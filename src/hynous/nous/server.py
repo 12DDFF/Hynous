@@ -70,7 +70,12 @@ def ensure_running() -> bool:
         pass
     else:
         # Spawn the server
-        server_dir = Path(cfg.nous.server_dir).expanduser().resolve()
+        raw_dir = Path(cfg.nous.server_dir).expanduser()
+        if not raw_dir.is_absolute():
+            # Resolve relative to project root (where config/ lives)
+            from ..core.config import _find_project_root
+            raw_dir = _find_project_root() / raw_dir
+        server_dir = raw_dir.resolve()
         if not (server_dir / "package.json").exists():
             logger.error("Nous server not found at %s", server_dir)
             return False

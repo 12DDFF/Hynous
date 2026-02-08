@@ -1,0 +1,130 @@
+{
+  "name": "@nous/core",
+  "version": "0.3.0",
+  "description": "Core library for Nous - nodes, edges, blocks, temporal handling, and database infrastructure",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./nodes": {
+      "types": "./dist/nodes/index.d.ts",
+      "import": "./dist/nodes/index.js"
+    },
+    "./blocks": {
+      "types": "./dist/blocks/index.d.ts",
+      "import": "./dist/blocks/index.js"
+    },
+    "./edges": {
+      "types": "./dist/edges/index.d.ts",
+      "import": "./dist/edges/index.js"
+    },
+    "./edges/weight": {
+      "types": "./dist/edges/weight/index.d.ts",
+      "import": "./dist/edges/weight/index.js"
+    },
+    "./temporal": {
+      "types": "./dist/temporal/index.d.ts",
+      "import": "./dist/temporal/index.js"
+    },
+    "./editing": {
+      "types": "./dist/editing/index.d.ts",
+      "import": "./dist/editing/index.js"
+    },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "import": "./dist/storage/index.js"
+    },
+    "./tps": {
+      "types": "./dist/tps/index.d.ts",
+      "import": "./dist/tps/index.js"
+    },
+    "./episodes": {
+      "types": "./dist/episodes/index.d.ts",
+      "import": "./dist/episodes/index.js"
+    },
+    "./db": {
+      "types": "./dist/db/index.d.ts",
+      "import": "./dist/db/index.js"
+    },
+    "./sync": {
+      "types": "./dist/sync/index.d.ts",
+      "import": "./dist/sync/index.js"
+    },
+    "./embeddings": {
+      "types": "./dist/embeddings/index.d.ts",
+      "import": "./dist/embeddings/index.js"
+    },
+    "./params": {
+      "types": "./dist/params/index.d.ts",
+      "import": "./dist/params/index.js"
+    },
+    "./ssa": {
+      "types": "./dist/ssa/index.d.ts",
+      "import": "./dist/ssa/index.js"
+    },
+    "./qcs": {
+      "types": "./dist/qcs/index.d.ts",
+      "import": "./dist/qcs/index.js"
+    },
+    "./contradiction": {
+      "types": "./dist/contradiction/index.d.ts",
+      "import": "./dist/contradiction/index.js"
+    },
+    "./security": {
+      "types": "./dist/security/index.d.ts",
+      "import": "./dist/security/index.js"
+    },
+    "./backend": {
+      "types": "./dist/backend/index.d.ts",
+      "import": "./dist/backend/index.js"
+    },
+    "./api": {
+      "types": "./dist/api/index.d.ts",
+      "import": "./dist/api/index.js"
+    },
+    "./operations": {
+      "types": "./dist/operations/index.d.ts",
+      "import": "./dist/operations/index.js"
+    },
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "import": "./dist/agent/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "clean": "rm -rf dist coverage"
+  },
+  "dependencies": {
+    "nanoid": "^5.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "nous",
+    "memory",
+    "knowledge-graph",
+    "ai",
+    "context"
+  ],
+  "license": "MIT"
+}

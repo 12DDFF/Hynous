@@ -1,0 +1,33 @@
+import { defineConfig } from 'tsup';
+
+export default defineConfig({
+  entry: [
+    'src/index.ts',
+    'src/nodes/index.ts',
+    'src/blocks/index.ts',
+    'src/edges/index.ts',
+    'src/temporal/index.ts',
+    'src/editing/index.ts',
+    'src/storage/index.ts',
+    'src/tps/index.ts',
+    'src/episodes/index.ts',
+    'src/db/index.ts',
+    'src/sync/index.ts',
+    'src/embeddings/index.ts',
+    'src/params/index.ts',
+    'src/ssa/index.ts',
+    'src/qcs/index.ts',
+    'src/contradiction/index.ts',
+    'src/security/index.ts',
+    'src/backend/index.ts',
+    'src/api/index.ts',
+    'src/operations/index.ts',
+    'src/agent/index.ts',
+  ],
+  format: ['esm'],
+  dts: true,
+  clean: true,
+  sourcemap: true,
+  splitting: false,
+  treeshake: true,
+});

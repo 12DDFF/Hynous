@@ -1,0 +1,16 @@
+{
+  "name": "nous",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Nous - The Personal Context API",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

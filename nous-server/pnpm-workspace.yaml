@@ -1,0 +1,7 @@
+packages:
+  - core
+  - app
+  - server
+
+ignoredBuiltDependencies:
+  - esbuild

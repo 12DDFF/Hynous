@@ -56,7 +56,7 @@ discord:
 # Memory (Nous) settings
 nous:
   url: "http://localhost:3100"        # Nous server URL
-  server_dir: "~/Desktop/nous-build/packages/server"  # Path to Nous server
+  server_dir: "nous-server/server"  # Path to Nous server (relative to project root)
   db_path: "storage/nous.db"          # Server-side DB path
   auto_retrieve_limit: 5              # Recent memories to auto-load
 
