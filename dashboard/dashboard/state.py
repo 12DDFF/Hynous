@@ -1,0 +1,840 @@
+"""
+Application State
+
+Central state management for the Hynous dashboard.
+All reactive state lives here.
+"""
+
+import re
+import asyncio
+import threading
+import reflex as rx
+import logging
+from pydantic import BaseModel
+from datetime import datetime
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+# Poll interval for live portfolio updates (seconds)
+_POLL_INTERVAL = 15
+
+# Background task decorator — rx.background not exposed in Reflex 0.8.x
+# but the machinery exists. Setting the marker attribute is all that's needed.
+from reflex.state import BACKGROUND_TASK_MARKER
+
+def _background(fn):
+    """Mark an async method as a Reflex background task."""
+    setattr(fn, BACKGROUND_TASK_MARKER, True)
+    return fn
+
+# --- Financial value highlighting ---
+# Matches: +1.5%, +$500, +0.0034%, +$1.2M, etc.
+_POS_RE = re.compile(r'(\+\$?[\d,]+\.?\d*[KMBkmb]?%?)')
+# Matches: -1.5%, -$500, etc. Requires preceding space/paren/pipe to avoid markdown list markers
+_NEG_RE = re.compile(r'(?<=[ (|:])(-\$?[\d,]+\.?\d*[KMBkmb]?%?)')
+
+_GREEN = '<span style="color:#4ade80;text-shadow:0 0 6px rgba(74,222,128,0.2)">'
+_RED = '<span style="color:#f87171;text-shadow:0 0 6px rgba(248,113,113,0.2)">'
+_END = '</span>'
+
+
+def _highlight(text: str) -> str:
+    """Add subtle color glow to financial values in text.
+
+    Positive values (+X%, +$X) get green glow.
+    Negative values (-X%, -$X) get red glow.
+    Uses raw HTML spans — requires use_raw=True in rx.markdown (default).
+    """
+    text = _POS_RE.sub(f'{_GREEN}\\1{_END}', text)
+    text = _NEG_RE.sub(f'{_RED}\\1{_END}', text)
+    return text
+
+# Human-readable names for tool indicators
+_TOOL_DISPLAY = {
+    "get_market_data": "Fetching market data",
+    "get_orderbook": "Reading orderbook",
+    "get_funding_history": "Analyzing funding rates",
+    "get_multi_timeframe": "Multi-timeframe analysis",
+    "get_liquidations": "Checking liquidations",
+    "get_global_sentiment": "Reading global sentiment",
+    "get_options_flow": "Analyzing options flow",
+    "get_institutional_flow": "Tracking institutional flow",
+    "search_web": "Searching the web",
+    "get_my_costs": "Checking costs",
+    "store_memory": "Storing memory",
+    "recall_memory": "Searching memories",
+    "get_account": "Checking account",
+    "execute_trade": "Executing trade",
+    "close_position": "Closing position",
+    "modify_position": "Modifying position",
+    "delete_memory": "Deleting memory",
+    "manage_watchpoints": "Managing watchpoints",
+}
+_TOOL_TAG = {
+    "get_market_data": "market data",
+    "get_orderbook": "orderbook",
+    "get_funding_history": "funding",
+    "get_multi_timeframe": "multi-TF",
+    "get_liquidations": "liquidations",
+    "get_global_sentiment": "sentiment",
+    "get_options_flow": "options",
+    "get_institutional_flow": "institutional",
+    "search_web": "web search",
+    "get_my_costs": "costs",
+    "store_memory": "memory",
+    "recall_memory": "memory",
+    "get_account": "account",
+    "execute_trade": "trade",
+    "close_position": "close",
+    "modify_position": "modify",
+    "delete_memory": "delete",
+    "manage_watchpoints": "watchpoints",
+}
+
+
+class Message(BaseModel):
+    """Chat message model."""
+    sender: str  # "user" or "hynous"
+    content: str
+    timestamp: str
+    tools_used: list[str] = []
+    show_avatar: bool = True  # False when grouped with previous same-sender message
+
+
+class Activity(BaseModel):
+    """Activity log entry."""
+    type: str  # "chat", "trade", "alert", "system"
+    title: str
+    level: str  # "info", "success", "warning", "error"
+    timestamp: str
+
+
+class DaemonActivity(BaseModel):
+    """Daemon activity log entry (from daemon_log.py)."""
+    type: str       # "wake", "watchpoint", "fill", "learning", "review", "error", "skip"
+    title: str
+    detail: str
+    timestamp: str
+
+
+class Position(BaseModel):
+    """Trading position."""
+    symbol: str
+    side: str  # "long" or "short"
+    size: float  # USD notional
+    entry: float  # entry price
+    mark: float = 0.0  # current mark price
+    pnl: float = 0.0  # return % on equity
+    pnl_usd: float = 0.0  # unrealized PnL in USD
+    leverage: int = 1
+
+
+# --- Agent + Daemon singletons (shared across all sessions) ---
+
+_agent = None
+_agent_error: Optional[str] = None
+_daemon = None
+_agent_lock = threading.Lock()
+
+
+def _get_agent():
+    """Lazily initialize the Hynous agent and daemon.
+
+    Thread-safe: uses double-checked locking so only one Agent is created
+    even when called concurrently from stream_response and init_and_start_daemon.
+    """
+    global _agent, _agent_error, _daemon
+
+    if _agent is not None:
+        return _agent
+
+    with _agent_lock:
+        # Double-check after acquiring lock
+        if _agent is not None:
+            return _agent
+
+        try:
+            from hynous.nous.server import ensure_running
+            if not ensure_running():
+                logger.warning("Nous server not available — memory tools will fail")
+
+            from hynous.intelligence import Agent
+            _agent = Agent()
+            _agent_error = None
+            logger.info("Hynous agent initialized successfully")
+
+            if _agent.config.daemon.enabled and _daemon is None:
+                from hynous.intelligence.daemon import Daemon
+                _daemon = Daemon(_agent, _agent.config)
+                _daemon.start()
+                logger.info("Daemon auto-started")
+
+            if _agent.config.discord.enabled:
+                try:
+                    from hynous.discord.bot import start_bot
+                    start_bot(_agent, _agent.config)
+                except Exception as e:
+                    logger.warning("Discord bot failed to start: %s", e)
+
+            return _agent
+        except Exception as e:
+            _agent_error = str(e)
+            logger.error(f"Failed to initialize agent: {e}")
+            return None
+
+
+def _reset_agent():
+    """Force re-initialization of the agent. Call after code changes."""
+    global _agent, _agent_error
+    _agent = None
+    _agent_error = None
+
+
+class AppState(rx.State):
+    """Main application state."""
+
+    # === Chat State ===
+    messages: List[Message] = []
+    current_input: str = ""
+    is_loading: bool = False
+    streaming_text: str = ""
+    active_tool: str = ""
+    _pending_input: str = ""  # Backend-only: passed to background streaming task
+
+    # === Agent State ===
+    agent_status: str = "idle"  # "idle", "thinking", "online", "error"
+
+    # === Portfolio State (updated by background poller) ===
+    portfolio_value: float = 0.0  # Live account value
+    portfolio_initial: float = 0.0  # Set from config/provider on first poll
+    portfolio_change: float = 0.0  # % change from initial
+    positions: List[Position] = []
+    _polling: bool = False  # Guard against duplicate pollers
+
+    # === Activity State ===
+    activities: List[Activity] = []
+
+    # === Navigation ===
+    current_page: str = "home"
+
+    # === Chat Actions ===
+
+    def set_input(self, value: str):
+        """Update the current input value."""
+        self.current_input = value
+
+    def _append_msg(self, msg: Message):
+        """Append a message, setting show_avatar based on previous sender."""
+        if self.messages and self.messages[-1].sender == msg.sender:
+            msg.show_avatar = False
+        self.messages.append(msg)
+
+    def _recompute_avatars(self):
+        """Recompute show_avatar for all messages (used after bulk load)."""
+        for i, msg in enumerate(self.messages):
+            if i == 0:
+                msg.show_avatar = True
+            else:
+                msg.show_avatar = msg.sender != self.messages[i - 1].sender
+
+    def _format_time(self) -> str:
+        """Format current time for display."""
+        now = datetime.now()
+        return now.strftime("%I:%M %p").lstrip("0").lower()
+
+    def send_message(self, form_data: dict = {}):
+        """Send a message and kick off background streaming.
+
+        Accepts form data from the uncontrolled input (form submit sends
+        {message: str}). Can also be called programmatically via
+        _pending_input for suggestions and quick-chat.
+        """
+        # Get message from form data or _pending_input (for programmatic sends)
+        text = form_data.get("message", "").strip() if form_data else ""
+        if not text:
+            text = self._pending_input.strip()
+        if not text:
+            return
+
+        # Add user message
+        user_msg = Message(
+            sender="user",
+            content=text,
+            timestamp=self._format_time()
+        )
+        self._append_msg(user_msg)
+
+        # Store input for background task
+        self._pending_input = text
+        self.is_loading = True
+        self.streaming_text = ""
+        self.active_tool = ""
+        self.agent_status = "thinking"
+
+        # Chain to background streaming task (state delta with user msg is sent first)
+        return AppState.stream_response
+
+    @_background
+    async def stream_response(self):
+        """Stream agent response as a background task.
+
+        Runs chat_stream() in a thread so it never blocks the event loop.
+        State updates are pushed via async with self between chunks.
+        """
+        async with self:
+            user_input = self._pending_input
+
+        # Run in thread so agent init (7s on first call) doesn't block event loop
+        agent = await asyncio.to_thread(_get_agent)
+        tools_used = []
+
+        if agent:
+            try:
+                # Run sync streaming generator in a thread, consume via queue
+                import queue
+                chunk_queue: queue.Queue = queue.Queue()
+                sentinel = object()
+
+                def _produce():
+                    try:
+                        for chunk_type, chunk_data in agent.chat_stream(user_input):
+                            chunk_queue.put((chunk_type, chunk_data))
+                    except Exception as e:
+                        chunk_queue.put(("error", str(e)))
+                    chunk_queue.put(sentinel)
+
+                # Start producer thread
+                import threading
+                producer = threading.Thread(target=_produce, daemon=True)
+                producer.start()
+
+                # Consume chunks in batches — push state every ~80ms
+                # instead of per-token. Reduces state lock acquisitions
+                # and computed var evaluations by ~10-50x.
+                done = False
+                while not done:
+                    text_batch = []
+                    tool_event = None
+                    error_msg = None
+
+                    # Drain all available chunks without blocking
+                    while True:
+                        try:
+                            item = chunk_queue.get_nowait()
+                        except Exception:
+                            break  # queue empty
+
+                        if item is sentinel:
+                            done = True
+                            break
+                        chunk_type, chunk_data = item
+                        if chunk_type == "error":
+                            error_msg = chunk_data
+                            done = True
+                            break
+                        elif chunk_type == "text":
+                            text_batch.append(chunk_data)
+                        elif chunk_type == "tool":
+                            tool_event = chunk_data
+                            break  # Push tool events immediately
+
+                    # Push batched updates in a single state lock
+                    if text_batch or tool_event or error_msg:
+                        async with self:
+                            if error_msg:
+                                self.streaming_text += f"\n\nSomething went wrong: {error_msg}"
+                                self.agent_status = "error"
+                            if text_batch:
+                                self.active_tool = ""
+                                self.streaming_text += "".join(text_batch)
+                            if tool_event:
+                                if self.streaming_text.strip():
+                                    self._append_msg(Message(
+                                        sender="hynous",
+                                        content=_highlight(self.streaming_text),
+                                        timestamp=self._format_time(),
+                                    ))
+                                    self.streaming_text = ""
+                                self.active_tool = tool_event
+                                if tool_event not in tools_used:
+                                    tools_used.append(tool_event)
+
+                    if not done:
+                        await asyncio.sleep(0.08)  # ~80ms between UI pushes
+
+                producer.join(timeout=5)
+
+            except Exception as e:
+                logger.error(f"Agent chat error: {e}")
+                async with self:
+                    self.streaming_text += "\n\nSomething went wrong on my end. Give me a moment and try again."
+                    self.agent_status = "error"
+        else:
+            async with self:
+                self.streaming_text = (
+                    f"I can't connect to my brain right now. "
+                    f"Make sure ANTHROPIC_API_KEY is set in your .env file.\n\n"
+                    f"Error: {_agent_error or 'Unknown'}"
+                )
+                self.agent_status = "error"
+
+        # Finalize
+        async with self:
+            response = self.streaming_text
+            display_tools = [_TOOL_TAG.get(t, t) for t in tools_used]
+            hynous_msg = Message(
+                sender="hynous",
+                content=_highlight(response),
+                timestamp=self._format_time(),
+                tools_used=display_tools,
+            )
+            self._append_msg(hynous_msg)
+
+            self.streaming_text = ""
+            self.active_tool = ""
+            self._add_activity("chat", f"Chat: {user_input[:30]}...", "info")
+            self.is_loading = False
+            if self.agent_status != "error":
+                self.agent_status = "idle"
+
+        # Persist to disk (outside state lock)
+        self._save_chat(agent)
+
+    def send_suggestion(self, suggestion: str):
+        """Send a suggestion as a message."""
+        self._pending_input = suggestion
+        return self.send_message()
+
+    def load_page(self):
+        """Load persisted messages + start portfolio polling on page load."""
+        # Load chat history
+        if not self.messages:
+            try:
+                from hynous.core.persistence import load
+                saved_messages, _ = load()
+                if saved_messages:
+                    self.messages = [Message(**m) for m in saved_messages]
+                    self._recompute_avatars()
+            except Exception as e:
+                logger.error(f"Failed to load persisted chat: {e}")
+
+        # Start background portfolio poller
+        return AppState.poll_portfolio
+
+    def _save_chat(self, agent=None):
+        """Persist current messages and agent history to disk."""
+        try:
+            from hynous.core.persistence import save
+            ui_data = [m.model_dump() for m in self.messages]
+            history = agent._history if agent else []
+            save(ui_data, history)
+        except Exception as e:
+            logger.error(f"Failed to save chat: {e}")
+
+    def clear_messages(self):
+        """Clear all messages, agent history, and persisted data."""
+        self.messages = []
+        agent = _get_agent()
+        if agent:
+            agent.clear_history()
+        try:
+            from hynous.core.persistence import clear
+            clear()
+        except Exception:
+            pass
+
+    # === Portfolio Polling ===
+
+    def start_polling(self):
+        """Start the background portfolio poller on page load."""
+        if not self._polling:
+            return AppState.poll_portfolio
+
+    @_background
+    async def poll_portfolio(self):
+        """Poll Hyperliquid testnet every few seconds for live portfolio data.
+
+        Runs as a Reflex background task — outside the main state lock.
+        Updates portfolio_value, portfolio_change, and positions.
+        Zero LLM tokens — pure Python → Hyperliquid REST.
+        """
+        async with self:
+            if self._polling:
+                return
+            self._polling = True
+
+        while True:
+            try:
+                # Run sync Hyperliquid API call in a thread so it doesn't
+                # block the Reflex event loop (call takes ~5-7s on testnet).
+                state_data = await asyncio.to_thread(self._fetch_portfolio)
+
+                if state_data is not None:
+                    value, positions, initial = state_data
+                    async with self:
+                        self.portfolio_value = round(value, 2)
+                        if initial > 0:
+                            self.portfolio_initial = initial
+                            self.portfolio_change = round(
+                                ((value - initial) / initial) * 100, 2
+                            )
+                        self.positions = positions
+            except Exception as e:
+                logger.debug(f"Portfolio poll error: {e}")
+
+            # Drain daemon chat queue — show daemon wakes in the chat feed
+            try:
+                from hynous.intelligence.daemon import get_daemon_chat_queue
+                dq = get_daemon_chat_queue()
+                new_daemon_msgs = []
+                while not dq.empty():
+                    try:
+                        new_daemon_msgs.append(dq.get_nowait())
+                    except Exception:
+                        break
+                if new_daemon_msgs:
+                    async with self:
+                        for item in new_daemon_msgs:
+                            header = f"**Daemon Wake — {item['type']}: {item['title']}**"
+                            self._append_msg(Message(
+                                sender="hynous",
+                                content=_highlight(f"> {header}\n\n{item['response']}"),
+                                timestamp=self._format_time(),
+                                tools_used=["daemon"],
+                            ))
+                    # Persist after adding daemon messages
+                    self._save_chat(_agent)
+            except Exception:
+                pass
+
+            await asyncio.sleep(_POLL_INTERVAL)
+
+    # === Activity Actions ===
+
+    def _add_activity(self, type: str, title: str, level: str = "info"):
+        """Add an activity to the log."""
+        activity = Activity(
+            type=type,
+            title=title,
+            level=level,
+            timestamp=datetime.now().isoformat()
+        )
+        self.activities.insert(0, activity)
+        # Keep only last 50 activities
+        self.activities = self.activities[:50]
+
+    # === Computed Vars ===
+
+    @staticmethod
+    def _fetch_portfolio() -> tuple[float, list["Position"]] | None:
+        """Fetch portfolio data from Hyperliquid (sync, runs in thread)."""
+        from hynous.data.providers.hyperliquid import get_provider
+        from hynous.core.config import load_config
+
+        config = load_config()
+        provider = get_provider(config=config)
+
+        if not provider.can_trade:
+            return None
+
+        state = provider.get_user_state()
+        value = state["account_value"]
+        raw_positions = state["positions"]
+        initial = getattr(provider, "_initial_balance", config.execution.paper_balance)
+
+        positions = [
+            Position(
+                symbol=p["coin"],
+                side=p["side"],
+                size=round(p["size_usd"], 2),
+                entry=p["entry_px"],
+                mark=p["mark_px"],
+                pnl=round(p["return_pct"], 2),
+                pnl_usd=round(p["unrealized_pnl"], 2),
+                leverage=p["leverage"],
+            )
+            for p in raw_positions
+        ]
+
+        return (round(value, 2), positions, initial)
+
+    @rx.var
+    def portfolio_value_str(self) -> str:
+        """Formatted portfolio value — updated by background poller."""
+        if self.portfolio_value > 0:
+            return f"${self.portfolio_value:,.2f}"
+        return "Connecting..."
+
+    @rx.var
+    def portfolio_change_str(self) -> str:
+        """Formatted portfolio change %."""
+        if self.portfolio_value == 0:
+            return "Waiting for data"
+        if self.portfolio_change == 0:
+            return "Testnet trading"
+        sign = "+" if self.portfolio_change > 0 else ""
+        return f"{sign}{self.portfolio_change:.2f}% all time"
+
+    @rx.var
+    def portfolio_change_color(self) -> str:
+        """Color for portfolio change."""
+        if self.portfolio_change > 0:
+            return "#22c55e"
+        elif self.portfolio_change < 0:
+            return "#ef4444"
+        return "#fafafa"
+
+    @rx.var(cache=False)
+    def wallet_total_str(self) -> str:
+        """Total monthly cost as formatted string."""
+        try:
+            from hynous.core.costs import get_month_summary
+            s = get_month_summary()
+            return f"${s['total_usd']:.2f}"
+        except Exception:
+            return "$0.00"
+
+    @rx.var(cache=False)
+    def wallet_subtitle(self) -> str:
+        """Subtitle for wallet card."""
+        try:
+            from hynous.core.costs import get_month_summary
+            s = get_month_summary()
+            return f"{s['month']} operating costs"
+        except Exception:
+            return "This month"
+
+    @rx.var(cache=False)
+    def wallet_claude_cost(self) -> str:
+        """Claude API cost string."""
+        try:
+            from hynous.core.costs import get_month_summary
+            s = get_month_summary()
+            c = s["claude"]
+            return f"${c['cost_usd']:.2f}"
+        except Exception:
+            return "$0.00"
+
+    @rx.var(cache=False)
+    def wallet_claude_calls(self) -> str:
+        """Claude API call count."""
+        try:
+            from hynous.core.costs import get_month_summary
+            return str(get_month_summary()["claude"]["calls"])
+        except Exception:
+            return "0"
+
+    @rx.var(cache=False)
+    def wallet_claude_tokens(self) -> str:
+        """Claude token usage string."""
+        try:
+            from hynous.core.costs import get_month_summary
+            c = get_month_summary()["claude"]
+            return f"{c['input_tokens']:,} in / {c['output_tokens']:,} out"
+        except Exception:
+            return "0 in / 0 out"
+
+    @rx.var(cache=False)
+    def wallet_perplexity_cost(self) -> str:
+        """Perplexity API cost string."""
+        try:
+            from hynous.core.costs import get_month_summary
+            return f"${get_month_summary()['perplexity']['cost_usd']:.2f}"
+        except Exception:
+            return "$0.00"
+
+    @rx.var(cache=False)
+    def wallet_perplexity_calls(self) -> str:
+        """Perplexity API call count."""
+        try:
+            from hynous.core.costs import get_month_summary
+            return str(get_month_summary()["perplexity"]["calls"])
+        except Exception:
+            return "0"
+
+    @rx.var
+    def wallet_coinglass_cost(self) -> str:
+        """Coinglass monthly subscription cost."""
+        return "$35.00"
+
+    @rx.var
+    def positions_count(self) -> str:
+        """Number of open positions — updated by background poller."""
+        return str(len(self.positions))
+
+    @rx.var
+    def message_count(self) -> str:
+        """Number of messages as string."""
+        return str(len(self.messages))
+
+    @rx.var(cache=False)
+    def daemon_running(self) -> bool:
+        """Whether the background daemon is active.
+
+        cache=False because this reads module-level _daemon which Reflex
+        auto_deps can't track. Without this, the value is permanently cached.
+        """
+        return _daemon is not None and _daemon.is_running
+
+    @rx.var(cache=False)
+    def daemon_wake_count(self) -> str:
+        """Total daemon wakes this session."""
+        if _daemon is None:
+            return "0"
+        return str(_daemon.wake_count)
+
+    @rx.var(cache=False)
+    def daemon_status_text(self) -> str:
+        """Daemon status: Running / Stopped / Paused."""
+        if _daemon is None or not _daemon.is_running:
+            return "Stopped"
+        if _daemon.trading_paused:
+            return "Paused"
+        return "Running"
+
+    @rx.var(cache=False)
+    def daemon_status_color(self) -> str:
+        """Color for daemon status dot."""
+        if _daemon is None or not _daemon.is_running:
+            return "#525252"
+        if _daemon.trading_paused:
+            return "#ef4444"
+        return "#22c55e"
+
+    @rx.var(cache=False)
+    def daemon_daily_pnl(self) -> str:
+        """Today's realized PnL string."""
+        if _daemon is None:
+            return "$0.00"
+        pnl = _daemon.daily_realized_pnl
+        sign = "+" if pnl >= 0 else ""
+        return f"{sign}${pnl:,.2f}"
+
+    @rx.var(cache=False)
+    def daemon_trading_paused(self) -> bool:
+        """Whether circuit breaker is active."""
+        return _daemon is not None and _daemon.trading_paused
+
+    @rx.var(cache=False)
+    def daemon_activities(self) -> list[DaemonActivity]:
+        """Last 20 daemon events from the activity log."""
+        try:
+            from hynous.core.daemon_log import get_events
+            raw = get_events(limit=20)
+            return [DaemonActivity(**e) for e in raw]
+        except Exception:
+            return []
+
+    @rx.var
+    def agent_status_display(self) -> str:
+        """Capitalized agent status."""
+        return self.agent_status.capitalize()
+
+    @rx.var
+    def agent_status_color(self) -> str:
+        """Color for agent status dot."""
+        colors = {
+            "online": "#22c55e",
+            "thinking": "#eab308",
+            "error": "#ef4444",
+        }
+        return colors.get(self.agent_status, "#525252")
+
+    @rx.var
+    def streaming_show_avatar(self) -> bool:
+        """Whether the streaming bubble should show the Hynous avatar.
+
+        False when the last saved message is already from Hynous (grouped).
+        """
+        if not self.messages:
+            return True
+        return self.messages[-1].sender != "hynous"
+
+    @rx.var
+    def streaming_display(self) -> str:
+        """Streaming text with financial highlights applied."""
+        if not self.streaming_text:
+            return ""
+        return _highlight(self.streaming_text)
+
+    @rx.var
+    def active_tool_display(self) -> str:
+        """Human-readable name for the currently active tool."""
+        if not self.active_tool:
+            return ""
+        return _TOOL_DISPLAY.get(self.active_tool, self.active_tool)
+
+    @rx.var
+    def active_tool_color(self) -> str:
+        """Accent color for the currently active tool indicator."""
+        colors = {
+            "get_market_data": "#60a5fa",
+            "get_orderbook": "#22d3ee",
+            "get_funding_history": "#fbbf24",
+            "get_multi_timeframe": "#a78bfa",
+            "get_liquidations": "#fb923c",
+            "get_global_sentiment": "#2dd4bf",
+            "get_options_flow": "#f472b6",
+            "get_institutional_flow": "#34d399",
+            "search_web": "#e879f9",
+            "get_my_costs": "#94a3b8",
+            "store_memory": "#a3e635",
+            "recall_memory": "#a3e635",
+            "get_account": "#f59e0b",
+            "execute_trade": "#22c55e",
+            "close_position": "#ef4444",
+            "modify_position": "#a78bfa",
+        }
+        return colors.get(self.active_tool, "#a5b4fc")
+
+    # === Daemon Controls ===
+
+    def toggle_daemon(self, checked: bool = True):
+        """Toggle daemon on/off.
+
+        Fully synchronous — if agent needs init on first toggle, this blocks
+        for ~7s. Acceptable since the user explicitly requested the action.
+        After first init, toggling is instant.
+        """
+        global _daemon
+
+        if not checked:
+            # Stop — always instant
+            if _daemon is not None and _daemon.is_running:
+                _daemon.stop()
+                self._add_activity("system", "Daemon stopped", "info")
+            return
+
+        # Start — initialize agent if needed
+        agent = _get_agent()
+        if not agent:
+            self._add_activity("system", f"Daemon failed: {_agent_error}", "error")
+            return
+
+        if _daemon is None:
+            from hynous.intelligence.daemon import Daemon
+            _daemon = Daemon(agent, agent.config)
+        if not _daemon.is_running:
+            _daemon.start()
+        self._add_activity("system", "Daemon started", "info")
+
+    # === Navigation ===
+
+    def go_to_home(self):
+        """Navigate to home page."""
+        self.current_page = "home"
+
+    def go_to_chat(self):
+        """Navigate to chat page."""
+        self.current_page = "chat"
+
+    def go_to_graph(self):
+        """Navigate to memory graph page."""
+        self.current_page = "graph"
+
+    def go_to_chat_with_message(self, msg: str):
+        """Navigate to chat and send a message."""
+        self.current_page = "chat"
+        self._pending_input = msg
+        return self.send_message()

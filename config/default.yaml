@@ -1,0 +1,83 @@
+# Hynous Configuration
+# Edit this file to change behavior. Restart app after changes.
+
+# Application metadata
+app:
+  name: "Hynous"
+  version: "0.1.0"
+
+# Execution settings
+execution:
+  mode: "paper"              # paper | testnet | live_confirm | live_auto
+  paper_balance: 1000        # Starting balance for paper trading (USD)
+  symbols:                   # Symbols to track
+    - "BTC"
+    - "ETH"
+    - "SOL"
+
+# Hyperliquid exchange settings
+hyperliquid:
+  default_leverage: 5          # Cross margin, conservative
+  max_position_usd: 10000     # Safety cap per position on testnet
+  default_slippage: 0.05       # 5% slippage tolerance for market orders
+
+# Agent settings
+agent:
+  model: "claude-sonnet-4-5-20250929"  # Claude model to use (Sonnet 4.5 - best cost/performance)
+  max_tokens: 4096           # Max response tokens
+  temperature: 0.7           # Creativity (0-1)
+
+# Coinglass settings (cross-exchange derivatives data)
+coinglass:
+  plan: "hobbyist"             # hobbyist | analyst | professional
+
+# Daemon settings (background autonomous agent)
+daemon:
+  enabled: false                   # Master switch — enable autonomous mode
+  price_poll_interval: 60          # Price polling from Hyperliquid (seconds)
+  deriv_poll_interval: 300         # Derivatives/sentiment polling (seconds)
+  periodic_interval: 3600          # Periodic market review wake (seconds, 60 min)
+  curiosity_threshold: 3           # Pending curiosity items before learning session
+  curiosity_check_interval: 900    # Curiosity queue check interval (seconds, 15 min)
+  max_daily_loss_usd: 100            # Circuit breaker: pause trading after this daily loss
+  max_open_positions: 3              # Max simultaneous open positions
+  max_wakes_per_hour: 6              # Rate limit on agent wakes per hour
+  wake_cooldown_seconds: 120         # Min seconds between non-priority wakes
+
+# Discord bot (chat relay + daemon notifications)
+discord:
+  enabled: true                                # Master switch
+  channel_id: 1469952346028245097              # Discord channel ID for notifications + chat
+  stats_channel_id: 1469946713471975476        # Separate channel for stats panel
+  allowed_user_ids:                            # Only respond to these users
+    - 1415781451474927657                      # David
+    - 614868895643205639                       # Kevin
+
+# Memory (Nous) settings
+nous:
+  url: "http://localhost:3100"        # Nous server URL
+  server_dir: "~/Desktop/nous-build/packages/server"  # Path to Nous server
+  db_path: "storage/nous.db"          # Server-side DB path
+  auto_retrieve_limit: 5              # Recent memories to auto-load
+
+# Tiered memory settings (working window + Nous-backed compression)
+memory:
+  window_size: 6                 # Complete exchanges to keep in working window
+  max_context_tokens: 800        # Token budget for recalled context injected per call
+  retrieve_limit: 5              # Max memories to retrieve per query
+  compression_model: "claude-haiku-4-5-20251001"  # Model for compressing evicted exchanges
+  compress_enabled: true         # Enable/disable automatic compression
+
+# Event detection thresholds
+events:
+  funding:
+    extreme_positive: 0.001  # 0.10%
+    extreme_negative: -0.0005  # -0.05%
+  price:
+    spike_percent: 0.05      # 5% move triggers event
+  cooldown_minutes: 30       # Min time between same event type
+
+# Logging
+logging:
+  level: "INFO"              # DEBUG | INFO | WARNING | ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

@@ -1,0 +1,108 @@
+# Tests
+
+> Test suites for Hynous.
+
+---
+
+## Structure
+
+```
+tests/
+├── unit/           # Test individual functions
+├── integration/    # Test component interactions
+└── e2e/            # Test full user flows
+```
+
+---
+
+## Running Tests
+
+```bash
+# All tests
+pytest
+
+# Unit tests only
+pytest tests/unit/
+
+# With coverage
+pytest --cov=src/hynous
+
+# Specific file
+pytest tests/unit/test_agent.py
+```
+
+---
+
+## Test Categories
+
+### Unit Tests (`unit/`)
+
+Test individual functions in isolation.
+Mock external dependencies.
+
+```python
+# tests/unit/test_agent.py
+
+def test_agent_formats_prompt():
+    agent = Agent(mock_config)
+    prompt = agent._build_prompt("Hello")
+    assert "Hynous" in prompt
+```
+
+### Integration Tests (`integration/`)
+
+Test multiple components working together.
+May use real databases (test instances).
+
+```python
+# tests/integration/test_chat_flow.py
+
+async def test_chat_stores_in_memory():
+    agent = Agent(config)
+    store = NousStore(":memory:")
+
+    response = await agent.chat("Remember this")
+
+    nodes = store.search("remember")
+    assert len(nodes) > 0
+```
+
+### E2E Tests (`e2e/`)
+
+Test full user flows.
+May require running services.
+
+```python
+# tests/e2e/test_dashboard.py
+
+def test_home_page_loads():
+    # Uses Reflex testing utilities
+    ...
+```
+
+---
+
+## Fixtures
+
+Common fixtures live in `conftest.py`:
+
+```python
+# tests/conftest.py
+
+@pytest.fixture
+def mock_config():
+    return Config(...)
+
+@pytest.fixture
+def memory_store():
+    return NousStore(":memory:")
+```
+
+---
+
+## Writing Good Tests
+
+1. **Test behavior, not implementation**
+2. **One assertion per test** (when possible)
+3. **Clear test names** — `test_agent_returns_error_on_invalid_symbol`
+4. **Mock external services** — Don't hit real APIs in tests

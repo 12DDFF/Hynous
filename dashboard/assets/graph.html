@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hynous Memory Graph</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0a0a;
+      color: #fafafa;
+      font-family: Inter, system-ui, sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #graph { width: 100%; height: 100%; }
+
+    /* Controls overlay */
+    .controls {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .controls input {
+      background: #141414;
+      border: 1px solid #262626;
+      color: #fafafa;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-family: Inter, system-ui, sans-serif;
+      outline: none;
+      width: 220px;
+      transition: border-color 0.15s;
+    }
+
+    .controls input:focus {
+      border-color: #6366f1;
+    }
+
+    .controls input::placeholder {
+      color: #525252;
+    }
+
+    .btn {
+      background: #141414;
+      border: 1px solid #262626;
+      color: #a3a3a3;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-family: Inter, system-ui, sans-serif;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      background: #1a1a1a;
+      color: #fafafa;
+      border-color: #404040;
+    }
+
+    /* Stats */
+    .stats {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      background: #141414;
+      border: 1px solid #262626;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.8rem;
+      color: #737373;
+      z-index: 10;
+    }
+
+    .stats span { color: #a5b4fc; }
+
+    /* Legend */
+    .legend {
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      background: #141414;
+      border: 1px solid #262626;
+      border-radius: 8px;
+      padding: 12px 16px;
+      z-index: 10;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+
+    .legend-title {
+      font-size: 0.75rem;
+      color: #525252;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 2px 0;
+      font-size: 0.8rem;
+      color: #a3a3a3;
+    }
+
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* Detail panel */
+    .detail-panel {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      background: #141414;
+      border: 1px solid #262626;
+      border-radius: 8px;
+      padding: 16px;
+      z-index: 10;
+      width: 300px;
+      max-height: 300px;
+      overflow-y: auto;
+      display: none;
+    }
+
+    .detail-panel .close-btn {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      background: none;
+      border: none;
+      color: #525252;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+
+    .detail-panel .close-btn:hover { color: #fafafa; }
+
+    .detail-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: #fafafa;
+      margin-bottom: 8px;
+      padding-right: 20px;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      padding: 3px 0;
+    }
+
+    .detail-row .label { color: #525252; }
+    .detail-row .value { color: #a3a3a3; }
+
+    .detail-summary {
+      font-size: 0.8rem;
+      color: #737373;
+      margin-top: 8px;
+      line-height: 1.4;
+      border-top: 1px solid #262626;
+      padding-top: 8px;
+    }
+
+    /* Loading */
+    .loading {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #525252;
+      font-size: 0.9rem;
+      z-index: 30;
+    }
+
+    .error {
+      color: #ef4444;
+    }
+  </style>
+</head>
+<body>
+  <div id="graph"></div>
+
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search memories..." autocomplete="off" />
+    <button class="btn" id="refresh-btn">Refresh</button>
+    <button class="btn" id="reset-btn">Reset View</button>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="legend" id="legend">
+    <div class="legend-title">Memory Types</div>
+  </div>
+
+
+  <div class="detail-panel" id="detail">
+    <button class="close-btn" id="detail-close">&times;</button>
+    <div class="detail-title" id="detail-title"></div>
+    <div id="detail-body"></div>
+  </div>
+
+  <div class="loading" id="loading">Loading graph...</div>
+
+  <script src="https://unpkg.com/d3-force@3/dist/d3-force.min.js"></script>
+  <script src="https://unpkg.com/force-graph@1.47.4/dist/force-graph.min.js"></script>
+  <script>
+    // ---- Configuration ----
+    // Try multiple addresses — browser may resolve localhost differently
+    const NOUS_URLS = [
+      'http://localhost:3100/v1/graph',
+      'http://127.0.0.1:3100/v1/graph',
+      'http://[::1]:3100/v1/graph',
+    ];
+
+    const COLORS = {
+      'custom:watchpoint':      '#b48a1a',
+      'custom:curiosity':       '#9b59a8',
+      'custom:lesson':          '#4a7fb5',
+      'custom:thesis':          '#7c6aad',
+      'custom:market_event':    '#b07040',
+      'custom:trade_entry':     '#3a9e6a',
+      'custom:trade_close':     '#a04848',
+      'custom:trade_modify':    '#a08030',
+      'custom:signal':          '#3a8f85',
+      'custom:turn_summary':    '#5a5a6a',
+      'custom:session_summary': '#6a6a78',
+      'custom:preference':      '#a05580',
+      'custom:trade':           '#2a8a7a',
+    };
+
+    const LABELS = {
+      'custom:watchpoint':      'Watchpoint',
+      'custom:curiosity':       'Curiosity',
+      'custom:lesson':          'Lesson',
+      'custom:thesis':          'Thesis',
+      'custom:market_event':    'Market Event',
+      'custom:trade_entry':     'Trade Entry',
+      'custom:trade_close':     'Trade Close',
+      'custom:trade_modify':    'Trade Modify',
+      'custom:signal':          'Signal',
+      'custom:turn_summary':    'Turn Summary',
+      'custom:session_summary': 'Session Summary',
+      'custom:preference':      'Preference',
+      'custom:trade':           'Trade',
+    };
+
+    const DEFAULT_COLOR = '#5a6380';
+
+    // ---- State ----
+    let graph = null;
+    let hoveredNode = null;
+    let selectedNode = null;
+    let searchTerm = '';
+    let graphData = { nodes: [], links: [] };
+
+    // ---- Legend ----
+    function buildLegend(nodes) {
+      const legendEl = document.getElementById('legend');
+      // Clear existing items (keep title)
+      const items = legendEl.querySelectorAll('.legend-item');
+      items.forEach(i => i.remove());
+
+      // Find which subtypes exist in the data
+      const subtypes = new Set(nodes.map(n => n.subtype).filter(Boolean));
+
+      for (const [subtype, label] of Object.entries(LABELS)) {
+        if (!subtypes.has(subtype)) continue;
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+        item.innerHTML = `<div class="legend-dot" style="background:${COLORS[subtype] || DEFAULT_COLOR}"></div>${label}`;
+        legendEl.appendChild(item);
+      }
+    }
+
+    // ---- Helpers ----
+    function getColor(node) {
+      return COLORS[node.subtype] || DEFAULT_COLOR;
+    }
+
+    function getRadius(node) {
+      // Size varies by connection count — subtle but visible
+      if (node._conns === undefined) {
+        node._conns = graphData.links.filter(l =>
+          (l.source.id || l.source) === node.id || (l.target.id || l.target) === node.id
+        ).length;
+      }
+      const c = node._conns;
+      // 0 conns: 2.8px, 1-2: ~3.5px, 5: ~4.5px, 10+: ~5.5px, cap 6px
+      return Math.min(6, 2.8 + Math.log2(c + 1) * 1.1);
+    }
+
+    function getOpacity(node) {
+      const r = node.retrievability ?? 1;
+      // Map retrievability to opacity: 1.0 → 1.0, 0.0 → 0.15
+      return Math.max(0.15, r * 0.85 + 0.15);
+    }
+
+    function isHighlighted(node) {
+      if (!searchTerm) return true;
+      const title = (node.title || '').toLowerCase();
+      const subtype = (node.subtype || '').toLowerCase();
+      return title.includes(searchTerm) || subtype.includes(searchTerm);
+    }
+
+    function formatDate(iso) {
+      if (!iso) return '?';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      } catch { return iso.slice(0, 10); }
+    }
+
+    function subtypeLabel(subtype) {
+      if (!subtype) return 'unknown';
+      return LABELS[subtype] || subtype.replace('custom:', '');
+    }
+
+
+    // ---- Detail panel ----
+    function showDetail(node) {
+      selectedNode = node;
+      const panel = document.getElementById('detail');
+      const title = document.getElementById('detail-title');
+      const body = document.getElementById('detail-body');
+
+      title.textContent = node.title || 'Untitled';
+      title.style.color = getColor(node);
+
+      const retr = node.retrievability != null ? (node.retrievability * 100).toFixed(0) + '%' : '?';
+
+      let html = '';
+      html += `<div class="detail-row"><span class="label">Type</span><span class="value">${subtypeLabel(node.subtype)}</span></div>`;
+      html += `<div class="detail-row"><span class="label">Lifecycle</span><span class="value">${node.lifecycle || '?'}</span></div>`;
+      html += `<div class="detail-row"><span class="label">Retrievability</span><span class="value">${retr}</span></div>`;
+      html += `<div class="detail-row"><span class="label">Access Count</span><span class="value">${node.access_count || 0}</span></div>`;
+      html += `<div class="detail-row"><span class="label">Created</span><span class="value">${formatDate(node.created_at)}</span></div>`;
+      html += `<div class="detail-row"><span class="label">ID</span><span class="value" style="font-family:monospace;font-size:0.7rem">${node.id}</span></div>`;
+
+      // Count connections
+      const connections = graphData.links.filter(l =>
+        (l.source.id || l.source) === node.id || (l.target.id || l.target) === node.id
+      );
+      html += `<div class="detail-row"><span class="label">Connections</span><span class="value">${connections.length}</span></div>`;
+
+      if (node.summary) {
+        html += `<div class="detail-summary">${node.summary}</div>`;
+      }
+
+      body.innerHTML = html;
+      panel.style.display = 'block';
+    }
+
+    function hideDetail() {
+      selectedNode = null;
+      document.getElementById('detail').style.display = 'none';
+    }
+
+    // ---- Graph rendering ----
+    function renderGraph(data) {
+      const el = document.getElementById('graph');
+      const loadingEl = document.getElementById('loading');
+      loadingEl.style.display = 'none';
+
+      // Clean edges that reference missing nodes
+      const nodeIds = new Set(data.nodes.map(n => n.id));
+      const validEdges = data.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+
+      graphData = { nodes: data.nodes, links: validEdges };
+
+      // Stats
+      document.getElementById('stats').innerHTML =
+        `<span>${data.nodes.length}</span> memories &middot; <span>${validEdges.length}</span> connections`;
+
+      // Legend
+      buildLegend(data.nodes);
+
+      if (graph) {
+        graph.graphData(graphData);
+        return;
+      }
+
+      graph = ForceGraph()(el)
+        .graphData(graphData)
+        .backgroundColor('#0a0a0a')
+        .width(el.clientWidth)
+        .height(el.clientHeight)
+
+        // Node rendering
+        .nodeCanvasObject((node, ctx, globalScale) => {
+          const r = getRadius(node);
+          const color = getColor(node);
+          const opacity = getOpacity(node);
+          const highlighted = isHighlighted(node);
+          const isSelected = selectedNode && selectedNode.id === node.id;
+          const isHovered = hoveredNode && hoveredNode.id === node.id;
+          const isConnected = selectedNode && graphData.links.some(l =>
+            ((l.source.id || l.source) === selectedNode.id && (l.target.id || l.target) === node.id) ||
+            ((l.target.id || l.target) === selectedNode.id && (l.source.id || l.source) === node.id)
+          );
+
+          let alpha = opacity;
+          if (searchTerm && !highlighted) alpha = 0.06;
+          if (selectedNode && !isSelected && !isConnected) alpha = 0.12;
+
+          // Soft glow — color-rich, tight to node, premium feel
+          if (isHovered || isSelected) {
+            const glowR = r + 6;
+            const grad = ctx.createRadialGradient(node.x, node.y, r * 0.3, node.x, node.y, glowR);
+            grad.addColorStop(0, color + 'cc');
+            grad.addColorStop(0.35, color + '66');
+            grad.addColorStop(0.7, color + '22');
+            grad.addColorStop(1, color + '00');
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, glowR, 0, 2 * Math.PI);
+            ctx.fillStyle = grad;
+            ctx.globalAlpha = isSelected ? 0.95 : 0.85;
+            ctx.fill();
+          }
+
+          // Core node
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+          ctx.fillStyle = color;
+          ctx.globalAlpha = alpha;
+          ctx.fill();
+
+          ctx.globalAlpha = 1;
+        })
+        .nodePointerAreaPaint((node, color, ctx) => {
+          const r = getRadius(node) + 4;
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+          ctx.fillStyle = color;
+          ctx.fill();
+        })
+
+        // Edge rendering — subtle, thin lines
+        .linkCanvasObject((link, ctx) => {
+          const strength = link.strength || 0.5;
+          const width = Math.max(0.2, strength * 0.6);
+          const sourceId = link.source.id || link.source;
+          const targetId = link.target.id || link.target;
+
+          let alpha = 0.3;
+          if (selectedNode) {
+            if (sourceId === selectedNode.id || targetId === selectedNode.id) {
+              alpha = 0.45;
+            } else {
+              alpha = 0.04;
+            }
+          }
+          if (searchTerm) {
+            const srcNode = graphData.nodes.find(n => n.id === sourceId);
+            const tgtNode = graphData.nodes.find(n => n.id === targetId);
+            if (srcNode && tgtNode && isHighlighted(srcNode) && isHighlighted(tgtNode)) {
+              alpha = 0.25;
+            } else if (searchTerm) {
+              alpha = 0.02;
+            }
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(link.source.x, link.source.y);
+          ctx.lineTo(link.target.x, link.target.y);
+          ctx.strokeStyle = '#9090a0';
+          ctx.globalAlpha = alpha;
+          ctx.lineWidth = width;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        })
+
+        // Interactions
+        .onNodeHover((node) => {
+          hoveredNode = node;
+          el.style.cursor = node ? 'pointer' : 'default';
+        })
+        .autoPauseRedraw(false)
+        .onNodeClick((node) => {
+          if (selectedNode && selectedNode.id === node.id) {
+            selectedNode = null;
+            hideDetail();
+            return;
+          }
+          showDetail(node);
+          graph.centerAt(node.x, node.y, 400);
+          graph.zoom(3, 400);
+        })
+        .onBackgroundClick(() => {
+          selectedNode = null;
+          hideDetail();
+        })
+
+        // Physics — configure AFTER creation (d3Force returns the force, not the graph)
+        ;
+
+      // Gentle charge — enough to spread nodes but not launch orphans
+      graph.d3Force('charge').strength(-60);
+      graph.d3Force('link').distance(80);
+
+      // Gravity toward center — prevents orphans from drifting into the void
+      graph.d3Force('gravity-x', d3.forceX(0).strength(0.04));
+      graph.d3Force('gravity-y', d3.forceY(0).strength(0.04));
+
+      // Handle window resize
+      window.addEventListener('resize', () => {
+        graph.width(el.clientWidth).height(el.clientHeight);
+      });
+    }
+
+    // ---- Data loading ----
+    let activeUrl = null;
+    let graphRendered = false;
+
+    async function tryFetch() {
+      // If we already found a working URL, try it first
+      if (activeUrl) {
+        try {
+          const resp = await fetch(activeUrl);
+          if (resp.ok) return await resp.json();
+        } catch {}
+        activeUrl = null;
+      }
+
+      // Try each URL
+      for (const url of NOUS_URLS) {
+        try {
+          const resp = await fetch(url, { signal: AbortSignal.timeout(3000) });
+          if (!resp.ok) continue;
+          const data = await resp.json();
+          activeUrl = url;
+          return data;
+        } catch {
+          continue;
+        }
+      }
+      return null;
+    }
+
+    async function loadGraph() {
+      const loadingEl = document.getElementById('loading');
+      loadingEl.style.display = 'block';
+      loadingEl.className = 'loading';
+      loadingEl.textContent = 'Loading graph...';
+
+      // Retry up to 5 times with increasing delay (server may still be starting)
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const data = await tryFetch();
+        if (data) {
+          graphRendered = true;
+          renderGraph(data);
+          return;
+        }
+        // Wait before retrying (1s, 2s, 3s, 4s)
+        if (attempt < 4) {
+          loadingEl.textContent = `Waiting for Nous server... (attempt ${attempt + 2})`;
+          await new Promise(r => setTimeout(r, (attempt + 1) * 1000));
+        }
+      }
+
+      // Only show error if graph never rendered
+      if (!graphRendered) {
+        loadingEl.className = 'loading error';
+        loadingEl.textContent = 'Could not connect to Nous server (port 3100). Make sure it is running.';
+      } else {
+        loadingEl.style.display = 'none';
+      }
+    }
+
+    // ---- Event handlers ----
+    document.getElementById('search').addEventListener('input', (e) => {
+      searchTerm = e.target.value.toLowerCase().trim();
+      if (graph) graph.refresh();
+    });
+
+    document.getElementById('refresh-btn').addEventListener('click', () => {
+      loadGraph();
+    });
+
+    document.getElementById('reset-btn').addEventListener('click', () => {
+      searchTerm = '';
+      document.getElementById('search').value = '';
+      selectedNode = null;
+      hideDetail();
+      if (graph) {
+        graph.centerAt(0, 0, 400);
+        graph.zoom(1, 400);
+        graph.refresh();
+      }
+    });
+
+    document.getElementById('detail-close').addEventListener('click', () => {
+      hideDetail();
+      if (graph) graph.refresh();
+    });
+
+    // ---- Init ----
+    loadGraph();
+  </script>
+</body>
+</html>
