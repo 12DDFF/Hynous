@@ -1,11 +1,15 @@
 """Reflex configuration for Hynous Dashboard."""
 
+import os
 import reflex as rx
+
+_api_url = os.environ.get("API_URL", "http://localhost:8000")
 
 config = rx.Config(
     app_name="dashboard",
     title="Hynous",
     description="Crypto Intelligence Dashboard",
+    api_url=_api_url,
 
     # Disable sitemap plugin warning
     plugins=[],

@@ -10,6 +10,7 @@ Group=hynous
 WorkingDirectory=/opt/hynous/dashboard
 EnvironmentFile=/opt/hynous/.env
 Environment=PATH=/opt/hynous/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=API_URL=http://89.167.50.168:8000
 ExecStart=/opt/hynous/.venv/bin/reflex run --env prod
 Restart=always
 RestartSec=10
