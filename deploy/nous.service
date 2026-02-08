@@ -1,0 +1,17 @@
+[Unit]
+Description=Nous Memory Server
+After=network.target
+
+[Service]
+Type=simple
+User=hynous
+Group=hynous
+WorkingDirectory=/opt/hynous/nous-server/server
+Environment=PORT=3100
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npx tsx src/index.ts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

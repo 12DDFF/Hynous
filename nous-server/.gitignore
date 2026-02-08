@@ -1,8 +1,7 @@
 # Dependencies
 node_modules/
 
-# Build outputs
-dist/
+# Build outputs (dist/ is committed — needed to run the server)
 *.tsbuildinfo
 
 # Test coverage

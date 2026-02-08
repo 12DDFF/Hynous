@@ -1,0 +1,18 @@
+[Unit]
+Description=Hynous Dashboard + Agent + Daemon + Discord Bot
+After=network.target nous.service
+Requires=nous.service
+
+[Service]
+Type=simple
+User=hynous
+Group=hynous
+WorkingDirectory=/opt/hynous/dashboard
+EnvironmentFile=/opt/hynous/.env
+Environment=PATH=/opt/hynous/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/hynous/.venv/bin/reflex run --env prod
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
