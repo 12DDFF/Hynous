@@ -473,7 +473,7 @@ class Agent:
                         kwargs["messages"] = self._sanitize_messages(self._compact_messages())
 
                     else:
-                        full_text = "".join(collected)
+                        full_text = "".join(collected) or "(no response)"
                         self._history.append({"role": "assistant", "content": full_text})
 
                         # Window management: compress evicted exchanges into Nous
@@ -577,6 +577,6 @@ class Agent:
         """Extract text from response content blocks."""
         texts = []
         for block in content:
-            if hasattr(block, "text"):
+            if hasattr(block, "text") and block.text:
                 texts.append(block.text)
-        return "\n".join(texts)
+        return "\n".join(texts) if texts else "(no response)"
