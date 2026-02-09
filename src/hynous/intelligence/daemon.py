@@ -465,7 +465,7 @@ class Daemon:
     def _expire_watchpoint(nous, wp: dict):
         """Mark a watchpoint as expired."""
         try:
-            nous.update_node(wp["id"], lifecycle_state="DORMANT")
+            nous.update_node(wp["id"], state_lifecycle="DORMANT")
             logger.info("Watchpoint expired: %s", wp.get("content_title", "?"))
         except Exception:
             pass
@@ -477,7 +477,7 @@ class Daemon:
         The agent must create a new watchpoint if it wants to monitor again.
         """
         try:
-            nous.update_node(wp["id"], lifecycle_state="DORMANT")
+            nous.update_node(wp["id"], state_lifecycle="DORMANT")
             logger.info("Watchpoint fired → DORMANT: %s", wp.get("content_title", "?"))
         except Exception:
             pass
@@ -924,7 +924,7 @@ class Daemon:
                 # Mark addressed curiosity items as WEAK so they don't re-trigger
                 for item in curiosity_items[:5]:
                     try:
-                        nous.update_node(item["id"], lifecycle_state="WEAK")
+                        nous.update_node(item["id"], state_lifecycle="WEAK")
                     except Exception:
                         pass
                 topics = [it.get("content_title", "?") for it in curiosity_items[:5]]

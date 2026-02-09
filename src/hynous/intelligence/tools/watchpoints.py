@@ -252,7 +252,7 @@ def _list_watchpoints(client, include_inactive: bool) -> str:
     for i, wp in enumerate(all_wps, 1):
         title = wp.get("content_title", "Untitled")
         node_id = wp.get("id", "?")
-        lifecycle = wp.get("lifecycle_state", "?")
+        lifecycle = wp.get("state_lifecycle", "?")
         date = wp.get("provenance_created_at", "?")[:10]
 
         # Parse trigger from body
