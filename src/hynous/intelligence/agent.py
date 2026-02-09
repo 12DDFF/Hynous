@@ -221,7 +221,7 @@ class Agent:
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
-            "messages": self._compact_messages(),
+            "messages": self._sanitize_messages(self._compact_messages()),
         }
 
         if self.tools.has_tools:
@@ -234,6 +234,22 @@ class Agent:
             kwargs["tools"] = tools
 
         return kwargs
+
+    @staticmethod
+    def _sanitize_messages(messages: list[dict]) -> list[dict]:
+        """Ensure no message has empty content (API rejects it)."""
+        sanitized = []
+        for msg in messages:
+            content = msg.get("content")
+            if not content and content != 0:
+                # Empty string, empty list, or None — replace with placeholder
+                sanitized.append({
+                    "role": msg["role"],
+                    "content": "(empty)" if msg["role"] == "assistant" else "(continued)",
+                })
+            else:
+                sanitized.append(msg)
+        return sanitized
 
     # ---- Concurrent tool execution ----
 
