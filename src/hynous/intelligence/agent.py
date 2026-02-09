@@ -392,7 +392,7 @@ class Agent:
 
                         self._history.append({"role": "assistant", "content": self._clean_content(response.content)})
                         self._history.append({"role": "user", "content": tool_results})
-                        kwargs["messages"] = self._compact_messages()
+                        kwargs["messages"] = self._sanitize_messages(self._compact_messages())
 
                     else:
                         text = self._extract_text(response.content)
@@ -469,7 +469,7 @@ class Agent:
 
                         self._history.append({"role": "assistant", "content": self._clean_content(response.content)})
                         self._history.append({"role": "user", "content": tool_results})
-                        kwargs["messages"] = self._compact_messages()
+                        kwargs["messages"] = self._sanitize_messages(self._compact_messages())
 
                     else:
                         full_text = "".join(collected)
