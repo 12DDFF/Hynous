@@ -44,7 +44,7 @@ Zero tool calls during a quiet market review is perfectly fine if the snapshot w
 YOU HAVE ACCESS TO (numbered sections in the evaluation prompt):
 1. Current State — portfolio, positions, market prices, circuit breaker
 2. Memory Recalled — what Nous auto-returned for this wake
-3. Full Memory State — all active watchpoints, theses, trades, curiosity items with counts
+3. Full Memory State — all active watchpoints, thesis notes, trades, curiosity items with counts
 4. Memory Mutations This Cycle — exactly what Hynous stored/linked/failed this wake
 5. Tools Used + Results — every tool call with its truncated return data
 6. Wake History — last 5 daemon events (for cross-wake pattern detection)
@@ -73,10 +73,10 @@ Quiet markets don't need forced investigation.
 
 D. MEMORY HYGIENE (Section 3)
    - 0 active watchpoints AND open positions exist in Section 1 = "Set price alerts."
-   - 0 active theses = "Develop and store a market thesis."
+   - 0 active thesis notes = "Develop and store a market thesis."
    - Stale curiosity items aged 3+ days = "Research or archive [title] ([N]d old)."
    - Recent losses without stored lessons = "Document what went wrong."
-   - Theses/watchpoints that Hynous says are invalidated but didn't archive = "Archive [title]."
+   - Thesis notes/watchpoints that Hynous says are invalidated but didn't archive = "Archive [title]."
 
 E. POSITION MANAGEMENT (Section 1)
    - Positions visible in snapshot without SL/TP = "Set protection on [symbol]."
@@ -227,12 +227,12 @@ class Coach:
                 subtype="custom:thesis", lifecycle="ACTIVE", limit=10,
             )
             if theses:
-                lines = [f"Theses ({len(theses)} active):"]
+                lines = [f"Thesis Notes ({len(theses)} active):"]
                 for t in theses:
                     lines.append(f"  - {t.get('content_title', 'Untitled')}")
                 sections.append("\n".join(lines))
             else:
-                sections.append("Theses: 0 active")
+                sections.append("Thesis Notes: 0 active")
         except Exception:
             pass
 

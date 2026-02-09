@@ -778,41 +778,28 @@ class Daemon:
         if side == "short":
             pnl_pct = -pnl_pct
 
+        pnl_line = (
+            f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
+            f"PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)"
+        )
+
         if classification == "stop_loss":
             lines = [
-                f"[DAEMON WAKE — Stop Loss Hit: {coin} {side.upper()}]",
-                "",
-                f"Your stop loss was hit on {coin} {side}.",
-                f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
-                f"Realized PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
-                "",
-                "Learning moment. Your [Live State] has current portfolio and market.",
-                "In ONE tool call batch: recall your trade thesis + store a lesson.",
-                "Was the thesis wrong, or was the stop too tight?",
-                "Be honest. Don't re-fetch prices — they're in your snapshot.",
+                f"[DAEMON WAKE — Stop Loss: {coin} {side.upper()}]",
+                "", pnl_line,
+                "Recall thesis + store lesson in one batch. Keep response short.",
             ]
         elif classification == "take_profit":
             lines = [
-                f"[DAEMON WAKE — Take Profit Hit: {coin} {side.upper()}]",
-                "",
-                f"Your take profit was hit on {coin} {side}!",
-                f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
-                f"Realized PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
-                "",
-                "Nice trade. In ONE tool call batch: recall your thesis + store a lesson.",
-                "What signals were right? Reinforce what worked.",
-                "Don't re-fetch prices — they're in your snapshot.",
+                f"[DAEMON WAKE — Take Profit: {coin} {side.upper()}]",
+                "", pnl_line,
+                "Recall thesis + store lesson in one batch. Keep response short.",
             ]
         else:
             lines = [
                 f"[DAEMON WAKE — Position Closed: {coin} {side.upper()}]",
-                "",
-                f"Your {coin} {side} position was closed.",
-                f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
-                f"Realized PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
-                "",
-                "Check if this was intentional. If you closed it, it's already documented.",
-                "Don't re-fetch basics — your [Live State] snapshot is current.",
+                "", pnl_line,
+                "If intentional, already documented. Keep response short.",
             ]
 
         # Append circuit breaker warning if trading is paused
@@ -854,19 +841,13 @@ class Daemon:
         lines = [
             "[DAEMON WAKE — Periodic Market Review]",
             "",
-            "Your [Live State] already has current portfolio, positions, prices, and F&G.",
-            "DON'T re-fetch basics (get_account, get_market_data) — that data is live.",
-            "",
-            "Instead, go deeper if something warrants it:",
-            "- Orderbook depth, multi-timeframe, liquidations, funding history",
-            "- Store/archive memories, set/clean watchpoints",
-            "- If nothing notable: just give a brief status and go back to sleep",
-            "",
-            "Batch tool calls — call multiple tools in one response when possible.",
+            "Snapshot has live data. Don't re-fetch basics. Keep response under 100 words.",
+            "Only call tools if something warrants deeper investigation.",
+            "If nothing notable: brief status + go back to sleep.",
         ]
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, max_coach_cycles=2)
+        response = self._wake_agent(message, max_coach_cycles=1)
         if response:
             symbols = self.config.execution.symbols
             log_event(DaemonEvent(
@@ -1080,19 +1061,12 @@ class Daemon:
                     self._check_fulfilled_directives(audit)
                     staleness_warning = self._update_fingerprint(audit)
 
-                    # Embed coach summary into response (visible in dashboard)
+                    # Embed compact coach line into response (visible in dashboard)
                     if all_coach_directives:
-                        dir_lines = "\n".join(
-                            f"> {i}. {d}" for i, d in enumerate(all_coach_directives, 1)
-                        )
-                        response += (
-                            f"\n\n---\n"
-                            f"> **Coach Review** — {len(all_coach_directives)} "
-                            f"directive{'s' if len(all_coach_directives) != 1 else ''} addressed\n"
-                            f"{dir_lines}"
-                        )
+                        n = len(all_coach_directives)
+                        response += f"\n\n*Coach: {n} directive{'s' if n != 1 else ''} addressed*"
                     elif coach_ran:
-                        response += "\n\n---\n> **Coach Review** — all clear"
+                        response += "\n\n*Coach: all clear*"
 
                 except Exception as e:
                     logger.error("Coach loop failed: %s", e)
@@ -1144,12 +1118,8 @@ class Daemon:
         lines = [
             "[DAEMON WAKE — Manual Review (triggered from dashboard)]",
             "",
-            "Your human triggered a manual review. Give them a thorough update.",
-            "Your [Live State] already has current portfolio, positions, prices, and F&G.",
-            "DON'T re-fetch basics — read the snapshot. Only call tools for deeper analysis.",
-            "",
-            "If something warrants investigation, batch your tool calls (multiple in one response).",
-            "If nothing notable: brief status + go back to sleep.",
+            "David wants an update. Snapshot has live data. Keep it short and clean.",
+            "Only call tools if something needs deeper investigation.",
         ]
 
         message = "\n".join(lines)
