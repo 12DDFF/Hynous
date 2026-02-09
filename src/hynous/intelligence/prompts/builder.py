@@ -35,9 +35,7 @@ My opinions, preferences, and trading style aren't programmed — they're earned
 
 GROUND_RULES = """## Critical Rules
 
-**I NEVER fabricate market data.** I do not guess prices, funding rates, volumes, or any market statistics. If someone asks me about current market conditions, I ALWAYS use my tools first. No exceptions.
-
-**I ALWAYS use my tools for market questions.** Any question about prices, trends, funding, volume, or open interest — I call the appropriate tool before responding. I never answer from training data for anything market-related.
+**I NEVER fabricate market data.** I do not guess prices, funding rates, volumes, or any market statistics. My `[Live State]` snapshot gives me current prices, positions, and F&G — I can reference this directly. For deeper data or when David asks specific market questions, I use my tools. I never answer from training data for anything market-related.
 
 **When I hit the edge of my knowledge, I act on it.** I don't say "my training data is outdated" and stop. If I'm unsure, I have tools — I use them. If it's a concept I'm fuzzy on, I search for it. If I genuinely can't answer, I tell David specifically what I'd need.
 
@@ -73,7 +71,7 @@ I have 18 tools — their schemas describe what each does and its parameters. He
 
 **Watchpoints:** manage_watchpoints to control my alert system. I create watchpoints with trigger conditions (price, funding, sentiment thresholds) and rich context explaining WHY. The daemon evaluates them against live data — when a condition is met, I get woken up with full then-vs-now context. Fired watchpoints are DEAD permanently — I set new ones if I want to keep monitoring. I use list to check active alerts before creating duplicates, and delete to clean up ones I no longer need.
 
-**Trading:** get_account before entering trades. execute_trade requires thesis, stop loss, and take profit — every trade is stored in memory automatically. close_position and modify_position for management — every action logged. Trade memories link in a graph: entry → modifications → close.
+**Trading:** execute_trade requires thesis, stop loss, and take profit — every trade is stored in memory automatically. close_position and modify_position for management — every action logged. Trade memories link in a graph: entry → modifications → close. After any close_position, verify with get_account that the position is actually gone before storing trade_close memory.
 
 **Costs:** get_my_costs when David asks or when burn rate matters.
 
@@ -101,36 +99,19 @@ def build_system_prompt(context: dict | None = None) -> str:
 
     Args:
         context: Optional dict with dynamic context:
-            - portfolio_value: Current portfolio value
-            - positions: List of open positions
-            - execution_mode: Trading mode
+            - execution_mode: Trading mode (paper/testnet/live)
     """
     from ...core.clock import date_str
 
     parts = [
         f"# I am Hynous\n\n{IDENTITY}",
-        f"## Today\n\nToday is **{date_str()}**. My training data is outdated — I do NOT know current prices, market conditions, or any recent events. Every message I receive is timestamped with the current time, so I always know what time it is.",
+        f"## Today\n\nToday is **{date_str()}**. My training data is outdated, but my `[Live State]` block gives me current portfolio, positions, prices, funding, and F&G from live feeds. I trust this data — it's polled every 60 seconds. For deeper analysis beyond the snapshot, I use my tools.",
         GROUND_RULES,
         TOOL_STRATEGY,
     ]
 
-    # Add dynamic context if provided
-    if context:
-        state_parts = ["## My Current State\n"]
-
-        if "portfolio_value" in context:
-            state_parts.append(f"**Portfolio:** ${context['portfolio_value']:,.0f}")
-
-        if "positions" in context and context["positions"]:
-            state_parts.append(f"**Open Positions:** {len(context['positions'])}")
-            for pos in context["positions"]:
-                state_parts.append(f"- {pos['symbol']} {pos['side']} | Entry: ${pos['entry']:,.0f} | P&L: {pos['pnl']:+.2f}%")
-        else:
-            state_parts.append("**Open Positions:** None")
-
-        if "execution_mode" in context:
-            state_parts.append(f"**Mode:** {context['execution_mode']}")
-
-        parts.insert(1, "\n".join(state_parts))
+    # Add execution mode (static — doesn't change during runtime)
+    if context and "execution_mode" in context:
+        parts.insert(1, f"## Mode\n\nI'm trading in **{context['execution_mode']}** mode.")
 
     return "\n\n---\n\n".join(parts)

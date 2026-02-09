@@ -61,31 +61,10 @@ class Agent:
         from ..data.providers.hyperliquid import get_provider
         provider = get_provider(config=self.config)
 
-        # Build system prompt with real portfolio data if trading is available
-        portfolio_value = self.config.execution.paper_balance
-        positions = []
-        if provider.can_trade:
-            try:
-                user_state = provider.get_user_state()
-                portfolio_value = user_state.get("account_value", portfolio_value)
-                positions = [
-                    {
-                        "symbol": p["coin"],
-                        "side": p["side"],
-                        "entry": p["entry_px"],
-                        "pnl": p["return_pct"],
-                    }
-                    for p in user_state.get("positions", [])
-                ]
-            except Exception as e:
-                logger.warning("Could not fetch testnet state for prompt: %s", e)
-
+        # Build system prompt — live portfolio data comes from [Live State]
+        # snapshot injected per-message, not baked into system prompt.
         self.system_prompt = build_system_prompt(
-            context={
-                "portfolio_value": portfolio_value,
-                "positions": positions,
-                "execution_mode": self.config.execution.mode,
-            }
+            context={"execution_mode": self.config.execution.mode}
         )
 
         # Tiered memory manager — retrieval + compression
