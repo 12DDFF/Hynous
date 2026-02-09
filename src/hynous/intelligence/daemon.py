@@ -786,13 +786,10 @@ class Daemon:
                 f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
                 f"Realized PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
                 "",
-                "This is a learning moment. Use your tools to:",
-                "1. Recall your original trade thesis (recall_memory for the entry)",
-                "2. Check what happened — what moved against you?",
-                "3. Was the thesis wrong, or was the stop too tight?",
-                "4. Store a lesson — what would you do differently?",
-                "",
-                "Be honest with yourself. This is how you get better.",
+                "Learning moment. Your [Live State] has current portfolio and market.",
+                "In ONE tool call batch: recall your trade thesis + store a lesson.",
+                "Was the thesis wrong, or was the stop too tight?",
+                "Be honest. Don't re-fetch prices — they're in your snapshot.",
             ]
         elif classification == "take_profit":
             lines = [
@@ -802,12 +799,9 @@ class Daemon:
                 f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
                 f"Realized PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
                 "",
-                "Nice trade. Use your tools to:",
-                "1. Recall your original thesis — did the market confirm it?",
-                "2. What signals were right? What can you do more of?",
-                "3. Store a lesson — reinforce what worked.",
-                "",
-                "Good patterns deserve to be remembered.",
+                "Nice trade. In ONE tool call batch: recall your thesis + store a lesson.",
+                "What signals were right? Reinforce what worked.",
+                "Don't re-fetch prices — they're in your snapshot.",
             ]
         else:
             lines = [
@@ -817,8 +811,8 @@ class Daemon:
                 f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
                 f"Realized PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
                 "",
-                "Check if this was intentional. If you closed it via your tools, "
-                "this was already documented.",
+                "Check if this was intentional. If you closed it, it's already documented.",
+                "Don't re-fetch basics — your [Live State] snapshot is current.",
             ]
 
         # Append circuit breaker warning if trading is paused
@@ -860,13 +854,15 @@ class Daemon:
         lines = [
             "[DAEMON WAKE — Periodic Market Review]",
             "",
-            "Review your positions and the market. Look for:",
-            "- New setups or opportunities worth investigating",
-            "- Changes that affect your open positions or thesis",
-            "- Key levels to add to your watchlist",
-            "- Anything worth storing in memory or researching further",
+            "Your [Live State] already has current portfolio, positions, prices, and F&G.",
+            "DON'T re-fetch basics (get_account, get_market_data) — that data is live.",
             "",
-            "Take concrete action — don't just observe.",
+            "Instead, go deeper if something warrants it:",
+            "- Orderbook depth, multi-timeframe, liquidations, funding history",
+            "- Store/archive memories, set/clean watchpoints",
+            "- If nothing notable: just give a brief status and go back to sleep",
+            "",
+            "Batch tool calls — call multiple tools in one response when possible.",
         ]
 
         message = "\n".join(lines)
@@ -1013,13 +1009,6 @@ class Daemon:
             return None
 
         try:
-            # Isolate daemon wake from user chat history.
-            # Daemon wakes are independent reviews — the agent gets context from
-            # the live state snapshot + Nous auto-recall, not from old chat turns.
-            # This saves ~10K non-cached input tokens per Sonnet call.
-            saved_history = self.agent._history[:]
-            self.agent._history = []
-
             # Turn 1: Hynous responds (snapshot auto-injected by agent.chat)
             response = self.agent.chat(message)
             if response is None:
@@ -1118,9 +1107,6 @@ class Daemon:
             logger.error("Daemon wake failed: %s", e)
             return None
         finally:
-            # Restore user's chat history (discard daemon wake entries).
-            # Daemon wakes are isolated — they don't pollute user conversation.
-            self.agent._history = saved_history
             self.agent._chat_lock.release()
             # Refresh position snapshot so agent-initiated closes don't
             # re-trigger fill detection on the next _check_positions() cycle.
@@ -1158,13 +1144,12 @@ class Daemon:
         lines = [
             "[DAEMON WAKE — Manual Review (triggered from dashboard)]",
             "",
-            "Your human triggered a manual review. Give them a thorough update:",
-            "- Current portfolio and position status",
-            "- Any notable market moves or signals",
-            "- Status of your theses and watchpoints",
-            "- Anything worth acting on right now",
+            "Your human triggered a manual review. Give them a thorough update.",
+            "Your [Live State] already has current portfolio, positions, prices, and F&G.",
+            "DON'T re-fetch basics — read the snapshot. Only call tools for deeper analysis.",
             "",
-            "Use your tools — don't just summarize from memory.",
+            "If something warrants investigation, batch your tool calls (multiple in one response).",
+            "If nothing notable: brief status + go back to sleep.",
         ]
 
         message = "\n".join(lines)

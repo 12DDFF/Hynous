@@ -35,7 +35,7 @@ _TOOL_TIMEOUT = 30
 # tool results.  ~200 tokens.  The agent already saw the full result and made
 # its decision — keeping the full text in subsequent API calls is pure waste.
 # Fresh (unseen) tool results are always kept at full fidelity.
-_MAX_STALE_RESULT_CHARS = 400
+_MAX_STALE_RESULT_CHARS = 800
 
 
 class Agent:
