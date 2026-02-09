@@ -74,6 +74,7 @@ class MarketSnapshot:
         self.funding: dict[str, float] = {}      # symbol → funding rate (decimal)
         self.oi_usd: dict[str, float] = {}       # symbol → open interest USD
         self.volume_usd: dict[str, float] = {}   # symbol → 24h notional volume
+        self.prev_day_price: dict[str, float] = {}  # symbol → previous day price (24h change)
         self.fear_greed: int = 0                  # 0-100 index
         self.last_price_poll: float = 0           # Unix timestamp
         self.last_deriv_poll: float = 0           # Unix timestamp
@@ -117,6 +118,10 @@ class Daemon:
         self._hl_provider = None
         self._nous_client = None
 
+        # Pre-fetched deep market data for briefing injection
+        from .briefing import DataCache
+        self._data_cache = DataCache()
+
         # Timing trackers
         self._last_review: float = 0
         self._last_curiosity_check: float = 0
@@ -146,7 +151,7 @@ class Daemon:
         self._pending_curiosity_count: int = 0
 
         # Coach cross-wake state
-        self._pending_directives: list[dict] = []   # Unresolved coach directives
+        self._pending_thoughts: list[str] = []       # Haiku questions (max 3)
         self._wake_fingerprints: list[frozenset] = []  # Last 5 tool+mutation fingerprints
 
         # Stats
@@ -329,6 +334,7 @@ class Daemon:
 
             for sym, ctx in contexts.items():
                 self.snapshot.funding[sym] = ctx["funding"]
+                self.snapshot.prev_day_price[sym] = ctx.get("prev_day_price", 0)
                 price = self.snapshot.prices.get(sym, 0)
                 self.snapshot.oi_usd[sym] = ctx["open_interest"] * price if price else 0
                 self.snapshot.volume_usd[sym] = ctx["day_volume"]
@@ -349,6 +355,14 @@ class Daemon:
 
         # Refresh trigger orders cache for fill classification
         self._refresh_trigger_cache()
+
+        # Pre-fetch deep data for briefing (position assets + BTC always)
+        try:
+            position_symbols = list(self._prev_positions.keys())
+            brief_targets = list(set(position_symbols) | {"BTC"})
+            self._data_cache.poll(self._get_provider(), brief_targets)
+        except Exception as e:
+            logger.debug("DataCache poll failed: %s", e)
 
         self.snapshot.last_deriv_poll = time.time()
         self._data_changed = True
@@ -748,7 +762,7 @@ class Daemon:
         ])
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, max_coach_cycles=1)
+        response = self._wake_agent(message, max_coach_cycles=0)
         if response:
             self.watchpoint_fires += 1
             log_event(DaemonEvent(
@@ -813,7 +827,7 @@ class Daemon:
             ])
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, priority=True, max_coach_cycles=1)
+        response = self._wake_agent(message, priority=True, max_coach_cycles=0)
         if response:
             self._fill_fires += 1
             fill_title = f"{classification.replace('_', ' ').title()}: {coin} {side}"
@@ -836,14 +850,14 @@ class Daemon:
 
         The agent sees portfolio, positions, market, and memory counts
         automatically via the snapshot injection in agent.chat().
-        Coach pushes for deeper engagement after the initial response.
+        Warnings push the agent to address real issues first.
         """
         lines = [
             "[DAEMON WAKE — Periodic Market Review]",
             "",
-            "Snapshot has live data. Don't re-fetch basics. Keep response under 100 words.",
-            "Only call tools if something warrants deeper investigation.",
-            "If nothing notable: brief status + go back to sleep.",
+            "Briefing has all market data. Don't re-fetch. Under 100 words.",
+            "Address [Warnings] and [Questions] first.",
+            "Then: any setup forming? Any thesis to update?",
         ]
 
         message = "\n".join(lines)
@@ -895,7 +909,7 @@ class Daemon:
             ])
 
             message = "\n".join(lines)
-            response = self._wake_agent(message, max_coach_cycles=1)
+            response = self._wake_agent(message, max_coach_cycles=0)
             if response:
                 self.learning_sessions += 1
                 # Mark addressed curiosity items as WEAK so they don't re-trigger
@@ -928,27 +942,26 @@ class Daemon:
         self, message: str, priority: bool = False,
         max_coach_cycles: int = 0,
     ) -> str | None:
-        """Send a daemon message to the agent, optionally with coach follow-up.
+        """Send a daemon message to the agent with pre-built briefing.
 
-        Uses the agent's _chat_lock to avoid racing with user chat.
-        Non-blocking: if the agent is busy (user chatting), skip this wake.
+        Flow:
+        1. Build code-based warnings (free, deterministic)
+        2. Build briefing from pre-fetched data (free)
+        3. Build code questions from data (free)
+        4. If max_coach_cycles > 0: Haiku sharpener BEFORE Sonnet (~$0.0003)
+        5. Assemble all into wake message
+        6. Agent responds (1 Sonnet call, skip_snapshot when briefing present)
+        7. Update fingerprint + clear consumed thoughts
 
-        Coach integration (when max_coach_cycles > 0):
-        1. Agent responds to wake message
-        2. Coach evaluates response with full context:
-           - Memory mutations (what was stored/linked/failed)
-           - Wake history (last 5 daemon events)
-           - Pending directives (unresolved from previous wakes)
-           - Staleness warning (repetitive behavior detection)
-        3. If directives issued: agent responds, directives stored
-        4. Fulfilled directives auto-cleared, stale ones escalated
+        No post-Sonnet evaluation. Haiku runs BEFORE, not after.
+        Total: 0-1 Haiku + 1 Sonnet.
 
         Args:
             message: The wake message to send.
             priority: If True, bypass cooldown (used for fill wakes).
                       Still respects hourly rate limit.
-            max_coach_cycles: Number of coach evaluation→follow-up cycles.
-                0 = no coaching (user chat, discord). 1-2 = daemon wakes.
+            max_coach_cycles: 0 = no coaching (fills, watchpoints, learning).
+                1 = sharpener (review, manual).
 
         Returns the agent's response text, or None if skipped/busy.
         """
@@ -990,87 +1003,83 @@ class Daemon:
             return None
 
         try:
-            # Turn 1: Hynous responds (snapshot auto-injected by agent.chat)
-            response = self.agent.chat(message)
+            # === 1. Build warnings (free, existing) ===
+            warnings_text = ""
+            memory_state = {}
+            try:
+                from .wake_warnings import build_warnings
+                warnings_text, memory_state = build_warnings(
+                    self._get_provider(), self, self._get_nous(), self.config,
+                )
+            except Exception as e:
+                logger.debug("Wake warnings failed: %s", e)
+
+            # === 2. Build briefing (free, pre-fetched data) ===
+            briefing_text = ""
+            code_questions = []
+            if self._data_cache.symbols:
+                try:
+                    from .briefing import build_briefing, build_code_questions
+                    briefing_text = build_briefing(
+                        self._data_cache, self.snapshot,
+                        self._get_provider(), self, self.config,
+                    )
+                    # Get positions for code questions
+                    try:
+                        state = self._get_provider().get_user_state()
+                        positions = state.get("positions", [])
+                    except Exception:
+                        positions = []
+                    code_questions = build_code_questions(
+                        self._data_cache, self.snapshot, positions, self.config,
+                    )
+                except Exception as e:
+                    logger.debug("Briefing build failed: %s", e)
+
+            # === 3. Haiku sharpener (pre-Sonnet, review/manual only) ===
+            haiku_questions = []
+            if max_coach_cycles > 0 and briefing_text:
+                try:
+                    from .coach import Coach
+                    coach = Coach(self.agent.client)
+                    haiku_questions = coach.sharpen(
+                        briefing_text, code_questions, memory_state,
+                        self._format_wake_history(),
+                    )
+                except Exception as e:
+                    logger.error("Coach sharpen failed: %s", e)
+
+            # === 4. Assemble wake message ===
+            parts = []
+            if briefing_text:
+                parts.append(f"[Briefing]\n{briefing_text}")
+            if code_questions or haiku_questions:
+                all_q = code_questions + haiku_questions
+                parts.append("[Questions]\n" + "\n".join(f"- {q}" for q in all_q))
+            if warnings_text:
+                parts.append(warnings_text)
+            parts.append(message)  # Original wake message
+
+            full_message = "\n\n".join(parts)
+
+            # === 5. Agent responds (skip_snapshot since briefing has it all) ===
+            response = self.agent.chat(
+                full_message, skip_snapshot=bool(briefing_text),
+            )
             if response is None:
                 return None
 
-            # Coach loop (only for daemon wakes with coaching enabled)
-            if max_coach_cycles > 0:
-                try:
-                    from .coach import Coach
-                    from ..nous.client import get_client
-                    from ..core.memory_tracker import get_tracker
+            # === 6. Update fingerprint for staleness detection ===
+            try:
+                from ..core.memory_tracker import get_tracker
+                audit = get_tracker().build_audit()
+                self._update_fingerprint(audit)
+            except Exception:
+                pass
 
-                    coach = Coach(self.agent.client)
-                    tracker = get_tracker()
-
-                    # Use agent's cached snapshot (just built by agent.chat)
-                    snapshot = self.agent._last_snapshot or ""
-
-                    # Build wake history from daemon log
-                    wake_history = self._format_wake_history()
-
-                    # Build pending directives text
-                    pending_text = self._format_pending_directives()
-
-                    # Build staleness warning
-                    staleness_warning = ""  # Computed after first cycle
-
-                    all_coach_directives: list[str] = []
-                    coach_ran = False
-
-                    for cycle in range(max_coach_cycles):
-                        # Get memory audit from mutation tracker
-                        memory_audit = tracker.format_for_coach()
-
-                        evaluation = coach.evaluate(
-                            snapshot=snapshot,
-                            response=response,
-                            tool_calls=self.agent._last_tool_calls,
-                            active_context=self.agent._last_active_context,
-                            nous_client=get_client(),
-                            memory_audit=memory_audit,
-                            wake_history=wake_history,
-                            pending_directives=pending_text,
-                            staleness_warning=staleness_warning,
-                        )
-                        coach_ran = True
-
-                        if not evaluation.needs_action:
-                            logger.info("Coach cycle %d: ALL_CLEAR", cycle + 1)
-                            break
-
-                        # Collect directives for embedded summary
-                        all_coach_directives.extend(evaluation.directives)
-
-                        # Store new directives for cross-wake tracking
-                        self._store_directives(evaluation.directives)
-
-                        # Feed coach directives back to Hynous
-                        logger.info("Coach cycle %d: %d depth, %d directives",
-                                     cycle + 1, evaluation.depth, len(evaluation.directives))
-                        response = self.agent.chat(evaluation.message)
-
-                        # If coach said depth=1, only do one cycle
-                        if evaluation.depth <= 1:
-                            break
-
-                    # Post-coach: check directive fulfillment + update fingerprint
-                    audit = tracker.build_audit()
-                    self._check_fulfilled_directives(audit)
-                    staleness_warning = self._update_fingerprint(audit)
-
-                    # Embed compact coach line into response (visible in dashboard)
-                    if all_coach_directives:
-                        n = len(all_coach_directives)
-                        response += f"\n\n*Coach: {n} directive{'s' if n != 1 else ''} addressed*"
-                    elif coach_ran:
-                        response += "\n\n*Coach: all clear*"
-
-                except Exception as e:
-                    logger.error("Coach loop failed: %s", e)
-                    # Continue with original response — coaching is best-effort
+            # === 7. Clear consumed thoughts ===
+            if self._pending_thoughts:
+                self._pending_thoughts.clear()
 
             self.wake_count += 1
             self._wake_timestamps.append(now)
@@ -1118,8 +1127,8 @@ class Daemon:
         lines = [
             "[DAEMON WAKE — Manual Review (triggered from dashboard)]",
             "",
-            "David wants an update. Snapshot has live data. Keep it short and clean.",
-            "Only call tools if something needs deeper investigation.",
+            "David wants an update. Briefing has market data.",
+            "Address [Warnings]/[Questions] if any, then give a sharp update.",
         ]
 
         message = "\n".join(lines)
@@ -1157,90 +1166,29 @@ class Daemon:
             ts = event.get("timestamp", "")
 
             age = _format_event_age(ts) if ts else "?"
-            # Compact: truncate detail
             if len(detail) > 80:
                 detail = detail[:77] + "..."
             lines.append(f"  {age}: [{etype}] {title} — {detail}")
 
         return "\n".join(lines)
 
-    def _format_pending_directives(self) -> str:
-        """Format unresolved directives for the coach prompt."""
-        if not self._pending_directives:
-            return ""
+    def _store_thought(self, question: str):
+        """Store a Haiku question for injection into the next wake."""
+        self._pending_thoughts.append(question)
+        # Cap at 3 thoughts max
+        if len(self._pending_thoughts) > 3:
+            self._pending_thoughts = self._pending_thoughts[-3:]
+        logger.info("Stored pending thought: %s", question[:60])
 
-        lines = ["Unresolved Directives (from previous wakes):"]
-        for d in self._pending_directives:
-            age = self.wake_count - d["wake_number"]
-            age_label = f"{age} wake{'s' if age != 1 else ''} ago"
-            prefix = "OVERDUE: " if age >= 3 else ""
-            lines.append(f"  [{age_label}] {prefix}\"{d['text']}\"")
-
-        return "\n".join(lines)
-
-    def _store_directives(self, directives: list[str]):
-        """Store new coach directives for cross-wake tracking."""
-        for text in directives:
-            self._pending_directives.append({
-                "text": text,
-                "issued_at": time.time(),
-                "wake_number": self.wake_count,
-            })
-
-        # Cap at 10 directives max
-        if len(self._pending_directives) > 10:
-            self._pending_directives = self._pending_directives[-10:]
-
-    def _check_fulfilled_directives(self, audit: dict):
-        """Remove directives that were fulfilled during this wake cycle."""
-        if not self._pending_directives:
-            return
-
-        remaining = []
-        for d in self._pending_directives:
-            if _check_directive_fulfillment(d["text"], audit):
-                logger.info("Directive fulfilled: %s", d["text"][:60])
-            else:
-                remaining.append(d)
-
-        removed = len(self._pending_directives) - len(remaining)
-        if removed > 0:
-            logger.info("Cleared %d fulfilled directive(s), %d remaining", removed, len(remaining))
-        self._pending_directives = remaining
-
-    def _update_fingerprint(self, audit: dict) -> str:
-        """Update wake fingerprint and return staleness warning if repetitive.
-
-        Compares current tool+mutation pattern against last 3 wakes.
-        Returns warning text if staleness detected, empty string otherwise.
-        """
-        # Build fingerprint from tools used + mutations made
+    def _update_fingerprint(self, audit: dict):
+        """Update wake fingerprint for staleness detection by warnings."""
         tools_used = frozenset(tc["name"] for tc in self.agent._last_tool_calls)
         mutations = frozenset(n["subtype"] for n in audit["nodes_created"])
         fingerprint = tools_used | mutations
 
-        # Check against recent fingerprints
-        staleness_score = 0
-        for prev in self._wake_fingerprints[-3:]:
-            if prev and fingerprint == prev:
-                staleness_score += 1
-
         self._wake_fingerprints.append(fingerprint)
         if len(self._wake_fingerprints) > 5:
             self._wake_fingerprints.pop(0)
-
-        if staleness_score >= 2 and fingerprint:
-            tools_str = ", ".join(sorted(tools_used)) if tools_used else "no tools"
-            mut_str = ", ".join(sorted(m.replace("custom:", "") for m in mutations)) if mutations else "no mutations"
-            warning = (
-                f"Hynous used the same pattern in {staleness_score} of the last 3 wakes: "
-                f"tools=[{tools_str}], mutations=[{mut_str}]. "
-                f"Push for different tools or new actions."
-            )
-            logger.info("Staleness detected: %s", warning[:80])
-            return warning
-
-        return ""
 
 
 # ====================================================================
@@ -1265,44 +1213,6 @@ def _format_event_age(iso_timestamp: str) -> str:
             return f"{delta.days}d ago"
     except Exception:
         return "?"
-
-
-def _check_directive_fulfillment(directive_text: str, audit: dict) -> bool:
-    """Check if a mutation audit satisfies a directive.
-
-    Simple keyword matching against the directive text and the subtypes
-    of nodes created during this cycle. Not ML — just practical heuristics.
-    """
-    text_lower = directive_text.lower()
-    subtypes_created = {n["subtype"] for n in audit.get("nodes_created", [])}
-    edges_created = audit.get("edges_created", [])
-    edge_types = {e["type"] for e in edges_created}
-
-    # Thesis-related directives
-    if any(w in text_lower for w in ("thesis", "conviction", "market view")):
-        return "custom:thesis" in subtypes_created
-
-    # Lesson-related directives
-    if any(w in text_lower for w in ("lesson", "document what went")):
-        return "custom:lesson" in subtypes_created
-
-    # Watchpoint-related directives
-    if any(w in text_lower for w in ("watchpoint", "alert", "monitor", "set price")):
-        return "custom:watchpoint" in subtypes_created
-
-    # Link-related directives
-    if any(w in text_lower for w in ("link", "connect", "edge")):
-        return len(edges_created) > 0
-
-    # Generic store/save directives
-    if any(w in text_lower for w in ("store", "save", "record", "document")):
-        return len(audit.get("nodes_created", [])) > 0
-
-    # Tool-based directives (can't verify from mutations alone)
-    if any(w in text_lower for w in ("use your tools", "investigate", "check", "research")):
-        return True  # Trust that the agent acted if tools were called
-
-    return False
 
 
 # ====================================================================

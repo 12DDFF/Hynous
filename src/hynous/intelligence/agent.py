@@ -386,7 +386,7 @@ class Agent:
 
     # ---- Chat methods ----
 
-    def chat(self, message: str) -> str:
+    def chat(self, message: str, skip_snapshot: bool = False) -> str:
         """Send a message and get a response, handling any tool calls.
 
         Maintains conversation history across calls.
@@ -394,23 +394,32 @@ class Agent:
         Retrieves relevant context from Nous before each exchange and
         compresses evicted history into Nous after each response.
 
+        Args:
+            message: The user/daemon message to send.
+            skip_snapshot: If True, skip [Live State] injection (daemon wakes
+                with [Briefing] already contain all the data).
+
         Thread-safe: acquires _chat_lock to prevent daemon/user interleaving.
         """
         with self._chat_lock:
             self._last_tool_calls = []  # Reset tool tracking
             get_tracker().reset()       # Reset mutation tracking for this cycle
 
-            # Build and inject snapshot
-            snapshot = self._build_snapshot()
-            if snapshot:
-                wrapped = (
-                    f"[Live State — auto-updated, no tool calls needed]\n"
-                    f"{snapshot}\n"
-                    f"[End Live State]\n\n"
-                    f"{message}"
-                )
+            # Build and inject snapshot (unless briefing already provides it)
+            if not skip_snapshot:
+                snapshot = self._build_snapshot()
+                if snapshot:
+                    wrapped = (
+                        f"[Live State — auto-updated, no tool calls needed]\n"
+                        f"{snapshot}\n"
+                        f"[End Live State]\n\n"
+                        f"{message}"
+                    )
+                else:
+                    wrapped = message
             else:
                 wrapped = message
+                self._last_snapshot = ""
 
             self._history.append({"role": "user", "content": stamp(wrapped)})
 
@@ -477,12 +486,16 @@ class Agent:
                 disable_queue_mode()
                 flush_memory_queue()
 
-    def chat_stream(self, message: str) -> Generator[tuple[str, str], None, None]:
+    def chat_stream(self, message: str, skip_snapshot: bool = False) -> Generator[tuple[str, str], None, None]:
         """Stream a response, yielding typed chunks as they arrive.
 
         Yields tuples of (type, data):
             ("text", chunk)  — streamed text fragment
             ("tool", name)   — a tool is being invoked
+
+        Args:
+            message: The user/daemon message to send.
+            skip_snapshot: If True, skip [Live State] injection.
 
         Thread-safe: acquires _chat_lock for the entire generator lifetime.
         The lock is held from first next() until generator exits.
@@ -498,17 +511,21 @@ class Agent:
             self._last_tool_calls = []  # Reset tool tracking
             get_tracker().reset()       # Reset mutation tracking for this cycle
 
-            # Build and inject snapshot
-            snapshot = self._build_snapshot()
-            if snapshot:
-                wrapped = (
-                    f"[Live State — auto-updated, no tool calls needed]\n"
-                    f"{snapshot}\n"
-                    f"[End Live State]\n\n"
-                    f"{message}"
-                )
+            # Build and inject snapshot (unless briefing already provides it)
+            if not skip_snapshot:
+                snapshot = self._build_snapshot()
+                if snapshot:
+                    wrapped = (
+                        f"[Live State — auto-updated, no tool calls needed]\n"
+                        f"{snapshot}\n"
+                        f"[End Live State]\n\n"
+                        f"{message}"
+                    )
+                else:
+                    wrapped = message
             else:
                 wrapped = message
+                self._last_snapshot = ""
 
             self._history.append({"role": "user", "content": stamp(wrapped)})
 
