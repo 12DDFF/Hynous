@@ -140,8 +140,9 @@ class Daemon:
         self._wake_timestamps: list[float] = []
         self._last_wake_time: float = 0
 
-        # Cached counts (for review wake, avoids re-querying Nous)
+        # Cached counts (for snapshot, avoids re-querying Nous)
         self._active_watchpoint_count: int = 0
+        self._active_thesis_count: int = 0
         self._pending_curiosity_count: int = 0
 
         # Stats
@@ -374,6 +375,15 @@ class Daemon:
             )
 
             self._active_watchpoint_count = len(watchpoints)
+
+            # Also cache thesis count (zero extra calls during this check)
+            try:
+                theses = nous.list_nodes(
+                    subtype="custom:thesis", lifecycle="ACTIVE", limit=50,
+                )
+                self._active_thesis_count = len(theses)
+            except Exception:
+                pass
 
             for wp in watchpoints:
                 body = wp.get("content_body", "")
@@ -734,7 +744,7 @@ class Daemon:
         ])
 
         message = "\n".join(lines)
-        response = self._wake_agent(message)
+        response = self._wake_agent(message, max_coach_cycles=1)
         if response:
             self.watchpoint_fires += 1
             log_event(DaemonEvent(
@@ -818,7 +828,7 @@ class Daemon:
             ])
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, priority=True)
+        response = self._wake_agent(message, priority=True, max_coach_cycles=1)
         if response:
             self._fill_fires += 1
             fill_title = f"{classification.replace('_', ' ').title()}: {coin} {side}"
@@ -837,54 +847,28 @@ class Daemon:
                          classification, coin, side, pnl_sign, abs(realized_pnl))
 
     def _wake_for_review(self):
-        """Periodic market review — systematic scan of tracked symbols.
+        """Periodic market review — snapshot provides all context now.
 
-        Uses cached data (snapshot, _prev_positions, cached counts) instead
-        of making fresh HTTP calls — the polling loop already gathered this.
+        The agent sees portfolio, positions, market, and memory counts
+        automatically via the snapshot injection in agent.chat().
+        Coach pushes for deeper engagement after the initial response.
         """
-        symbols = self.config.execution.symbols
-
         lines = [
             "[DAEMON WAKE — Periodic Market Review]",
             "",
-            self.snapshot.price_summary(symbols),
+            "Review your positions and the market. Look for:",
+            "- New setups or opportunities worth investigating",
+            "- Changes that affect your open positions or thesis",
+            "- Key levels to add to your watchlist",
+            "- Anything worth storing in memory or researching further",
+            "",
+            "Take concrete action — don't just observe.",
         ]
 
-        # Use cached position data (from _check_positions, same poll cycle)
-        if self._prev_positions:
-            lines.append("")
-            lines.append(f"You have {len(self._prev_positions)} open position(s):")
-            for coin, pdata in self._prev_positions.items():
-                current_px = self.snapshot.prices.get(coin, 0)
-                if current_px and pdata["entry_px"]:
-                    pnl_pct = (current_px - pdata["entry_px"]) / pdata["entry_px"] * 100
-                    if pdata["side"] == "short":
-                        pnl_pct = -pnl_pct
-                else:
-                    pnl_pct = 0
-                lines.append(
-                    f"  {coin} {pdata['side']} | "
-                    f"Entry: ${pdata['entry_px']:,.0f} | "
-                    f"PnL: {pnl_pct:+.1f}%"
-                )
-
-        # Use cached counts (from _check_watchpoints and _check_curiosity)
-        lines.append("")
-        lines.append(
-            f"Active watchpoints: {self._active_watchpoint_count} | "
-            f"Pending curiosity: {self._pending_curiosity_count}"
-        )
-
-        lines.extend([
-            "",
-            "Quick market review. Use your tools if anything catches your eye. "
-            "Check your positions, update theses, note anything interesting. "
-            "If nothing notable, keep it brief.",
-        ])
-
         message = "\n".join(lines)
-        response = self._wake_agent(message)
+        response = self._wake_agent(message, max_coach_cycles=2)
         if response:
+            symbols = self.config.execution.symbols
             log_event(DaemonEvent(
                 "review", "Periodic market review",
                 f"Symbols: {', '.join(symbols)} | F&G: {self.snapshot.fear_greed}",
@@ -930,7 +914,7 @@ class Daemon:
             ])
 
             message = "\n".join(lines)
-            response = self._wake_agent(message)
+            response = self._wake_agent(message, max_coach_cycles=1)
             if response:
                 self.learning_sessions += 1
                 # Mark addressed curiosity items as WEAK so they don't re-trigger
@@ -959,8 +943,11 @@ class Daemon:
     # Agent Wake (Thread-Safe)
     # ================================================================
 
-    def _wake_agent(self, message: str, priority: bool = False) -> str | None:
-        """Send a daemon message to the agent.
+    def _wake_agent(
+        self, message: str, priority: bool = False,
+        max_coach_cycles: int = 0,
+    ) -> str | None:
+        """Send a daemon message to the agent, optionally with coach follow-up.
 
         Uses the agent's _chat_lock to avoid racing with user chat.
         Non-blocking: if the agent is busy (user chatting), skip this wake.
@@ -969,6 +956,8 @@ class Daemon:
             message: The wake message to send.
             priority: If True, bypass cooldown (used for fill wakes).
                       Still respects hourly rate limit.
+            max_coach_cycles: Number of coach evaluation→follow-up cycles.
+                0 = no coaching (user chat, discord). 1-2 = daemon wakes.
 
         Returns the agent's response text, or None if skipped/busy.
         """
@@ -1010,9 +999,46 @@ class Daemon:
             return None
 
         try:
-            # Use agent.chat() directly — stamps, retrieves context,
-            # calls tools, stores memories, manages history. Full loop.
+            # Turn 1: Hynous responds (snapshot auto-injected by agent.chat)
             response = self.agent.chat(message)
+            if response is None:
+                return None
+
+            # Coach loop (only for daemon wakes with coaching enabled)
+            if max_coach_cycles > 0:
+                try:
+                    from .coach import Coach
+                    from ..nous.client import get_client
+
+                    coach = Coach(self.agent.client)
+                    # Use agent's cached snapshot (just built by agent.chat)
+                    snapshot = self.agent._last_snapshot or ""
+
+                    for cycle in range(max_coach_cycles):
+                        evaluation = coach.evaluate(
+                            snapshot=snapshot,
+                            response=response,
+                            tool_calls=self.agent._last_tool_calls,
+                            active_context=self.agent._last_active_context,
+                            nous_client=get_client(),
+                        )
+                        if not evaluation.needs_action:
+                            logger.info("Coach cycle %d: ALL_CLEAR", cycle + 1)
+                            break
+
+                        # Feed coach directives back to Hynous
+                        logger.info("Coach cycle %d: %d depth, sending directives",
+                                     cycle + 1, evaluation.depth)
+                        response = self.agent.chat(evaluation.message)
+
+                        # If coach said depth=1, only do one cycle
+                        if evaluation.depth <= 1:
+                            break
+
+                except Exception as e:
+                    logger.error("Coach loop failed: %s", e)
+                    # Continue with original response — coaching is best-effort
+
             self.wake_count += 1
             self._wake_timestamps.append(now)
             self._last_wake_time = now

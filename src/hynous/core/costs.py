@@ -13,6 +13,11 @@ Pricing (as of Feb 2026):
     Output:        $15.00/M tokens
     Cache write:   $3.75/M tokens  (25% premium on first cache fill)
     Cache read:    $0.30/M tokens  (90% savings on subsequent calls)
+  Claude Haiku 4.5:
+    Input:         $0.80/M tokens
+    Output:        $4.00/M tokens
+    Cache write:   $1.00/M tokens
+    Cache read:    $0.08/M tokens
   Perplexity Sonar:  $1/M input tokens, $1/M output tokens
   Coinglass Hobbyist: $35/month fixed
 """
@@ -31,11 +36,17 @@ _COSTS_FILE = _STORAGE_DIR / "costs.json"
 
 # Pricing per million tokens (USD)
 PRICING = {
-    "claude": {
+    "claude_sonnet": {
         "input": 3.00,
         "output": 15.00,
         "cache_write": 3.75,
         "cache_read": 0.30,
+    },
+    "claude_haiku": {
+        "input": 0.80,
+        "output": 4.00,
+        "cache_write": 1.00,
+        "cache_read": 0.08,
     },
     "perplexity": {"input": 1.00, "output": 1.00},
 }
@@ -44,6 +55,9 @@ PRICING = {
 FIXED_MONTHLY = {
     "coinglass": 35.00,
 }
+
+# Valid Claude model keys
+_CLAUDE_MODELS = ("sonnet", "haiku")
 
 
 def _month_key() -> str:
@@ -71,25 +85,44 @@ def _save(data: dict) -> None:
         logger.error(f"Failed to save costs: {e}")
 
 
+def _empty_claude_bucket() -> dict:
+    """Template for a single model's token bucket."""
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "calls": 0,
+    }
+
+
 def _get_month(data: dict, month: str) -> dict:
     """Get or create a month's cost record."""
     if month not in data["months"]:
         data["months"][month] = {
-            "claude": {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "cache_write_tokens": 0,
-                "cache_read_tokens": 0,
-                "calls": 0,
-            },
+            "claude_sonnet": _empty_claude_bucket(),
+            "claude_haiku": _empty_claude_bucket(),
             "perplexity": {"input_tokens": 0, "output_tokens": 0, "calls": 0},
             "fixed": dict(FIXED_MONTHLY),
         }
+    m = data["months"][month]
+
+    # Migrate from old single "claude" bucket to split buckets
+    if "claude" in m and "claude_sonnet" not in m:
+        # Old data had a single "claude" key — move it to "claude_sonnet"
+        m["claude_sonnet"] = m.pop("claude")
+        m.setdefault("claude_haiku", _empty_claude_bucket())
+
+    # Ensure both model buckets exist (covers partial migration)
+    m.setdefault("claude_sonnet", _empty_claude_bucket())
+    m.setdefault("claude_haiku", _empty_claude_bucket())
+
     # Migrate older records that lack cache fields
-    c = data["months"][month]["claude"]
-    c.setdefault("cache_write_tokens", 0)
-    c.setdefault("cache_read_tokens", 0)
-    return data["months"][month]
+    for key in ("claude_sonnet", "claude_haiku"):
+        m[key].setdefault("cache_write_tokens", 0)
+        m[key].setdefault("cache_read_tokens", 0)
+
+    return m
 
 
 def record_claude_usage(
@@ -97,21 +130,29 @@ def record_claude_usage(
     output_tokens: int,
     cache_write_tokens: int = 0,
     cache_read_tokens: int = 0,
+    model: str = "sonnet",
 ) -> None:
     """Record a Claude API call's token usage.
 
-    With prompt caching enabled, the API reports:
-      - input_tokens:                uncached input tokens (regular price)
-      - cache_creation_input_tokens: tokens written to cache (write price)
-      - cache_read_input_tokens:     tokens read from cache (read price)
+    Args:
+        input_tokens: Uncached input tokens.
+        output_tokens: Output tokens.
+        cache_write_tokens: Tokens written to cache (write price).
+        cache_read_tokens: Tokens read from cache (read price).
+        model: "sonnet" or "haiku". Defaults to "sonnet".
     """
+    if model not in _CLAUDE_MODELS:
+        model = "sonnet"
+
+    bucket_key = f"claude_{model}"
     data = _load()
     month = _get_month(data, _month_key())
-    month["claude"]["input_tokens"] += input_tokens
-    month["claude"]["output_tokens"] += output_tokens
-    month["claude"]["cache_write_tokens"] += cache_write_tokens
-    month["claude"]["cache_read_tokens"] += cache_read_tokens
-    month["claude"]["calls"] += 1
+    bucket = month[bucket_key]
+    bucket["input_tokens"] += input_tokens
+    bucket["output_tokens"] += output_tokens
+    bucket["cache_write_tokens"] += cache_write_tokens
+    bucket["cache_read_tokens"] += cache_read_tokens
+    bucket["calls"] += 1
     _save(data)
 
 
@@ -126,24 +167,43 @@ def record_perplexity_usage(input_tokens: int, output_tokens: int) -> None:
 
 
 def _calc_api_cost(
-    service: str,
+    pricing_key: str,
     input_tokens: int,
     output_tokens: int,
     cache_write_tokens: int = 0,
     cache_read_tokens: int = 0,
 ) -> float:
     """Calculate USD cost for token usage (cache-aware)."""
-    p = PRICING.get(service, {"input": 0, "output": 0})
+    p = PRICING.get(pricing_key, {"input": 0, "output": 0})
     cost = (
         (input_tokens / 1_000_000) * p["input"]
         + (output_tokens / 1_000_000) * p["output"]
     )
-    # Add cache costs if present (Claude only)
     if cache_write_tokens:
         cost += (cache_write_tokens / 1_000_000) * p.get("cache_write", p["input"])
     if cache_read_tokens:
         cost += (cache_read_tokens / 1_000_000) * p.get("cache_read", p["input"])
     return cost
+
+
+def _bucket_cost(pricing_key: str, bucket: dict) -> float:
+    """Calculate cost for a token bucket."""
+    return _calc_api_cost(
+        pricing_key,
+        bucket["input_tokens"],
+        bucket["output_tokens"],
+        bucket.get("cache_write_tokens", 0),
+        bucket.get("cache_read_tokens", 0),
+    )
+
+
+def _bucket_nocache_cost(pricing_key: str, bucket: dict) -> float:
+    """Calculate what cost would have been without caching."""
+    return _calc_api_cost(
+        pricing_key,
+        bucket["input_tokens"] + bucket.get("cache_write_tokens", 0) + bucket.get("cache_read_tokens", 0),
+        bucket["output_tokens"],
+    )
 
 
 _summary_cache: dict | None = None
@@ -155,39 +215,36 @@ def get_month_summary(month: Optional[str] = None) -> dict:
     """Get cost summary for a month.
 
     Returns dict with:
-        claude: {input_tokens, output_tokens, calls, cost_usd}
+        claude: {input_tokens, output_tokens, calls, cost_usd, cache_savings_usd,
+                 sonnet: {...}, haiku: {...}}
         perplexity: {input_tokens, output_tokens, calls, cost_usd}
         fixed: {coinglass: 35.00, ...}
         total_usd: float
 
-    Current-month results are cached for 30s to avoid repeated disk reads
-    (dashboard computed vars call this 7x per state update).
+    The top-level "claude" key sums Sonnet + Haiku for backward compatibility
+    with the dashboard. Sub-keys provide per-model breakdowns.
     """
     global _summary_cache, _summary_cache_time
 
     if month is None:
         month = _month_key()
-        # Cache hit for current month
         if _summary_cache is not None and time.monotonic() - _summary_cache_time < _SUMMARY_CACHE_TTL:
             return _summary_cache
 
     data = _load()
     m = _get_month(data, month)
 
-    c = m["claude"]
-    claude_cost = _calc_api_cost(
-        "claude",
-        c["input_tokens"],
-        c["output_tokens"],
-        c["cache_write_tokens"],
-        c["cache_read_tokens"],
-    )
-    # What we would have paid without caching (all cache tokens at regular input price)
-    claude_nocache = _calc_api_cost(
-        "claude",
-        c["input_tokens"] + c["cache_write_tokens"] + c["cache_read_tokens"],
-        c["output_tokens"],
-    )
+    sonnet = m["claude_sonnet"]
+    haiku = m["claude_haiku"]
+
+    sonnet_cost = _bucket_cost("claude_sonnet", sonnet)
+    sonnet_nocache = _bucket_nocache_cost("claude_sonnet", sonnet)
+    haiku_cost = _bucket_cost("claude_haiku", haiku)
+    haiku_nocache = _bucket_nocache_cost("claude_haiku", haiku)
+
+    total_claude_cost = sonnet_cost + haiku_cost
+    total_claude_savings = (sonnet_nocache - sonnet_cost) + (haiku_nocache - haiku_cost)
+
     perplexity_cost = _calc_api_cost(
         "perplexity", m["perplexity"]["input_tokens"], m["perplexity"]["output_tokens"]
     )
@@ -196,19 +253,36 @@ def get_month_summary(month: Optional[str] = None) -> dict:
     result = {
         "month": month,
         "claude": {
-            **c,
-            "cost_usd": round(claude_cost, 4),
-            "cache_savings_usd": round(claude_nocache - claude_cost, 4),
+            # Summed totals — dashboard reads these
+            "input_tokens": sonnet["input_tokens"] + haiku["input_tokens"],
+            "output_tokens": sonnet["output_tokens"] + haiku["output_tokens"],
+            "cache_write_tokens": sonnet.get("cache_write_tokens", 0) + haiku.get("cache_write_tokens", 0),
+            "cache_read_tokens": sonnet.get("cache_read_tokens", 0) + haiku.get("cache_read_tokens", 0),
+            "calls": sonnet["calls"] + haiku["calls"],
+            "cost_usd": round(total_claude_cost, 4),
+            "cache_savings_usd": round(total_claude_savings, 4),
+            # Per-model breakdowns
+            "sonnet": {
+                "calls": sonnet["calls"],
+                "input_tokens": sonnet["input_tokens"],
+                "output_tokens": sonnet["output_tokens"],
+                "cost_usd": round(sonnet_cost, 4),
+            },
+            "haiku": {
+                "calls": haiku["calls"],
+                "input_tokens": haiku["input_tokens"],
+                "output_tokens": haiku["output_tokens"],
+                "cost_usd": round(haiku_cost, 4),
+            },
         },
         "perplexity": {
             **m["perplexity"],
             "cost_usd": round(perplexity_cost, 4),
         },
         "fixed": m["fixed"],
-        "total_usd": round(claude_cost + perplexity_cost + fixed_total, 2),
+        "total_usd": round(total_claude_cost + perplexity_cost + fixed_total, 2),
     }
 
-    # Cache current-month result
     if month == _month_key():
         _summary_cache = result
         _summary_cache_time = time.monotonic()
@@ -226,7 +300,7 @@ def get_cost_report() -> str:
     lines = [f"Operating Costs ({s['month']}):"]
     lines.append("")
 
-    # Claude
+    # Claude — total
     c = s["claude"]
     cache_note = ""
     if c["cache_read_tokens"] > 0:
@@ -237,6 +311,20 @@ def get_cost_report() -> str:
         f"{c['input_tokens']:,} in / {c['output_tokens']:,} out tokens"
         f"{cache_note})"
     )
+
+    # Claude — per-model breakdown
+    sn = c["sonnet"]
+    hk = c["haiku"]
+    if sn["calls"] > 0:
+        lines.append(
+            f"    Sonnet: ${sn['cost_usd']:.2f} ({sn['calls']} calls, "
+            f"{sn['input_tokens']:,} in / {sn['output_tokens']:,} out)"
+        )
+    if hk["calls"] > 0:
+        lines.append(
+            f"    Haiku:  ${hk['cost_usd']:.2f} ({hk['calls']} calls, "
+            f"{hk['input_tokens']:,} in / {hk['output_tokens']:,} out)"
+        )
 
     # Perplexity
     p = s["perplexity"]

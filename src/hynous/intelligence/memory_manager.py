@@ -545,12 +545,7 @@ def _auto_link_summary(nous, node_id: str, title: str) -> None:
 
 
 def _record_compression_usage(response) -> None:
-    """Record Haiku compression token usage.
-
-    Records under the shared 'claude' bucket. This overestimates cost
-    (Haiku is ~12x cheaper than Sonnet) but the absolute numbers are
-    tiny (~$0.0004 per compression) so the error is negligible.
-    """
+    """Record Haiku compression token usage."""
     try:
         usage = response.usage
         if usage:
@@ -559,6 +554,7 @@ def _record_compression_usage(response) -> None:
                 output_tokens=usage.output_tokens,
                 cache_write_tokens=0,
                 cache_read_tokens=0,
+                model="haiku",
             )
     except Exception:
         pass

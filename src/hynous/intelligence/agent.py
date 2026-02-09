@@ -101,6 +101,14 @@ class Agent:
         # same thread.  A plain Lock would deadlock.
         self._chat_lock = threading.RLock()
 
+        # Coach tracking — read by Coach after each chat() in daemon wakes
+        self._last_tool_calls: list[dict] = []      # Tools called with results in last chat()
+        self._last_active_context: str | None = None # Nous context from last chat()
+
+        # Snapshot tracking — cached for daemon coach loop and context retrieval
+        self._last_snapshot: str | None = None       # Last built snapshot text
+        self._snapshot_symbols: list[str] = []       # Position symbols from last snapshot
+
         # Load persisted conversation history (survives restarts)
         _, saved_history = persistence.load()
         self._history: list[dict] = (
@@ -144,17 +152,43 @@ class Agent:
 
         return messages
 
+    def _build_snapshot(self) -> str | None:
+        """Build live state snapshot for context injection.
+
+        Returns compact text (~150 tokens) with portfolio, market, and
+        memory state, or None if snapshot can't be built.
+        Also caches the snapshot and extracts position symbols for
+        smarter daemon wake context retrieval.
+        """
+        try:
+            from ..data.providers.hyperliquid import get_provider
+            from .daemon import get_active_daemon
+            from ..nous.client import get_client
+            from .context_snapshot import build_snapshot, extract_symbols
+
+            provider = get_provider()
+            daemon = get_active_daemon()
+            nous = get_client()
+            snapshot = build_snapshot(provider, daemon, nous, self.config)
+            if snapshot:
+                self._last_snapshot = snapshot
+                self._snapshot_symbols = extract_symbols(snapshot)
+                return snapshot
+            return None
+        except Exception as e:
+            logger.debug("Snapshot build failed: %s", e)
+            return None
+
     def _compact_messages(self) -> list[dict]:
-        """Build messages for API with stale tool results compacted.
+        """Build messages for API with stale tool results and snapshots compacted.
 
         After the agent processes tool results and responds, those results
         sit in history forever at full size — re-sent on every subsequent
         API call even though the agent already incorporated them.
 
-        This method truncates all STALE tool results (ones the agent has
-        already seen and responded to) to ~200 tokens each.  Only the
-        LATEST tool_result block is kept at full fidelity because the
-        agent hasn't processed it yet.
+        This method:
+        1. Truncates all STALE tool results to ~200 tokens each
+        2. Strips [Live State] snapshot blocks from all but the latest user message
 
         Returns a modified copy — never mutates _history.
         """
@@ -178,6 +212,25 @@ class Agent:
                 compacted.append(self._truncate_tool_entry(entry))
             else:
                 compacted.append(entry)
+
+        # Strip snapshots from all but the last user message with string content.
+        # Stale snapshots waste ~150 tokens each on outdated portfolio/market data.
+        last_user_idx = None
+        for i in range(len(compacted) - 1, -1, -1):
+            if compacted[i]["role"] == "user" and isinstance(compacted[i].get("content"), str):
+                last_user_idx = i
+                break
+
+        for i, entry in enumerate(compacted):
+            if (entry["role"] == "user"
+                    and isinstance(entry.get("content"), str)
+                    and i != last_user_idx
+                    and "[Live State" in entry["content"]):
+                content = entry["content"]
+                end_marker = "[End Live State]\n\n"
+                idx = content.find(end_marker)
+                if idx >= 0:
+                    compacted[i] = {"role": "user", "content": content[idx + len(end_marker):]}
 
         return compacted
 
@@ -364,10 +417,31 @@ class Agent:
         Thread-safe: acquires _chat_lock to prevent daemon/user interleaving.
         """
         with self._chat_lock:
-            self._history.append({"role": "user", "content": stamp(message)})
+            self._last_tool_calls = []  # Reset tool tracking
+
+            # Build and inject snapshot
+            snapshot = self._build_snapshot()
+            if snapshot:
+                wrapped = (
+                    f"[Live State — auto-updated, no tool calls needed]\n"
+                    f"{snapshot}\n"
+                    f"[End Live State]\n\n"
+                    f"{message}"
+                )
+            else:
+                wrapped = message
+
+            self._history.append({"role": "user", "content": stamp(wrapped)})
 
             # Retrieve relevant past context from Nous
-            self._active_context = self.memory_manager.retrieve_context(message)
+            # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
+            if "[DAEMON WAKE" in message:
+                symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
+                search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
+            else:
+                search_query = message
+            self._active_context = self.memory_manager.retrieve_context(search_query)
+            self._last_active_context = self._active_context  # Preserve for coach
 
             # Enable memory queue — store_memory calls become instant during thinking.
             # All queued memories flush to Nous after the response is complete.
@@ -390,6 +464,17 @@ class Agent:
                     if response.stop_reason == "tool_use":
                         tool_blocks = [b for b in response.content if b.type == "tool_use"]
                         tool_results = self._execute_tools(tool_blocks)
+
+                        # Track tool calls with truncated results for coach
+                        for block, result in zip(tool_blocks, tool_results):
+                            content = result.get("content", "")
+                            if len(content) > 400:
+                                content = content[:400] + "..."
+                            self._last_tool_calls.append({
+                                "name": str(block.name),
+                                "input": dict(block.input),
+                                "result": content,
+                            })
 
                         self._history.append({"role": "assistant", "content": self._clean_content(response.content)})
                         self._history.append({"role": "user", "content": tool_results})
@@ -429,10 +514,31 @@ class Agent:
                     show_tool_indicator(data)
         """
         with self._chat_lock:
-            self._history.append({"role": "user", "content": stamp(message)})
+            self._last_tool_calls = []  # Reset tool tracking
+
+            # Build and inject snapshot
+            snapshot = self._build_snapshot()
+            if snapshot:
+                wrapped = (
+                    f"[Live State — auto-updated, no tool calls needed]\n"
+                    f"{snapshot}\n"
+                    f"[End Live State]\n\n"
+                    f"{message}"
+                )
+            else:
+                wrapped = message
+
+            self._history.append({"role": "user", "content": stamp(wrapped)})
 
             # Retrieve relevant past context from Nous
-            self._active_context = self.memory_manager.retrieve_context(message)
+            # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
+            if "[DAEMON WAKE" in message:
+                symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
+                search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
+            else:
+                search_query = message
+            self._active_context = self.memory_manager.retrieve_context(search_query)
+            self._last_active_context = self._active_context  # Preserve for coach
 
             # Enable memory queue — store_memory calls become instant during thinking.
             enable_queue_mode()
@@ -467,6 +573,17 @@ class Agent:
 
                         # Execute tools (concurrent when multiple)
                         tool_results = self._execute_tools(tool_blocks)
+
+                        # Track tool calls with truncated results for coach
+                        for block, result in zip(tool_blocks, tool_results):
+                            content = result.get("content", "")
+                            if len(content) > 400:
+                                content = content[:400] + "..."
+                            self._last_tool_calls.append({
+                                "name": str(block.name),
+                                "input": dict(block.input),
+                                "result": content,
+                            })
 
                         self._history.append({"role": "assistant", "content": self._clean_content(response.content)})
                         self._history.append({"role": "user", "content": tool_results})

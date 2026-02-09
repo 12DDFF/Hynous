@@ -563,6 +563,13 @@ def handle_execute_trade(
     if result["status"] != "filled" or fill_sz == 0:
         return f"Order not filled. Status: {result['status']}. Try again or adjust size."
 
+    # Invalidate snapshot cache so next chat() gets fresh position data
+    try:
+        from ..context_snapshot import invalidate_snapshot
+        invalidate_snapshot()
+    except Exception:
+        pass
+
     # --- Build result ---
     effective_usd = size_usd if size_usd else fill_sz * fill_px
     lines = [
@@ -785,6 +792,30 @@ def _store_trade_memory(
 
     if node_id:
         lines.append(f"Trade stored in memory (id: {node_id})")
+
+        # Auto-link to active thesis about this symbol
+        try:
+            from ...nous.client import get_client
+            client = get_client()
+            thesis_nodes = client.search(
+                query=symbol,
+                subtype="custom:thesis",
+                lifecycle="ACTIVE",
+                limit=3,
+            )
+            for thesis in thesis_nodes:
+                thesis_id = thesis.get("id")
+                if thesis_id and thesis_id != node_id:
+                    client.create_edge(
+                        source_id=node_id,
+                        target_id=thesis_id,
+                        type="supports",
+                        strength=0.8,
+                    )
+                    lines.append(f"Linked to thesis: {thesis.get('content_title', 'unknown')}")
+        except Exception as e:
+            logger.debug("Auto-link thesis failed: %s", e)
+
     return node_id
 
 
@@ -920,6 +951,13 @@ def handle_close_position(
 
         exit_px = result.get("avg_px", 0)
         closed_sz = result.get("filled_sz", close_size or full_size)
+
+    # Invalidate snapshot cache so next chat() gets fresh position data
+    try:
+        from ..context_snapshot import invalidate_snapshot
+        invalidate_snapshot()
+    except Exception:
+        pass
 
     # --- Calculate realized PnL ---
     entry_px = position["entry_px"]
@@ -1206,6 +1244,13 @@ def handle_modify_position(
             changes.append(f"Leverage updated: {leverage}x")
         except Exception as e:
             changes.append(f"Leverage update FAILED: {e}")
+
+    # Invalidate snapshot cache so next chat() gets fresh data
+    try:
+        from ..context_snapshot import invalidate_snapshot
+        invalidate_snapshot()
+    except Exception:
+        pass
 
     # --- Store modification in memory (always — every adjustment is documented) ---
     # Find the entry node to link this modification back to it
