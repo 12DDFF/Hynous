@@ -243,6 +243,7 @@ class Agent:
             content = msg.get("content")
             if not content and content != 0:
                 # Empty string, empty list, or None — replace with placeholder
+                logger.warning("Sanitized empty %s message (content=%r)", msg["role"], content)
                 sanitized.append({
                     "role": msg["role"],
                     "content": "(empty)" if msg["role"] == "assistant" else "(continued)",
