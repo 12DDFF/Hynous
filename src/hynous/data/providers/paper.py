@@ -311,6 +311,7 @@ class PaperProvider:
                 trade = self._close_at_locked(symbol, price)
                 oid = trade["oid"]
                 filled_sz = trade["size"]
+                self._save()
             else:
                 # Partial close
                 pnl_per_unit = (price - pos.entry_px) if pos.side == "long" \

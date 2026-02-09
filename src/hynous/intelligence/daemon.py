@@ -1112,6 +1112,18 @@ class Daemon:
             return None
         finally:
             self.agent._chat_lock.release()
+            # Refresh position snapshot so agent-initiated closes don't
+            # re-trigger fill detection on the next _check_positions() cycle.
+            try:
+                provider = self._get_provider()
+                if provider.can_trade:
+                    state = provider.get_user_state()
+                    self._prev_positions = {
+                        p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"]}
+                        for p in state.get("positions", [])
+                    }
+            except Exception:
+                pass
 
     # ================================================================
     # Manual Wake (triggered from dashboard UI)
