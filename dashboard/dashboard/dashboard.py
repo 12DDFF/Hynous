@@ -122,6 +122,13 @@ def index() -> rx.Component:
 
 # Create app
 app = rx.App(
+    theme=rx.theme(
+        appearance="dark",
+        accent_color="iris",       # Purple/indigo accent (#6366f1 family)
+        gray_color="sand",
+        radius="medium",
+        scaling="100%",
+    ),
     style={
         "background": "#0a0a0a",
         "color": "#fafafa",
