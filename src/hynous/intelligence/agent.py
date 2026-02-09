@@ -159,6 +159,19 @@ class Agent:
             logger.debug("Snapshot build failed: %s", e)
             return None
 
+    @staticmethod
+    def _get_cached_briefing() -> str | None:
+        """Get cached briefing from daemon's DataCache (5-min TTL).
+
+        Returns rich briefing (~600 tokens) if daemon is running and has
+        pre-fetched data. Falls back to None → caller uses basic snapshot.
+        """
+        try:
+            from .briefing import get_cached_briefing
+            return get_cached_briefing()
+        except Exception:
+            return None
+
     def _compact_messages(self) -> list[dict]:
         """Build messages for API with stale tool results and snapshots compacted.
 
@@ -204,13 +217,22 @@ class Agent:
         for i, entry in enumerate(compacted):
             if (entry["role"] == "user"
                     and isinstance(entry.get("content"), str)
-                    and i != last_user_idx
-                    and "[Live State" in entry["content"]):
+                    and i != last_user_idx):
                 content = entry["content"]
-                end_marker = "[End Live State]\n\n"
-                idx = content.find(end_marker)
-                if idx >= 0:
-                    compacted[i] = {"role": "user", "content": content[idx + len(end_marker):]}
+                # Strip stale [Live State] blocks
+                if "[Live State" in content:
+                    end_marker = "[End Live State]\n\n"
+                    idx = content.find(end_marker)
+                    if idx >= 0:
+                        content = content[idx + len(end_marker):]
+                # Strip stale [Briefing] blocks
+                if "[Briefing" in content:
+                    end_marker = "[End Briefing]\n\n"
+                    idx = content.find(end_marker)
+                    if idx >= 0:
+                        content = content[idx + len(end_marker):]
+                if content != entry["content"]:
+                    compacted[i] = {"role": "user", "content": content}
 
         return compacted
 
@@ -405,18 +427,29 @@ class Agent:
             self._last_tool_calls = []  # Reset tool tracking
             get_tracker().reset()       # Reset mutation tracking for this cycle
 
-            # Build and inject snapshot (unless briefing already provides it)
+            # Build context injection:
+            # - skip_snapshot=True (daemon wake with briefing): no injection
+            # - skip_snapshot=False: try cached briefing first, fall back to snapshot
             if not skip_snapshot:
-                snapshot = self._build_snapshot()
-                if snapshot:
+                briefing = self._get_cached_briefing()
+                if briefing:
                     wrapped = (
-                        f"[Live State — auto-updated, no tool calls needed]\n"
-                        f"{snapshot}\n"
-                        f"[End Live State]\n\n"
+                        f"[Briefing — auto-updated, no tool calls needed]\n"
+                        f"{briefing}\n"
+                        f"[End Briefing]\n\n"
                         f"{message}"
                     )
                 else:
-                    wrapped = message
+                    snapshot = self._build_snapshot()
+                    if snapshot:
+                        wrapped = (
+                            f"[Live State — auto-updated, no tool calls needed]\n"
+                            f"{snapshot}\n"
+                            f"[End Live State]\n\n"
+                            f"{message}"
+                        )
+                    else:
+                        wrapped = message
             else:
                 wrapped = message
                 self._last_snapshot = ""
@@ -511,18 +544,29 @@ class Agent:
             self._last_tool_calls = []  # Reset tool tracking
             get_tracker().reset()       # Reset mutation tracking for this cycle
 
-            # Build and inject snapshot (unless briefing already provides it)
+            # Build context injection:
+            # - skip_snapshot=True (daemon wake with briefing): no injection
+            # - skip_snapshot=False: try cached briefing first, fall back to snapshot
             if not skip_snapshot:
-                snapshot = self._build_snapshot()
-                if snapshot:
+                briefing = self._get_cached_briefing()
+                if briefing:
                     wrapped = (
-                        f"[Live State — auto-updated, no tool calls needed]\n"
-                        f"{snapshot}\n"
-                        f"[End Live State]\n\n"
+                        f"[Briefing — auto-updated, no tool calls needed]\n"
+                        f"{briefing}\n"
+                        f"[End Briefing]\n\n"
                         f"{message}"
                     )
                 else:
-                    wrapped = message
+                    snapshot = self._build_snapshot()
+                    if snapshot:
+                        wrapped = (
+                            f"[Live State — auto-updated, no tool calls needed]\n"
+                            f"{snapshot}\n"
+                            f"[End Live State]\n\n"
+                            f"{message}"
+                        )
+                    else:
+                        wrapped = message
             else:
                 wrapped = message
                 self._last_snapshot = ""

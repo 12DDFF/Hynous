@@ -537,8 +537,9 @@ def build_code_questions(
 
         # 4. 24h price move >3%
         current_price = snapshot.prices.get(sym) if snapshot else None
-        if current_price and asset.prev_day_price and asset.prev_day_price > 0:
-            change_24h = ((current_price - asset.prev_day_price) / asset.prev_day_price) * 100
+        prev_price = snapshot.prev_day_price.get(sym, 0) if snapshot else 0
+        if current_price and prev_price > 0:
+            change_24h = ((current_price - prev_price) / prev_price) * 100
             if abs(change_24h) > 3:
                 direction = "up" if change_24h > 0 else "down"
                 questions.append(
@@ -588,6 +589,58 @@ def build_code_questions(
 
     # Cap at 4 questions
     return questions[:4]
+
+
+# ====================================================================
+# Cached briefing for user chats (5-min TTL)
+# ====================================================================
+
+_briefing_cache: str | None = None
+_briefing_cache_time: float = 0
+_BRIEFING_TTL = 300  # 5 minutes
+
+
+def get_cached_briefing() -> str | None:
+    """Get cached briefing text for user chats.
+
+    Returns the briefing if daemon is running and DataCache has data.
+    Rebuilds at most once every 5 minutes. Returns None if no data
+    available (daemon not running, no positions, etc.).
+    """
+    global _briefing_cache, _briefing_cache_time
+
+    now = time.time()
+    if _briefing_cache is not None and (now - _briefing_cache_time) < _BRIEFING_TTL:
+        return _briefing_cache
+
+    try:
+        from .daemon import get_active_daemon
+        from ..data.providers.hyperliquid import get_provider
+
+        daemon = get_active_daemon()
+        if daemon is None or not daemon._data_cache.symbols:
+            return None
+
+        provider = get_provider()
+        config = daemon.config
+
+        briefing = build_briefing(
+            daemon._data_cache, daemon.snapshot, provider, daemon, config,
+        )
+        if briefing:
+            _briefing_cache = briefing
+            _briefing_cache_time = now
+            return _briefing_cache
+    except Exception as e:
+        logger.debug("Cached briefing build failed: %s", e)
+
+    return None
+
+
+def invalidate_briefing_cache():
+    """Force refresh on next access (call after trades/position changes)."""
+    global _briefing_cache
+    _briefing_cache = None
 
 
 # ====================================================================
