@@ -671,6 +671,9 @@ def _store_to_nous(
     Returns node_id or None.
     """
     from ...nous.client import get_client
+    from ...core.memory_tracker import get_tracker
+
+    tracker = get_tracker()
 
     # Build structured body — always JSON for trade memories
     body_data: dict = {"text": content}
@@ -689,6 +692,10 @@ def _store_to_nous(
         )
         node_id = node.get("id")
 
+        # Track mutation
+        if node_id:
+            tracker.record_create(subtype, title, node_id)
+
         # Link to related trade node (entry → modify, entry → close)
         if link_to and node_id:
             try:
@@ -697,12 +704,15 @@ def _store_to_nous(
                     target_id=node_id,
                     type=edge_type,
                 )
+                tracker.record_edge(link_to, node_id, edge_type, "trade lifecycle")
             except Exception as e:
                 logger.warning("Failed to create trade edge %s → %s: %s", link_to, node_id, e)
+                tracker.record_fail("create_edge", str(e))
 
         return node_id
     except Exception as e:
         logger.error("Failed to store trade memory: %s", e)
+        tracker.record_fail("create_node", str(e))
         return None
 
 
@@ -796,7 +806,9 @@ def _store_trade_memory(
         # Auto-link to active thesis about this symbol
         try:
             from ...nous.client import get_client
+            from ...core.memory_tracker import get_tracker
             client = get_client()
+            tracker = get_tracker()
             thesis_nodes = client.search(
                 query=symbol,
                 subtype="custom:thesis",
@@ -812,6 +824,7 @@ def _store_trade_memory(
                         type="supports",
                         strength=0.8,
                     )
+                    tracker.record_edge(node_id, thesis_id, "supports", "auto thesis link")
                     lines.append(f"Linked to thesis: {thesis.get('content_title', 'unknown')}")
         except Exception as e:
             logger.debug("Auto-link thesis failed: %s", e)

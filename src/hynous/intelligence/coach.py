@@ -6,10 +6,20 @@ Identifies gaps in memory, actions, and behavioral patterns, then
 generates 2-4 targeted directives for follow-up.
 
 Runs ONLY on daemon wakes (not user chat or Discord).
-Cost per evaluation: ~$0.0005 (Haiku, ~1.8K in + 150 out).
+
+Data sources (all zero-cost — already in-process):
+  - Memory mutations from MutationTracker (what was stored/linked/failed)
+  - Wake history from DaemonLog (cross-wake patterns)
+  - Pending directives from Daemon (accountability)
+  - Staleness fingerprints from Daemon (repetition detection)
+  - Tool calls with results from Agent (depth assessment)
+  - Memory state from Nous (completeness check)
+
+Cost per evaluation: ~$0.0006 (Haiku, ~2.0K in + 150 out).
 """
 
 import logging
+import re
 from dataclasses import dataclass
 
 import anthropic
@@ -20,33 +30,61 @@ logger = logging.getLogger(__name__)
 
 
 COACH_SYSTEM_PROMPT = """\
-You are Hynous's internal coach. You review his daemon wake responses and push him to go deeper.
+You are Hynous's internal coach. You evaluate his daemon wake responses using ONLY the data below.
 
-You see: his live state, his memory state, what was auto-recalled, and what tools he used WITH their results.
+ROLE: You and Hynous are partners. You handle quality control — he handles execution.
+Your job: find gaps between what should have happened and what actually happened, \
+then give 2-4 specific directives to close those gaps.
 
-YOUR JOB — identify gaps and demand action:
+YOU HAVE ACCESS TO (numbered sections in the evaluation prompt):
+1. Current State — portfolio, positions, market prices, circuit breaker
+2. Memory Recalled — what Nous auto-returned for this wake
+3. Full Memory State — all active watchpoints, theses, trades, curiosity items with counts
+4. Memory Mutations This Cycle — exactly what Hynous stored/linked/failed this wake
+5. Tools Used + Results — every tool call with its truncated return data
+6. Wake History — last 5 daemon events (for cross-wake pattern detection)
+7. Unresolved Directives — your previous instructions that weren't fulfilled yet
+8. Hynous's Response — his text output
 
-MEMORY GAPS:
-- Trade entries without linked thesis → "Your HYPE trade has no thesis stored. What's your conviction? Store it."
-- Empty watchlist → "Zero watchpoints. What levels matter? Set them before you sleep."
-- Low thesis count → "Only 1 active thesis. What's your market read? Develop more views."
-- Pending curiosity never explored → "You logged curiosity about X 3 days ago. Research it or archive it."
-- Stale observations → "You said 'interesting' but didn't store or act on it."
+EVALUATION FRAMEWORK — check each area in order, skip if data is absent:
 
-BEHAVIORAL GAPS:
-- No tools called → "You observed but didn't investigate. Use your tools."
-- Vague language without specifics → "What exactly do you mean by 'keeping an eye on it'?"
-- Loss/lesson not stored → "You mentioned a mistake but didn't store a lesson. Document it."
-- Recalled memory not referenced → "You were shown a lesson about X but didn't consider it."
-- Positions without stops → "Your position has no SL/TP. Set protection."
-- Tool returned useful data but agent ignored it → "Funding was -0.03% but you didn't comment on it."
+A. DIRECTIVE ACCOUNTABILITY (Section 7)
+   - If unresolved directives exist, they are your TOP priority.
+   - Each unfulfilled directive = automatic re-issue with age.
+   - 3+ wakes old = prefix with "OVERDUE:".
+   - If a directive was fulfilled this cycle (check Section 4), do NOT re-issue.
 
-RULES:
-- 2-4 numbered directives. Each ends with a concrete action verb.
-- Under 150 words. No praise, no filler.
-- If Hynous genuinely covered everything: respond with only "ALL_CLEAR"
-- Reference specific data (names, prices, memory titles) — never be generic.
-- Use the tool results to judge depth — don't ask for data the agent already has."""
+B. GRAPH INTEGRITY (Sections 4 + 3)
+   - Trade entries in Section 3 marked "(!! no thesis linked)" = directive to store/link thesis.
+   - Nodes created (Section 4) but 0 edges = directive to link them.
+   - Failed mutations in Section 4 = directive to retry.
+   - Use exact counts: "2/3 trade entries have no thesis (67% unlinked)."
+
+C. TOOL DEPTH (Section 5)
+   - No tools called = "You observed but didn't investigate. Use your tools."
+   - Tool returned notable data (funding spikes, F&G extremes, volume anomalies) \
+that Hynous's response didn't address = cite the specific number.
+   - If staleness warning is present, push for different tools or new actions.
+
+D. MEMORY COMPLETENESS (Section 3)
+   - 0 active watchpoints + open positions = "Set price alerts for your positions."
+   - 0 active theses = "What's your market view? Develop and store a thesis."
+   - Curiosity items aged 3+ days = "Research or archive [title] ([N]d old)."
+   - Recent losses without stored lessons = "Document what went wrong."
+
+E. POSITION MANAGEMENT (Section 1)
+   - Positions visible in snapshot without SL/TP = "Set protection on [symbol]."
+   - Circuit breaker active = "Focus on analysis. No new entries."
+
+OUTPUT RULES:
+- 2-4 numbered directives. Each MUST end with a concrete action verb \
+(store, set, research, link, document, investigate, archive).
+- Under 150 words total. No praise, no filler, no hedging, no greetings.
+- Use exact numbers from the data: counts, percentages, prices, ages.
+- If ALL areas are genuinely covered: respond with ONLY "ALL_CLEAR".
+- ONLY reference data that appears in the numbered sections. \
+Never assume, infer, or hallucinate data that isn't there.
+- If tool results show the agent already handled something, don't re-request it."""
 
 
 @dataclass
@@ -55,6 +93,7 @@ class CoachResult:
     needs_action: bool
     message: str       # Directive message to send to Hynous (empty if ALL_CLEAR)
     depth: int         # Suggested follow-up rounds (0=done, 1-2=more rounds)
+    directives: list[str]  # Individual directive texts (for persistence tracking)
 
 
 class Coach:
@@ -70,6 +109,11 @@ class Coach:
         tool_calls: list[dict],
         active_context: str | None,
         nous_client,
+        *,
+        memory_audit: str = "",
+        wake_history: str = "",
+        pending_directives: str = "",
+        staleness_warning: str = "",
     ) -> CoachResult:
         """Evaluate Hynous's response. Returns directives or ALL_CLEAR.
 
@@ -79,6 +123,10 @@ class Coach:
             tool_calls: List of dicts with 'name', 'input', 'result' keys.
             active_context: Nous context that was auto-recalled (or None).
             nous_client: NousClient for querying memory state.
+            memory_audit: Formatted mutation tracker output.
+            wake_history: Formatted recent daemon events.
+            pending_directives: Formatted unresolved directives from previous wakes.
+            staleness_warning: Staleness detection text (or empty).
 
         Returns:
             CoachResult with directives or ALL_CLEAR.
@@ -87,6 +135,7 @@ class Coach:
             memory_state = self._build_memory_state(nous_client)
             user_msg = self._build_prompt(
                 snapshot, response, tool_calls, active_context, memory_state,
+                memory_audit, wake_history, pending_directives, staleness_warning,
             )
 
             result = self.client.messages.create(
@@ -114,25 +163,23 @@ class Coach:
 
             if "ALL_CLEAR" in text:
                 logger.info("Coach: ALL_CLEAR — no follow-up needed")
-                return CoachResult(needs_action=False, message="", depth=0)
+                return CoachResult(needs_action=False, message="", depth=0, directives=[])
 
-            # Count directives to determine depth
-            directive_count = len([
-                line for line in text.splitlines()
-                if line.strip()[:1] in ("1", "2", "3", "4")
-            ])
-            depth = 2 if directive_count >= 3 else 1
+            # Extract individual directives (lines starting with 1-4)
+            directives = _extract_directives(text)
+            depth = 2 if len(directives) >= 3 else 1
 
-            logger.info("Coach: %d directives, depth=%d", directive_count, depth)
+            logger.info("Coach: %d directives, depth=%d", len(directives), depth)
             return CoachResult(
                 needs_action=True,
                 message=f"[Internal Review — address these before you go back to sleep]\n{text}",
                 depth=depth,
+                directives=directives,
             )
 
         except Exception as e:
             logger.error("Coach evaluation failed: %s", e)
-            return CoachResult(needs_action=False, message="", depth=0)
+            return CoachResult(needs_action=False, message="", depth=0, directives=[])
 
     def _build_memory_state(self, nous_client) -> str:
         """Query Nous for active memory counts and titles.
@@ -196,13 +243,21 @@ class Coach:
                     if sym:
                         thesis_symbols.add(sym)
 
+                unlinked = 0
                 lines = [f"Trade Entries ({len(entries)} active):"]
                 for entry in entries:
                     title = entry.get("content_title", "Untitled")
                     symbol = _extract_symbol(title)
                     has_thesis = symbol in thesis_symbols if symbol else True
+                    if not has_thesis:
+                        unlinked += 1
                     flag = "" if has_thesis else " (!! no thesis linked)"
                     lines.append(f"  - {title}{flag}")
+
+                if unlinked > 0:
+                    pct = int(unlinked / len(entries) * 100)
+                    lines.append(f"  ({unlinked}/{len(entries)} unlinked = {pct}%)")
+
                 sections.append("\n".join(lines))
         except Exception:
             pass
@@ -248,6 +303,10 @@ class Coach:
         tool_calls: list[dict],
         active_context: str | None,
         memory_state: str,
+        memory_audit: str,
+        wake_history: str,
+        pending_directives: str,
+        staleness_warning: str,
     ) -> str:
         """Assemble the evaluation prompt for Haiku."""
         # Format tool calls with results (not just names)
@@ -263,20 +322,45 @@ class Coach:
                     # Truncate result for coach prompt
                     if len(result) > 300:
                         result = result[:300] + "..."
-                    tool_lines.append(f"  → {result}")
+                    tool_lines.append(f"  -> {result}")
             tools_str = "\n".join(tool_lines)
         else:
             tools_str = "None — took no action"
 
         context_str = active_context or "None — no relevant memories found"
 
-        return (
-            f"## Current State\n{snapshot}\n\n"
-            f"## What Memory Was Recalled For Hynous\n{context_str}\n\n"
-            f"## Full Memory State\n{memory_state}\n\n"
-            f"## Tools Hynous Used (with results)\n{tools_str}\n\n"
-            f"## Hynous's Response\n{response}"
-        )
+        # Build sections — only include non-empty ones
+        sections = [
+            f"## 1. Current State\n{snapshot}",
+            f"## 2. What Memory Was Recalled For Hynous\n{context_str}",
+            f"## 3. Full Memory State\n{memory_state}",
+            f"## 4. Memory Mutations This Cycle\n{memory_audit or 'None — no Nous writes this cycle'}",
+            f"## 5. Tools Hynous Used (with results)\n{tools_str}",
+            f"## 6. Wake History\n{wake_history or 'No previous wakes'}",
+            f"## 7. Unresolved Directives\n{pending_directives or 'None — all previous directives resolved'}",
+        ]
+
+        if staleness_warning:
+            sections.append(f"## Staleness Warning\n{staleness_warning}")
+
+        sections.append(f"## 8. Hynous's Response\n{response}")
+
+        return "\n\n".join(sections)
+
+
+def _extract_directives(text: str) -> list[str]:
+    """Extract individual directive texts from coach response.
+
+    Matches lines starting with 1., 2., 3., 4. (with optional whitespace).
+    Returns list of directive strings without the number prefix.
+    """
+    directives = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        match = re.match(r'^([1-4])\.\s*(.+)', stripped)
+        if match:
+            directives.append(match.group(2).strip())
+    return directives
 
 
 def _extract_symbol(title: str) -> str | None:

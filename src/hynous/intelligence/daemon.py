@@ -145,6 +145,10 @@ class Daemon:
         self._active_thesis_count: int = 0
         self._pending_curiosity_count: int = 0
 
+        # Coach cross-wake state
+        self._pending_directives: list[dict] = []   # Unresolved coach directives
+        self._wake_fingerprints: list[frozenset] = []  # Last 5 tool+mutation fingerprints
+
         # Stats
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
@@ -952,6 +956,16 @@ class Daemon:
         Uses the agent's _chat_lock to avoid racing with user chat.
         Non-blocking: if the agent is busy (user chatting), skip this wake.
 
+        Coach integration (when max_coach_cycles > 0):
+        1. Agent responds to wake message
+        2. Coach evaluates response with full context:
+           - Memory mutations (what was stored/linked/failed)
+           - Wake history (last 5 daemon events)
+           - Pending directives (unresolved from previous wakes)
+           - Staleness warning (repetitive behavior detection)
+        3. If directives issued: agent responds, directives stored
+        4. Fulfilled directives auto-cleared, stale ones escalated
+
         Args:
             message: The wake message to send.
             priority: If True, bypass cooldown (used for fill wakes).
@@ -1009,31 +1023,58 @@ class Daemon:
                 try:
                     from .coach import Coach
                     from ..nous.client import get_client
+                    from ..core.memory_tracker import get_tracker
 
                     coach = Coach(self.agent.client)
+                    tracker = get_tracker()
+
                     # Use agent's cached snapshot (just built by agent.chat)
                     snapshot = self.agent._last_snapshot or ""
 
+                    # Build wake history from daemon log
+                    wake_history = self._format_wake_history()
+
+                    # Build pending directives text
+                    pending_text = self._format_pending_directives()
+
+                    # Build staleness warning
+                    staleness_warning = ""  # Computed after first cycle
+
                     for cycle in range(max_coach_cycles):
+                        # Get memory audit from mutation tracker
+                        memory_audit = tracker.format_for_coach()
+
                         evaluation = coach.evaluate(
                             snapshot=snapshot,
                             response=response,
                             tool_calls=self.agent._last_tool_calls,
                             active_context=self.agent._last_active_context,
                             nous_client=get_client(),
+                            memory_audit=memory_audit,
+                            wake_history=wake_history,
+                            pending_directives=pending_text,
+                            staleness_warning=staleness_warning,
                         )
                         if not evaluation.needs_action:
                             logger.info("Coach cycle %d: ALL_CLEAR", cycle + 1)
                             break
 
+                        # Store new directives for cross-wake tracking
+                        self._store_directives(evaluation.directives)
+
                         # Feed coach directives back to Hynous
-                        logger.info("Coach cycle %d: %d depth, sending directives",
-                                     cycle + 1, evaluation.depth)
+                        logger.info("Coach cycle %d: %d depth, %d directives",
+                                     cycle + 1, evaluation.depth, len(evaluation.directives))
                         response = self.agent.chat(evaluation.message)
 
                         # If coach said depth=1, only do one cycle
                         if evaluation.depth <= 1:
                             break
+
+                    # Post-coach: check directive fulfillment + update fingerprint
+                    audit = tracker.build_audit()
+                    self._check_fulfilled_directives(audit)
+                    staleness_warning = self._update_fingerprint(audit)
 
                 except Exception as e:
                     logger.error("Coach loop failed: %s", e)
@@ -1049,6 +1090,173 @@ class Daemon:
             return None
         finally:
             self.agent._chat_lock.release()
+
+    # ================================================================
+    # Coach Cross-Wake Intelligence
+    # ================================================================
+
+    def _format_wake_history(self) -> str:
+        """Format recent daemon events for the coach prompt."""
+        from ..core.daemon_log import get_events
+
+        events = get_events(limit=5)
+        if not events:
+            return ""
+
+        lines = [f"Recent Wake History (last {len(events)}):"]
+        for event in events:
+            etype = event.get("type", "?")
+            title = event.get("title", "?")
+            detail = event.get("detail", "")
+            ts = event.get("timestamp", "")
+
+            age = _format_event_age(ts) if ts else "?"
+            # Compact: truncate detail
+            if len(detail) > 80:
+                detail = detail[:77] + "..."
+            lines.append(f"  {age}: [{etype}] {title} — {detail}")
+
+        return "\n".join(lines)
+
+    def _format_pending_directives(self) -> str:
+        """Format unresolved directives for the coach prompt."""
+        if not self._pending_directives:
+            return ""
+
+        lines = ["Unresolved Directives (from previous wakes):"]
+        for d in self._pending_directives:
+            age = self.wake_count - d["wake_number"]
+            age_label = f"{age} wake{'s' if age != 1 else ''} ago"
+            prefix = "OVERDUE: " if age >= 3 else ""
+            lines.append(f"  [{age_label}] {prefix}\"{d['text']}\"")
+
+        return "\n".join(lines)
+
+    def _store_directives(self, directives: list[str]):
+        """Store new coach directives for cross-wake tracking."""
+        for text in directives:
+            self._pending_directives.append({
+                "text": text,
+                "issued_at": time.time(),
+                "wake_number": self.wake_count,
+            })
+
+        # Cap at 10 directives max
+        if len(self._pending_directives) > 10:
+            self._pending_directives = self._pending_directives[-10:]
+
+    def _check_fulfilled_directives(self, audit: dict):
+        """Remove directives that were fulfilled during this wake cycle."""
+        if not self._pending_directives:
+            return
+
+        remaining = []
+        for d in self._pending_directives:
+            if _check_directive_fulfillment(d["text"], audit):
+                logger.info("Directive fulfilled: %s", d["text"][:60])
+            else:
+                remaining.append(d)
+
+        removed = len(self._pending_directives) - len(remaining)
+        if removed > 0:
+            logger.info("Cleared %d fulfilled directive(s), %d remaining", removed, len(remaining))
+        self._pending_directives = remaining
+
+    def _update_fingerprint(self, audit: dict) -> str:
+        """Update wake fingerprint and return staleness warning if repetitive.
+
+        Compares current tool+mutation pattern against last 3 wakes.
+        Returns warning text if staleness detected, empty string otherwise.
+        """
+        # Build fingerprint from tools used + mutations made
+        tools_used = frozenset(tc["name"] for tc in self.agent._last_tool_calls)
+        mutations = frozenset(n["subtype"] for n in audit["nodes_created"])
+        fingerprint = tools_used | mutations
+
+        # Check against recent fingerprints
+        staleness_score = 0
+        for prev in self._wake_fingerprints[-3:]:
+            if prev and fingerprint == prev:
+                staleness_score += 1
+
+        self._wake_fingerprints.append(fingerprint)
+        if len(self._wake_fingerprints) > 5:
+            self._wake_fingerprints.pop(0)
+
+        if staleness_score >= 2 and fingerprint:
+            tools_str = ", ".join(sorted(tools_used)) if tools_used else "no tools"
+            mut_str = ", ".join(sorted(m.replace("custom:", "") for m in mutations)) if mutations else "no mutations"
+            warning = (
+                f"Hynous used the same pattern in {staleness_score} of the last 3 wakes: "
+                f"tools=[{tools_str}], mutations=[{mut_str}]. "
+                f"Push for different tools or new actions."
+            )
+            logger.info("Staleness detected: %s", warning[:80])
+            return warning
+
+        return ""
+
+
+# ====================================================================
+# Coach Intelligence Helpers
+# ====================================================================
+
+def _format_event_age(iso_timestamp: str) -> str:
+    """Format an ISO timestamp as relative age (e.g. '3h ago', '45m ago')."""
+    try:
+        ts = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        delta = now - ts
+        total_seconds = int(delta.total_seconds())
+
+        if total_seconds < 60:
+            return "just now"
+        elif total_seconds < 3600:
+            return f"{total_seconds // 60}m ago"
+        elif total_seconds < 86400:
+            return f"{total_seconds // 3600}h ago"
+        else:
+            return f"{delta.days}d ago"
+    except Exception:
+        return "?"
+
+
+def _check_directive_fulfillment(directive_text: str, audit: dict) -> bool:
+    """Check if a mutation audit satisfies a directive.
+
+    Simple keyword matching against the directive text and the subtypes
+    of nodes created during this cycle. Not ML — just practical heuristics.
+    """
+    text_lower = directive_text.lower()
+    subtypes_created = {n["subtype"] for n in audit.get("nodes_created", [])}
+    edges_created = audit.get("edges_created", [])
+    edge_types = {e["type"] for e in edges_created}
+
+    # Thesis-related directives
+    if any(w in text_lower for w in ("thesis", "conviction", "market view")):
+        return "custom:thesis" in subtypes_created
+
+    # Lesson-related directives
+    if any(w in text_lower for w in ("lesson", "document what went")):
+        return "custom:lesson" in subtypes_created
+
+    # Watchpoint-related directives
+    if any(w in text_lower for w in ("watchpoint", "alert", "monitor", "set price")):
+        return "custom:watchpoint" in subtypes_created
+
+    # Link-related directives
+    if any(w in text_lower for w in ("link", "connect", "edge")):
+        return len(edges_created) > 0
+
+    # Generic store/save directives
+    if any(w in text_lower for w in ("store", "save", "record", "document")):
+        return len(audit.get("nodes_created", [])) > 0
+
+    # Tool-based directives (can't verify from mutations alone)
+    if any(w in text_lower for w in ("use your tools", "investigate", "check", "research")):
+        return True  # Trust that the agent acted if tools were called
+
+    return False
 
 
 # ====================================================================

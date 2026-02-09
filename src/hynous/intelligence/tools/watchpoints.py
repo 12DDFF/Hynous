@@ -204,6 +204,13 @@ def _create_watchpoint(
 
     node_id = node.get("id", "?")
 
+    # Track mutation
+    try:
+        from ...core.memory_tracker import get_tracker
+        get_tracker().record_create("custom:watchpoint", title, node_id)
+    except Exception:
+        pass
+
     # Auto-link to related memories
     from .memory import _auto_link
     _auto_link(node_id, title, context)

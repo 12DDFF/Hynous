@@ -22,6 +22,7 @@ from ..core.config import Config, load_config
 from ..core.clock import stamp
 from ..core import persistence
 from ..core.costs import record_claude_usage
+from ..core.memory_tracker import get_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -418,6 +419,7 @@ class Agent:
         """
         with self._chat_lock:
             self._last_tool_calls = []  # Reset tool tracking
+            get_tracker().reset()       # Reset mutation tracking for this cycle
 
             # Build and inject snapshot
             snapshot = self._build_snapshot()
@@ -515,6 +517,7 @@ class Agent:
         """
         with self._chat_lock:
             self._last_tool_calls = []  # Reset tool tracking
+            get_tracker().reset()       # Reset mutation tracking for this cycle
 
             # Build and inject snapshot
             snapshot = self._build_snapshot()

@@ -348,6 +348,9 @@ def _store_memory_impl(
     summary = content[:500] if len(content) > 500 else None
 
     try:
+        from ...core.memory_tracker import get_tracker
+        tracker = get_tracker()
+
         client = get_client()
         node = client.create_node(
             type=node_type,
@@ -362,6 +365,9 @@ def _store_memory_impl(
 
         node_id = node.get("id", "?")
 
+        # Track mutation
+        tracker.record_create(subtype, title, node_id)
+
         # Create edges for explicitly linked memories
         if link_ids:
             for link_id in link_ids:
@@ -371,8 +377,10 @@ def _store_memory_impl(
                         target_id=link_id,
                         type="relates_to",
                     )
+                    tracker.record_edge(node_id, link_id, "relates_to", "explicit link")
                 except Exception as e:
                     logger.warning("Failed to link %s → %s: %s", node_id, link_id, e)
+                    tracker.record_fail("create_edge", str(e))
 
         # Resolve [[wikilinks]] in content → search & link (background)
         _resolve_wikilinks(node_id, content, explicit_ids=link_ids)
@@ -385,6 +393,10 @@ def _store_memory_impl(
 
     except Exception as e:
         logger.error("store_memory failed: %s", e)
+        try:
+            get_tracker().record_fail("create_node", str(e))
+        except Exception:
+            pass
         return f"Error storing memory: {e}"
 
 
