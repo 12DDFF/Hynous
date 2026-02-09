@@ -1,9 +1,9 @@
 """
-Delete Memory Tool — delete_memory
+Delete / Archive Memory Tool — delete_memory
 
-Lets the agent remove memories and their connections from the knowledge graph.
-Use cases: cleaning up stale watchpoints, removing incorrect data, pruning
-duplicates, breaking outdated links.
+Lets the agent remove or archive memories and their connections from the
+knowledge graph. Use cases: cleaning up stale watchpoints, archiving
+invalidated theses, removing incorrect data, pruning duplicates.
 
 Standard tool module pattern:
   1. TOOL_DEF dict
@@ -20,15 +20,17 @@ logger = logging.getLogger(__name__)
 TOOL_DEF = {
     "name": "delete_memory",
     "description": (
-        "Delete a memory node (and optionally its edges) from your knowledge graph.\n\n"
+        "Delete or archive a memory node from your knowledge graph.\n\n"
         "Use cases:\n"
-        "  - Remove a fired watchpoint you no longer need\n"
-        "  - Delete a memory that turned out to be wrong\n"
-        "  - Clean up duplicate entries\n"
+        "  - Archive an invalidated thesis (keeps data, hides from active queries)\n"
+        "  - Archive a resolved watchpoint or stale trade entry\n"
+        "  - Delete a memory that's just wrong or a duplicate\n"
         "  - Break a specific edge between two memories\n\n"
         "You need the node ID or edge ID — get them from recall_memory results.\n\n"
         "Actions:\n"
-        "  delete_node — Remove a memory node. Optionally remove all its edges too.\n"
+        "  archive — Mark a node DORMANT. It won't appear in active queries but data is preserved. "
+        "USE THIS for invalidated theses, resolved setups, expired watchpoints.\n"
+        "  delete_node — Permanently remove a memory node. Use for wrong data or duplicates.\n"
         "  delete_edge — Remove a single edge (connection) between two memories."
     ),
     "parameters": {
@@ -36,12 +38,12 @@ TOOL_DEF = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["delete_node", "delete_edge"],
-                "description": "What to delete.",
+                "enum": ["archive", "delete_node", "delete_edge"],
+                "description": "What to do. Prefer 'archive' over 'delete_node' — archive preserves data.",
             },
             "node_id": {
                 "type": "string",
-                "description": "ID of the memory node to delete (for delete_node action).",
+                "description": "ID of the memory node (for archive or delete_node action).",
             },
             "edge_id": {
                 "type": "string",
@@ -49,7 +51,7 @@ TOOL_DEF = {
             },
             "delete_edges": {
                 "type": "boolean",
-                "description": "Also delete all edges connected to this node. Default true.",
+                "description": "Also delete all edges connected to this node (delete_node only). Default true.",
             },
         },
         "required": ["action"],
@@ -63,13 +65,31 @@ def handle_delete_memory(
     edge_id: Optional[str] = None,
     delete_edges: bool = True,
 ) -> str:
-    """Delete a memory node or edge from Nous."""
+    """Delete or archive a memory node or edge from Nous."""
     from ...nous.client import get_client
 
     try:
         client = get_client()
 
-        if action == "delete_node":
+        if action == "archive":
+            if not node_id:
+                return "Error: node_id is required for archive action."
+
+            node = client.get_node(node_id)
+            if not node:
+                return f"Error: node {node_id} not found."
+
+            title = node.get("content_title", "Untitled")
+            current = node.get("state_lifecycle", "ACTIVE")
+
+            if current == "DORMANT":
+                return f"Already archived: \"{title}\" ({node_id})"
+
+            client.update_node(node_id, state_lifecycle="DORMANT")
+            logger.info("Archived node: \"%s\" (%s) %s → DORMANT", title, node_id, current)
+            return f"Archived: \"{title}\" ({node_id}) — now DORMANT, preserved but hidden from active queries"
+
+        elif action == "delete_node":
             if not node_id:
                 return "Error: node_id is required for delete_node action."
 
@@ -113,7 +133,7 @@ def handle_delete_memory(
             return f"Deleted edge: {edge_id}"
 
         else:
-            return f"Error: unknown action '{action}'. Use delete_node or delete_edge."
+            return f"Error: unknown action '{action}'. Use archive, delete_node, or delete_edge."
 
     except Exception as e:
         logger.error("delete_memory failed: %s", e)
