@@ -497,6 +497,7 @@ class AppState(rx.State):
                         break
                 if new_daemon_msgs:
                     async with self:
+                        self.is_waking = False  # Clear manual wake indicator
                         for item in new_daemon_msgs:
                             header = f"**Daemon Wake — {item['type']}: {item['title']}**"
                             self._append_msg(Message(
@@ -799,6 +800,7 @@ class AppState(rx.State):
 
         Non-blocking: fires the wake in a daemon background thread.
         Response appears in chat feed via the daemon chat queue.
+        The is_waking flag is cleared by poll_portfolio when the response arrives.
         """
         if _daemon is None or not _daemon.is_running:
             self._add_activity("system", "Cannot wake — daemon not running", "warning")
@@ -809,24 +811,6 @@ class AppState(rx.State):
         self.is_waking = True
         _daemon.trigger_manual_wake()
         self._add_activity("system", "Manual wake triggered", "info")
-
-        # Reset the waking flag after a delay (wake takes 10-30s typically)
-        # The actual response comes through the daemon chat queue
-        return AppState._clear_waking_flag
-
-    @_background
-    async def _clear_waking_flag(self):
-        """Clear the waking indicator after the wake completes or times out."""
-        import asyncio
-        # Wait for the response to appear in the queue (poll every 2s, max 60s)
-        from hynous.intelligence.daemon import get_daemon_chat_queue
-        dq = get_daemon_chat_queue()
-        for _ in range(30):  # 30 * 2s = 60s max
-            await asyncio.sleep(2)
-            if not dq.empty():
-                break
-        async with self:
-            self.is_waking = False
 
     def toggle_daemon(self, checked: bool = True):
         """Toggle daemon on/off.
