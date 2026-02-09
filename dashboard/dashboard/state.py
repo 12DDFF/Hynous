@@ -239,9 +239,11 @@ class AppState(rx.State):
                 msg.show_avatar = msg.sender != self.messages[i - 1].sender
 
     def _format_time(self) -> str:
-        """Format current time for display."""
-        now = datetime.now()
-        return now.strftime("%I:%M %p").lstrip("0").lower()
+        """Format current time for display (Pacific timezone)."""
+        from hynous.core.clock import now as pacific_now
+        t = pacific_now()
+        tz = t.strftime("%Z").lower()  # "pst" or "pdt"
+        return t.strftime("%I:%M %p").lstrip("0").lower() + f" {tz}"
 
     def send_message(self, form_data: dict = {}):
         """Send a message and kick off background streaming.
@@ -789,6 +791,42 @@ class AppState(rx.State):
         return colors.get(self.active_tool, "#a5b4fc")
 
     # === Daemon Controls ===
+
+    is_waking: bool = False  # True while a manual wake is in progress
+
+    def wake_agent_now(self):
+        """Trigger an immediate daemon review wake.
+
+        Non-blocking: fires the wake in a daemon background thread.
+        Response appears in chat feed via the daemon chat queue.
+        """
+        if _daemon is None or not _daemon.is_running:
+            self._add_activity("system", "Cannot wake — daemon not running", "warning")
+            return
+        if self.is_waking:
+            return  # Already waking
+
+        self.is_waking = True
+        _daemon.trigger_manual_wake()
+        self._add_activity("system", "Manual wake triggered", "info")
+
+        # Reset the waking flag after a delay (wake takes 10-30s typically)
+        # The actual response comes through the daemon chat queue
+        return AppState._clear_waking_flag
+
+    @_background
+    async def _clear_waking_flag(self):
+        """Clear the waking indicator after the wake completes or times out."""
+        import asyncio
+        # Wait for the response to appear in the queue (poll every 2s, max 60s)
+        from hynous.intelligence.daemon import get_daemon_chat_queue
+        dq = get_daemon_chat_queue()
+        for _ in range(30):  # 30 * 2s = 60s max
+            await asyncio.sleep(2)
+            if not dq.empty():
+                break
+        async with self:
+            self.is_waking = False
 
     def toggle_daemon(self, checked: bool = True):
         """Toggle daemon on/off.

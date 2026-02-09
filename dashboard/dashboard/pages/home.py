@@ -594,6 +594,41 @@ def _daemon_detail() -> rx.Component:
             align="center",
         ),
 
+        # Manual wake button
+        rx.cond(
+            AppState.daemon_running,
+            rx.button(
+                rx.cond(
+                    AppState.is_waking,
+                    rx.hstack(
+                        rx.spinner(size="1", color="#fafafa"),
+                        rx.text("Waking...", font_size="0.8rem"),
+                        spacing="2",
+                        align="center",
+                    ),
+                    rx.hstack(
+                        rx.icon("zap", size=14),
+                        rx.text("Wake Agent Now", font_size="0.8rem"),
+                        spacing="2",
+                        align="center",
+                    ),
+                ),
+                on_click=AppState.wake_agent_now,
+                disabled=AppState.is_waking,
+                width="100%",
+                background="linear-gradient(135deg, #4338ca 0%, #6366f1 100%)",
+                color="#fafafa",
+                border="none",
+                border_radius="8px",
+                height="36px",
+                font_weight="500",
+                cursor=rx.cond(AppState.is_waking, "wait", "pointer"),
+                _hover={"opacity": "0.9"},
+                opacity=rx.cond(AppState.is_waking, "0.7", "1"),
+            ),
+            rx.fragment(),
+        ),
+
         rx.divider(border_color="#1a1a1a"),
 
         # Activity feed

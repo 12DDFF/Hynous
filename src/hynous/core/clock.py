@@ -2,6 +2,8 @@
 Clock — Time awareness for Hynous.
 
 Single source of truth for how the system sees time.
+All times are Pacific (America/Los_Angeles) regardless of server location.
+
 Used everywhere something needs a timestamp:
   - agent.chat() stamps each user message
   - daemon loop stamps event triggers (future)
@@ -12,22 +14,27 @@ Usage:
 
     # Stamp a message with current time
     stamped = stamp("What's BTC doing?")
-    # → "[2:34 PM · Feb 6, 2026] What's BTC doing?"
+    # → "[2:34 PM PST · Feb 6, 2026] What's BTC doing?"
 
     # Just get the formatted time string
     t = time_str()
-    # → "2:34 PM · Feb 6, 2026"
+    # → "2:34 PM PST · Feb 6, 2026"
 
     # Get raw datetime
     dt = now()
 """
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+# Default timezone — Pacific Time (Los Angeles)
+# Server may be in Europe but we always display Pacific.
+_PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 def now() -> datetime:
-    """Current time (local timezone)."""
-    return datetime.now()
+    """Current time (Pacific timezone)."""
+    return datetime.now(_PACIFIC)
 
 
 def now_utc() -> datetime:
@@ -38,10 +45,12 @@ def now_utc() -> datetime:
 def time_str() -> str:
     """Formatted time string for display.
 
-    Format: "2:34 PM · Feb 6, 2026"
+    Format: "2:34 PM PST · Feb 6, 2026"
+    Includes timezone abbreviation (PST or PDT depending on DST).
     """
     t = now()
-    return t.strftime("%-I:%M %p · %b %-d, %Y")
+    tz_abbr = t.strftime("%Z")  # "PST" or "PDT"
+    return t.strftime(f"%-I:%M %p {tz_abbr} · %b %-d, %Y")
 
 
 def stamp(message: str) -> str:

@@ -1040,6 +1040,9 @@ class Daemon:
                     # Build staleness warning
                     staleness_warning = ""  # Computed after first cycle
 
+                    all_coach_directives: list[str] = []
+                    coach_ran = False
+
                     for cycle in range(max_coach_cycles):
                         # Get memory audit from mutation tracker
                         memory_audit = tracker.format_for_coach()
@@ -1055,9 +1058,14 @@ class Daemon:
                             pending_directives=pending_text,
                             staleness_warning=staleness_warning,
                         )
+                        coach_ran = True
+
                         if not evaluation.needs_action:
                             logger.info("Coach cycle %d: ALL_CLEAR", cycle + 1)
                             break
+
+                        # Collect directives for embedded summary
+                        all_coach_directives.extend(evaluation.directives)
 
                         # Store new directives for cross-wake tracking
                         self._store_directives(evaluation.directives)
@@ -1076,6 +1084,20 @@ class Daemon:
                     self._check_fulfilled_directives(audit)
                     staleness_warning = self._update_fingerprint(audit)
 
+                    # Embed coach summary into response (visible in dashboard)
+                    if all_coach_directives:
+                        dir_lines = "\n".join(
+                            f"> {i}. {d}" for i, d in enumerate(all_coach_directives, 1)
+                        )
+                        response += (
+                            f"\n\n---\n"
+                            f"> **Coach Review** — {len(all_coach_directives)} "
+                            f"directive{'s' if len(all_coach_directives) != 1 else ''} addressed\n"
+                            f"{dir_lines}"
+                        )
+                    elif coach_ran:
+                        response += "\n\n---\n> **Coach Review** — all clear"
+
                 except Exception as e:
                     logger.error("Coach loop failed: %s", e)
                     # Continue with original response — coaching is best-effort
@@ -1090,6 +1112,53 @@ class Daemon:
             return None
         finally:
             self.agent._chat_lock.release()
+
+    # ================================================================
+    # Manual Wake (triggered from dashboard UI)
+    # ================================================================
+
+    def trigger_manual_wake(self):
+        """Trigger an immediate review wake from the UI.
+
+        Runs in a background thread — returns immediately. The response
+        appears in the dashboard chat feed via the daemon chat queue.
+        """
+        if not self._running:
+            logger.warning("Manual wake ignored — daemon not running")
+            return
+
+        threading.Thread(
+            target=self._manual_wake, daemon=True, name="manual-wake",
+        ).start()
+
+    def _manual_wake(self):
+        """Execute a manual review wake (runs in background thread)."""
+        lines = [
+            "[DAEMON WAKE — Manual Review (triggered from dashboard)]",
+            "",
+            "Your human triggered a manual review. Give them a thorough update:",
+            "- Current portfolio and position status",
+            "- Any notable market moves or signals",
+            "- Status of your theses and watchpoints",
+            "- Anything worth acting on right now",
+            "",
+            "Use your tools — don't just summarize from memory.",
+        ]
+
+        message = "\n".join(lines)
+        response = self._wake_agent(message, priority=True, max_coach_cycles=1)
+        if response:
+            log_event(DaemonEvent(
+                "review", "Manual review (dashboard)",
+                f"Triggered by user | F&G: {self.snapshot.fear_greed}",
+            ))
+            _daemon_chat_queue.put({
+                "type": "Manual Review",
+                "title": "Manual review (dashboard)",
+                "response": response,
+            })
+            _notify_discord("Review", "Manual review (dashboard)", response)
+            logger.info("Manual review complete (%d chars)", len(response))
 
     # ================================================================
     # Coach Cross-Wake Intelligence
