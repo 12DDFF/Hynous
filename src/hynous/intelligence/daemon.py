@@ -1013,6 +1013,13 @@ class Daemon:
             return None
 
         try:
+            # Isolate daemon wake from user chat history.
+            # Daemon wakes are independent reviews — the agent gets context from
+            # the live state snapshot + Nous auto-recall, not from old chat turns.
+            # This saves ~10K non-cached input tokens per Sonnet call.
+            saved_history = self.agent._history[:]
+            self.agent._history = []
+
             # Turn 1: Hynous responds (snapshot auto-injected by agent.chat)
             response = self.agent.chat(message)
             if response is None:
@@ -1111,6 +1118,9 @@ class Daemon:
             logger.error("Daemon wake failed: %s", e)
             return None
         finally:
+            # Restore user's chat history (discard daemon wake entries).
+            # Daemon wakes are isolated — they don't pollute user conversation.
+            self.agent._history = saved_history
             self.agent._chat_lock.release()
             # Refresh position snapshot so agent-initiated closes don't
             # re-trigger fill detection on the next _check_positions() cycle.
