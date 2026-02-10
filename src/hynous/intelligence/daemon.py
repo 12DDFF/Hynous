@@ -155,6 +155,11 @@ class Daemon:
         self._pending_thoughts: list[str] = []       # Haiku questions (max 3)
         self._wake_fingerprints: list[frozenset] = []  # Last 5 tool+mutation fingerprints
 
+        # Event polling (Perplexity, every 6h)
+        self._last_event_poll: float = 0
+        self._cached_events: str = ""
+        self._EVENT_POLL_INTERVAL = 6 * 3600  # 6 hours
+
         # Stats
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
@@ -191,6 +196,21 @@ class Daemon:
         global _active_daemon
         _active_daemon = self
         self._running = True
+        # Load cached events from disk (survive restarts)
+        try:
+            import os
+            cache_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(
+                    os.path.dirname(os.path.abspath(__file__))))),
+                "storage", "events-cache.json",
+            )
+            if os.path.exists(cache_path):
+                with open(cache_path) as f:
+                    data = json.load(f)
+                    self._cached_events = data.get("events", "")
+                    self._last_event_poll = data.get("fetched_at", 0)
+        except Exception:
+            pass
         self._thread = threading.Thread(
             target=self._loop, daemon=True, name="hynous-daemon",
         )
@@ -211,6 +231,11 @@ class Daemon:
         if _active_daemon is self:
             _active_daemon = None
         flush_daemon_log()  # Persist any buffered events
+        try:
+            from ..core.equity_tracker import flush as flush_equity
+            flush_equity()
+        except Exception:
+            pass
         logger.info("Daemon stopped (wakes=%d, watchpoints=%d, learning=%d)",
                      self.wake_count, self.watchpoint_fires, self.learning_sessions)
 
@@ -292,6 +317,11 @@ class Daemon:
                     self._last_curiosity_check = now
                     self._check_curiosity()
 
+                # 4b. Event polling (every 6h)
+                if now - self._last_event_poll >= self._EVENT_POLL_INTERVAL:
+                    self._poll_events()
+                    self._last_event_poll = now
+
                 # 5. Periodic review (1h weekdays, 2h weekends)
                 review_interval = self.config.daemon.periodic_interval
                 if datetime.now(timezone.utc).weekday() >= 5:  # Sat=5, Sun=6
@@ -366,9 +396,62 @@ class Daemon:
         except Exception as e:
             logger.debug("DataCache poll failed: %s", e)
 
+        # Record equity snapshot (every deriv poll = ~5 min)
+        try:
+            from ..core.equity_tracker import record_snapshot
+            provider = self._get_provider()
+            if provider.can_trade:
+                state = provider.get_user_state()
+                record_snapshot(
+                    account_value=state["account_value"],
+                    unrealized_pnl=state["unrealized_pnl"],
+                    daily_realized_pnl=self._daily_realized_pnl,
+                    position_count=len(state.get("positions", [])),
+                )
+        except Exception as e:
+            logger.debug("Equity snapshot failed: %s", e)
+
         self.snapshot.last_deriv_poll = time.time()
         self._data_changed = True
         self.polls += 1
+
+    def _poll_events(self):
+        """Fetch upcoming crypto/macro events from Perplexity. Every 6h."""
+        try:
+            from ..data.providers.perplexity import get_provider as ppx_get
+            ppx = ppx_get()
+            result = ppx.search(
+                "What are the key crypto and macro economic events in the next 7 days? "
+                "Include FOMC, CPI, ETF decisions, token unlocks, protocol upgrades. "
+                "List dates and events only, no commentary. Be brief."
+            )
+            answer = ""
+            if isinstance(result, dict):
+                answer = result.get("answer", "")
+            elif isinstance(result, str):
+                answer = result
+            if answer:
+                # Truncate to reasonable length
+                self._cached_events = answer[:500] if len(answer) > 500 else answer
+                # Persist to disk for recovery
+                try:
+                    import os
+                    cache_path = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.dirname(
+                            os.path.dirname(os.path.abspath(__file__))))),
+                        "storage", "events-cache.json",
+                    )
+                    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                    with open(cache_path, "w") as f:
+                        json.dump({
+                            "events": self._cached_events,
+                            "fetched_at": time.time(),
+                        }, f)
+                except Exception:
+                    pass
+                logger.info("Event poll complete (%d chars)", len(self._cached_events))
+        except Exception as e:
+            logger.debug("Event poll failed: %s", e)
 
     # ================================================================
     # Watchpoint System
@@ -1090,6 +1173,7 @@ class Daemon:
                         positions = []
                     code_questions = build_code_questions(
                         self._data_cache, self.snapshot, positions, self.config,
+                        daemon=self,
                     )
                 except Exception as e:
                     logger.debug("Briefing build failed: %s", e)

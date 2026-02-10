@@ -70,6 +70,7 @@ _TOOL_DISPLAY = {
     "modify_position": "Modifying position",
     "delete_memory": "Deleting memory",
     "manage_watchpoints": "Managing watchpoints",
+    "get_trade_stats": "Checking trade stats",
 }
 _TOOL_TAG = {
     "get_market_data": "market data",
@@ -90,6 +91,7 @@ _TOOL_TAG = {
     "modify_position": "modify",
     "delete_memory": "delete",
     "manage_watchpoints": "watchpoints",
+    "get_trade_stats": "stats",
 }
 
 
@@ -128,6 +130,20 @@ class Position(BaseModel):
     pnl: float = 0.0  # return % on equity
     pnl_usd: float = 0.0  # unrealized PnL in USD
     leverage: int = 1
+
+
+class ClosedTrade(BaseModel):
+    """Closed trade for journal display."""
+    symbol: str
+    side: str
+    entry_px: float
+    exit_px: float
+    pnl_pct: float
+    pnl_usd: float
+    closed_at: str
+    close_type: str = "full"
+    duration_hours: float = 0.0
+    date: str = ""  # Pre-formatted date string (YYYY-MM-DD)
 
 
 # --- Agent + Daemon singletons (shared across all sessions) ---
@@ -788,6 +804,7 @@ class AppState(rx.State):
             "execute_trade": "#22c55e",
             "close_position": "#ef4444",
             "modify_position": "#a78bfa",
+            "get_trade_stats": "#f97316",
         }
         return colors.get(self.active_tool, "#a5b4fc")
 
@@ -860,3 +877,92 @@ class AppState(rx.State):
         self.current_page = "chat"
         self._pending_input = msg
         return self.send_message()
+
+    # === Journal State ===
+
+    journal_win_rate: str = "—"
+    journal_total_pnl: str = "—"
+    journal_profit_factor: str = "—"
+    journal_total_trades: str = "0"
+    closed_trades: List[ClosedTrade] = []
+    symbol_breakdown: list[dict] = []
+
+    def go_to_journal(self):
+        """Navigate to journal page and load data."""
+        self.current_page = "journal"
+        return AppState.load_journal
+
+    @_background
+    async def load_journal(self):
+        """Load trade stats and equity data for journal page."""
+        data = await asyncio.to_thread(self._fetch_journal_data)
+        if data:
+            async with self:
+                stats, trades, breakdown = data
+                self.journal_win_rate = f"{stats['win_rate']:.0f}%" if stats['total_trades'] > 0 else "—"
+                sign = "+" if stats['total_pnl'] >= 0 else ""
+                self.journal_total_pnl = f"{sign}${stats['total_pnl']:.2f}" if stats['total_trades'] > 0 else "—"
+                pf = stats['profit_factor']
+                self.journal_profit_factor = f"{pf:.2f}" if pf != float('inf') else "∞" if stats['total_trades'] > 0 else "—"
+                self.journal_total_trades = str(stats['total_trades'])
+                self.closed_trades = trades
+                self.symbol_breakdown = breakdown
+
+    @staticmethod
+    def _fetch_journal_data():
+        """Fetch journal data from trade analytics (sync, runs in thread)."""
+        try:
+            from hynous.core.trade_analytics import get_trade_stats
+            stats = get_trade_stats()
+            trades = [
+                ClosedTrade(
+                    symbol=t.symbol,
+                    side=t.side,
+                    entry_px=t.entry_px,
+                    exit_px=t.exit_px,
+                    pnl_pct=round(t.pnl_pct, 2),
+                    pnl_usd=round(t.pnl_usd, 2),
+                    closed_at=t.closed_at,
+                    close_type=t.close_type,
+                    duration_hours=round(t.duration_hours, 1),
+                    date=t.closed_at.split("T")[0] if "T" in t.closed_at else t.closed_at[:10],
+                )
+                for t in stats.trades[:30]
+            ]
+            breakdown = [
+                {"symbol": sym, "trades": d["trades"], "win_rate": d["win_rate"], "pnl": d["pnl"]}
+                for sym, d in sorted(stats.by_symbol.items())
+            ]
+            return (
+                {
+                    "win_rate": stats.win_rate,
+                    "total_pnl": stats.total_pnl,
+                    "profit_factor": stats.profit_factor,
+                    "total_trades": stats.total_trades,
+                },
+                trades,
+                breakdown,
+            )
+        except Exception:
+            return None
+
+    @rx.var(cache=False)
+    def journal_equity_data(self) -> list[dict]:
+        """Equity curve data for chart. cache=False: reads external file."""
+        try:
+            from hynous.core.equity_tracker import get_equity_data
+            data = get_equity_data(days=30)
+            # Format for recharts
+            result = []
+            for point in data:
+                ts = point.get("timestamp", 0)
+                from datetime import datetime, timezone
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                result.append({
+                    "date": dt.strftime("%m/%d"),
+                    "value": point.get("account_value", 0),
+                    "pnl": point.get("unrealized_pnl", 0),
+                })
+            return result
+        except Exception:
+            return []

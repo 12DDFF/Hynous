@@ -54,7 +54,10 @@ def build_warnings(provider, daemon, nous_client, config) -> tuple[str, dict]:
         # 7. Circuit breaker
         _check_circuit_breaker(daemon, warnings)
 
-        # 8. Pending thought from last review
+        # 8. Correlated positions
+        _check_correlation(provider, warnings)
+
+        # 9. Pending thought from last review
         thought_lines = _get_pending_thoughts(daemon)
 
         # Assemble output
@@ -299,8 +302,50 @@ def _check_circuit_breaker(daemon, warnings: list):
         warnings.append(f"Circuit breaker active (${pnl:+.0f} today) — no new entries")
 
 
+_CORRELATION_GROUPS = [
+    {"BTC", "ETH"},        # ~0.85
+    {"ETH", "SOL"},        # ~0.80
+    {"BTC", "SOL"},        # ~0.75
+    {"ETH", "ARB", "OP"},  # L2s
+    {"SOL", "SUI", "APT"}, # Alt-L1s
+]
+
+
+def _check_correlation(provider, warnings: list):
+    """Check 8: Multiple same-direction positions in correlated assets."""
+    if provider is None:
+        return
+    try:
+        state = provider.get_user_state()
+        positions = state.get("positions", [])
+        if len(positions) < 2:
+            return
+
+        pos_by_coin = {p["coin"].upper(): p["side"] for p in positions}
+
+        warned = set()
+        for group in _CORRELATION_GROUPS:
+            in_group = group & set(pos_by_coin.keys())
+            if len(in_group) < 2:
+                continue
+            # Check if same direction
+            sides = {pos_by_coin[c] for c in in_group}
+            if len(sides) == 1:
+                key = frozenset(in_group)
+                if key not in warned:
+                    warned.add(key)
+                    direction = sides.pop().upper()
+                    coins = ", ".join(sorted(in_group))
+                    warnings.append(
+                        f"Correlated positions: {coins} all {direction} — "
+                        f"one move could hit both. Consider reducing exposure."
+                    )
+    except Exception as e:
+        logger.debug("Correlation check failed: %s", e)
+
+
 def _get_pending_thoughts(daemon) -> list[str]:
-    """Check 7: Pending thoughts from Haiku's last review."""
+    """Check 9: Pending thoughts from Haiku's last review."""
     if daemon is None:
         return []
     thoughts = getattr(daemon, "_pending_thoughts", [])

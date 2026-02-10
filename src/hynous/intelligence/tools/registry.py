@@ -126,4 +126,7 @@ def get_registry() -> ToolRegistry:
     from . import watchpoints
     watchpoints.register(registry)
 
+    from . import trade_stats
+    trade_stats.register(registry)
+
     return registry
