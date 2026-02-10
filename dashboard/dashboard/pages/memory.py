@@ -1,7 +1,7 @@
 """Memory management page — clusters, health, conflicts, stale cleanup."""
 
 import reflex as rx
-from ..state import AppState, ClusterDisplay
+from ..state import AppState, ClusterDisplay, ConflictItem
 
 
 # --- Sidebar Components ---
@@ -24,33 +24,42 @@ def _section_header(label: str, icon_name: str, icon_color: str = "#737373") -> 
 
 
 def _cluster_item(cluster) -> rx.Component:
-    """Single cluster row in sidebar."""
-    return rx.hstack(
-        rx.box(
-            width="6px",
-            height="6px",
-            border_radius="50%",
-            background=cluster.accent,
-            flex_shrink="0",
+    """Single cluster row in sidebar with health bar."""
+    return rx.vstack(
+        rx.hstack(
+            rx.box(
+                width="6px",
+                height="6px",
+                border_radius="50%",
+                background=cluster.accent,
+                flex_shrink="0",
+            ),
+            rx.text(
+                cluster.name,
+                font_size="0.78rem",
+                font_weight="500",
+                color="#fafafa",
+                flex="1",
+                overflow="hidden",
+                text_overflow="ellipsis",
+                white_space="nowrap",
+            ),
+            rx.text(
+                cluster.node_count,
+                font_size="0.72rem",
+                color="#525252",
+                font_weight="500",
+            ),
+            spacing="2",
+            align="center",
+            width="100%",
         ),
-        rx.text(
-            cluster.name,
-            font_size="0.78rem",
-            font_weight="500",
-            color="#fafafa",
-            flex="1",
-            overflow="hidden",
-            text_overflow="ellipsis",
-            white_space="nowrap",
+        rx.cond(
+            cluster.health_html != "",
+            rx.html(cluster.health_html),
+            rx.fragment(),
         ),
-        rx.text(
-            cluster.node_count,
-            font_size="0.72rem",
-            color="#525252",
-            font_weight="500",
-        ),
-        spacing="2",
-        align="center",
+        spacing="0",
         width="100%",
         padding="0.375rem 0.5rem",
         border_radius="6px",
@@ -188,6 +197,22 @@ def _actions_section() -> rx.Component:
             AppState.toggle_stale,
             badge_count=AppState.stale_count,
         ),
+        _action_button(
+            "Backfill Embeddings", "sparkles", "#a5b4fc",
+            AppState.run_backfill,
+            is_loading=AppState.backfill_running,
+        ),
+        # Backfill result display
+        rx.cond(
+            AppState.backfill_result != "",
+            rx.text(
+                AppState.backfill_result,
+                font_size="0.7rem",
+                color="#525252",
+                padding="0.25rem 0.625rem",
+            ),
+            rx.fragment(),
+        ),
         # Decay result display
         rx.cond(
             AppState.decay_result != "",
@@ -249,6 +274,83 @@ def _main_area() -> rx.Component:
 
 # --- Dialogs ---
 
+def _conflict_card(item: ConflictItem) -> rx.Component:
+    """Single conflict card with per-item resolve buttons."""
+    return rx.box(
+        rx.vstack(
+            # Header: type + confidence
+            rx.hstack(
+                rx.text(item.conflict_type, font_size="0.72rem", font_weight="500", color="#eab308"),
+                rx.spacer(),
+                rx.text(item.confidence + " confidence", font_size="0.7rem", color="#525252"),
+                width="100%",
+                align="center",
+            ),
+            # OLD block
+            rx.box(
+                rx.text("OLD", font_size="0.7rem", color="#a3a3a3", margin_bottom="2px"),
+                rx.text(item.old_title, font_size="0.78rem", font_weight="500", color="#fafafa"),
+                rx.cond(
+                    item.old_body != "",
+                    rx.text(item.old_body, font_size="0.7rem", color="#737373", margin_top="2px"),
+                    rx.fragment(),
+                ),
+                padding="0.5rem",
+                background="#111",
+                border_left="2px solid #ef4444",
+                border_radius="0 4px 4px 0",
+            ),
+            # NEW block
+            rx.box(
+                rx.text("NEW", font_size="0.7rem", color="#a3a3a3", margin_bottom="2px"),
+                rx.text(item.new_title, font_size="0.78rem", font_weight="500", color="#fafafa"),
+                rx.cond(
+                    item.new_body != "",
+                    rx.text(item.new_body, font_size="0.7rem", color="#737373", margin_top="2px"),
+                    rx.fragment(),
+                ),
+                padding="0.5rem",
+                background="#111",
+                border_left="2px solid #22c55e",
+                border_radius="0 4px 4px 0",
+            ),
+            # Action buttons
+            rx.hstack(
+                rx.button(
+                    "Keep New",
+                    variant="soft",
+                    color_scheme="green",
+                    size="1",
+                    on_click=lambda: AppState.resolve_one_conflict(item.conflict_id, "new_is_current"),
+                ),
+                rx.button(
+                    "Keep Old",
+                    variant="soft",
+                    color_scheme="red",
+                    size="1",
+                    on_click=lambda: AppState.resolve_one_conflict(item.conflict_id, "old_is_current"),
+                ),
+                rx.button(
+                    "Keep Both",
+                    variant="soft",
+                    color_scheme="gray",
+                    size="1",
+                    on_click=lambda: AppState.resolve_one_conflict(item.conflict_id, "keep_both"),
+                ),
+                spacing="2",
+            ),
+            spacing="2",
+            width="100%",
+        ),
+        padding="0.75rem",
+        background="#0d0d0d",
+        border="1px solid #1a1a1a",
+        border_radius="8px",
+        margin_bottom="0.5rem",
+        width="100%",
+    )
+
+
 def _conflicts_dialog() -> rx.Component:
     """Conflict resolution dialog."""
     return rx.dialog.root(
@@ -297,7 +399,11 @@ def _conflicts_dialog() -> rx.Component:
                 rx.cond(
                     AppState.conflict_count != "0",
                     rx.scroll_area(
-                        rx.html(AppState.conflict_html),
+                        rx.vstack(
+                            rx.foreach(AppState.conflict_items, _conflict_card),
+                            spacing="0",
+                            width="100%",
+                        ),
                         max_height="450px",
                         width="100%",
                     ),
@@ -320,14 +426,26 @@ def _conflicts_dialog() -> rx.Component:
 
 
 def _stale_dialog() -> rx.Component:
-    """Stale memories management dialog."""
+    """Stale memories management dialog with lifecycle filter."""
     return rx.dialog.root(
         rx.dialog.content(
             rx.vstack(
                 rx.hstack(
                     rx.icon("archive", size=18, color="#525252"),
-                    rx.text("Dormant Memories", font_weight="600", font_size="1rem"),
+                    rx.text(
+                        AppState.stale_filter + " Memories",
+                        font_weight="600",
+                        font_size="1rem",
+                    ),
                     rx.spacer(),
+                    rx.select(
+                        ["DORMANT", "WEAK", "ACTIVE"],
+                        value=AppState.stale_filter,
+                        on_change=AppState.set_stale_filter,
+                        size="1",
+                        variant="ghost",
+                        color="#525252",
+                    ),
                     rx.badge(AppState.stale_count, variant="soft", color_scheme="gray"),
                     rx.dialog.close(
                         rx.icon("x", size=16, color="#525252", cursor="pointer", _hover={"color": "#fafafa"}),
@@ -337,7 +455,7 @@ def _stale_dialog() -> rx.Component:
                     width="100%",
                 ),
                 rx.text(
-                    "These memories have decayed to dormant. Archive them to clean up active recall.",
+                    "Browse memories by lifecycle state. Archive dormant ones to clean up recall.",
                     font_size="0.8rem",
                     color="#525252",
                 ),

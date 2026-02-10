@@ -143,6 +143,7 @@ class ClosedTrade(BaseModel):
     closed_at: str
     close_type: str = "full"
     duration_hours: float = 0.0
+    duration_str: str = ""  # Pre-formatted: "4.2h" or "1.3d"
     date: str = ""  # Pre-formatted date string (YYYY-MM-DD)
 
 
@@ -167,6 +168,17 @@ class ClusterDisplay(BaseModel):
     node_count: str = "0"
     health_html: str = ""
     accent: str = "#525252"
+
+
+class ConflictItem(BaseModel):
+    """Structured conflict for per-item resolution UI."""
+    conflict_id: str = ""
+    conflict_type: str = ""
+    confidence: str = ""
+    old_title: str = ""
+    old_body: str = ""
+    new_title: str = ""
+    new_body: str = ""
 
 
 # --- Agent + Daemon singletons (shared across all sessions) ---
@@ -699,6 +711,51 @@ class AppState(rx.State):
             return f"{c['input_tokens']:,} in / {c['output_tokens']:,} out"
         except Exception:
             return "0 in / 0 out"
+
+    @rx.var(cache=False)
+    def wallet_sonnet_cost(self) -> str:
+        """Sonnet model cost string."""
+        try:
+            from hynous.core.costs import get_month_summary
+            return f"${get_month_summary()['claude']['sonnet']['cost_usd']:.2f}"
+        except Exception:
+            return "$0.00"
+
+    @rx.var(cache=False)
+    def wallet_sonnet_calls(self) -> str:
+        """Sonnet model call count."""
+        try:
+            from hynous.core.costs import get_month_summary
+            return str(get_month_summary()['claude']['sonnet']['calls'])
+        except Exception:
+            return "0"
+
+    @rx.var(cache=False)
+    def wallet_haiku_cost(self) -> str:
+        """Haiku model cost string."""
+        try:
+            from hynous.core.costs import get_month_summary
+            return f"${get_month_summary()['claude']['haiku']['cost_usd']:.2f}"
+        except Exception:
+            return "$0.00"
+
+    @rx.var(cache=False)
+    def wallet_haiku_calls(self) -> str:
+        """Haiku model call count."""
+        try:
+            from hynous.core.costs import get_month_summary
+            return str(get_month_summary()['claude']['haiku']['calls'])
+        except Exception:
+            return "0"
+
+    @rx.var(cache=False)
+    def wallet_cache_savings(self) -> str:
+        """Cache savings string."""
+        try:
+            from hynous.core.costs import get_month_summary
+            return f"${get_month_summary()['claude']['cache_savings_usd']:.2f}"
+        except Exception:
+            return "$0.00"
 
     @rx.var(cache=False)
     def wallet_perplexity_cost(self) -> str:
@@ -1247,16 +1304,20 @@ class AppState(rx.State):
     memory_health_ratio: str = "0%"
     memory_lifecycle_html: str = ""
 
-    conflict_html: str = ""  # Pre-rendered conflict list
+    conflict_items: List[ConflictItem] = []
     conflict_count: str = "0"
     show_conflicts: bool = False
 
     stale_html: str = ""  # Pre-rendered dormant node list
     stale_count: str = "0"
+    stale_filter: str = "DORMANT"
     show_stale: bool = False
 
     decay_running: bool = False
     decay_result: str = ""
+
+    backfill_running: bool = False
+    backfill_result: str = ""
 
     @_background
     async def load_memory_page(self):
@@ -1269,7 +1330,7 @@ class AppState(rx.State):
             self.memory_edge_count = health["edge_count"]
             self.memory_health_ratio = health["health_ratio"]
             self.memory_lifecycle_html = health["lifecycle_html"]
-            self.conflict_html = conflicts["html"]
+            self.conflict_items = conflicts["items"]
             self.conflict_count = conflicts["count"]
             self.stale_html = stale["html"]
             self.stale_count = stale["count"]
@@ -1342,18 +1403,17 @@ class AppState(rx.State):
 
     @staticmethod
     def _fetch_conflicts() -> dict:
-        """Fetch pending conflicts with pre-rendered HTML."""
+        """Fetch pending conflicts as structured ConflictItem list."""
         try:
             from hynous.nous.client import get_client
-            from html import escape
             client = get_client()
             conflicts = client.get_conflicts(status="pending")
 
             if not conflicts:
-                return {"html": "", "count": "0"}
+                return {"items": [], "count": "0"}
 
-            parts = []
-            for c in conflicts[:50]:  # Cap display at 50
+            items = []
+            for c in conflicts[:100]:  # Cap at 100
                 cid = c.get("id", "?")
                 old_id = c.get("old_node_id", "?")
                 new_id = c.get("new_node_id")
@@ -1384,39 +1444,29 @@ class AppState(rx.State):
 
                 conf_pct = f"{confidence:.0%}" if isinstance(confidence, float) else str(confidence)
 
-                parts.append(
-                    f'<div style="padding:0.75rem;background:#0d0d0d;border:1px solid #1a1a1a;'
-                    f'border-radius:8px;margin-bottom:0.5rem" data-cid="{escape(cid)}">'
-                    f'<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">'
-                    f'<span style="color:#eab308;font-size:0.72rem;font-weight:500">{escape(ctype)}</span>'
-                    f'<span style="color:#525252;font-size:0.7rem">{conf_pct} confidence</span></div>'
-                    f'<div style="padding:0.5rem;background:#111;border-left:2px solid #ef4444;'
-                    f'border-radius:0 4px 4px 0;margin-bottom:0.375rem">'
-                    f'<div style="color:#a3a3a3;font-size:0.7rem;margin-bottom:2px">OLD</div>'
-                    f'<div style="color:#fafafa;font-size:0.78rem;font-weight:500">{escape(old_title)}</div>'
-                    f'<div style="color:#737373;font-size:0.7rem;margin-top:2px">{escape(old_body)}</div></div>'
-                    f'<div style="padding:0.5rem;background:#111;border-left:2px solid #22c55e;'
-                    f'border-radius:0 4px 4px 0">'
-                    f'<div style="color:#a3a3a3;font-size:0.7rem;margin-bottom:2px">NEW</div>'
-                    f'<div style="color:#fafafa;font-size:0.78rem;font-weight:500">'
-                    f'{escape(new_title or new_content[:80])}</div>'
-                    f'<div style="color:#737373;font-size:0.7rem;margin-top:2px">'
-                    f'{escape(new_body or new_content[:200])}</div></div></div>'
-                )
+                items.append(ConflictItem(
+                    conflict_id=cid,
+                    conflict_type=ctype,
+                    confidence=conf_pct,
+                    old_title=old_title,
+                    old_body=old_body,
+                    new_title=new_title or new_content[:80],
+                    new_body=new_body or new_content[:200],
+                ))
 
-            return {"html": "".join(parts), "count": str(len(conflicts))}
+            return {"items": items, "count": str(len(conflicts))}
         except Exception:
-            return {"html": "", "count": "0"}
+            return {"items": [], "count": "0"}
 
     @staticmethod
-    def _fetch_stale() -> dict:
-        """Fetch dormant memories with pre-rendered HTML."""
+    def _fetch_stale(lifecycle: str = "DORMANT") -> dict:
+        """Fetch memories by lifecycle with pre-rendered HTML."""
         try:
             from hynous.nous.client import get_client
             from html import escape
             from datetime import datetime, timezone
             client = get_client()
-            nodes = client.list_nodes(lifecycle="DORMANT", limit=30)
+            nodes = client.list_nodes(lifecycle=lifecycle, limit=30)
 
             if not nodes:
                 return {"html": "", "count": "0"}
@@ -1487,6 +1537,31 @@ class AppState(rx.State):
         return f"Processed {processed} nodes, {transitioned} transitioned"
 
     @_background
+    async def run_backfill(self):
+        """Run embedding backfill."""
+        async with self:
+            self.backfill_running = True
+            self.backfill_result = ""
+        try:
+            result = await asyncio.to_thread(self._exec_backfill)
+            async with self:
+                self.backfill_result = result
+                self.backfill_running = False
+        except Exception as e:
+            async with self:
+                self.backfill_result = f"Error: {e}"
+                self.backfill_running = False
+
+    @staticmethod
+    def _exec_backfill() -> str:
+        from hynous.nous.client import get_client
+        client = get_client()
+        result = client.backfill_embeddings()
+        embedded = result.get("embedded", 0)
+        total = result.get("total", 0)
+        return f"Embedded {embedded}/{total} nodes"
+
+    @_background
     async def resolve_all_conflicts(self):
         """Batch resolve all pending conflicts as new_is_current."""
         try:
@@ -1495,7 +1570,7 @@ class AppState(rx.State):
             conflicts = await asyncio.to_thread(self._fetch_conflicts)
             health = await asyncio.to_thread(self._fetch_memory_health)
             async with self:
-                self.conflict_html = conflicts["html"]
+                self.conflict_items = conflicts["items"]
                 self.conflict_count = conflicts["count"]
                 self.memory_node_count = health["node_count"]
                 self.memory_health_ratio = health["health_ratio"]
@@ -1510,7 +1585,7 @@ class AppState(rx.State):
             result = await asyncio.to_thread(self._exec_batch_resolve, "keep_both")
             conflicts = await asyncio.to_thread(self._fetch_conflicts)
             async with self:
-                self.conflict_html = conflicts["html"]
+                self.conflict_items = conflicts["items"]
                 self.conflict_count = conflicts["count"]
         except Exception:
             pass
@@ -1552,6 +1627,21 @@ class AppState(rx.State):
             except Exception:
                 pass
 
+    def set_stale_filter(self, val: str):
+        """Update stale lifecycle filter and refresh."""
+        self.stale_filter = val
+        return AppState.load_stale_filtered
+
+    @_background
+    async def load_stale_filtered(self):
+        """Re-fetch stale nodes with current filter."""
+        async with self:
+            lifecycle = self.stale_filter
+        stale = await asyncio.to_thread(self._fetch_stale, lifecycle)
+        async with self:
+            self.stale_html = stale["html"]
+            self.stale_count = stale["count"]
+
     def toggle_conflicts(self):
         """Toggle conflicts dialog."""
         self.show_conflicts = not self.show_conflicts
@@ -1560,14 +1650,49 @@ class AppState(rx.State):
         """Toggle stale memories dialog."""
         self.show_stale = not self.show_stale
 
+    def resolve_one_conflict(self, conflict_id: str, resolution: str):
+        """Resolve a single conflict and refresh."""
+        return AppState._exec_resolve_one(conflict_id, resolution)
+
+    @_background
+    async def _exec_resolve_one(self, conflict_id: str, resolution: str):
+        """Background: resolve one conflict, refresh list."""
+        try:
+            await asyncio.to_thread(self._do_resolve_one, conflict_id, resolution)
+            conflicts = await asyncio.to_thread(self._fetch_conflicts)
+            health = await asyncio.to_thread(self._fetch_memory_health)
+            async with self:
+                self.conflict_items = conflicts["items"]
+                self.conflict_count = conflicts["count"]
+                self.memory_node_count = health["node_count"]
+                self.memory_health_ratio = health["health_ratio"]
+                self.memory_lifecycle_html = health["lifecycle_html"]
+        except Exception:
+            pass
+
+    @staticmethod
+    def _do_resolve_one(conflict_id: str, resolution: str):
+        from hynous.nous.client import get_client
+        client = get_client()
+        client.resolve_conflict(conflict_id, resolution)
+
     # === Journal State ===
 
     journal_win_rate: str = "—"
     journal_total_pnl: str = "—"
     journal_profit_factor: str = "—"
     journal_total_trades: str = "0"
+    journal_current_streak: str = "—"
+    journal_max_win_streak: str = "0"
+    journal_max_loss_streak: str = "0"
+    journal_avg_duration: str = "—"
+    equity_days: int = 30
     closed_trades: List[ClosedTrade] = []
     symbol_breakdown: list[dict] = []
+
+    def set_equity_days(self, days: str):
+        """Update equity chart timeframe."""
+        self.equity_days = int(days)
 
     def go_to_journal(self):
         """Navigate to journal page and load data."""
@@ -1587,6 +1712,24 @@ class AppState(rx.State):
                 pf = stats['profit_factor']
                 self.journal_profit_factor = f"{pf:.2f}" if pf != float('inf') else "∞" if stats['total_trades'] > 0 else "—"
                 self.journal_total_trades = str(stats['total_trades'])
+                # Streaks
+                streak = stats['current_streak']
+                if streak > 0:
+                    self.journal_current_streak = f"+{streak}W"
+                elif streak < 0:
+                    self.journal_current_streak = f"{streak}L"
+                else:
+                    self.journal_current_streak = "—"
+                self.journal_max_win_streak = str(stats['max_win_streak'])
+                self.journal_max_loss_streak = str(stats['max_loss_streak'])
+                # Avg duration
+                dur = stats['avg_duration_hours']
+                if dur >= 24:
+                    self.journal_avg_duration = f"{dur / 24:.1f}d"
+                elif dur > 0:
+                    self.journal_avg_duration = f"{dur:.1f}h"
+                else:
+                    self.journal_avg_duration = "—"
                 self.closed_trades = trades
                 self.symbol_breakdown = breakdown
 
@@ -1596,8 +1739,16 @@ class AppState(rx.State):
         try:
             from hynous.core.trade_analytics import get_trade_stats
             stats = get_trade_stats()
-            trades = [
-                ClosedTrade(
+            trades = []
+            for t in stats.trades[:30]:
+                dur_h = round(t.duration_hours, 1)
+                if dur_h >= 24:
+                    dur_str = f"{dur_h / 24:.1f}d"
+                elif dur_h > 0:
+                    dur_str = f"{dur_h}h"
+                else:
+                    dur_str = "—"
+                trades.append(ClosedTrade(
                     symbol=t.symbol,
                     side=t.side,
                     entry_px=t.entry_px,
@@ -1606,11 +1757,10 @@ class AppState(rx.State):
                     pnl_usd=round(t.pnl_usd, 2),
                     closed_at=t.closed_at,
                     close_type=t.close_type,
-                    duration_hours=round(t.duration_hours, 1),
+                    duration_hours=dur_h,
+                    duration_str=dur_str,
                     date=t.closed_at.split("T")[0] if "T" in t.closed_at else t.closed_at[:10],
-                )
-                for t in stats.trades[:30]
-            ]
+                ))
             breakdown = [
                 {
                     "symbol": sym,
@@ -1627,6 +1777,10 @@ class AppState(rx.State):
                     "total_pnl": stats.total_pnl,
                     "profit_factor": stats.profit_factor,
                     "total_trades": stats.total_trades,
+                    "current_streak": stats.current_streak,
+                    "max_win_streak": stats.max_win_streak,
+                    "max_loss_streak": stats.max_loss_streak,
+                    "avg_duration_hours": stats.avg_duration_hours,
                 },
                 trades,
                 breakdown,
@@ -1639,7 +1793,7 @@ class AppState(rx.State):
         """Equity curve data for chart. cache=False: reads external file."""
         try:
             from hynous.core.equity_tracker import get_equity_data
-            data = get_equity_data(days=30)
+            data = get_equity_data(days=self.equity_days)
             # Format for recharts
             result = []
             for point in data:

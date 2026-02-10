@@ -6,7 +6,7 @@ from ..components import card, stat_card
 
 
 def _stats_row() -> rx.Component:
-    """Top row — 4 stat cards."""
+    """Top row — 7 stat cards."""
     return rx.hstack(
         stat_card("Win Rate", AppState.journal_win_rate, "closed trades"),
         stat_card(
@@ -25,22 +25,56 @@ def _stats_row() -> rx.Component:
         ),
         stat_card("Profit Factor", AppState.journal_profit_factor, "gross profit / loss"),
         stat_card("Total Trades", AppState.journal_total_trades, "closed positions"),
+        stat_card(
+            "Current Streak",
+            AppState.journal_current_streak,
+            "consecutive",
+            value_color=rx.cond(
+                AppState.journal_current_streak.contains("+"),
+                "#4ade80",
+                rx.cond(
+                    AppState.journal_current_streak.contains("L"),
+                    "#f87171",
+                    "#fafafa",
+                ),
+            ),
+        ),
+        stat_card(
+            "Max Streaks",
+            AppState.journal_max_win_streak + "W / " + AppState.journal_max_loss_streak + "L",
+            "win / loss",
+        ),
+        stat_card("Avg Duration", AppState.journal_avg_duration, "per trade"),
         width="100%",
         spacing="4",
+        flex_wrap="wrap",
     )
 
 
 def _equity_chart() -> rx.Component:
-    """Equity curve chart (30-day area chart)."""
+    """Equity curve chart with timeframe selector."""
     return card(
         rx.vstack(
-            rx.text(
-                "Equity Curve",
-                font_size="0.8rem",
-                font_weight="600",
-                color="#525252",
-                text_transform="uppercase",
-                letter_spacing="0.05em",
+            rx.hstack(
+                rx.text(
+                    "Equity Curve",
+                    font_size="0.8rem",
+                    font_weight="600",
+                    color="#525252",
+                    text_transform="uppercase",
+                    letter_spacing="0.05em",
+                ),
+                rx.spacer(),
+                rx.select(
+                    ["7", "30", "90"],
+                    value=AppState.equity_days.to(str),
+                    on_change=AppState.set_equity_days,
+                    size="1",
+                    variant="ghost",
+                    color="#525252",
+                ),
+                width="100%",
+                align="center",
             ),
             rx.cond(
                 AppState.journal_equity_data.length() > 0,
@@ -159,6 +193,14 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
             min_width="70px",
             font_family="JetBrains Mono",
         ),
+        # Duration
+        rx.text(
+            trade.duration_str,
+            font_size="0.8rem",
+            color="#737373",
+            min_width="50px",
+            font_family="JetBrains Mono",
+        ),
         width="100%",
         padding_y="0.5rem",
         border_bottom="1px solid #1a1a1a",
@@ -187,6 +229,7 @@ def _trade_table() -> rx.Component:
                 rx.text("Exit", font_size="0.7rem", color="#525252", min_width="80px"),
                 rx.text("PnL %", font_size="0.7rem", color="#525252", min_width="60px"),
                 rx.text("PnL $", font_size="0.7rem", color="#525252", min_width="70px"),
+                rx.text("Duration", font_size="0.7rem", color="#525252", min_width="50px"),
                 width="100%",
                 padding_y="0.5rem",
                 border_bottom="1px solid #262626",

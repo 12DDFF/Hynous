@@ -286,7 +286,7 @@ def _trades_detail() -> rx.Component:
 def _wallet_detail() -> rx.Component:
     """Detail view for the Wallet dialog — cost breakdown by service."""
     return rx.vstack(
-        # Claude API
+        # Claude API — total
         rx.hstack(
             rx.box(
                 rx.icon("brain", size=16, color="#a78bfa"),
@@ -312,6 +312,87 @@ def _wallet_detail() -> rx.Component:
                 spacing="0",
             ),
             spacing="3",
+            align="start",
+            width="100%",
+        ),
+        # Sonnet breakdown
+        rx.hstack(
+            rx.box(width="36px", flex_shrink="0"),  # Indent spacer
+            rx.box(
+                rx.icon("brain", size=14, color="#a78bfa"),
+                width="28px",
+                height="28px",
+                border_radius="8px",
+                background="rgba(167,139,250,0.08)",
+                display="flex",
+                align_items="center",
+                justify_content="center",
+                flex_shrink="0",
+            ),
+            rx.vstack(
+                rx.text("Sonnet 4.5", font_size="0.78rem", font_weight="500", color="#d4d4d4"),
+                rx.hstack(
+                    rx.text(AppState.wallet_sonnet_cost, font_size="0.75rem", color="#a78bfa", font_weight="500"),
+                    rx.text("·", color="#333"),
+                    rx.text(AppState.wallet_sonnet_calls + " calls", font_size="0.7rem", color="#525252"),
+                    spacing="2",
+                    align="center",
+                ),
+                spacing="0",
+            ),
+            spacing="2",
+            align="start",
+            width="100%",
+        ),
+        # Haiku breakdown
+        rx.hstack(
+            rx.box(width="36px", flex_shrink="0"),  # Indent spacer
+            rx.box(
+                rx.icon("zap", size=14, color="#fbbf24"),
+                width="28px",
+                height="28px",
+                border_radius="8px",
+                background="rgba(251,191,36,0.08)",
+                display="flex",
+                align_items="center",
+                justify_content="center",
+                flex_shrink="0",
+            ),
+            rx.vstack(
+                rx.text("Haiku 4.5", font_size="0.78rem", font_weight="500", color="#d4d4d4"),
+                rx.hstack(
+                    rx.text(AppState.wallet_haiku_cost, font_size="0.75rem", color="#fbbf24", font_weight="500"),
+                    rx.text("·", color="#333"),
+                    rx.text(AppState.wallet_haiku_calls + " calls", font_size="0.7rem", color="#525252"),
+                    spacing="2",
+                    align="center",
+                ),
+                spacing="0",
+            ),
+            spacing="2",
+            align="start",
+            width="100%",
+        ),
+        # Cache savings
+        rx.hstack(
+            rx.box(width="36px", flex_shrink="0"),  # Indent spacer
+            rx.box(
+                rx.icon("sparkles", size=14, color="#4ade80"),
+                width="28px",
+                height="28px",
+                border_radius="8px",
+                background="rgba(74,222,128,0.08)",
+                display="flex",
+                align_items="center",
+                justify_content="center",
+                flex_shrink="0",
+            ),
+            rx.vstack(
+                rx.text("Cache saved", font_size="0.78rem", font_weight="500", color="#d4d4d4"),
+                rx.text(AppState.wallet_cache_savings, font_size="0.75rem", color="#4ade80", font_weight="500"),
+                spacing="0",
+            ),
+            spacing="2",
             align="start",
             width="100%",
         ),
