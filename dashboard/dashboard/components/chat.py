@@ -196,6 +196,7 @@ def chat_bubble(message: Message) -> rx.Component:
                         line_height="1.65",
                         white_space="pre-wrap",
                         font_size="0.9rem",
+                        word_break="break-word",
                     ),
                     rx.markdown(
                         message.content,
@@ -215,6 +216,7 @@ def chat_bubble(message: Message) -> rx.Component:
                         ),
                         spacing="1",
                         padding_top="0.375rem",
+                        flex_wrap="wrap",
                     ),
                     rx.fragment(),
                 ),
@@ -225,7 +227,6 @@ def chat_bubble(message: Message) -> rx.Component:
             border_radius="14px",
             max_width="80%",
             min_width="0",
-            overflow="hidden",
             background=rx.cond(is_user, "#1f1f1f", "linear-gradient(135deg, #18181b 0%, #1c1c22 100%)"),
             border=rx.cond(is_user, "1px solid #2a2a2a", "1px solid #27272a"),
             box_shadow=rx.cond(is_user, "none", "0 2px 8px rgba(0,0,0,0.15)"),
@@ -362,7 +363,6 @@ def streaming_bubble(text: rx.Var[str], show_avatar: rx.Var[bool] = True) -> rx.
             border_radius="14px",
             max_width="80%",
             min_width="0",
-            overflow="hidden",
             background="linear-gradient(135deg, #18181b 0%, #1c1c22 100%)",
             border="1px solid #27272a",
             box_shadow="0 2px 8px rgba(0,0,0,0.15)",
@@ -500,24 +500,25 @@ def chat_input(
     """
     return rx.form(
         rx.hstack(
-            rx.input(
+            rx.el.textarea(
                 name="message",
                 placeholder=placeholder,
-                background="#111111",
-                border="1px solid #1a1a1a",
-                border_radius="10px",
-                color="#e5e5e5",
-                padding_x="16px",
-                height="46px",
-                flex="1",
-                font_size="0.9rem",
-                auto_complete=False,
-                custom_attrs={"autocomplete": "off", "data-1p-ignore": "true", "data-lpignore": "true"},
-                _focus={
-                    "border_color": "#2d2d2d",
+                rows=1,
+                style={
+                    "background": "#111111",
+                    "border": "1px solid #1a1a1a",
+                    "border_radius": "10px",
+                    "color": "#e5e5e5",
+                    "padding": "12px 16px",
+                    "flex": "1",
+                    "font_size": "0.9rem",
+                    "font_family": "inherit",
+                    "resize": "none",
+                    "overflow": "hidden",
+                    "max_height": "200px",
+                    "line_height": "1.5",
                     "outline": "none",
                 },
-                _placeholder={"color": "#404040"},
             ),
             rx.button(
                 rx.cond(
@@ -548,8 +549,39 @@ def chat_input(
             ),
             width="100%",
             spacing="2",
-            align="center",
+            align="end",
         ),
+        # JS: auto-grow textarea, Enter to submit, Shift+Enter for newline, reset on submit
+        rx.script("""
+            (function() {
+                const form = document.querySelector('form');
+                if (!form) return;
+                const ta = form.querySelector('textarea[name="message"]');
+                if (!ta) return;
+
+                ta.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+                    this.style.overflow = this.scrollHeight > 200 ? 'auto' : 'hidden';
+                });
+
+                ta.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (this.value.trim()) {
+                            form.requestSubmit();
+                        }
+                    }
+                });
+
+                form.addEventListener('submit', function() {
+                    setTimeout(function() {
+                        ta.style.height = 'auto';
+                        ta.style.overflow = 'hidden';
+                    }, 0);
+                });
+            })();
+        """),
         on_submit=on_submit,
         reset_on_submit=True,
         width="100%",

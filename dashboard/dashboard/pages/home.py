@@ -863,71 +863,58 @@ def profile_card() -> rx.Component:
         border="1px solid #1a1a1a",
         border_radius="16px",
         padding="1.5rem",
-        width="280px",
-        flex_shrink="0",
+        min_width="260px",
+        max_width="320px",
+        flex="1 1 260px",
     )
 
 
-def _wp_row(item: dict) -> rx.Component:
-    """Single watchpoint row — header or item, determined by is_header flag."""
-    return rx.cond(
-        item["is_header"],
-        # Symbol header row
-        rx.hstack(
-            rx.text(
-                item["symbol"],
-                font_size="0.8rem",
-                font_weight="600",
-                color="#fafafa",
+def _wp_accordion_item(group: dict) -> rx.Component:
+    """Single accordion item for a symbol group."""
+    return rx.accordion.item(
+        rx.accordion.header(
+            rx.accordion.trigger(
+                rx.hstack(
+                    rx.text(
+                        group["symbol"],
+                        font_size="0.8rem",
+                        font_weight="600",
+                        color="#fafafa",
+                    ),
+                    rx.badge(
+                        group["count"],
+                        variant="soft",
+                        color_scheme="gray",
+                        size="1",
+                    ),
+                    rx.spacer(),
+                    rx.accordion.icon(),
+                    spacing="2",
+                    align="center",
+                    width="100%",
+                ),
+                padding_y="0.5rem",
+                cursor="pointer",
+                _hover={"opacity": "0.8"},
             ),
-            rx.badge(
-                item["condition"],
-                variant="soft",
-                color_scheme="gray",
-                size="1",
-            ),
-            spacing="2",
-            align="center",
-            padding_top="0.5rem",
-            padding_bottom="0.25rem",
         ),
-        # Watchpoint item row
-        rx.hstack(
-            rx.icon(
-                rx.cond(item["is_up"], "trending-up", "trending-down"),
-                size=13,
-                color=rx.cond(item["is_up"], "#4ade80", "#f87171"),
-                flex_shrink="0",
-            ),
+        rx.accordion.content(
             rx.text(
-                item["condition"],
+                group["detail"],
+                white_space="pre-line",
                 font_size="0.78rem",
-                font_weight="500",
                 color="#d4d4d4",
-                flex_shrink="0",
+                line_height="1.7",
+                padding_left="0.25rem",
+                padding_bottom="0.5rem",
             ),
-            rx.text(
-                item["title"],
-                font_size="0.72rem",
-                color="#525252",
-                overflow="hidden",
-                text_overflow="ellipsis",
-                white_space="nowrap",
-            ),
-            rx.spacer(),
-            rx.text(item["expiry"], font_size="0.6rem", color="#333"),
-            spacing="2",
-            align="center",
-            width="100%",
-            padding_left="0.5rem",
-            padding_y="0.3rem",
-            border_bottom="1px solid #141414",
         ),
+        value=group["symbol"],
     )
 
 
 def _watchlist_card() -> rx.Component:
-    """Watchlist card — grouped by symbol, flat foreach."""
+    """Watchlist card — collapsible accordion per symbol."""
     return rx.box(
         rx.vstack(
             rx.hstack(
@@ -955,11 +942,16 @@ def _watchlist_card() -> rx.Component:
                 align="center",
             ),
             rx.cond(
-                AppState.watchpoints_flat.length() > 0,
-                rx.vstack(
-                    rx.foreach(AppState.watchpoints_flat, _wp_row),
-                    spacing="0",
+                AppState.watchpoint_groups.length() > 0,
+                rx.accordion.root(
+                    rx.foreach(AppState.watchpoint_groups, _wp_accordion_item),
+                    type="multiple",
+                    collapsible=True,
+                    variant="ghost",
                     width="100%",
+                    style={
+                        "& [data-orientation='vertical']": {"border": "none"},
+                    },
                 ),
                 rx.center(
                     rx.text(
@@ -1144,7 +1136,7 @@ def home_page() -> rx.Component:
 
             # Right: Dashboard content
             rx.vstack(
-                # Stats row — 2 cards only (portfolio + status)
+                # Stats row — portfolio + wallet + daemon
                 rx.hstack(
                     stat_card(
                         title="Portfolio Value",
@@ -1156,19 +1148,21 @@ def home_page() -> rx.Component:
                     _daemon_card(),
                     spacing="4",
                     width="100%",
+                    flex_wrap="wrap",
                 ),
 
                 # Positions + Watchlist side by side
                 rx.hstack(
-                    rx.box(positions_section(), flex="1", min_width="0"),
-                    rx.box(_watchlist_card(), flex="1", min_width="0"),
+                    rx.box(positions_section(), flex="1 1 300px", min_width="0"),
+                    rx.box(_watchlist_card(), flex="1 1 260px", min_width="0"),
                     spacing="4",
                     width="100%",
                     align_items="stretch",
+                    flex_wrap="wrap",
                 ),
 
-                # Suggestions below
-                suggestion_cards(),
+                # Suggestions — full-width row
+                rx.box(suggestion_cards(), width="100%"),
 
                 flex="1",
                 spacing="4",
@@ -1179,6 +1173,7 @@ def home_page() -> rx.Component:
             width="100%",
             spacing="4",
             align_items="start",
+            flex_wrap="wrap",
         ),
         width="100%",
         height="100%",

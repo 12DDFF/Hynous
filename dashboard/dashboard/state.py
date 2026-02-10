@@ -880,7 +880,7 @@ class AppState(rx.State):
 
     # === Watchlist State ===
 
-    watchpoints_flat: list[dict] = []
+    watchpoint_groups: list[dict] = []
     watchpoint_count: str = "0"
 
     @_background
@@ -888,15 +888,15 @@ class AppState(rx.State):
         """Fetch active watchpoints from Nous, grouped by symbol."""
         data = await asyncio.to_thread(self._fetch_watchpoints)
         async with self:
-            self.watchpoints_flat = data["flat"]
+            self.watchpoint_groups = data["groups"]
             self.watchpoint_count = str(data["count"])
 
     @staticmethod
     def _fetch_watchpoints() -> dict:
         """Fetch watchpoints from Nous (sync, runs in thread).
 
-        Returns flat list with header rows for symbol grouping.
-        Each row: is_header=True for group headers, False for items.
+        Returns groups list where each group has:
+          symbol, count, detail (pre-formatted multi-line string)
         """
         try:
             from hynous.nous.client import get_client
@@ -906,14 +906,13 @@ class AppState(rx.State):
             nodes = client.list_nodes(subtype="custom:watchpoint", lifecycle="ACTIVE", limit=50)
 
             # Group by symbol
-            by_symbol: dict[str, list[dict]] = {}
+            by_symbol: dict[str, list[str]] = {}
             for n in nodes:
                 body = _json.loads(n.get("content_body", "{}"))
                 trigger = body.get("trigger", {})
                 symbol = trigger.get("symbol", "?")
                 condition = trigger.get("condition", "?")
                 value = trigger.get("value", 0)
-                expiry = trigger.get("expiry", "")[:10]
                 title = n.get("content_title", "")
 
                 # Format value
@@ -931,42 +930,32 @@ class AppState(rx.State):
                         title_short = title_short[len(prefix):].lstrip(" —-")
                         break
 
-                # Condition label
-                is_up = "above" in condition or condition == "fear_greed_extreme"
+                # Condition label + icon
                 if condition == "fear_greed_extreme":
-                    cond_label = f"F&G < {int(value)}"
+                    line = f"⚡ F&G < {int(value)}"
                 elif "above" in condition:
-                    cond_label = f"above {val_str}"
+                    line = f"↗ above {val_str}"
                 else:
-                    cond_label = f"below {val_str}"
+                    line = f"↘ below {val_str}"
 
-                item = {
-                    "is_header": False,
-                    "symbol": symbol,
-                    "condition": cond_label,
-                    "title": title_short[:50],
-                    "expiry": expiry[5:] if expiry else "",
-                    "is_up": is_up,
-                }
-                by_symbol.setdefault(symbol, []).append(item)
+                if title_short:
+                    line += f" — {title_short[:50]}"
 
-            # Build flat list with headers
-            flat: list[dict] = []
+                by_symbol.setdefault(symbol, []).append(line)
+
+            # Build groups
+            groups: list[dict] = []
             for sym in sorted(by_symbol.keys()):
-                items = by_symbol[sym]
-                flat.append({
-                    "is_header": True,
+                lines = by_symbol[sym]
+                groups.append({
                     "symbol": sym,
-                    "condition": f"{len(items)}",
-                    "title": "",
-                    "expiry": "",
-                    "is_up": True,
+                    "count": str(len(lines)),
+                    "detail": "\n".join(lines),
                 })
-                flat.extend(items)
 
-            return {"flat": flat, "count": len(nodes)}
+            return {"groups": groups, "count": len(nodes)}
         except Exception:
-            return {"flat": [], "count": 0}
+            return {"groups": [], "count": 0}
 
     # === Journal State ===
 
