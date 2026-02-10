@@ -188,7 +188,7 @@ def _actions_section() -> rx.Component:
             is_loading=AppState.decay_running,
         ),
         _action_button(
-            "Conflicts", "alert-triangle", "#ef4444",
+            "Conflicts", "triangle-alert", "#ef4444",
             AppState.toggle_conflicts,
             badge_count=AppState.conflict_count,
         ),
@@ -373,7 +373,7 @@ def _conflicts_dialog() -> rx.Component:
         rx.dialog.content(
             rx.vstack(
                 rx.hstack(
-                    rx.icon("alert-triangle", size=18, color="#ef4444"),
+                    rx.icon("triangle-alert", size=18, color="#ef4444"),
                     rx.text("Pending Conflicts", font_weight="600", font_size="1rem"),
                     rx.spacer(),
                     rx.badge(AppState.conflict_count, variant="soft", color_scheme="red"),
