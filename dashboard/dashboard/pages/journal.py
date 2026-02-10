@@ -218,8 +218,7 @@ def _trade_table() -> rx.Component:
 
 def _symbol_row(item: dict) -> rx.Component:
     """Single row in per-symbol breakdown table."""
-    pnl_val = item["pnl"]
-    pnl_color = rx.cond(pnl_val.to(str).contains("-"), "#f87171", "#4ade80")
+    pnl_color = rx.cond(item["pnl_positive"], "#4ade80", "#f87171")
 
     return rx.hstack(
         rx.text(
@@ -243,7 +242,7 @@ def _symbol_row(item: dict) -> rx.Component:
             font_family="JetBrains Mono",
         ),
         rx.text(
-            "$" + pnl_val.to(str),
+            item["pnl"],
             font_size="0.8rem",
             font_weight="500",
             color=pnl_color,

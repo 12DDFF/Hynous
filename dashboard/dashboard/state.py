@@ -930,7 +930,13 @@ class AppState(rx.State):
                 for t in stats.trades[:30]
             ]
             breakdown = [
-                {"symbol": sym, "trades": d["trades"], "win_rate": d["win_rate"], "pnl": d["pnl"]}
+                {
+                    "symbol": sym,
+                    "trades": d["trades"],
+                    "win_rate": d["win_rate"],
+                    "pnl": f"${d['pnl']:.2f}",
+                    "pnl_positive": d["pnl"] >= 0,
+                }
                 for sym, d in sorted(stats.by_symbol.items())
             ]
             return (
