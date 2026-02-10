@@ -1322,8 +1322,10 @@ class AppState(rx.State):
     @_background
     async def load_memory_page(self):
         """Load all memory management data."""
+        async with self:
+            lifecycle = self.stale_filter
         health, conflicts, stale, clusters = await asyncio.to_thread(
-            self._fetch_memory_page_data
+            self._fetch_memory_page_data, lifecycle
         )
         async with self:
             self.memory_node_count = health["node_count"]
@@ -1338,11 +1340,11 @@ class AppState(rx.State):
             self.cluster_total = str(clusters["total"])
 
     @staticmethod
-    def _fetch_memory_page_data() -> tuple:
+    def _fetch_memory_page_data(lifecycle: str = "DORMANT") -> tuple:
         """Fetch all memory page data in one thread."""
         health = AppState._fetch_memory_health()
         conflicts = AppState._fetch_conflicts()
-        stale = AppState._fetch_stale()
+        stale = AppState._fetch_stale(lifecycle)
         clusters = AppState._fetch_clusters()
         return health, conflicts, stale, clusters
 
@@ -1605,7 +1607,9 @@ class AppState(rx.State):
         """Archive all dormant memories."""
         try:
             await asyncio.to_thread(self._exec_bulk_archive)
-            stale = await asyncio.to_thread(self._fetch_stale)
+            async with self:
+                lifecycle = self.stale_filter
+            stale = await asyncio.to_thread(self._fetch_stale, lifecycle)
             health = await asyncio.to_thread(self._fetch_memory_health)
             async with self:
                 self.stale_html = stale["html"]
@@ -1621,11 +1625,14 @@ class AppState(rx.State):
         from hynous.nous.client import get_client
         client = get_client()
         nodes = client.list_nodes(lifecycle="DORMANT", limit=100)
+        archived = 0
         for n in nodes:
             try:
-                client.update_node(n["id"], lifecycle="ARCHIVE")
+                client.update_node(n["id"], state_lifecycle="ARCHIVE")
+                archived += 1
             except Exception:
                 pass
+        logger.info("Bulk archive: %d/%d dormant nodes archived", archived, len(nodes))
 
     def set_stale_filter(self, val: str):
         """Update stale lifecycle filter and refresh."""
