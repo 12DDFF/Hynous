@@ -192,18 +192,51 @@ def _check_missing_protection(provider, warnings: list):
 
 
 def _check_no_watchpoints(provider, memory_state: dict, warnings: list):
-    """Check 3: No watchpoints but has open positions."""
+    """Check 3: No watchpoints — always a problem."""
     watchpoints = memory_state.get("watchpoints", [])
-    if watchpoints:
+
+    if not watchpoints:
+        # Always warn — even with no positions, should be scanning the market
+        try:
+            if provider is None:
+                warnings.append("0 watchpoints — set alerts for levels you're watching")
+                return
+            state = provider.get_user_state()
+            positions = state.get("positions", [])
+            if positions:
+                warnings.append(f"0 watchpoints with {len(positions)} open position{'s' if len(positions) != 1 else ''} — set SL/TP alerts and market scans")
+            else:
+                warnings.append("0 watchpoints and 0 positions — scan the market and set alerts for potential setups")
+        except Exception:
+            warnings.append("0 watchpoints — set alerts for levels you're watching")
         return
 
+    # Have watchpoints — check if they only cover position symbols (tunnel vision)
     try:
         if provider is None:
             return
         state = provider.get_user_state()
         positions = state.get("positions", [])
-        if positions:
-            warnings.append(f"0 watchpoints with {len(positions)} open position{'s' if len(positions) != 1 else ''}")
+        if not positions:
+            return  # No positions — any watchpoints are fine
+
+        # Get symbols from watchpoints (check title for coin mentions)
+        wp_symbols = set()
+        for wp in watchpoints:
+            title = (wp.get("content_title") or "").upper()
+            for sym in ("BTC", "ETH", "SOL", "HYPE", "DOGE", "ARB", "OP", "SUI",
+                        "AVAX", "LINK", "MATIC", "XRP", "ADA", "DOT", "NEAR",
+                        "APT", "FTM", "ATOM", "UNI", "AAVE"):
+                if sym in title:
+                    wp_symbols.add(sym)
+
+        pos_symbols = {p["coin"].upper() for p in positions}
+
+        # All watchpoints only cover position symbols — no market-wide alerts
+        if wp_symbols and wp_symbols.issubset(pos_symbols) and len(positions) > 0:
+            other_majors = {"BTC", "ETH", "SOL"} - pos_symbols
+            if other_majors:
+                warnings.append(f"Watchpoints only cover your positions — add alerts for {', '.join(sorted(other_majors))}")
     except Exception:
         pass
 
