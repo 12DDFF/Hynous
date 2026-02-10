@@ -1,7 +1,7 @@
 """Home page — Hynous profile + dashboard."""
 
 import reflex as rx
-from ..state import AppState, DaemonActivity, WatchpointItem
+from ..state import AppState, DaemonActivity
 from ..components import stat_card, ticker_badge
 
 
@@ -869,43 +869,6 @@ def profile_card() -> rx.Component:
     )
 
 
-def _wp_item_card(item: WatchpointItem) -> rx.Component:
-    """Styled watchpoint item with colored border and accent."""
-    return rx.box(
-        rx.hstack(
-            rx.icon(
-                rx.cond(item.is_up, "trending-up", "trending-down"),
-                size=13,
-                color=rx.cond(item.is_up, "#4ade80", "#f87171"),
-                flex_shrink="0",
-            ),
-            rx.text(
-                item.condition,
-                font_size="0.78rem",
-                font_weight="500",
-                color=rx.cond(item.is_up, "#4ade80", "#f87171"),
-            ),
-            spacing="2",
-            align="center",
-        ),
-        rx.cond(
-            item.title != "",
-            rx.text(
-                item.title,
-                font_size="0.72rem",
-                color="#a3a3a3",
-                padding_top="0.125rem",
-                line_height="1.4",
-            ),
-            rx.fragment(),
-        ),
-        padding="0.5rem 0.625rem",
-        border_left=rx.cond(item.is_up, "2px solid #4ade80", "2px solid #f87171"),
-        background=rx.cond(item.is_up, "rgba(74,222,128,0.05)", "rgba(248,113,113,0.05)"),
-        border_radius="0 6px 6px 0",
-    )
-
-
 def _wp_accordion_item(group) -> rx.Component:
     """Single accordion item for a symbol group."""
     return rx.accordion.item(
@@ -931,12 +894,8 @@ def _wp_accordion_item(group) -> rx.Component:
             ),
         ),
         rx.accordion.content(
-            rx.vstack(
-                rx.foreach(group.entries, _wp_item_card),
-                spacing="2",
-                width="100%",
-                padding_bottom="0.5rem",
-            ),
+            rx.html(group.detail_html),
+            padding_bottom="0.5rem",
         ),
         value=group.symbol,
     )

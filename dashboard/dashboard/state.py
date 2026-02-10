@@ -146,18 +146,11 @@ class ClosedTrade(BaseModel):
     date: str = ""  # Pre-formatted date string (YYYY-MM-DD)
 
 
-class WatchpointItem(BaseModel):
-    """Single watchpoint within a symbol group."""
-    is_up: bool = True
-    condition: str = ""
-    title: str = ""
-
-
 class WatchpointGroup(BaseModel):
     """Watchpoint group for a single symbol (used in accordion)."""
     symbol: str = ""
     count: str = "0"
-    entries: List[WatchpointItem] = []
+    detail_html: str = ""
 
 
 # --- Agent + Daemon singletons (shared across all sessions) ---
@@ -909,17 +902,18 @@ class AppState(rx.State):
     def _fetch_watchpoints() -> dict:
         """Fetch watchpoints from Nous (sync, runs in thread).
 
-        Returns typed WatchpointGroup list with WatchpointItem children.
+        Returns WatchpointGroup list with pre-rendered HTML detail.
         """
         try:
             from hynous.nous.client import get_client
             import json as _json
+            from html import escape
 
             client = get_client()
             nodes = client.list_nodes(subtype="custom:watchpoint", lifecycle="ACTIVE", limit=50)
 
             # Group by symbol
-            by_symbol: dict[str, list[WatchpointItem]] = {}
+            by_symbol: dict[str, list[tuple[bool, str, str]]] = {}
             for n in nodes:
                 body = _json.loads(n.get("content_body", "{}"))
                 trigger = body.get("trigger", {})
@@ -953,14 +947,36 @@ class AppState(rx.State):
                     cond_label = f"below {val_str}"
 
                 by_symbol.setdefault(symbol, []).append(
-                    WatchpointItem(is_up=is_up, condition=cond_label, title=title_short[:50])
+                    (is_up, cond_label, title_short[:50])
                 )
 
-            # Build groups
-            groups = [
-                WatchpointGroup(symbol=sym, count=str(len(items)), entries=items)
-                for sym, items in sorted(by_symbol.items())
-            ]
+            # Build groups with pre-rendered HTML
+            groups: list[WatchpointGroup] = []
+            for sym in sorted(by_symbol.keys()):
+                wp_items = by_symbol[sym]
+                html_parts = []
+                for is_up, cond, title in wp_items:
+                    color = "#4ade80" if is_up else "#f87171"
+                    bg = "rgba(74,222,128,0.05)" if is_up else "rgba(248,113,113,0.05)"
+                    icon = "↗" if is_up else "↘"
+                    title_html = (
+                        f'<div style="font-size:0.72rem;color:#a3a3a3;padding-top:2px;line-height:1.4">'
+                        f'{escape(title)}</div>'
+                    ) if title else ""
+                    html_parts.append(
+                        f'<div style="padding:0.5rem 0.625rem;border-left:2px solid {color};'
+                        f'background:{bg};border-radius:0 6px 6px 0;margin-bottom:0.375rem">'
+                        f'<div style="display:flex;align-items:center;gap:0.375rem">'
+                        f'<span style="color:{color};font-size:0.82rem">{icon}</span>'
+                        f'<span style="font-size:0.78rem;font-weight:500;color:{color}">'
+                        f'{escape(cond)}</span>'
+                        f'</div>{title_html}</div>'
+                    )
+                groups.append(WatchpointGroup(
+                    symbol=sym,
+                    count=str(len(wp_items)),
+                    detail_html="".join(html_parts),
+                ))
 
             return {"groups": groups, "count": len(nodes)}
         except Exception:
