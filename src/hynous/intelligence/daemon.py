@@ -896,9 +896,16 @@ class Daemon:
             lines = [
                 "[DAEMON WAKE — Periodic Market Review]",
                 "",
-                "Briefing has all market data. Don't re-fetch. Under 100 words.",
-                "Address [Warnings] and [Questions] first.",
-                "Then: any setup forming? Any thesis to update?",
+                "Briefing has market data. Address [Warnings] and [Questions] first.",
+                "",
+                "EVERY review you MUST:",
+                "1. Check ALL symbols (BTC, ETH, SOL) — not just your positions. "
+                "What's moving? Any divergence between them?",
+                "2. Check your watchpoints — still relevant? Need new ones?",
+                "3. If you have NO watchpoints set: set at least 2 right now.",
+                "4. If any asset moved >2% since last review: note it, consider a thesis.",
+                "",
+                "Keep status brief. But always leave with active watchpoints.",
             ]
             review_type = "Periodic market review"
 
