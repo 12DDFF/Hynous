@@ -12,6 +12,11 @@ build_code_questions() generates deterministic signal-based questions from the
 data (funding extremes, F&G, orderbook imbalance, etc.). These are threshold
 checks code can do perfectly — no LLM needed.
 
+get_briefing_injection() provides the smart injection for user chats:
+- First message or stale (>5 min): full [Briefing] block (~600 tokens)
+- Subsequent messages: [Update] delta with only what changed (~30-80 tokens)
+- Nothing changed: None (no injection needed)
+
 Cost: zero (Python only).
 """
 
@@ -54,6 +59,27 @@ class AssetData:
     low_7d: float = 0.0
     # Meta
     fetched_at: float = 0.0
+
+
+# ====================================================================
+# InjectedState — snapshot of last-injected values for delta computation
+# ====================================================================
+
+@dataclass
+class InjectedState:
+    """Snapshot of values at last injection, for delta computation."""
+    timestamp: float
+    datacache_poll_time: float
+    prices: dict[str, float] = field(default_factory=dict)
+    portfolio_value: float = 0.0
+    unrealized_pnl: float = 0.0
+    daily_pnl: float = 0.0
+    trading_paused: bool = False
+    positions: dict[str, dict] = field(default_factory=dict)
+    fear_greed: int = 0
+    funding: dict[str, float] = field(default_factory=dict)
+    book_imbalance: dict[str, str] = field(default_factory=dict)
+    memory_counts: tuple[int, int, int] = (0, 0, 0)
 
 
 # ====================================================================
@@ -592,55 +618,243 @@ def build_code_questions(
 
 
 # ====================================================================
-# Cached briefing for user chats (5-min TTL)
+# Delta briefing injection for user chats
 # ====================================================================
 
-_briefing_cache: str | None = None
-_briefing_cache_time: float = 0
-_BRIEFING_TTL = 300  # 5 minutes
+_last_state: InjectedState | None = None
+_last_full_briefing_time: float = 0
+_FULL_BRIEFING_TTL = 300  # 5 minutes — full briefing every 5 min
 
 
-def get_cached_briefing() -> str | None:
-    """Get cached briefing text for user chats.
+def _get_daemon():
+    """Get active daemon (inline import to avoid circular)."""
+    from .daemon import get_active_daemon
+    return get_active_daemon()
 
-    Returns the briefing if daemon is running and DataCache has data.
-    Rebuilds at most once every 5 minutes. Returns None if no data
-    available (daemon not running, no positions, etc.).
+
+def _capture_state(daemon, now: float) -> InjectedState:
+    """Capture current market/portfolio state for delta computation."""
+    from ..data.providers.hyperliquid import get_provider
+
+    state = InjectedState(
+        timestamp=now,
+        datacache_poll_time=daemon._data_cache._last_fetch,
+    )
+
+    # Prices, funding, F&G from daemon snapshot
+    if daemon.snapshot:
+        state.prices = dict(daemon.snapshot.prices)
+        state.funding = dict(daemon.snapshot.funding)
+        state.fear_greed = daemon.snapshot.fear_greed
+
+    # Portfolio + positions from provider
+    try:
+        provider = get_provider()
+        user_state = provider.get_user_state()
+        state.portfolio_value = user_state.get("account_value", 0)
+        state.unrealized_pnl = user_state.get("unrealized_pnl", 0)
+        for p in user_state.get("positions", []):
+            state.positions[p["coin"]] = {
+                "side": p["side"],
+                "entry_px": p["entry_px"],
+                "mark_px": p["mark_px"],
+                "pnl_usd": p["unrealized_pnl"],
+                "pnl_pct": p["return_pct"],
+            }
+    except Exception:
+        pass
+
+    # Daily PnL + circuit breaker
+    state.daily_pnl = daemon._daily_realized_pnl
+    state.trading_paused = daemon._trading_paused
+
+    # Memory counts
+    state.memory_counts = (
+        getattr(daemon, "_active_watchpoint_count", 0),
+        getattr(daemon, "_active_thesis_count", 0),
+        getattr(daemon, "_pending_curiosity_count", 0),
+    )
+
+    # Book imbalance from DataCache
+    for sym in daemon._data_cache.symbols:
+        asset = daemon._data_cache.get(sym)
+        if asset and asset.imbalance:
+            state.book_imbalance[sym] = asset.imbalance
+
+    return state
+
+
+def get_briefing_injection() -> str | None:
+    """Get briefing injection for user chats — full or delta.
+
+    Returns:
+        "[Briefing ...] ... [End Briefing]"  — full briefing (~600 tokens)
+        "[Update ...] ... [End Update]"      — delta only (~30-80 tokens)
+        None                                  — nothing changed, or daemon not running
     """
-    global _briefing_cache, _briefing_cache_time
+    global _last_state, _last_full_briefing_time
+
+    daemon = _get_daemon()
+    if daemon is None or not daemon._data_cache.symbols:
+        return None
 
     now = time.time()
-    if _briefing_cache is not None and (now - _briefing_cache_time) < _BRIEFING_TTL:
-        return _briefing_cache
+    datacache_time = daemon._data_cache._last_fetch
+
+    need_full = (
+        _last_state is None
+        or datacache_time != _last_state.datacache_poll_time
+        or (now - _last_full_briefing_time) > _FULL_BRIEFING_TTL
+    )
+
+    if need_full:
+        return _build_and_store_full(daemon, now, datacache_time)
+    else:
+        return _build_delta(daemon, now)
+
+
+def _build_and_store_full(daemon, now: float, datacache_time: float) -> str | None:
+    """Build full briefing, store state, return wrapped text."""
+    global _last_state, _last_full_briefing_time
 
     try:
-        from .daemon import get_active_daemon
         from ..data.providers.hyperliquid import get_provider
-
-        daemon = get_active_daemon()
-        if daemon is None or not daemon._data_cache.symbols:
-            return None
-
         provider = get_provider()
-        config = daemon.config
 
         briefing = build_briefing(
-            daemon._data_cache, daemon.snapshot, provider, daemon, config,
+            daemon._data_cache, daemon.snapshot, provider, daemon, daemon.config,
         )
-        if briefing:
-            _briefing_cache = briefing
-            _briefing_cache_time = now
-            return _briefing_cache
-    except Exception as e:
-        logger.debug("Cached briefing build failed: %s", e)
+        if not briefing:
+            return None
 
-    return None
+        _last_state = _capture_state(daemon, now)
+        _last_full_briefing_time = now
+
+        return (
+            f"[Briefing — auto-updated, no tool calls needed]\n"
+            f"{briefing}\n"
+            f"[End Briefing]"
+        )
+    except Exception as e:
+        logger.debug("Full briefing build failed: %s", e)
+        return None
+
+
+def _build_delta(daemon, now: float) -> str | None:
+    """Compare current state to last injection, return delta or None."""
+    global _last_state
+
+    try:
+        current = _capture_state(daemon, now)
+    except Exception as e:
+        logger.debug("Delta capture failed: %s", e)
+        return None
+
+    old = _last_state
+    changes: list[str] = []
+
+    # Price changes (>0.1% move)
+    price_parts = []
+    for sym in current.prices:
+        new_px = current.prices[sym]
+        old_px = old.prices.get(sym, 0)
+        if old_px > 0 and abs(new_px - old_px) / old_px > 0.001:
+            pct = ((new_px - old_px) / old_px) * 100
+            price_parts.append(
+                f"{sym} {_fmt_price(old_px)} -> {_fmt_price(new_px)} ({pct:+.1f}%)"
+            )
+    if price_parts:
+        changes.append("Prices: " + " | ".join(price_parts))
+
+    # Position PnL changes (>$1 or new/closed positions)
+    old_coins = set(old.positions.keys())
+    new_coins = set(current.positions.keys())
+
+    for coin in new_coins - old_coins:
+        p = current.positions[coin]
+        changes.append(f"NEW: {coin} {p['side']} @ {_fmt_price(p['entry_px'])}")
+
+    for coin in old_coins - new_coins:
+        changes.append(f"CLOSED: {coin}")
+
+    for coin in old_coins & new_coins:
+        old_p = old.positions[coin]
+        new_p = current.positions[coin]
+        old_usd = old_p["pnl_usd"]
+        new_usd = new_p["pnl_usd"]
+        if abs(new_usd - old_usd) > 1:
+            changes.append(
+                f"{coin}: {'+' if old_usd >= 0 else ''}${old_usd:.0f} -> "
+                f"{'+' if new_usd >= 0 else ''}${new_usd:.0f} "
+                f"({old_p['pnl_pct']:+.1f}% -> {new_p['pnl_pct']:+.1f}%)"
+            )
+
+    # Portfolio value (>$5 change)
+    if abs(current.portfolio_value - old.portfolio_value) > 5:
+        changes.append(
+            f"Portfolio: ${old.portfolio_value:,.0f} -> ${current.portfolio_value:,.0f}"
+        )
+
+    # F&G (>2 points)
+    if current.fear_greed > 0 and abs(current.fear_greed - old.fear_greed) > 2:
+        changes.append(f"F&G: {old.fear_greed} -> {current.fear_greed}")
+
+    # Book imbalance label changed
+    for sym in current.book_imbalance:
+        new_label = current.book_imbalance[sym]
+        old_label = old.book_imbalance.get(sym, "")
+        if new_label != old_label:
+            changes.append(f"{sym} book: {old_label or '?'} -> {new_label}")
+
+    # Funding rate (>1bp change)
+    for sym in current.funding:
+        new_f = current.funding[sym]
+        old_f = old.funding.get(sym, 0)
+        if abs(new_f - old_f) > 0.0001:
+            changes.append(f"{sym} funding: {old_f:+.4%} -> {new_f:+.4%}")
+
+    # Memory counts
+    if current.memory_counts != old.memory_counts:
+        old_wp, old_th, old_cu = old.memory_counts
+        new_wp, new_th, new_cu = current.memory_counts
+        parts = []
+        if new_wp != old_wp:
+            parts.append(f"watchpoints {old_wp}->{new_wp}")
+        if new_th != old_th:
+            parts.append(f"theses {old_th}->{new_th}")
+        if new_cu != old_cu:
+            parts.append(f"curiosity {old_cu}->{new_cu}")
+        if parts:
+            changes.append("Memory: " + ", ".join(parts))
+
+    # Circuit breaker
+    if current.trading_paused != old.trading_paused:
+        if current.trading_paused:
+            changes.append("CIRCUIT BREAKER TRIGGERED")
+        else:
+            changes.append("Circuit breaker reset")
+
+    # Update stored state
+    _last_state = current
+
+    if not changes:
+        return None
+
+    # Age is from last FULL briefing (not last delta)
+    age_sec = now - _last_full_briefing_time
+    if age_sec < 120:
+        age_str = f"{int(age_sec)}s"
+    else:
+        age_str = f"{int(age_sec / 60)}m"
+
+    body = "\n".join(changes)
+    return f"[Update — {age_str} since briefing]\n{body}\n[End Update]"
 
 
 def invalidate_briefing_cache():
-    """Force refresh on next access (call after trades/position changes)."""
-    global _briefing_cache
-    _briefing_cache = None
+    """Force full briefing on next access (call after trades/position changes)."""
+    global _last_state
+    _last_state = None
 
 
 # ====================================================================

@@ -160,15 +160,15 @@ class Agent:
             return None
 
     @staticmethod
-    def _get_cached_briefing() -> str | None:
-        """Get cached briefing from daemon's DataCache (5-min TTL).
+    def _get_briefing_injection() -> str | None:
+        """Get briefing injection — full [Briefing] or delta [Update].
 
-        Returns rich briefing (~600 tokens) if daemon is running and has
-        pre-fetched data. Falls back to None → caller uses basic snapshot.
+        Returns pre-wrapped text if daemon is running and has data.
+        Falls back to None → caller uses basic [Live State] snapshot.
         """
         try:
-            from .briefing import get_cached_briefing
-            return get_cached_briefing()
+            from .briefing import get_briefing_injection
+            return get_briefing_injection()
         except Exception:
             return None
 
@@ -228,6 +228,12 @@ class Agent:
                 # Strip stale [Briefing] blocks
                 if "[Briefing" in content:
                     end_marker = "[End Briefing]\n\n"
+                    idx = content.find(end_marker)
+                    if idx >= 0:
+                        content = content[idx + len(end_marker):]
+                # Strip stale [Update] blocks
+                if "[Update" in content:
+                    end_marker = "[End Update]\n\n"
                     idx = content.find(end_marker)
                     if idx >= 0:
                         content = content[idx + len(end_marker):]
@@ -429,16 +435,11 @@ class Agent:
 
             # Build context injection:
             # - skip_snapshot=True (daemon wake with briefing): no injection
-            # - skip_snapshot=False: try cached briefing first, fall back to snapshot
+            # - skip_snapshot=False: try briefing injection first, fall back to snapshot
             if not skip_snapshot:
-                briefing = self._get_cached_briefing()
-                if briefing:
-                    wrapped = (
-                        f"[Briefing — auto-updated, no tool calls needed]\n"
-                        f"{briefing}\n"
-                        f"[End Briefing]\n\n"
-                        f"{message}"
-                    )
+                injection = self._get_briefing_injection()
+                if injection:
+                    wrapped = f"{injection}\n\n{message}"
                 else:
                     snapshot = self._build_snapshot()
                     if snapshot:
@@ -546,16 +547,11 @@ class Agent:
 
             # Build context injection:
             # - skip_snapshot=True (daemon wake with briefing): no injection
-            # - skip_snapshot=False: try cached briefing first, fall back to snapshot
+            # - skip_snapshot=False: try briefing injection first, fall back to snapshot
             if not skip_snapshot:
-                briefing = self._get_cached_briefing()
-                if briefing:
-                    wrapped = (
-                        f"[Briefing — auto-updated, no tool calls needed]\n"
-                        f"{briefing}\n"
-                        f"[End Briefing]\n\n"
-                        f"{message}"
-                    )
+                injection = self._get_briefing_injection()
+                if injection:
+                    wrapped = f"{injection}\n\n{message}"
                 else:
                     snapshot = self._build_snapshot()
                     if snapshot:
