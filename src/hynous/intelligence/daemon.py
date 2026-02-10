@@ -803,19 +803,38 @@ class Daemon:
             lines = [
                 f"[DAEMON WAKE — Stop Loss: {coin} {side.upper()}]",
                 "", pnl_line,
-                "Recall thesis + store lesson in one batch. Keep response short.",
+                "",
+                "DO ALL OF THIS:",
+                "1. Recall your thesis — what was the setup? What invalidated it?",
+                "2. Store a real lesson — not just 'stops work'. What would you do differently?",
+                "3. Archive the thesis (it's done)",
+                "4. Delete or update any watchpoints tied to this position",
+                "5. Scan the current market — what's the structure now? Any setups forming?",
+                "6. Set new watchpoints for levels you're watching",
+                "Take the space you need. This isn't routine.",
             ]
         elif classification == "take_profit":
             lines = [
                 f"[DAEMON WAKE — Take Profit: {coin} {side.upper()}]",
                 "", pnl_line,
-                "Recall thesis + store lesson in one batch. Keep response short.",
+                "",
+                "DO ALL OF THIS:",
+                "1. Recall your thesis — what worked? What was the edge?",
+                "2. Store a lesson — what pattern can you repeat?",
+                "3. Archive the thesis",
+                "4. Clean up watchpoints tied to this position",
+                "5. Scan the market — ride the momentum or wait? Any follow-up setups?",
+                "6. Set new watchpoints for what you're watching next",
+                "Take the space you need.",
             ]
         else:
             lines = [
                 f"[DAEMON WAKE — Position Closed: {coin} {side.upper()}]",
                 "", pnl_line,
-                "If intentional, already documented. Keep response short.",
+                "",
+                "1. If intentional, store why you closed early",
+                "2. Clean up related watchpoints",
+                "3. Quick market scan — what are you watching now?",
             ]
 
         # Append circuit breaker warning if trading is paused
