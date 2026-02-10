@@ -148,21 +148,26 @@ app = rx.App(
 app.add_page(index, route="/", title="Hynous", on_load=AppState.load_page)
 
 
-# Eagerly start agent + daemon on app boot (don't wait for first page visit).
-# Runs in a background thread so it doesn't block Reflex compilation.
-import threading
+# Eagerly start agent + daemon when the backend server starts.
+# Uses Reflex lifespan task so it only runs in the actual backend worker,
+# not in Reflex's compiler/frontend subprocesses.
+import logging as _logging
 
-def _eager_agent_start():
-    import time
-    time.sleep(5)  # Let Reflex finish startup
+_boot_logger = _logging.getLogger("hynous.boot")
+
+
+async def _eager_agent_start():
+    """Lifespan task: start agent+daemon 3s after backend boots."""
+    import asyncio
+    await asyncio.sleep(3)
     try:
         from .state import _get_agent
-        agent = _get_agent()
+        agent = await asyncio.to_thread(_get_agent)
         if agent:
-            print("[hynous] Agent + daemon started eagerly on boot")
+            _boot_logger.info("Agent + daemon started eagerly on boot")
         else:
-            print("[hynous] Agent failed to start on boot")
+            _boot_logger.warning("Agent failed to start on boot")
     except Exception as e:
-        print(f"[hynous] Eager start error: {e}")
+        _boot_logger.error("Eager start error: %s", e)
 
-threading.Thread(target=_eager_agent_start, daemon=True).start()
+app.register_lifespan_task(_eager_agent_start)
