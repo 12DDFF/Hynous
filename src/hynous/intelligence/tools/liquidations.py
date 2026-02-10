@@ -81,15 +81,19 @@ def handle_get_liquidations(
     view: str = "overview",
     symbol: str | None = None,
     symbols: list[str] | None = None,
-    range: str = "24h",
+    time_range: str = "24h",
+    **kwargs,
 ) -> str:
     """Handle the get_liquidations tool call."""
     from ...data.providers.coinglass import get_provider
 
+    # Accept both "range" (from TOOL_DEF) and "time_range" (Python-safe)
+    time_range = kwargs.get("range", time_range)
+
     provider = get_provider()
 
     if view == "by_exchange":
-        return _by_exchange(provider, symbol or "BTC", range)
+        return _by_exchange(provider, symbol or "BTC", time_range)
     else:
         return _overview(provider, symbols, symbol)
 
@@ -161,12 +165,12 @@ def _overview(provider, symbols: list[str] | None, single_symbol: str | None) ->
     return "\n".join(lines)
 
 
-def _by_exchange(provider, symbol: str, range: str) -> str:
+def _by_exchange(provider, symbol: str, time_range: str) -> str:
     """Per-exchange liquidation breakdown for one coin."""
     symbol = symbol.upper()
 
     try:
-        exchanges = provider.get_liquidation_by_exchange(symbol, range)
+        exchanges = provider.get_liquidation_by_exchange(symbol, time_range)
     except Exception as e:
         logger.error(f"Liquidation exchange-list error for {symbol}: {e}")
         return f"Error fetching exchange liquidation data: {e}"

@@ -358,8 +358,10 @@ def _fear_greed(provider) -> str:
 
     # Current value (latest)
     current = values[-1] if values else 0
-    if isinstance(current, str):
+    try:
         current = float(current)
+    except (ValueError, TypeError):
+        current = 0
 
     # Classification
     if current <= 25:

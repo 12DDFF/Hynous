@@ -466,7 +466,7 @@ def _store_memory_impl(
             matches = similar.get("matches", [])
 
             # DUPLICATE (>= 0.95 cosine): drop the new node entirely
-            if recommendation == "duplicate_found" and matches:
+            if recommendation == "duplicate_found" and matches and len(matches) > 0:
                 top = matches[0]  # Highest similarity match (sorted by Nous)
                 dup_title = top.get("title", "Untitled")
                 dup_id = top.get("node_id", "?")

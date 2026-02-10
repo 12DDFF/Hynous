@@ -562,11 +562,14 @@ def handle_execute_trade(
         except Exception as e:
             return f"Error executing market order: {e}"
 
+    if not isinstance(result, dict):
+        return f"Unexpected order response. Try again."
+
     fill_px = result.get("avg_px", price)
     fill_sz = result.get("filled_sz", 0)
 
-    if result["status"] != "filled" or fill_sz == 0:
-        return f"Order not filled. Status: {result['status']}. Try again or adjust size."
+    if result.get("status") != "filled" or fill_sz == 0:
+        return f"Order not filled. Status: {result.get('status', 'unknown')}. Try again or adjust size."
 
     # Invalidate snapshot + briefing cache so next chat() gets fresh position data
     try:
@@ -606,13 +609,15 @@ def handle_execute_trade(
         lines.append(f"Confidence: {confidence * 100:.0f}%")
 
     # --- Store trade in memory (always — every trade is documented) ---
-    if is_buy:
-        risk = fill_px - stop_loss
-        reward = take_profit - fill_px
-    else:
-        risk = stop_loss - fill_px
-        reward = fill_px - take_profit
-    rr_val = round(reward / risk, 2) if risk > 0 else 0
+    rr_val = 0
+    if stop_loss is not None and take_profit is not None:
+        if is_buy:
+            risk = fill_px - stop_loss
+            reward = take_profit - fill_px
+        else:
+            risk = stop_loss - fill_px
+            reward = fill_px - take_profit
+        rr_val = round(reward / risk, 2) if risk > 0 else 0
 
     _store_trade_memory(
         side, symbol, _fmt_price(fill_px), fill_px,
@@ -812,34 +817,37 @@ def _store_trade_memory(
         signals=signals,
     )
 
-    if node_id:
-        lines.append(f"Trade stored in memory (id: {node_id})")
+    if not node_id:
+        lines.append("Warning: trade memory store failed — trade executed but not recorded in Nous")
+        return None
 
-        # Auto-link to active thesis about this symbol
-        try:
-            from ...nous.client import get_client
-            from ...core.memory_tracker import get_tracker
-            client = get_client()
-            tracker = get_tracker()
-            thesis_nodes = client.search(
-                query=symbol,
-                subtype="custom:thesis",
-                lifecycle="ACTIVE",
-                limit=3,
-            )
-            for thesis in thesis_nodes:
-                thesis_id = thesis.get("id")
-                if thesis_id and thesis_id != node_id:
-                    client.create_edge(
-                        source_id=node_id,
-                        target_id=thesis_id,
-                        type="supports",
-                        strength=0.8,
-                    )
-                    tracker.record_edge(node_id, thesis_id, "supports", "auto thesis link")
-                    lines.append(f"Linked to thesis: {thesis.get('content_title', 'unknown')}")
-        except Exception as e:
-            logger.debug("Auto-link thesis failed: %s", e)
+    lines.append(f"Trade stored in memory (id: {node_id})")
+
+    # Auto-link to active thesis about this symbol
+    try:
+        from ...nous.client import get_client
+        from ...core.memory_tracker import get_tracker
+        client = get_client()
+        tracker = get_tracker()
+        thesis_nodes = client.search(
+            query=symbol,
+            subtype="custom:thesis",
+            lifecycle="ACTIVE",
+            limit=3,
+        )
+        for thesis in thesis_nodes:
+            thesis_id = thesis.get("id")
+            if thesis_id and thesis_id != node_id:
+                client.create_edge(
+                    source_id=node_id,
+                    target_id=thesis_id,
+                    type="supports",
+                    strength=0.8,
+                )
+                tracker.record_edge(node_id, thesis_id, "supports", "auto thesis link")
+                lines.append(f"Linked to thesis: {thesis.get('content_title', 'unknown')}")
+    except Exception as e:
+        logger.debug("Auto-link thesis failed: %s", e)
 
     return node_id
 
@@ -974,6 +982,8 @@ def handle_close_position(
         except Exception as e:
             return f"Error closing position: {e}"
 
+        if not isinstance(result, dict):
+            return "Unexpected close response. Try again."
         exit_px = result.get("avg_px", 0)
         closed_sz = result.get("filled_sz", close_size or full_size)
 
@@ -987,7 +997,7 @@ def handle_close_position(
         pass
 
     # --- Calculate realized PnL ---
-    entry_px = position["entry_px"]
+    entry_px = position.get("entry_px", 0)
     if is_long:
         pnl_per_unit = exit_px - entry_px
     else:
@@ -1163,9 +1173,9 @@ def handle_modify_position(
     if not position:
         return f"No open position for {symbol}."
 
-    is_long = position["side"] == "long"
-    mark_px = position["mark_px"]
-    sz = position["size"]
+    is_long = position.get("side") == "long"
+    mark_px = position.get("mark_px", 0)
+    sz = position.get("size", 0)
 
     # --- Validate new levels vs current mark ---
     if stop_loss is not None:
