@@ -161,6 +161,14 @@ class WatchpointGroup(BaseModel):
     detail_html: str = ""
 
 
+class ClusterDisplay(BaseModel):
+    """Cluster card data with pre-rendered health bar HTML."""
+    name: str = ""
+    node_count: str = "0"
+    health_html: str = ""
+    accent: str = "#525252"
+
+
 # --- Agent + Daemon singletons (shared across all sessions) ---
 
 _agent = None
@@ -453,7 +461,7 @@ class AppState(rx.State):
                 logger.error(f"Failed to load persisted chat: {e}")
 
         # Start background tasks
-        return [AppState.poll_portfolio, AppState.load_watchpoints]
+        return [AppState.poll_portfolio, AppState.load_watchpoints, AppState.load_clusters]
 
     def _save_chat(self, agent=None):
         """Persist current messages and agent history to disk."""
@@ -1104,6 +1112,108 @@ class AppState(rx.State):
             return {"groups": groups, "count": len(nodes)}
         except Exception:
             return {"groups": [], "count": 0}
+
+    # === Clusters State ===
+
+    cluster_displays: List[ClusterDisplay] = []
+    cluster_total: str = "0"
+
+    @_background
+    async def load_clusters(self):
+        """Fetch cluster data from Nous."""
+        data = await asyncio.to_thread(self._fetch_clusters)
+        async with self:
+            self.cluster_displays = data["clusters"]
+            self.cluster_total = str(data["total"])
+
+    @staticmethod
+    def _fetch_clusters() -> dict:
+        """Fetch clusters with health info (sync, runs in thread)."""
+        try:
+            from hynous.nous.client import get_client
+            from html import escape
+
+            client = get_client()
+            clusters = client.list_clusters()
+
+            # Color map for known cluster names
+            accent_map = {
+                "BTC": "#f7931a",
+                "ETH": "#627eea",
+                "SOL": "#9945ff",
+                "Theses": "#60a5fa",
+                "Lessons": "#a3e635",
+                "Trade History": "#f59e0b",
+            }
+
+            displays: list[ClusterDisplay] = []
+            total_nodes = 0
+
+            for cl in clusters:
+                cid = cl.get("id", "")
+                name = cl.get("name", "?")
+                node_count = cl.get("node_count", 0)
+                total_nodes += node_count
+                accent = accent_map.get(name, "#a5b4fc")
+
+                # Fetch health for this cluster
+                health_html = ""
+                try:
+                    health = client.get_cluster_health(cid)
+                    active = health.get("active_nodes", 0)
+                    weak = health.get("weak_nodes", 0)
+                    dormant = health.get("dormant_nodes", 0)
+                    total = active + weak + dormant
+
+                    if total > 0:
+                        a_pct = round(active / total * 100)
+                        w_pct = round(weak / total * 100)
+                        d_pct = 100 - a_pct - w_pct
+
+                        # Health bar
+                        bar = (
+                            f'<div style="display:flex;height:4px;border-radius:2px;overflow:hidden;'
+                            f'background:#1a1a1a;margin-top:6px">'
+                        )
+                        if a_pct > 0:
+                            bar += f'<div style="width:{a_pct}%;background:#22c55e"></div>'
+                        if w_pct > 0:
+                            bar += f'<div style="width:{w_pct}%;background:#eab308"></div>'
+                        if d_pct > 0:
+                            bar += f'<div style="width:{d_pct}%;background:#404040"></div>'
+                        bar += '</div>'
+
+                        # Labels
+                        labels = []
+                        if active:
+                            labels.append(f'<span style="color:#22c55e">{active} active</span>')
+                        if weak:
+                            labels.append(f'<span style="color:#eab308">{weak} weak</span>')
+                        if dormant:
+                            labels.append(f'<span style="color:#525252">{dormant} dormant</span>')
+                        label_row = (
+                            f'<div style="display:flex;gap:8px;font-size:0.65rem;margin-top:4px">'
+                            f'{" ".join(labels)}</div>'
+                        )
+                        health_html = bar + label_row
+                    else:
+                        health_html = (
+                            '<div style="font-size:0.65rem;color:#404040;margin-top:6px">'
+                            'Empty cluster</div>'
+                        )
+                except Exception:
+                    health_html = ""
+
+                displays.append(ClusterDisplay(
+                    name=name,
+                    node_count=str(node_count),
+                    health_html=health_html,
+                    accent=accent,
+                ))
+
+            return {"clusters": displays, "total": total_nodes}
+        except Exception:
+            return {"clusters": [], "total": 0}
 
     # === Journal State ===
 

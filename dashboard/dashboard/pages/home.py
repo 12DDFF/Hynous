@@ -1,7 +1,7 @@
 """Home page — Hynous profile + dashboard."""
 
 import reflex as rx
-from ..state import AppState, DaemonActivity, DaemonActivityFormatted
+from ..state import AppState, DaemonActivity, DaemonActivityFormatted, ClusterDisplay
 from ..components import stat_card, ticker_badge
 
 
@@ -1116,6 +1116,101 @@ def _watchlist_card() -> rx.Component:
     )
 
 
+def _cluster_item(cluster) -> rx.Component:
+    """Single cluster mini card."""
+    return rx.box(
+        rx.vstack(
+            rx.hstack(
+                rx.box(
+                    width="8px",
+                    height="8px",
+                    border_radius="50%",
+                    background=cluster.accent,
+                    flex_shrink="0",
+                ),
+                rx.text(
+                    cluster.name,
+                    font_size="0.82rem",
+                    font_weight="500",
+                    color="#fafafa",
+                ),
+                rx.spacer(),
+                rx.text(
+                    cluster.node_count,
+                    font_size="0.75rem",
+                    color="#525252",
+                    font_weight="500",
+                ),
+                spacing="2",
+                align="center",
+                width="100%",
+            ),
+            rx.html(cluster.health_html),
+            spacing="0",
+            width="100%",
+        ),
+        padding="0.625rem 0.75rem",
+        background="#0d0d0d",
+        border="1px solid #1a1a1a",
+        border_radius="8px",
+    )
+
+
+def _clusters_card() -> rx.Component:
+    """Knowledge clusters card."""
+    return rx.box(
+        rx.vstack(
+            rx.hstack(
+                rx.hstack(
+                    rx.icon("brain", size=14, color="#a5b4fc"),
+                    rx.text(
+                        "Knowledge Clusters",
+                        font_size="0.75rem",
+                        font_weight="600",
+                        color="#737373",
+                        text_transform="uppercase",
+                        letter_spacing="0.05em",
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+                rx.spacer(),
+                rx.badge(
+                    AppState.cluster_total + " memories",
+                    variant="soft",
+                    color_scheme="purple",
+                    size="1",
+                ),
+                width="100%",
+                align="center",
+            ),
+            rx.cond(
+                AppState.cluster_displays.length() > 0,
+                rx.grid(
+                    rx.foreach(AppState.cluster_displays, _cluster_item),
+                    columns="2",
+                    spacing="2",
+                    width="100%",
+                ),
+                rx.center(
+                    rx.text(
+                        "No clusters yet",
+                        font_size="0.8rem",
+                        color="#404040",
+                    ),
+                    padding="1.5rem",
+                ),
+            ),
+            spacing="3",
+            width="100%",
+        ),
+        background="#111111",
+        border="1px solid #1a1a1a",
+        border_radius="12px",
+        padding="1rem",
+    )
+
+
 def _suggestion(text: str, icon_name: str) -> rx.Component:
     """Single suggestion card."""
     return rx.box(
@@ -1299,8 +1394,14 @@ def home_page() -> rx.Component:
                 # Positions — full width
                 rx.box(positions_section(), width="100%"),
 
-                # Watchlist
-                rx.box(_watchlist_card(), width="100%"),
+                # Watchlist + Clusters side by side
+                rx.hstack(
+                    rx.box(_watchlist_card(), flex="1", min_width="0"),
+                    rx.box(_clusters_card(), flex="1", min_width="0"),
+                    spacing="4",
+                    width="100%",
+                    flex_wrap="wrap",
+                ),
 
                 # Suggestions — full-width row
                 rx.box(suggestion_cards(), width="100%"),
