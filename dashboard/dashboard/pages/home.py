@@ -868,6 +868,140 @@ def profile_card() -> rx.Component:
     )
 
 
+def _wp_item(item: dict) -> rx.Component:
+    """Single watchpoint row."""
+    arrow_color = rx.cond(item["is_up"], "#4ade80", "#f87171")
+    arrow_icon = rx.cond(item["is_up"], "trending-up", "trending-down")
+    return rx.box(
+        rx.hstack(
+            rx.icon(arrow_icon, size=14, color=arrow_color, flex_shrink="0"),
+            rx.vstack(
+                rx.hstack(
+                    rx.text(
+                        item["condition"],
+                        font_size="0.8rem",
+                        font_weight="500",
+                        color="#e5e5e5",
+                    ),
+                    rx.text(
+                        item["title"],
+                        font_size="0.75rem",
+                        color="#737373",
+                        overflow="hidden",
+                        text_overflow="ellipsis",
+                        white_space="nowrap",
+                        max_width="200px",
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+                spacing="0",
+            ),
+            rx.spacer(),
+            rx.text(item["expiry"], font_size="0.65rem", color="#404040"),
+            spacing="3",
+            align="center",
+            width="100%",
+        ),
+        padding_y="0.375rem",
+        border_bottom="1px solid #141414",
+    )
+
+
+def _wp_group(group: dict) -> rx.Component:
+    """Watchpoint group — symbol header + items."""
+    return rx.accordion.item(
+        rx.accordion.header(
+            rx.accordion.trigger(
+                rx.hstack(
+                    rx.text(
+                        group["symbol"],
+                        font_size="0.85rem",
+                        font_weight="600",
+                        color="#fafafa",
+                    ),
+                    rx.badge(
+                        group["count"].to(str),
+                        variant="soft",
+                        color_scheme="gray",
+                        size="1",
+                    ),
+                    rx.spacer(),
+                    rx.accordion.icon(),
+                    width="100%",
+                    align="center",
+                ),
+            ),
+        ),
+        rx.accordion.content(
+            rx.vstack(
+                rx.foreach(group["items"], _wp_item),
+                spacing="0",
+                width="100%",
+            ),
+        ),
+        value=group["symbol"],
+    )
+
+
+def _watchlist_card() -> rx.Component:
+    """Watchlist card — collapsible by symbol."""
+    return rx.box(
+        rx.vstack(
+            rx.hstack(
+                rx.hstack(
+                    rx.icon("eye", size=14, color="#fbbf24"),
+                    rx.text(
+                        "Watchlist",
+                        font_size="0.75rem",
+                        font_weight="600",
+                        color="#737373",
+                        text_transform="uppercase",
+                        letter_spacing="0.05em",
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+                rx.spacer(),
+                rx.badge(
+                    AppState.watchpoint_count,
+                    variant="soft",
+                    color_scheme="yellow",
+                    size="1",
+                ),
+                width="100%",
+                align="center",
+            ),
+            rx.cond(
+                AppState.watchpoint_groups.length() > 0,
+                rx.accordion.root(
+                    rx.foreach(AppState.watchpoint_groups, _wp_group),
+                    type="multiple",
+                    variant="ghost",
+                    width="100%",
+                    default_value=AppState.watchpoint_groups.map(
+                        lambda g: g["symbol"]
+                    ),
+                ),
+                rx.center(
+                    rx.text(
+                        "No active watchpoints",
+                        font_size="0.8rem",
+                        color="#404040",
+                    ),
+                    padding="1.5rem",
+                ),
+            ),
+            spacing="3",
+            width="100%",
+        ),
+        background="#111111",
+        border="1px solid #1a1a1a",
+        border_radius="12px",
+        padding="1rem",
+    )
+
+
 def _suggestion(text: str, icon_name: str) -> rx.Component:
     """Single suggestion card."""
     return rx.box(
@@ -1046,14 +1180,17 @@ def home_page() -> rx.Component:
                     width="100%",
                 ),
 
-                # Positions + Suggestions side by side
+                # Positions + Watchlist side by side
                 rx.hstack(
                     rx.box(positions_section(), flex="1", min_width="0"),
-                    rx.box(suggestion_cards(), flex="1", min_width="0"),
+                    rx.box(_watchlist_card(), flex="1", min_width="0"),
                     spacing="4",
                     width="100%",
                     align_items="stretch",
                 ),
+
+                # Suggestions below
+                suggestion_cards(),
 
                 flex="1",
                 spacing="4",
