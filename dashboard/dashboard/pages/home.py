@@ -1167,27 +1167,45 @@ def _events_card() -> rx.Component:
                 rx.fragment(),
             ),
 
-            # Events text
+            # Macro economic events
             rx.cond(
-                AppState.events_text != "",
+                AppState.events_macro_html != "",
                 rx.vstack(
                     rx.text(
-                        "UPCOMING",
+                        "MACRO EVENTS",
                         font_size="0.6rem",
                         font_weight="600",
                         color="#525252",
                         letter_spacing="0.05em",
                     ),
-                    rx.text(
-                        AppState.events_text,
-                        font_size="0.78rem",
-                        color="#a3a3a3",
-                        line_height="1.6",
-                        white_space="pre-wrap",
-                    ),
+                    rx.html(AppState.events_macro_html),
                     spacing="1",
                     width="100%",
                 ),
+                rx.fragment(),
+            ),
+
+            # Crypto events
+            rx.cond(
+                AppState.events_crypto_html != "",
+                rx.vstack(
+                    rx.text(
+                        "CRYPTO EVENTS",
+                        font_size="0.6rem",
+                        font_weight="600",
+                        color="#525252",
+                        letter_spacing="0.05em",
+                    ),
+                    rx.html(AppState.events_crypto_html),
+                    spacing="1",
+                    width="100%",
+                ),
+                rx.fragment(),
+            ),
+
+            # Empty state — only when both are empty
+            rx.cond(
+                (AppState.events_macro_html == "") & (AppState.events_crypto_html == "") & (AppState.events_funding_html == ""),
                 rx.center(
                     rx.vstack(
                         rx.icon("calendar-off", size=20, color="#333"),
@@ -1197,7 +1215,7 @@ def _events_card() -> rx.Component:
                             color="#404040",
                         ),
                         rx.text(
-                            "Daemon polls Perplexity every 6h",
+                            "Daemon polls every 6h",
                             font_size="0.7rem",
                             color="#333",
                         ),
@@ -1206,6 +1224,7 @@ def _events_card() -> rx.Component:
                     ),
                     padding="1.5rem",
                 ),
+                rx.fragment(),
             ),
 
             spacing="3",

@@ -761,19 +761,117 @@ class AppState(rx.State):
             return []
 
     @rx.var(cache=False)
-    def events_text(self) -> str:
-        """Cached event calendar text from daemon."""
+    def events_macro_html(self) -> str:
+        """Pre-rendered HTML for macro economic events."""
         if _daemon is None:
             return ""
-        return _daemon.cached_events_text or ""
+        data = _daemon.cached_events
+        if not data or not isinstance(data, dict):
+            return ""
+        macro = data.get("macro", [])
+        if not macro:
+            return ""
+        from html import escape
+        rows = []
+        for e in macro:
+            name = escape(str(e.get("name", "")))
+            date = escape(str(e.get("date", "")))
+            country = escape(str(e.get("country", "")))
+            impact = str(e.get("impact", "")).lower()
+            estimate = escape(str(e.get("estimate", "")))
+            previous = escape(str(e.get("previous", "")))
+            # Impact dot color
+            dot_color = "#ef4444" if impact == "high" else "#fbbf24" if impact == "medium" else "#525252"
+            # Values line
+            vals = ""
+            if estimate or previous:
+                parts = []
+                if estimate:
+                    parts.append(f"Est: {estimate}")
+                if previous:
+                    parts.append(f"Prev: {previous}")
+                vals = (
+                    f'<span style="font-size:0.68rem;color:#525252;margin-left:4px">'
+                    f'{" / ".join(parts)}</span>'
+                )
+            rows.append(
+                f'<div style="display:flex;align-items:center;gap:6px;padding:4px 0;'
+                f'border-bottom:1px solid #1a1a1a">'
+                f'<span style="font-size:0.7rem;color:#525252;min-width:42px;flex-shrink:0">{date}</span>'
+                f'<span style="width:6px;height:6px;border-radius:50%;background:{dot_color};flex-shrink:0"></span>'
+                f'<span style="font-size:0.75rem;color:#e5e5e5">{name}'
+                f'<span style="color:#525252;font-size:0.68rem"> ({country})</span>'
+                f'{vals}</span>'
+                f'</div>'
+            )
+        return "".join(rows)
+
+    @rx.var(cache=False)
+    def events_crypto_html(self) -> str:
+        """Pre-rendered HTML for crypto events."""
+        if _daemon is None:
+            return ""
+        data = _daemon.cached_events
+        if not data or not isinstance(data, dict):
+            return ""
+        crypto = data.get("crypto", [])
+        if not crypto:
+            return ""
+        from html import escape
+        rows = []
+        for e in crypto:
+            title = escape(str(e.get("title", "")))
+            date = escape(str(e.get("date", "")))
+            coins = e.get("coins", [])
+            category = escape(str(e.get("category", "")))
+            # Format date to short
+            if len(date) == 10:  # YYYY-MM-DD
+                try:
+                    from datetime import datetime
+                    dt = datetime.strptime(date, "%Y-%m-%d")
+                    date = dt.strftime("%b %d")
+                except Exception:
+                    pass
+            # Coin badges
+            coin_html = ""
+            for sym in coins[:3]:
+                coin_html += (
+                    f'<span style="font-size:0.7rem;font-weight:600;color:#818cf8;'
+                    f'margin-right:4px">{escape(sym)}</span>'
+                )
+            # Category badge
+            cat_html = ""
+            if category:
+                cat_html = (
+                    f'<span style="font-size:0.62rem;color:#525252;background:#1a1a1a;'
+                    f'padding:1px 5px;border-radius:4px;margin-left:4px">{category}</span>'
+                )
+            rows.append(
+                f'<div style="display:flex;align-items:center;gap:6px;padding:4px 0;'
+                f'border-bottom:1px solid #1a1a1a">'
+                f'<span style="font-size:0.7rem;color:#525252;min-width:42px;flex-shrink:0">{date}</span>'
+                f'{coin_html}'
+                f'<span style="font-size:0.73rem;color:#a3a3a3;flex:1;min-width:0;'
+                f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{title}{cat_html}</span>'
+                f'</div>'
+            )
+        return "".join(rows)
 
     @rx.var(cache=False)
     def events_age_str(self) -> str:
         """How long ago events were fetched."""
         if _daemon is None:
             return ""
-        age = _daemon.events_age_seconds
-        if age == float("inf"):
+        data = _daemon.cached_events
+        if not data or not isinstance(data, dict):
+            age = _daemon.events_age_seconds
+        else:
+            fetched_at = data.get("fetched_at", 0)
+            if not fetched_at:
+                return ""
+            import time as _time
+            age = _time.time() - fetched_at
+        if age == float("inf") or age < 0:
             return ""
         mins = int(age / 60)
         if mins < 60:
