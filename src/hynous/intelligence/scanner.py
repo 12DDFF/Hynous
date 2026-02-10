@@ -136,6 +136,9 @@ class MarketScanner:
         self.anomalies_detected: int = 0
         self.wakes_triggered: int = 0
 
+        # Recent anomaly history for dashboard display
+        self._recent_anomalies: deque = deque(maxlen=20)
+
         self._warmup_logged = False
 
     # -----------------------------------------------------------------
@@ -241,6 +244,11 @@ class MarketScanner:
 
         unique.sort(key=lambda a: a.severity, reverse=True)
         self.anomalies_detected += len(unique)
+
+        # Store in history for dashboard
+        for a in unique:
+            self._recent_anomalies.append(a)
+
         return unique
 
     def _boost_severity(self, symbol: str, severity: float) -> float:
@@ -250,6 +258,28 @@ class MarketScanner:
         if symbol in self.position_symbols:
             severity += 0.15
         return min(severity, 1.0)
+
+    def get_status(self) -> dict:
+        """Export scanner state for dashboard display."""
+        return {
+            "active": self._warmup_logged or self._price_polls >= _WARMUP_PRICES,
+            "warming_up": not self._warmup_logged and self._price_polls < _WARMUP_PRICES,
+            "price_polls": self._price_polls,
+            "deriv_polls": self._deriv_polls,
+            "pairs_count": len(self._liquid_symbols),
+            "anomalies_detected": self.anomalies_detected,
+            "wakes_triggered": self.wakes_triggered,
+            "recent": [
+                {
+                    "type": a.type,
+                    "symbol": a.symbol,
+                    "severity": round(a.severity, 2),
+                    "headline": a.headline,
+                    "detected_at": a.detected_at,
+                }
+                for a in reversed(self._recent_anomalies)
+            ],
+        }
 
     # -----------------------------------------------------------------
     # Dedup

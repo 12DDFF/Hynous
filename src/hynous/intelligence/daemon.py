@@ -272,6 +272,7 @@ class Daemon:
             "polls": self.polls,
             "trading_paused": self._trading_paused,
             "daily_pnl": self._daily_realized_pnl,
+            "scanner": self._scanner.get_status() if self._scanner else None,
             "snapshot": {
                 "prices": dict(self.snapshot.prices),
                 "fear_greed": self.snapshot.fear_greed,

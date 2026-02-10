@@ -568,16 +568,17 @@ class AppState(rx.State):
             except Exception:
                 pass
 
-            # Refresh memory data every ~60s (4 polls)
+            # Refresh memory + scanner data every ~60s (4 polls)
             _cluster_tick += 1
             if _cluster_tick % 4 == 0:
                 try:
-                    cluster_data, health_data, conflict_data, wp_data = await asyncio.to_thread(
+                    cluster_data, health_data, conflict_data, wp_data, scanner_data = await asyncio.to_thread(
                         lambda: (
                             AppState._fetch_clusters(),
                             AppState._fetch_memory_health(),
                             AppState._fetch_conflicts(),
                             AppState._fetch_watchpoints(),
+                            AppState._fetch_scanner_status(),
                         )
                     )
                     async with self:
@@ -590,6 +591,15 @@ class AppState(rx.State):
                         self.conflict_count = conflict_data["count"]
                         self.watchpoint_groups = wp_data["groups"]
                         self.watchpoint_count = str(wp_data["count"])
+                        # Scanner banner
+                        self.scanner_active = scanner_data["active"]
+                        self.scanner_warming_up = scanner_data["warming_up"]
+                        self.scanner_price_polls = scanner_data["price_polls"]
+                        self.scanner_deriv_polls = scanner_data["deriv_polls"]
+                        self.scanner_pairs_count = scanner_data["pairs_count"]
+                        self.scanner_anomalies_total = scanner_data["anomalies_detected"]
+                        self.scanner_wakes_total = scanner_data["wakes_triggered"]
+                        self.scanner_recent = scanner_data["recent"]
                 except Exception:
                     pass
 
@@ -1304,6 +1314,121 @@ class AppState(rx.State):
             return {"clusters": displays, "total": total_nodes}
         except Exception:
             return {"clusters": [], "total": 0}
+
+    # === Scanner Banner State ===
+
+    scanner_active: bool = False
+    scanner_warming_up: bool = False
+    scanner_price_polls: int = 0
+    scanner_deriv_polls: int = 0
+    scanner_pairs_count: int = 0
+    scanner_anomalies_total: int = 0
+    scanner_wakes_total: int = 0
+    scanner_recent: list[dict] = []
+    scanner_expanded: bool = False
+
+    def toggle_scanner_expanded(self):
+        """Toggle scanner detail panel."""
+        self.scanner_expanded = not self.scanner_expanded
+
+    @rx.var(cache=False)
+    def scanner_status_text(self) -> str:
+        """Scanner headline for banner."""
+        if _daemon is None or not _daemon.is_running or _daemon._scanner is None:
+            return "Scanner Offline"
+        if self.scanner_warming_up:
+            return f"Warming Up  {self.scanner_price_polls}/5 price  {self.scanner_deriv_polls}/2 deriv"
+        if self.scanner_active:
+            return f"Scanner Active  {self.scanner_pairs_count} pairs"
+        return "Scanner Idle"
+
+    @rx.var(cache=False)
+    def scanner_status_color(self) -> str:
+        """Color for scanner icon."""
+        if self.scanner_active:
+            return "#2dd4bf"
+        if self.scanner_warming_up:
+            return "#fbbf24"
+        return "#525252"
+
+    @rx.var(cache=False)
+    def scanner_subtitle(self) -> str:
+        """Secondary text for banner."""
+        if not self.scanner_active and not self.scanner_warming_up:
+            return ""
+        parts = []
+        if self.scanner_anomalies_total > 0:
+            parts.append(f"{self.scanner_anomalies_total} anomalies")
+        if self.scanner_wakes_total > 0:
+            parts.append(f"{self.scanner_wakes_total} wakes")
+        if not parts:
+            return "No anomalies yet"
+        return " \u00b7 ".join(parts)
+
+    @rx.var(cache=False)
+    def scanner_recent_html(self) -> str:
+        """Pre-rendered HTML for recent anomaly rows."""
+        import time as _time
+        if not self.scanner_recent:
+            return (
+                '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.72rem;'
+                'color:#404040;text-align:center;padding:0.5rem 0;">'
+                'No anomalies detected yet</div>'
+            )
+        rows = []
+        now = _time.time()
+        for a in self.scanner_recent[:10]:
+            age_s = int(now - a.get("detected_at", now))
+            if age_s < 60:
+                age = "just now"
+            elif age_s < 3600:
+                age = f"{age_s // 60}m ago"
+            else:
+                age = f"{age_s // 3600}h ago"
+
+            sev = a.get("severity", 0)
+            if sev >= 0.7:
+                sev_color = "#ef4444"
+            elif sev >= 0.5:
+                sev_color = "#fbbf24"
+            else:
+                sev_color = "#525252"
+
+            sym = a.get("symbol", "?")
+            headline = a.get("headline", "")
+            # Escape HTML
+            from html import escape
+            headline = escape(headline)
+
+            rows.append(
+                f'<div style="display:flex;gap:0.75rem;padding:0.25rem 0;align-items:center;">'
+                f'<span style="width:52px;color:#525252;flex-shrink:0">{age}</span>'
+                f'<span style="width:48px;color:#2dd4bf;font-weight:500;flex-shrink:0">{sym}</span>'
+                f'<span style="flex:1;color:#a3a3a3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{headline}</span>'
+                f'<span style="width:36px;text-align:right;color:{sev_color};flex-shrink:0">{sev:.2f}</span>'
+                f'</div>'
+            )
+        html = (
+            '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.72rem;">'
+            + "".join(rows)
+            + '</div>'
+        )
+        return html
+
+    @staticmethod
+    def _fetch_scanner_status() -> dict:
+        """Read scanner status from daemon (sync, thread-safe)."""
+        try:
+            if _daemon is not None and _daemon._scanner is not None:
+                return _daemon._scanner.get_status()
+        except Exception:
+            pass
+        return {
+            "active": False, "warming_up": False,
+            "price_polls": 0, "deriv_polls": 0,
+            "pairs_count": 0, "anomalies_detected": 0,
+            "wakes_triggered": 0, "recent": [],
+        }
 
     # === Memory Management State ===
 

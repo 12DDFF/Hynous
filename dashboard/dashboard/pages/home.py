@@ -1353,6 +1353,84 @@ def positions_section() -> rx.Component:
     )
 
 
+def _scanner_banner() -> rx.Component:
+    """Collapsible scanner activity banner — shows market scanner status + recent anomalies."""
+    return rx.box(
+        # Header row (always visible)
+        rx.hstack(
+            rx.icon("radar", size=16, color=AppState.scanner_status_color),
+            rx.text(
+                AppState.scanner_status_text,
+                font_size="0.8rem",
+                font_weight="500",
+                color="#e5e5e5",
+            ),
+            rx.text("\u00b7", color="#404040"),
+            rx.text(
+                AppState.scanner_subtitle,
+                font_size="0.8rem",
+                color="#737373",
+            ),
+            rx.spacer(),
+            rx.icon(
+                rx.cond(AppState.scanner_expanded, "chevron-up", "chevron-down"),
+                size=14,
+                color="#525252",
+            ),
+            width="100%",
+            spacing="2",
+            align="center",
+        ),
+        # Expandable detail (recent anomalies)
+        rx.cond(
+            AppState.scanner_expanded,
+            rx.box(
+                rx.html(AppState.scanner_recent_html),
+                padding_top="0.75rem",
+                border_top="1px solid #1a1a1a",
+                margin_top="0.75rem",
+            ),
+            rx.fragment(),
+        ),
+        # Container styling — teal/amber/gray tint based on state
+        background=rx.cond(
+            AppState.scanner_active,
+            "color-mix(in srgb, #2dd4bf 5%, #111111)",
+            rx.cond(
+                AppState.scanner_warming_up,
+                "color-mix(in srgb, #fbbf24 5%, #111111)",
+                "#111111",
+            ),
+        ),
+        border=rx.cond(
+            AppState.scanner_active,
+            "1px solid rgba(45,212,191,0.15)",
+            rx.cond(
+                AppState.scanner_warming_up,
+                "1px solid rgba(251,191,36,0.15)",
+                "1px solid #1a1a1a",
+            ),
+        ),
+        border_radius="12px",
+        padding="0.75rem 1rem",
+        width="100%",
+        cursor="pointer",
+        transition="all 0.15s ease",
+        _hover={
+            "border_color": rx.cond(
+                AppState.scanner_active,
+                "rgba(45,212,191,0.3)",
+                rx.cond(
+                    AppState.scanner_warming_up,
+                    "rgba(251,191,36,0.3)",
+                    "#2a2a2a",
+                ),
+            ),
+        },
+        on_click=AppState.toggle_scanner_expanded,
+    )
+
+
 def home_page() -> rx.Component:
     """Home page — profile card + dashboard info."""
     return rx.box(
@@ -1376,6 +1454,9 @@ def home_page() -> rx.Component:
                     width="100%",
                     flex_wrap="wrap",
                 ),
+
+                # Scanner banner
+                _scanner_banner(),
 
                 # Positions — full width
                 rx.box(positions_section(), width="100%"),
