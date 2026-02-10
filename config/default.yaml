@@ -17,7 +17,7 @@ execution:
 
 # Hyperliquid exchange settings
 hyperliquid:
-  default_leverage: 5          # Cross margin, conservative
+  default_leverage: 10         # Minimum 10x, always set per-trade
   max_position_usd: 10000     # Safety cap per position on testnet
   default_slippage: 0.05       # 5% slippage tolerance for market orders
 

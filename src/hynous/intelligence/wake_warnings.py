@@ -45,13 +45,16 @@ def build_warnings(provider, daemon, nous_client, config) -> tuple[str, dict]:
         # 4. Stale curiosity (>3d)
         _check_stale_curiosity(memory_state, warnings)
 
-        # 5. Staleness (same pattern 3 wakes)
+        # 5. Big unrealized gain at risk
+        _check_profit_at_risk(provider, warnings)
+
+        # 6. Staleness (same pattern 3 wakes)
         _check_staleness(daemon, warnings)
 
-        # 6. Circuit breaker
+        # 7. Circuit breaker
         _check_circuit_breaker(daemon, warnings)
 
-        # 7. Pending thought from last review
+        # 8. Pending thought from last review
         thought_lines = _get_pending_thoughts(daemon)
 
         # Assemble output
@@ -237,6 +240,23 @@ def _check_no_watchpoints(provider, memory_state: dict, warnings: list):
             other_majors = {"BTC", "ETH", "SOL"} - pos_symbols
             if other_majors:
                 warnings.append(f"Watchpoints only cover your positions — add alerts for {', '.join(sorted(other_majors))}")
+    except Exception:
+        pass
+
+
+def _check_profit_at_risk(provider, warnings: list):
+    """Check 5: Position with big unrealized gain — tighten stop or take profit."""
+    if provider is None:
+        return
+    try:
+        state = provider.get_user_state()
+        for p in state.get("positions", []):
+            ret_pct = p.get("return_pct", 0)
+            coin = p["coin"]
+            if ret_pct >= 10:
+                warnings.append(f"{coin} is up {ret_pct:.1f}% — that's exceptional. Tighten stop or take profit NOW. Don't let this become 0%.")
+            elif ret_pct >= 7:
+                warnings.append(f"{coin} is up {ret_pct:.1f}% — tighten stop to lock in at least half this gain")
     except Exception:
         pass
 

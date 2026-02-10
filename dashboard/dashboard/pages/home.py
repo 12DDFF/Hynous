@@ -922,22 +922,48 @@ def suggestion_cards() -> rx.Component:
 def position_row(pos) -> rx.Component:
     """Single position row."""
     return rx.hstack(
-        rx.text(pos.symbol, color="#e5e5e5", font_size="0.85rem", width="20%"),
+        # Symbol + Side
+        rx.hstack(
+            rx.text(pos.symbol, color="#e5e5e5", font_size="0.85rem", font_weight="500"),
+            rx.text(
+                pos.side.upper(),
+                color=rx.cond(pos.side == "long", "#22c55e", "#ef4444"),
+                font_size="0.7rem",
+                font_weight="600",
+            ),
+            spacing="0.375rem",
+            width="18%",
+            align_items="center",
+        ),
+        # Margin (size / leverage)
+        rx.text("$" + (pos.size / pos.leverage).to(int).to(str), color="#a3a3a3", font_size="0.85rem", width="14%"),
+        # Size (notional)
+        rx.text("$" + pos.size.to(int).to(str), color="#a3a3a3", font_size="0.85rem", width="14%"),
+        # Leverage
         rx.text(
-            pos.side.upper(),
-            color=rx.cond(pos.side == "long", "#22c55e", "#ef4444"),
+            pos.leverage.to(str) + "x",
+            color="#fbbf24",
             font_size="0.85rem",
             font_weight="500",
-            width="20%",
+            width="10%",
         ),
-        rx.text("$" + pos.size.to(str), color="#a3a3a3", font_size="0.85rem", width="20%"),
-        rx.text("$" + pos.entry.to(str), color="#a3a3a3", font_size="0.85rem", width="20%"),
+        # Entry price
+        rx.text("$" + pos.entry.to(str), color="#a3a3a3", font_size="0.85rem", width="18%"),
+        # P&L %
         rx.text(
             pos.pnl.to(str) + "%",
             color=rx.cond(pos.pnl >= 0, "#22c55e", "#ef4444"),
             font_size="0.85rem",
             font_weight="500",
-            width="20%",
+            width="13%",
+        ),
+        # P&L $
+        rx.text(
+            rx.cond(pos.pnl_usd >= 0, "+$", "-$") + rx.cond(pos.pnl_usd >= 0, pos.pnl_usd, pos.pnl_usd * -1).to(str),
+            color=rx.cond(pos.pnl_usd >= 0, "#22c55e", "#ef4444"),
+            font_size="0.85rem",
+            font_weight="600",
+            width="13%",
         ),
         width="100%",
         padding_y="0.625rem",
@@ -961,11 +987,13 @@ def positions_section() -> rx.Component:
                 AppState.positions.length() > 0,
                 rx.vstack(
                     rx.hstack(
-                        rx.text("Symbol", color="#525252", font_size="0.7rem", width="20%"),
-                        rx.text("Side", color="#525252", font_size="0.7rem", width="20%"),
-                        rx.text("Size", color="#525252", font_size="0.7rem", width="20%"),
-                        rx.text("Entry", color="#525252", font_size="0.7rem", width="20%"),
-                        rx.text("P&L", color="#525252", font_size="0.7rem", width="20%"),
+                        rx.text("Symbol", color="#525252", font_size="0.7rem", width="18%"),
+                        rx.text("Margin", color="#525252", font_size="0.7rem", width="14%"),
+                        rx.text("Size", color="#525252", font_size="0.7rem", width="14%"),
+                        rx.text("Lev", color="#525252", font_size="0.7rem", width="10%"),
+                        rx.text("Entry", color="#525252", font_size="0.7rem", width="18%"),
+                        rx.text("P&L %", color="#525252", font_size="0.7rem", width="13%"),
+                        rx.text("P&L $", color="#525252", font_size="0.7rem", width="13%"),
                         width="100%",
                         padding_bottom="0.5rem",
                         border_bottom="1px solid #1a1a1a",

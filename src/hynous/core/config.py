@@ -48,7 +48,7 @@ class HyperliquidConfig:
     """Hyperliquid exchange settings."""
     mainnet_url: str = "https://api.hyperliquid.xyz"
     testnet_url: str = "https://api.hyperliquid-testnet.xyz"
-    default_leverage: int = 5
+    default_leverage: int = 10
     max_position_usd: float = 10000  # Safety cap per position
     default_slippage: float = 0.05   # 5% slippage tolerance for market orders
 

@@ -300,22 +300,22 @@ TRADE_TOOL_DEF = {
         "Position sizing (provide one):\n"
         "- size_usd: Size in USD (e.g. 2000)\n"
         "- size: Size in base asset (e.g. 0.03 BTC)\n\n"
-        "Risk management (required):\n"
+        "Risk management (ALL required):\n"
+        "- leverage: REQUIRED, minimum 10x\n"
         "- stop_loss: Where my thesis is wrong — auto-placed as trigger order\n"
         "- take_profit: Where I take profit — auto-placed as trigger order\n"
         "- reasoning: My full thesis for this trade — stored in memory\n\n"
         "Optional:\n"
-        "- leverage: Per-trade leverage (overrides account default)\n"
         "- slippage: Max slippage for market orders (default from config)\n"
         "- confidence: How sure I am (0.0-1.0), affects position sizing decisions\n\n"
         "Examples:\n"
         '  Market entry:\n'
-        '    {"symbol": "BTC", "side": "long", "size_usd": 2000, "stop_loss": 66000, '
+        '    {"symbol": "BTC", "side": "long", "size_usd": 2000, "leverage": 10, "stop_loss": 66000, '
         '"take_profit": 72000, "reasoning": "Funding reset from +0.03% to -0.01%, '
         'shorts crowding, support held at 67K with strong bid wall. R:R ~3:1."}\n'
-        '  With leverage + confidence:\n'
-        '    {"symbol": "ETH", "side": "short", "size_usd": 1500, "stop_loss": 3900, '
-        '"take_profit": 3400, "leverage": 10, "confidence": 0.7, '
+        '  Higher leverage + confidence:\n'
+        '    {"symbol": "ETH", "side": "short", "size_usd": 1500, "leverage": 15, "stop_loss": 3900, '
+        '"take_profit": 3400, "confidence": 0.7, '
         '"reasoning": "Bearish divergence on 4h, OI rising but price flat..."}\n'
         '  Limit entry:\n'
         '    {"symbol": "SOL", "side": "long", "size_usd": 1000, "order_type": "limit", '
@@ -358,8 +358,8 @@ TRADE_TOOL_DEF = {
             },
             "leverage": {
                 "type": "integer",
-                "description": "Leverage for this trade. Omit to use account default.",
-                "minimum": 1,
+                "description": "Leverage for this trade. REQUIRED — minimum 10x.",
+                "minimum": 10,
             },
             "stop_loss": {
                 "type": "number",
@@ -386,7 +386,7 @@ TRADE_TOOL_DEF = {
                 "description": "Full trade thesis — why entering, what signals support it. Always stored in memory.",
             },
         },
-        "required": ["symbol", "side", "stop_loss", "take_profit", "reasoning"],
+        "required": ["symbol", "side", "leverage", "stop_loss", "take_profit", "reasoning"],
     },
 }
 
@@ -418,6 +418,10 @@ def handle_execute_trade(
 
     symbol = symbol.upper()
     is_buy = side == "long"
+
+    # --- Validate leverage (mandatory, minimum 10x) ---
+    if leverage is None or leverage < 10:
+        return "Error: leverage is required and must be at least 10x."
 
     # --- Validate sizing ---
     if size_usd is None and size is None:
