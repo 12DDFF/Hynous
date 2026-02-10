@@ -37,7 +37,7 @@ daemon:
   price_poll_interval: 60          # Price polling from Hyperliquid (seconds)
   deriv_poll_interval: 300         # Derivatives/sentiment polling (seconds)
   periodic_interval: 3600          # Periodic market review wake (seconds, 60 min)
-  curiosity_threshold: 3           # Pending curiosity items before learning session
+  curiosity_threshold: 1           # Pending curiosity items before learning session
   curiosity_check_interval: 900    # Curiosity queue check interval (seconds, 15 min)
   max_daily_loss_usd: 100            # Circuit breaker: pause trading after this daily loss
   max_open_positions: 3              # Max simultaneous open positions

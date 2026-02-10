@@ -35,6 +35,7 @@ WHAT TO LOOK FOR:
 - A thesis assumption that current market data contradicts
 - A risk the trader isn't thinking about (correlation, timing, macro)
 - Something across recent wakes that forms a pattern
+- A concept or theory the trader should understand to interpret the current data better
 
 Write 1-2 questions (under 30 words each). Specific, using numbers from the data.
 Good: "7d funding rising but 24h price flat — longs building without price \

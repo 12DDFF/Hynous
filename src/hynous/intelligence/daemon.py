@@ -159,6 +159,7 @@ class Daemon:
         self.watchpoint_fires: int = 0
         self.learning_sessions: int = 0
         self.polls: int = 0
+        self._review_count: int = 0
 
     # ================================================================
     # Cached Provider Access
@@ -846,35 +847,56 @@ class Daemon:
                          classification, coin, side, pnl_sign, abs(realized_pnl))
 
     def _wake_for_review(self):
-        """Periodic market review — snapshot provides all context now.
+        """Periodic market review — alternates between normal and learning reviews.
 
-        The agent sees portfolio, positions, market, and memory counts
-        automatically via the snapshot injection in agent.chat().
-        Warnings push the agent to address real issues first.
+        Every 3rd review is a learning review that prompts the agent to
+        explore a concept, pattern, or contradiction using search_web.
+        Normal reviews stay brief (under 100 words).
         """
-        lines = [
-            "[DAEMON WAKE — Periodic Market Review]",
-            "",
-            "Briefing has all market data. Don't re-fetch. Under 100 words.",
-            "Address [Warnings] and [Questions] first.",
-            "Then: any setup forming? Any thesis to update?",
-        ]
+        self._review_count += 1
+        is_learning = self._review_count % 3 == 0
+
+        if is_learning:
+            lines = [
+                "[DAEMON WAKE — Periodic Review + Learning]",
+                "",
+                "Briefing has market data. Address [Warnings] and [Questions] first.",
+                "",
+                "Then pick ONE:",
+                "a) A concept from this session you want to understand deeper — "
+                "research it with search_web, store the lesson",
+                "b) A pattern you've noticed but can't explain — look into the theory",
+                "c) Something from memory that contradicts what you're seeing — investigate",
+                "",
+                "Store what you learn. Store curiosity items for things to explore later.",
+                "If nothing sparks interest: normal review (under 100 words).",
+            ]
+            review_type = "Periodic review + learning"
+        else:
+            lines = [
+                "[DAEMON WAKE — Periodic Market Review]",
+                "",
+                "Briefing has all market data. Don't re-fetch. Under 100 words.",
+                "Address [Warnings] and [Questions] first.",
+                "Then: any setup forming? Any thesis to update?",
+            ]
+            review_type = "Periodic market review"
 
         message = "\n".join(lines)
         response = self._wake_agent(message, max_coach_cycles=1)
         if response:
             symbols = self.config.execution.symbols
             log_event(DaemonEvent(
-                "review", "Periodic market review",
+                "review", review_type,
                 f"Symbols: {', '.join(symbols)} | F&G: {self.snapshot.fear_greed}",
             ))
             _daemon_chat_queue.put({
                 "type": "Review",
-                "title": "Periodic market review",
+                "title": review_type,
                 "response": response,
             })
-            _notify_discord("Review", "Periodic market review", response)
-            logger.info("Periodic review complete (%d chars)", len(response))
+            _notify_discord("Review", review_type, response)
+            logger.info("%s complete (%d chars)", review_type, len(response))
 
     def _check_curiosity(self):
         """Check if curiosity queue is large enough for a learning session."""
