@@ -211,6 +211,18 @@ class NousClient:
         resp.raise_for_status()
         return resp.json()
 
+    def batch_resolve_conflicts(self, items: list[dict]) -> dict:
+        """Batch resolve conflicts. items: [{conflict_id, resolution}, ...]
+
+        Returns: {ok, resolved, failed, total, results}
+        """
+        resp = self._session.post(
+            self._url("/contradiction/batch-resolve"),
+            json={"items": items},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # ---- Decay ----
 
     def run_decay(self) -> dict:

@@ -6,8 +6,9 @@ When the agent stores content with correction markers ("actually",
 "I was wrong", "update:"), Nous queues potential conflicts for review.
 
 Actions:
-  list    — Show pending (or resolved) conflicts in the queue
-  resolve — Resolve a conflict with a chosen strategy
+  list          — Show pending (or resolved) conflicts in the queue
+  resolve       — Resolve a single conflict with a chosen strategy
+  batch_resolve — Resolve multiple conflicts with the same strategy
 
 Standard tool module pattern:
   1. TOOL_DEF dict
@@ -30,7 +31,10 @@ TOOL_DEF = {
         "potential contradictions and queues them for your review.\n\n"
         "Actions:\n"
         "  list — Show pending conflicts (or filter by status).\n"
-        "  resolve — Resolve a conflict with your decision.\n\n"
+        "  resolve — Resolve a single conflict with your decision.\n"
+        "  batch_resolve — Resolve multiple conflicts with the same "
+        "resolution in one call. Much more efficient than resolving "
+        "one by one.\n\n"
         "Resolution strategies:\n"
         "  old_is_current — The old memory is correct, new one is wrong.\n"
         "  new_is_current — The new memory supersedes the old one.\n"
@@ -38,16 +42,17 @@ TOOL_DEF = {
         "  merge — Both contain useful info, should be combined.\n\n"
         "Examples:\n"
         '  {"action": "list"}\n'
-        '  {"action": "list", "status": "resolved"}\n'
         '  {"action": "resolve", "conflict_id": "c_abc123", '
-        '"resolution": "new_is_current"}'
+        '"resolution": "new_is_current"}\n'
+        '  {"action": "batch_resolve", "conflict_ids": '
+        '["c_abc", "c_def", "c_ghi"], "resolution": "new_is_current"}'
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["list", "resolve"],
+                "enum": ["list", "resolve", "batch_resolve"],
                 "description": "What to do.",
             },
             "status": {
@@ -59,10 +64,15 @@ TOOL_DEF = {
                 "type": "string",
                 "description": "Conflict ID to resolve (for resolve action).",
             },
+            "conflict_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Conflict IDs to batch-resolve (for batch_resolve action).",
+            },
             "resolution": {
                 "type": "string",
                 "enum": ["old_is_current", "new_is_current", "keep_both", "merge"],
-                "description": "How to resolve the conflict (for resolve action).",
+                "description": "How to resolve the conflict(s).",
             },
         },
         "required": ["action"],
@@ -74,6 +84,7 @@ def handle_manage_conflicts(
     action: str,
     status: str = "pending",
     conflict_id: Optional[str] = None,
+    conflict_ids: Optional[list] = None,
     resolution: Optional[str] = None,
 ) -> str:
     """List or resolve conflicts in the contradiction queue."""
@@ -154,7 +165,7 @@ def handle_manage_conflicts(
                 lines.append("")
 
             lines.append(
-                "Use resolve action with conflict_id and resolution "
+                "Use resolve or batch_resolve with resolution "
                 "(old_is_current, new_is_current, keep_both, merge)."
             )
             return "\n".join(lines)
@@ -170,8 +181,6 @@ def handle_manage_conflicts(
             if result.get("ok"):
                 logger.info("Resolved conflict %s: %s", conflict_id, resolution)
                 actions = result.get("actions", [])
-                old_id = result.get("old_node_id", "?")
-                new_id = result.get("new_node_id", "?")
 
                 lines = [f"Resolved: conflict {conflict_id} — {resolution}."]
                 if actions:
@@ -184,8 +193,27 @@ def handle_manage_conflicts(
                 error = result.get("error", "unknown error")
                 return f"Error resolving conflict {conflict_id}: {error}"
 
+        elif action == "batch_resolve":
+            if not conflict_ids:
+                return "Error: conflict_ids array is required for batch_resolve action."
+            if not resolution:
+                return "Error: resolution is required for batch_resolve action."
+
+            items = [{"conflict_id": cid, "resolution": resolution} for cid in conflict_ids]
+            result = client.batch_resolve_conflicts(items)
+
+            resolved = result.get("resolved", 0)
+            failed = result.get("failed", 0)
+            total = result.get("total", 0)
+
+            logger.info("Batch resolved %d/%d conflicts as %s", resolved, total, resolution)
+            msg = f"Batch resolved: {resolved}/{total} conflicts as {resolution}."
+            if failed:
+                msg += f" ({failed} failed)"
+            return msg
+
         else:
-            return f"Error: unknown action '{action}'. Use list or resolve."
+            return f"Error: unknown action '{action}'. Use list, resolve, or batch_resolve."
 
     except Exception as e:
         logger.error("manage_conflicts failed: %s", e)

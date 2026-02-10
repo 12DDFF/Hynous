@@ -716,6 +716,11 @@ def _store_to_nous(
                 logger.warning("Failed to create trade edge %s → %s: %s", link_to, node_id, e)
                 tracker.record_fail("create_edge", str(e))
 
+        # Auto-assign to clusters (subtype + keyword match, background)
+        if node_id:
+            from .memory import _auto_assign_clusters
+            _auto_assign_clusters(client, node_id, subtype, title=title, content=content)
+
         return node_id
     except Exception as e:
         logger.error("Failed to store trade memory: %s", e)

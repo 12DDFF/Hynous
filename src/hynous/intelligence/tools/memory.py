@@ -169,39 +169,57 @@ def _auto_link(node_id: str, title: str, content: str, explicit_ids: list | None
 
 
 def _auto_assign_clusters(
-    client, node_id: str, subtype: str, exclude_cluster: str | None = None,
+    client, node_id: str, subtype: str,
+    title: str = "", content: str = "",
+    exclude_cluster: str | None = None,
 ):
-    """Auto-assign node to clusters whose auto_subtypes include this subtype.
+    """Auto-assign node to clusters by subtype match OR keyword match.
 
     Runs in background thread to avoid blocking the store response.
-    Skips the exclude_cluster (already assigned explicitly).
+
+    Two matching strategies:
+    1. Subtype match: cluster.auto_subtypes includes this node's subtype
+    2. Keyword match: cluster name appears as a whole word in title or content
+       (case-insensitive, for asset symbol clusters like "BTC", "ETH")
+
+    A node can belong to multiple clusters.
     """
     def _assign():
         try:
+            import re
             clusters = client.list_clusters()
+            text_upper = f"{title} {content}".upper()
+
             for cl in clusters:
                 cid = cl.get("id")
                 if not cid:
                     continue
-                # Skip if already explicitly assigned
                 if exclude_cluster and cid == exclude_cluster:
                     continue
 
+                matched = False
+
+                # Strategy 1: Subtype match (existing logic)
                 auto_subs = cl.get("auto_subtypes")
-                if not auto_subs:
-                    continue
+                if auto_subs:
+                    if isinstance(auto_subs, str):
+                        try:
+                            auto_subs = json.loads(auto_subs)
+                        except (json.JSONDecodeError, TypeError):
+                            auto_subs = None
 
-                # Handle both parsed list and raw JSON string
-                if isinstance(auto_subs, str):
-                    try:
-                        auto_subs = json.loads(auto_subs)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
+                    if isinstance(auto_subs, list) and subtype in auto_subs:
+                        matched = True
 
-                if not isinstance(auto_subs, list):
-                    continue
+                # Strategy 2: Keyword match (cluster name in content)
+                if not matched:
+                    cluster_name = (cl.get("name") or "").upper()
+                    if cluster_name and len(cluster_name) >= 2:
+                        pattern = r'(?<![A-Z])' + re.escape(cluster_name) + r'(?![A-Z])'
+                        if re.search(pattern, text_upper):
+                            matched = True
 
-                if subtype in auto_subs:
+                if matched:
                     try:
                         client.add_to_cluster(cid, node_id=node_id)
                     except Exception:
@@ -548,8 +566,8 @@ def _store_memory_impl(
             except Exception as e:
                 logger.debug("Explicit cluster assignment failed: %s", e)
 
-        # 2. Auto-assign based on cluster auto_subtypes (background)
-        _auto_assign_clusters(client, node_id, subtype, exclude_cluster=cluster)
+        # 2. Auto-assign based on cluster auto_subtypes + keyword match (background)
+        _auto_assign_clusters(client, node_id, subtype, title=title, content=content, exclude_cluster=cluster)
 
         logger.info("Stored %s: \"%s\" (%s)", memory_type, title, node_id)
         result_msg = f"Stored: \"{title}\" ({node_id})"

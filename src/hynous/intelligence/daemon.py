@@ -322,6 +322,8 @@ class Daemon:
         """The daemon's heartbeat. Runs in a background thread."""
         # Startup health check — verify Nous is reachable
         self._check_health(startup=True)
+        # Seed clusters if none exist
+        self._seed_clusters()
 
         # Initial data fetch
         self._poll_prices()
@@ -1169,8 +1171,8 @@ class Daemon:
     def _check_conflicts(self):
         """Poll the Nous contradiction queue for pending conflicts.
 
-        If conflicts exist, wake the agent with details so it can
-        review and resolve them using the manage_conflicts tool.
+        Tier 1: Auto-resolve obvious cases (no agent, no cost).
+        Tier 2: Wake agent with remaining conflicts for batch resolution.
         """
         try:
             nous = self._get_nous()
@@ -1182,93 +1184,234 @@ class Daemon:
                 logger.debug("Conflict check: no pending conflicts")
                 return
 
-            # Build wake message with conflict details
-            lines = [
-                "[DAEMON WAKE — Contradiction Review]",
-                f"You have {len(conflicts)} pending contradiction(s) in your knowledge base.",
-                "Review them and decide how to resolve each one.",
-                "",
-            ]
+            # === Tier 1: Auto-resolve (zero cost) ===
+            auto_items = []   # [{conflict_id, resolution}]
+            remaining = []    # conflicts that need agent review
 
-            for conflict in conflicts[:5]:  # Show at most 5 to avoid overwhelming
-                cid = conflict.get("id", "?")
-                old_id = conflict.get("old_node_id", "?")
-                new_id = conflict.get("new_node_id")
-                new_content = conflict.get("new_content", "")
-                ctype = conflict.get("conflict_type", "?")
-                confidence = conflict.get("detection_confidence", 0)
-
-                # Fetch old node full content
-                old_title = old_id
-                old_body = ""
-                try:
-                    old_node = nous.get_node(old_id)
-                    if old_node:
-                        old_title = old_node.get("content_title", old_id)
-                        old_body = old_node.get("content_body", "") or ""
-                except Exception:
-                    pass
-
-                # Fetch new node full content if it exists
-                new_title = ""
-                new_body = ""
-                if new_id:
-                    try:
-                        new_node = nous.get_node(new_id)
-                        if new_node:
-                            new_title = new_node.get("content_title", "")
-                            new_body = new_node.get("content_body", "") or ""
-                    except Exception:
-                        pass
-
-                lines.append(f"Conflict {cid} ({ctype}, {confidence:.0%} confidence):")
-
-                # Old node
-                old_preview = old_body[:500] if old_body else "(no content)"
-                if len(old_body) > 500:
-                    old_preview += "..."
-                lines.append(f"  OLD: \"{old_title}\" ({old_id})")
-                lines.append(f"  {old_preview}")
-
-                # New node or content
-                if new_id and new_title:
-                    new_preview = new_body[:500] if new_body else "(no content)"
-                    if len(new_body) > 500:
-                        new_preview += "..."
-                    lines.append(f"  NEW: \"{new_title}\" ({new_id})")
-                    lines.append(f"  {new_preview}")
+            for conflict in conflicts:
+                auto_resolution = self._auto_resolve_conflict(conflict, nous)
+                if auto_resolution:
+                    auto_items.append({
+                        "conflict_id": conflict["id"],
+                        "resolution": auto_resolution,
+                    })
                 else:
-                    new_preview = new_content[:500]
-                    if len(new_content) > 500:
-                        new_preview += "..."
-                    lines.append(f"  NEW CONTENT: {new_preview}")
-                lines.append("")
+                    remaining.append(conflict)
 
-            if len(conflicts) > 5:
-                lines.append(f"... and {len(conflicts) - 5} more. Use manage_conflicts(action=\"list\") to see all.")
-                lines.append("")
+            # Batch-resolve all auto-decisions in one HTTP call
+            if auto_items:
+                try:
+                    result = nous.batch_resolve_conflicts(auto_items)
+                    auto_resolved = result.get("resolved", 0)
+                    logger.info("Auto-resolved %d/%d conflicts (tier 1)",
+                                auto_resolved, len(auto_items))
+                    log_event(DaemonEvent(
+                        "conflict", "Auto-resolved conflicts",
+                        f"{auto_resolved} auto-resolved, {len(remaining)} need review",
+                    ))
+                except Exception as e:
+                    logger.warning("Batch auto-resolve failed: %s", e)
+                    # Fall back to sending all to agent
+                    remaining = conflicts
 
-            lines.extend([
-                "Use your manage_conflicts tool to:",
-                "1. List all conflicts: {\"action\": \"list\"}",
-                "2. Resolve each one: {\"action\": \"resolve\", \"conflict_id\": \"c_...\", "
-                "\"resolution\": \"new_is_current\"}",
-                "",
-                "Resolutions: old_is_current, new_is_current, keep_both, merge",
-            ])
+            if not remaining:
+                return
 
-            message = "\n".join(lines)
-            response = self._wake_agent(message)
-            if response:
-                log_event(DaemonEvent(
-                    "conflict", "Contradiction review",
-                    f"{len(conflicts)} pending conflicts",
-                ))
-                logger.info("Contradiction review wake: %d conflicts, agent responded (%d chars)",
-                            len(conflicts), len(response))
+            # === Tier 2: Wake agent with remaining conflicts ===
+            self._wake_for_conflicts(remaining, nous)
 
         except Exception as e:
             logger.debug("Conflict check failed: %s", e)
+
+    def _auto_resolve_conflict(self, conflict: dict, nous) -> str | None:
+        """Apply Tier 1 auto-resolve rules. Returns resolution string or None.
+
+        Rules (conservative — better to send to agent than auto-resolve wrong):
+        1. Expired: expires_at has passed -> keep_both
+        2. Low confidence: detection_confidence < 0.40 -> keep_both
+        3. Explicit self-correction: markers + confidence > 0.50 -> new_is_current
+        4. Explicit update: markers + confidence > 0.50 -> new_is_current
+        5. Same subtype + same entity: latest view wins -> new_is_current
+        """
+        cid = conflict.get("id", "?")
+        confidence = conflict.get("detection_confidence", 0)
+        new_content = (conflict.get("new_content", "") or "").lower()
+        expires_at = conflict.get("expires_at", "")
+
+        # Rule 1: Expired
+        if expires_at:
+            try:
+                from datetime import datetime, timezone
+                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if exp_dt < datetime.now(timezone.utc):
+                    logger.debug("Auto-resolve %s: expired", cid)
+                    return "keep_both"
+            except (ValueError, TypeError):
+                pass
+
+        # Rule 2: Low confidence (system wasn't sure it's a real contradiction)
+        if confidence < 0.40:
+            logger.debug("Auto-resolve %s: low confidence (%.2f)", cid, confidence)
+            return "keep_both"
+
+        # Rule 3: Explicit self-correction
+        correction_markers = ["i was wrong", "correction:", "i made an error", "i was mistaken"]
+        if confidence > 0.50 and any(m in new_content for m in correction_markers):
+            logger.debug("Auto-resolve %s: self-correction detected", cid)
+            return "new_is_current"
+
+        # Rule 4: Explicit update
+        update_markers = ["update:", "revised:", "updated:", "revised view"]
+        if confidence > 0.50 and any(m in new_content for m in update_markers):
+            logger.debug("Auto-resolve %s: explicit update detected", cid)
+            return "new_is_current"
+
+        # Rule 5: Same subtype + same entity (latest view wins)
+        old_node_id = conflict.get("old_node_id")
+        new_node_id = conflict.get("new_node_id")
+        entity = conflict.get("entity_name")
+        if old_node_id and new_node_id and entity:
+            try:
+                old_node = nous.get_node(old_node_id)
+                new_node = nous.get_node(new_node_id)
+                if old_node and new_node:
+                    if old_node.get("subtype") == new_node.get("subtype"):
+                        logger.debug("Auto-resolve %s: same subtype+entity (%s)", cid, entity)
+                        return "new_is_current"
+            except Exception:
+                pass
+
+        return None
+
+    def _wake_for_conflicts(self, conflicts: list[dict], nous):
+        """Wake agent with remaining conflicts, instructing batch resolution."""
+        lines = [
+            "[DAEMON WAKE — Contradiction Review]",
+            f"You have {len(conflicts)} contradiction(s) that need your judgment.",
+            "",
+        ]
+
+        for conflict in conflicts[:5]:
+            cid = conflict.get("id", "?")
+            old_id = conflict.get("old_node_id", "?")
+            new_id = conflict.get("new_node_id")
+            new_content = conflict.get("new_content", "")
+            ctype = conflict.get("conflict_type", "?")
+            confidence = conflict.get("detection_confidence", 0)
+
+            old_title = old_id
+            old_body = ""
+            try:
+                old_node = nous.get_node(old_id)
+                if old_node:
+                    old_title = old_node.get("content_title", old_id)
+                    old_body = old_node.get("content_body", "") or ""
+            except Exception:
+                pass
+
+            new_title = ""
+            new_body = ""
+            if new_id:
+                try:
+                    new_node = nous.get_node(new_id)
+                    if new_node:
+                        new_title = new_node.get("content_title", "")
+                        new_body = new_node.get("content_body", "") or ""
+                except Exception:
+                    pass
+
+            lines.append(f"Conflict {cid} ({ctype}, {confidence:.0%} confidence):")
+
+            old_preview = old_body[:500] if old_body else "(no content)"
+            if len(old_body) > 500:
+                old_preview += "..."
+            lines.append(f'  OLD: "{old_title}" ({old_id})')
+            lines.append(f"  {old_preview}")
+
+            if new_id and new_title:
+                new_preview = new_body[:500] if new_body else "(no content)"
+                if len(new_body) > 500:
+                    new_preview += "..."
+                lines.append(f'  NEW: "{new_title}" ({new_id})')
+                lines.append(f"  {new_preview}")
+            else:
+                new_preview = new_content[:500]
+                if len(new_content) > 500:
+                    new_preview += "..."
+                lines.append(f"  NEW CONTENT: {new_preview}")
+            lines.append("")
+
+        if len(conflicts) > 5:
+            lines.append(f"... and {len(conflicts) - 5} more. Use manage_conflicts(action=\"list\") to see all.")
+            lines.append("")
+
+        lines.extend([
+            "EFFICIENT RESOLUTION:",
+            "- Group conflicts with the same decision and use batch_resolve:",
+            '  {"action": "batch_resolve", "conflict_ids": ["c_...", "c_..."], "resolution": "new_is_current"}',
+            "- Only resolve individually when conflicts need different decisions.",
+            "",
+            "Resolutions: old_is_current, new_is_current, keep_both, merge",
+        ])
+
+        message = "\n".join(lines)
+        response = self._wake_agent(message)
+        if response:
+            log_event(DaemonEvent(
+                "conflict", "Contradiction review",
+                f"{len(conflicts)} conflicts for agent review",
+            ))
+            logger.info("Contradiction review wake: %d conflicts, agent responded (%d chars)",
+                        len(conflicts), len(response))
+
+    def _seed_clusters(self):
+        """Create starter clusters if none exist.
+
+        Called once on daemon startup. Only seeds when the cluster list is
+        completely empty (won't re-seed if user deleted some clusters).
+        """
+        try:
+            nous = self._get_nous()
+            existing = nous.list_clusters()
+            if existing:
+                logger.debug("Cluster seeding skipped: %d clusters exist", len(existing))
+                return
+
+            symbols = self.config.execution.symbols  # ["BTC", "ETH", "SOL"]
+
+            # Asset clusters (keyword matching in _auto_assign_clusters)
+            for sym in symbols:
+                nous.create_cluster(
+                    name=sym,
+                    description=f"All {sym}-related memories",
+                    pinned=True,
+                )
+
+            # Type clusters (subtype-based auto-assignment)
+            type_clusters = [
+                ("Theses", "Active and archived trade theses", ["custom:thesis"]),
+                ("Lessons", "Lessons learned from experience and research", ["custom:lesson"]),
+                ("Trade History", "Trade entries, modifications, and closes", [
+                    "custom:trade_entry", "custom:trade_close", "custom:trade_modify",
+                ]),
+            ]
+            for name, desc, auto_subs in type_clusters:
+                nous.create_cluster(
+                    name=name,
+                    description=desc,
+                    auto_subtypes=auto_subs,
+                )
+
+            total = len(symbols) + len(type_clusters)
+            log_event(DaemonEvent(
+                "cluster", "Clusters seeded",
+                f"{len(symbols)} asset + {len(type_clusters)} type clusters",
+            ))
+            logger.info("Seeded %d clusters (%d asset + %d type)",
+                        total, len(symbols), len(type_clusters))
+
+        except Exception as e:
+            logger.warning("Cluster seeding failed: %s", e)
 
     def _check_health(self, startup: bool = False):
         """Check Nous server health and log knowledge base stats.
