@@ -6,8 +6,8 @@ from ..components import card, stat_card
 
 
 def _stats_row() -> rx.Component:
-    """Top row — 7 stat cards."""
-    return rx.hstack(
+    """Top row — 7 stat cards in a grid."""
+    return rx.grid(
         stat_card("Win Rate", AppState.journal_win_rate, "closed trades"),
         stat_card(
             "Total PnL",
@@ -45,9 +45,9 @@ def _stats_row() -> rx.Component:
             "win / loss",
         ),
         stat_card("Avg Duration", AppState.journal_avg_duration, "per trade"),
-        width="100%",
+        columns="4",
         spacing="4",
-        flex_wrap="wrap",
+        width="100%",
     )
 
 

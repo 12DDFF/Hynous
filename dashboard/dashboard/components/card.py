@@ -46,10 +46,13 @@ def stat_card(
             ),
             align_items="start",
             spacing="1",
+            height="100%",
         ),
         background="#111111",
         border="1px solid #1a1a1a",
         border_radius="12px",
         padding="1rem",
         flex="1",
+        min_height="100px",
+        height="100%",
     )
