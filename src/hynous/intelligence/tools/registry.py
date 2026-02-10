@@ -63,11 +63,11 @@ class ToolRegistry:
         """Convert all tools to Anthropic API format."""
         return [tool.to_anthropic_format() for tool in self._tools.values()]
 
-    def call(self, name: str, **kwargs) -> Any:
+    def call(self, tool_name: str, **kwargs) -> Any:
         """Call a tool by name with arguments."""
-        tool = self.get(name)
+        tool = self.get(tool_name)
         if not tool:
-            raise ValueError(f"Unknown tool: {name}")
+            raise ValueError(f"Unknown tool: {tool_name}")
         return tool.handler(**kwargs)
 
     @property
