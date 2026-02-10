@@ -2,7 +2,7 @@
 
 import reflex as rx
 from ..state import AppState, Position
-from ..components import chat_bubble, chat_input, typing_indicator, streaming_bubble, tool_indicator
+from ..components import chat_bubble, chat_input, typing_indicator, streaming_bubble, tool_indicator, ticker_badge
 
 
 def welcome_state() -> rx.Component:
@@ -137,7 +137,7 @@ def input_area() -> rx.Component:
 def _pos_chip(pos: Position) -> rx.Component:
     """Compact position chip for the top bar."""
     return rx.hstack(
-        rx.text(pos.symbol, font_size="0.75rem", font_weight="600", color="#e5e5e5"),
+        ticker_badge(pos.symbol, font_size="0.75rem", font_weight="600"),
         rx.text(
             pos.side.upper(),
             font_size="0.65rem",

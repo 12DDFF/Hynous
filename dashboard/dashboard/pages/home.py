@@ -1,8 +1,8 @@
 """Home page — Hynous profile + dashboard."""
 
 import reflex as rx
-from ..state import AppState, DaemonActivity
-from ..components import stat_card
+from ..state import AppState, DaemonActivity, WatchpointItem
+from ..components import stat_card, ticker_badge
 
 
 def _profile_avatar() -> rx.Component:
@@ -243,7 +243,7 @@ def _trades_detail() -> rx.Component:
                 rx.foreach(
                     AppState.positions,
                     lambda pos: rx.hstack(
-                        rx.text(pos.symbol, color="#e5e5e5", font_size="0.85rem", font_weight="500"),
+                        ticker_badge(pos.symbol, font_size="0.85rem"),
                         rx.text(
                             pos.side.upper(),
                             color=rx.cond(pos.side == "long", "#22c55e", "#ef4444"),
@@ -869,20 +869,52 @@ def profile_card() -> rx.Component:
     )
 
 
-def _wp_accordion_item(group: dict) -> rx.Component:
+def _wp_item_card(item: WatchpointItem) -> rx.Component:
+    """Styled watchpoint item with colored border and accent."""
+    return rx.box(
+        rx.hstack(
+            rx.icon(
+                rx.cond(item.is_up, "trending-up", "trending-down"),
+                size=13,
+                color=rx.cond(item.is_up, "#4ade80", "#f87171"),
+                flex_shrink="0",
+            ),
+            rx.text(
+                item.condition,
+                font_size="0.78rem",
+                font_weight="500",
+                color=rx.cond(item.is_up, "#4ade80", "#f87171"),
+            ),
+            spacing="2",
+            align="center",
+        ),
+        rx.cond(
+            item.title != "",
+            rx.text(
+                item.title,
+                font_size="0.72rem",
+                color="#a3a3a3",
+                padding_top="0.125rem",
+                line_height="1.4",
+            ),
+            rx.fragment(),
+        ),
+        padding="0.5rem 0.625rem",
+        border_left=rx.cond(item.is_up, "2px solid #4ade80", "2px solid #f87171"),
+        background=rx.cond(item.is_up, "rgba(74,222,128,0.05)", "rgba(248,113,113,0.05)"),
+        border_radius="0 6px 6px 0",
+    )
+
+
+def _wp_accordion_item(group) -> rx.Component:
     """Single accordion item for a symbol group."""
     return rx.accordion.item(
         rx.accordion.header(
             rx.accordion.trigger(
                 rx.hstack(
-                    rx.text(
-                        group["symbol"],
-                        font_size="0.8rem",
-                        font_weight="600",
-                        color="#fafafa",
-                    ),
+                    ticker_badge(group.symbol, font_size="0.8rem", font_weight="600"),
                     rx.badge(
-                        group["count"],
+                        group.count,
                         variant="soft",
                         color_scheme="gray",
                         size="1",
@@ -899,17 +931,14 @@ def _wp_accordion_item(group: dict) -> rx.Component:
             ),
         ),
         rx.accordion.content(
-            rx.text(
-                group["detail"],
-                white_space="pre-line",
-                font_size="0.78rem",
-                color="#d4d4d4",
-                line_height="1.7",
-                padding_left="0.25rem",
+            rx.vstack(
+                rx.foreach(group.items, _wp_item_card),
+                spacing="2",
+                width="100%",
                 padding_bottom="0.5rem",
             ),
         ),
-        value=group["symbol"],
+        value=group.symbol,
     )
 
 
@@ -969,6 +998,7 @@ def _watchlist_card() -> rx.Component:
         border="1px solid #1a1a1a",
         border_radius="12px",
         padding="1rem",
+        height="100%",
     )
 
 
@@ -1028,7 +1058,7 @@ def position_row(pos) -> rx.Component:
     return rx.hstack(
         # Symbol + Side
         rx.hstack(
-            rx.text(pos.symbol, color="#e5e5e5", font_size="0.85rem", font_weight="500"),
+            ticker_badge(pos.symbol, font_size="0.85rem", font_weight="500"),
             rx.text(
                 pos.side.upper(),
                 color=rx.cond(pos.side == "long", "#22c55e", "#ef4444"),
@@ -1124,6 +1154,7 @@ def positions_section() -> rx.Component:
         border="1px solid #1a1a1a",
         border_radius="12px",
         padding="1rem",
+        height="100%",
     )
 
 

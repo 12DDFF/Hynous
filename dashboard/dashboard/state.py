@@ -146,6 +146,20 @@ class ClosedTrade(BaseModel):
     date: str = ""  # Pre-formatted date string (YYYY-MM-DD)
 
 
+class WatchpointItem(BaseModel):
+    """Single watchpoint within a symbol group."""
+    is_up: bool = True
+    condition: str = ""
+    title: str = ""
+
+
+class WatchpointGroup(BaseModel):
+    """Watchpoint group for a single symbol (used in accordion)."""
+    symbol: str = ""
+    count: str = "0"
+    items: List[WatchpointItem] = []
+
+
 # --- Agent + Daemon singletons (shared across all sessions) ---
 
 _agent = None
@@ -880,7 +894,7 @@ class AppState(rx.State):
 
     # === Watchlist State ===
 
-    watchpoint_groups: list[dict] = []
+    watchpoint_groups: List[WatchpointGroup] = []
     watchpoint_count: str = "0"
 
     @_background
@@ -895,8 +909,7 @@ class AppState(rx.State):
     def _fetch_watchpoints() -> dict:
         """Fetch watchpoints from Nous (sync, runs in thread).
 
-        Returns groups list where each group has:
-          symbol, count, detail (pre-formatted multi-line string)
+        Returns typed WatchpointGroup list with WatchpointItem children.
         """
         try:
             from hynous.nous.client import get_client
@@ -906,7 +919,7 @@ class AppState(rx.State):
             nodes = client.list_nodes(subtype="custom:watchpoint", lifecycle="ACTIVE", limit=50)
 
             # Group by symbol
-            by_symbol: dict[str, list[str]] = {}
+            by_symbol: dict[str, list[WatchpointItem]] = {}
             for n in nodes:
                 body = _json.loads(n.get("content_body", "{}"))
                 trigger = body.get("trigger", {})
@@ -930,28 +943,24 @@ class AppState(rx.State):
                         title_short = title_short[len(prefix):].lstrip(" —-")
                         break
 
-                # Condition label + icon
+                # Condition + direction
+                is_up = "above" in condition or condition == "fear_greed_extreme"
                 if condition == "fear_greed_extreme":
-                    line = f"⚡ F&G < {int(value)}"
+                    cond_label = f"F&G < {int(value)}"
                 elif "above" in condition:
-                    line = f"↗ above {val_str}"
+                    cond_label = f"above {val_str}"
                 else:
-                    line = f"↘ below {val_str}"
+                    cond_label = f"below {val_str}"
 
-                if title_short:
-                    line += f" — {title_short[:50]}"
-
-                by_symbol.setdefault(symbol, []).append(line)
+                by_symbol.setdefault(symbol, []).append(
+                    WatchpointItem(is_up=is_up, condition=cond_label, title=title_short[:50])
+                )
 
             # Build groups
-            groups: list[dict] = []
-            for sym in sorted(by_symbol.keys()):
-                lines = by_symbol[sym]
-                groups.append({
-                    "symbol": sym,
-                    "count": str(len(lines)),
-                    "detail": "\n".join(lines),
-                })
+            groups = [
+                WatchpointGroup(symbol=sym, count=str(len(items)), items=items)
+                for sym, items in sorted(by_symbol.items())
+            ]
 
             return {"groups": groups, "count": len(nodes)}
         except Exception:
