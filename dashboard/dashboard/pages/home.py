@@ -931,7 +931,7 @@ def position_row(pos) -> rx.Component:
                 font_size="0.7rem",
                 font_weight="600",
             ),
-            spacing="0.375rem",
+            spacing="1",
             width="18%",
             align_items="center",
         ),
