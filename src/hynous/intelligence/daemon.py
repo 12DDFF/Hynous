@@ -155,11 +155,6 @@ class Daemon:
         self._pending_thoughts: list[str] = []       # Haiku questions (max 3)
         self._wake_fingerprints: list[frozenset] = []  # Last 5 tool+mutation fingerprints
 
-        # Event polling (Coinglass + CoinMarketCal, every 6h)
-        self._last_event_poll: float = 0
-        self._cached_events: dict = {}  # {macro: [...], crypto: [...], fetched_at: float}
-        self._EVENT_POLL_INTERVAL = 6 * 3600  # 6 hours
-
         # Stats
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
@@ -196,25 +191,6 @@ class Daemon:
         global _active_daemon
         _active_daemon = self
         self._running = True
-        # Load cached events from disk (survive restarts)
-        try:
-            import os
-            cache_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(
-                    os.path.dirname(os.path.abspath(__file__))))),
-                "storage", "events-cache.json",
-            )
-            if os.path.exists(cache_path):
-                with open(cache_path) as f:
-                    data = json.load(f)
-                    # Support both old (string) and new (dict) format
-                    if "macro" in data:
-                        self._cached_events = data
-                        self._last_event_poll = data.get("fetched_at", 0)
-                    else:
-                        self._last_event_poll = data.get("fetched_at", 0)
-        except Exception:
-            pass
         self._thread = threading.Thread(
             target=self._loop, daemon=True, name="hynous-daemon",
         )
@@ -309,18 +285,6 @@ class Daemon:
         return 3 - (self._review_count % 3)
 
     @property
-    def cached_events(self) -> dict:
-        """Cached event calendar data (macro + crypto)."""
-        return self._cached_events
-
-    @property
-    def events_age_seconds(self) -> float:
-        """Seconds since last event poll."""
-        if not self._last_event_poll:
-            return float("inf")
-        return time.time() - self._last_event_poll
-
-    @property
     def current_funding_rates(self) -> dict[str, float]:
         """Current funding rates from snapshot."""
         return dict(self.snapshot.funding)
@@ -380,11 +344,6 @@ class Daemon:
                 if now - self._last_curiosity_check >= self.config.daemon.curiosity_check_interval:
                     self._last_curiosity_check = now
                     self._check_curiosity()
-
-                # 4b. Event polling (every 6h)
-                if now - self._last_event_poll >= self._EVENT_POLL_INTERVAL:
-                    self._poll_events()
-                    self._last_event_poll = now
 
                 # 5. Periodic review (1h weekdays, 2h weekends)
                 review_interval = self.config.daemon.periodic_interval
@@ -478,67 +437,6 @@ class Daemon:
         self.snapshot.last_deriv_poll = time.time()
         self._data_changed = True
         self.polls += 1
-
-    def _poll_events(self):
-        """Fetch upcoming events from Coinglass (macro) + CoinMarketCal (crypto). Every 6h."""
-        macro_events = []
-        crypto_events = []
-
-        # 1. Perplexity macro economic calendar (FOMC, CPI, NFP, GDP)
-        try:
-            from ..data.providers.perplexity import get_provider as ppx_get
-            ppx = ppx_get()
-            result = ppx.search(
-                "List upcoming US macro economic events for the next 7 days in this exact format, "
-                "one per line: DATE | EVENT | IMPACT (high/medium) | ESTIMATE | PREVIOUS\n"
-                "Include only: FOMC, CPI, PPI, NFP, unemployment, GDP, retail sales, "
-                "jobless claims, PCE, ISM. Skip low-impact events.\n"
-                "Example: Feb 12 | CPI Release | high | 3.1% | 2.9%\n"
-                "If no major events this week, say 'No major macro events this week.'"
-            )
-            answer = ""
-            if isinstance(result, dict):
-                answer = result.get("answer", "")
-            elif isinstance(result, str):
-                answer = result
-            if answer:
-                macro_events = _parse_macro_text(answer)
-        except Exception as e:
-            logger.debug("Perplexity macro calendar failed: %s", e)
-
-        # 2. CoinMarketCal crypto events (token unlocks, upgrades, listings)
-        try:
-            from ..data.providers.coinmarketcal import get_crypto_events
-            crypto_events = get_crypto_events(limit=15)
-        except Exception as e:
-            logger.debug("CoinMarketCal failed: %s", e)
-
-        if not macro_events and not crypto_events:
-            logger.debug("Event poll returned no data")
-            return
-
-        # Cache structured data
-        self._cached_events = {
-            "macro": macro_events,
-            "crypto": crypto_events,
-            "fetched_at": time.time(),
-        }
-
-        # Persist to disk for recovery
-        try:
-            import os
-            cache_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(
-                    os.path.dirname(os.path.abspath(__file__))))),
-                "storage", "events-cache.json",
-            )
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            with open(cache_path, "w") as f:
-                json.dump(self._cached_events, f)
-        except Exception:
-            pass
-        logger.info("Event poll: %d macro, %d crypto events",
-                     len(macro_events), len(crypto_events))
 
     # ================================================================
     # Watchpoint System
@@ -1494,43 +1392,6 @@ class Daemon:
 # ====================================================================
 # Coach Intelligence Helpers
 # ====================================================================
-
-def _parse_macro_text(text: str) -> list[dict]:
-    """Parse Perplexity macro events text into structured dicts.
-
-    Expects lines like: Feb 12 | CPI Release | high | 3.1% | 2.9%
-    Falls back to raw text lines if format doesn't match.
-    """
-    events = []
-    import re
-    for line in text.strip().split("\n"):
-        line = line.strip().lstrip("- •")
-        # Strip Perplexity citation markers like [1], [2][3], etc.
-        line = re.sub(r"\[\d+\]", "", line).strip()
-        if not line or "no major" in line.lower():
-            continue
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) >= 2:
-            events.append({
-                "name": parts[1] if len(parts) > 1 else parts[0],
-                "date": parts[0],
-                "country": "US",
-                "impact": parts[2].lower() if len(parts) > 2 else "medium",
-                "estimate": parts[3] if len(parts) > 3 else "",
-                "previous": parts[4] if len(parts) > 4 else "",
-            })
-        elif line:
-            # Fallback: treat whole line as event name
-            events.append({
-                "name": line[:80],
-                "date": "",
-                "country": "US",
-                "impact": "medium",
-                "estimate": "",
-                "previous": "",
-            })
-    return events[:15]
-
 
 def _format_event_age(iso_timestamp: str) -> str:
     """Format an ISO timestamp as relative age (e.g. '3h ago', '45m ago')."""

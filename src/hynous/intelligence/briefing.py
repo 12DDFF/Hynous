@@ -320,11 +320,6 @@ def build_briefing(
     if stats_line:
         sections.append(stats_line)
 
-    # --- Upcoming events ---
-    events_line = _build_events_line(daemon)
-    if events_line:
-        sections.append(events_line)
-
     # --- Memory counts (from daemon cache) ---
     memory_line = _build_memory_line(daemon)
     if memory_line:
@@ -513,18 +508,6 @@ def _build_stats_line() -> str:
     return ""
 
 
-def _build_events_line(daemon) -> str:
-    """Upcoming events from daemon's cached event data."""
-    if daemon is None:
-        return ""
-    cached = getattr(daemon, "_cached_events", None)
-    if not cached:
-        return ""
-    # Truncate to ~100 chars for briefing
-    text = cached if len(cached) <= 120 else cached[:117] + "..."
-    return f"Events: {text}"
-
-
 def _build_memory_line(daemon) -> str:
     """Memory counts from daemon's cached values."""
     if daemon is None:
@@ -649,18 +632,6 @@ def build_code_questions(
             questions.append(
                 f"F&G at {fg} (Extreme Fear) — what flips your bias?"
             )
-
-    # 7. Upcoming event mentions a position symbol
-    if daemon is not None and position_coins:
-        cached_events = getattr(daemon, "_cached_events", "") or ""
-        if cached_events:
-            events_upper = cached_events.upper()
-            for coin in position_coins:
-                if coin.upper() in events_upper:
-                    questions.append(
-                        f"Upcoming event may affect {coin} — check event calendar and manage risk"
-                    )
-                    break  # Only one event warning
 
     # Cap at 4 questions
     return questions[:4]

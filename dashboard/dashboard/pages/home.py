@@ -1116,128 +1116,6 @@ def _watchlist_card() -> rx.Component:
     )
 
 
-def _events_card() -> rx.Component:
-    """Event calendar card — upcoming events + funding rates."""
-    return rx.box(
-        rx.vstack(
-            # Header
-            rx.hstack(
-                rx.hstack(
-                    rx.icon("calendar", size=14, color="#a78bfa"),
-                    rx.text(
-                        "Events",
-                        font_size="0.75rem",
-                        font_weight="600",
-                        color="#737373",
-                        text_transform="uppercase",
-                        letter_spacing="0.05em",
-                    ),
-                    spacing="2",
-                    align="center",
-                ),
-                rx.spacer(),
-                rx.cond(
-                    AppState.events_age_str != "",
-                    rx.text(
-                        AppState.events_age_str,
-                        font_size="0.65rem",
-                        color="#525252",
-                    ),
-                    rx.fragment(),
-                ),
-                width="100%",
-                align="center",
-            ),
-
-            # Funding rates section
-            rx.cond(
-                AppState.events_funding_html != "",
-                rx.vstack(
-                    rx.text(
-                        "FUNDING RATES",
-                        font_size="0.6rem",
-                        font_weight="600",
-                        color="#525252",
-                        letter_spacing="0.05em",
-                    ),
-                    rx.html(AppState.events_funding_html),
-                    spacing="1",
-                    width="100%",
-                ),
-                rx.fragment(),
-            ),
-
-            # Macro economic events
-            rx.cond(
-                AppState.events_macro_html != "",
-                rx.vstack(
-                    rx.text(
-                        "MACRO EVENTS",
-                        font_size="0.6rem",
-                        font_weight="600",
-                        color="#525252",
-                        letter_spacing="0.05em",
-                    ),
-                    rx.html(AppState.events_macro_html),
-                    spacing="1",
-                    width="100%",
-                ),
-                rx.fragment(),
-            ),
-
-            # Crypto events
-            rx.cond(
-                AppState.events_crypto_html != "",
-                rx.vstack(
-                    rx.text(
-                        "CRYPTO EVENTS",
-                        font_size="0.6rem",
-                        font_weight="600",
-                        color="#525252",
-                        letter_spacing="0.05em",
-                    ),
-                    rx.html(AppState.events_crypto_html),
-                    spacing="1",
-                    width="100%",
-                ),
-                rx.fragment(),
-            ),
-
-            # Empty state — only when both are empty
-            rx.cond(
-                (AppState.events_macro_html == "") & (AppState.events_crypto_html == "") & (AppState.events_funding_html == ""),
-                rx.center(
-                    rx.vstack(
-                        rx.icon("calendar-off", size=20, color="#333"),
-                        rx.text(
-                            "No events cached yet",
-                            font_size="0.8rem",
-                            color="#404040",
-                        ),
-                        rx.text(
-                            "Daemon polls every 6h",
-                            font_size="0.7rem",
-                            color="#333",
-                        ),
-                        spacing="1",
-                        align="center",
-                    ),
-                    padding="1.5rem",
-                ),
-                rx.fragment(),
-            ),
-
-            spacing="3",
-            width="100%",
-        ),
-        background="#111111",
-        border="1px solid #1a1a1a",
-        border_radius="12px",
-        padding="1rem",
-        height="100%",
-    )
-
-
 def _suggestion(text: str, icon_name: str) -> rx.Component:
     """Single suggestion card."""
     return rx.box(
@@ -1421,15 +1299,8 @@ def home_page() -> rx.Component:
                 # Positions — full width
                 rx.box(positions_section(), width="100%"),
 
-                # Watchlist + Events side by side
-                rx.hstack(
-                    rx.box(_watchlist_card(), flex="1 1 260px", min_width="0"),
-                    rx.box(_events_card(), flex="1 1 260px", min_width="0"),
-                    spacing="4",
-                    width="100%",
-                    align_items="stretch",
-                    flex_wrap="wrap",
-                ),
+                # Watchlist
+                rx.box(_watchlist_card(), width="100%"),
 
                 # Suggestions — full-width row
                 rx.box(suggestion_cards(), width="100%"),
