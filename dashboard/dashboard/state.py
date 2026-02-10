@@ -567,11 +567,12 @@ class AppState(rx.State):
             _cluster_tick += 1
             if _cluster_tick % 4 == 0:
                 try:
-                    cluster_data, health_data, conflict_data = await asyncio.to_thread(
+                    cluster_data, health_data, conflict_data, wp_data = await asyncio.to_thread(
                         lambda: (
                             AppState._fetch_clusters(),
                             AppState._fetch_memory_health(),
                             AppState._fetch_conflicts(),
+                            AppState._fetch_watchpoints(),
                         )
                     )
                     async with self:
@@ -582,6 +583,8 @@ class AppState(rx.State):
                         self.memory_health_ratio = health_data["health_ratio"]
                         self.memory_lifecycle_html = health_data["lifecycle_html"]
                         self.conflict_count = conflict_data["count"]
+                        self.watchpoint_groups = wp_data["groups"]
+                        self.watchpoint_count = str(wp_data["count"])
                 except Exception:
                     pass
 
