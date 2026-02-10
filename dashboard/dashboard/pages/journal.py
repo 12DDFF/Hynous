@@ -69,7 +69,7 @@ def _equity_chart() -> rx.Component:
                         content_style={"backgroundColor": "#111111", "border": "1px solid #1a1a1a"},
                     ),
                     rx.el.defs(
-                        rx.el.linearGradient(
+                        rx.el.linear_gradient(
                             rx.el.stop(offset="5%", stop_color="#4ade80", stop_opacity=0.3),
                             rx.el.stop(offset="95%", stop_color="#4ade80", stop_opacity=0.0),
                             id="equityGradient",
