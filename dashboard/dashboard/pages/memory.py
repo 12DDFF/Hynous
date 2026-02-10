@@ -89,7 +89,7 @@ def _clusters_section() -> rx.Component:
 def _health_section() -> rx.Component:
     """Memory health overview."""
     return rx.vstack(
-        _section_header("Health", "heart-pulse", "#22c55e"),
+        _section_header("Health", "activity", "#22c55e"),
         rx.hstack(
             rx.vstack(
                 rx.text(AppState.memory_node_count, font_size="1.1rem", font_weight="600", color="#fafafa"),
