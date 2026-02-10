@@ -880,7 +880,7 @@ class AppState(rx.State):
 
     # === Watchlist State ===
 
-    watchpoint_groups: list[dict] = []
+    watchpoints_flat: list[dict] = []
     watchpoint_count: str = "0"
 
     @_background
@@ -888,12 +888,16 @@ class AppState(rx.State):
         """Fetch active watchpoints from Nous, grouped by symbol."""
         data = await asyncio.to_thread(self._fetch_watchpoints)
         async with self:
-            self.watchpoint_groups = data["groups"]
+            self.watchpoints_flat = data["flat"]
             self.watchpoint_count = str(data["count"])
 
     @staticmethod
     def _fetch_watchpoints() -> dict:
-        """Fetch watchpoints from Nous (sync, runs in thread)."""
+        """Fetch watchpoints from Nous (sync, runs in thread).
+
+        Returns flat list with header rows for symbol grouping.
+        Each row: is_header=True for group headers, False for items.
+        """
         try:
             from hynous.nous.client import get_client
             import json as _json
@@ -911,58 +915,58 @@ class AppState(rx.State):
                 value = trigger.get("value", 0)
                 expiry = trigger.get("expiry", "")[:10]
                 title = n.get("content_title", "")
-                context = body.get("text", "")
 
                 # Format value
                 if "price" in condition and value >= 1000:
                     val_str = f"${value:,.0f}"
                 elif "price" in condition:
                     val_str = f"${value}"
-                elif "funding" in condition:
-                    val_str = f"{value}"
                 else:
                     val_str = str(value)
 
-                # Short title: strip symbol prefix if present
+                # Short title: strip symbol/price prefix
                 title_short = title
                 for prefix in [f"{symbol} ${value:,.0f}", f"{symbol} ${value}", symbol]:
                     if title_short.startswith(prefix):
                         title_short = title_short[len(prefix):].lstrip(" —-")
                         break
 
-                # Direction
+                # Condition label
                 is_up = "above" in condition or condition == "fear_greed_extreme"
-                cond_label = condition.replace("_", " ").replace("price ", "").replace("funding ", "F: ")
                 if condition == "fear_greed_extreme":
                     cond_label = f"F&G < {int(value)}"
-                    val_str = ""
                 elif "above" in condition:
                     cond_label = f"above {val_str}"
                 else:
                     cond_label = f"below {val_str}"
 
                 item = {
+                    "is_header": False,
+                    "symbol": symbol,
                     "condition": cond_label,
                     "title": title_short[:50],
-                    "context": context[:120] + ("..." if len(context) > 120 else ""),
-                    "expiry": expiry[5:] if expiry else "",  # MM-DD
+                    "expiry": expiry[5:] if expiry else "",
                     "is_up": is_up,
                 }
                 by_symbol.setdefault(symbol, []).append(item)
 
-            # Build groups sorted by symbol
-            groups = []
+            # Build flat list with headers
+            flat: list[dict] = []
             for sym in sorted(by_symbol.keys()):
                 items = by_symbol[sym]
-                groups.append({
+                flat.append({
+                    "is_header": True,
                     "symbol": sym,
-                    "count": len(items),
-                    "items": items,
+                    "condition": f"{len(items)}",
+                    "title": "",
+                    "expiry": "",
+                    "is_up": True,
                 })
+                flat.extend(items)
 
-            return {"groups": groups, "count": len(nodes)}
+            return {"flat": flat, "count": len(nodes)}
         except Exception:
-            return {"groups": [], "count": 0}
+            return {"flat": [], "count": 0}
 
     # === Journal State ===
 

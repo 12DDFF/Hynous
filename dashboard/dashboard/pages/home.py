@@ -868,84 +868,66 @@ def profile_card() -> rx.Component:
     )
 
 
-def _wp_item(item: dict) -> rx.Component:
-    """Single watchpoint row."""
-    arrow_color = rx.cond(item["is_up"], "#4ade80", "#f87171")
-    arrow_icon = rx.cond(item["is_up"], "trending-up", "trending-down")
-    return rx.box(
+def _wp_row(item: dict) -> rx.Component:
+    """Single watchpoint row — header or item, determined by is_header flag."""
+    return rx.cond(
+        item["is_header"],
+        # Symbol header row
         rx.hstack(
-            rx.icon(arrow_icon, size=14, color=arrow_color, flex_shrink="0"),
-            rx.vstack(
-                rx.hstack(
-                    rx.text(
-                        item["condition"],
-                        font_size="0.8rem",
-                        font_weight="500",
-                        color="#e5e5e5",
-                    ),
-                    rx.text(
-                        item["title"],
-                        font_size="0.75rem",
-                        color="#737373",
-                        overflow="hidden",
-                        text_overflow="ellipsis",
-                        white_space="nowrap",
-                        max_width="200px",
-                    ),
-                    spacing="2",
-                    align="center",
-                ),
-                spacing="0",
+            rx.text(
+                item["symbol"],
+                font_size="0.8rem",
+                font_weight="600",
+                color="#fafafa",
+            ),
+            rx.badge(
+                item["condition"],
+                variant="soft",
+                color_scheme="gray",
+                size="1",
+            ),
+            spacing="2",
+            align="center",
+            padding_top="0.5rem",
+            padding_bottom="0.25rem",
+        ),
+        # Watchpoint item row
+        rx.hstack(
+            rx.icon(
+                rx.cond(item["is_up"], "trending-up", "trending-down"),
+                size=13,
+                color=rx.cond(item["is_up"], "#4ade80", "#f87171"),
+                flex_shrink="0",
+            ),
+            rx.text(
+                item["condition"],
+                font_size="0.78rem",
+                font_weight="500",
+                color="#d4d4d4",
+                flex_shrink="0",
+            ),
+            rx.text(
+                item["title"],
+                font_size="0.72rem",
+                color="#525252",
+                overflow="hidden",
+                text_overflow="ellipsis",
+                white_space="nowrap",
             ),
             rx.spacer(),
-            rx.text(item["expiry"], font_size="0.65rem", color="#404040"),
-            spacing="3",
+            rx.text(item["expiry"], font_size="0.6rem", color="#333"),
+            spacing="2",
             align="center",
             width="100%",
+            padding_left="0.5rem",
+            padding_y="0.3rem",
+            border_bottom="1px solid #141414",
         ),
-        padding_y="0.375rem",
-        border_bottom="1px solid #141414",
-    )
-
-
-def _wp_group(group: dict) -> rx.Component:
-    """Watchpoint group — symbol header + items."""
-    return rx.accordion.item(
-        rx.accordion.header(
-            rx.accordion.trigger(
-                rx.hstack(
-                    rx.text(
-                        group["symbol"],
-                        font_size="0.85rem",
-                        font_weight="600",
-                        color="#fafafa",
-                    ),
-                    rx.badge(
-                        group["count"].to(str),
-                        variant="soft",
-                        color_scheme="gray",
-                        size="1",
-                    ),
-                    rx.spacer(),
-                    rx.accordion.icon(),
-                    width="100%",
-                    align="center",
-                ),
-            ),
-        ),
-        rx.accordion.content(
-            rx.vstack(
-                rx.foreach(group["items"], _wp_item),
-                spacing="0",
-                width="100%",
-            ),
-        ),
-        value=group["symbol"],
     )
 
 
 def _watchlist_card() -> rx.Component:
-    """Watchlist card — collapsible by symbol."""
+    """Watchlist card — grouped by symbol, flat foreach."""
     return rx.box(
         rx.vstack(
             rx.hstack(
@@ -973,15 +955,11 @@ def _watchlist_card() -> rx.Component:
                 align="center",
             ),
             rx.cond(
-                AppState.watchpoint_groups.length() > 0,
-                rx.accordion.root(
-                    rx.foreach(AppState.watchpoint_groups, _wp_group),
-                    type="multiple",
-                    variant="ghost",
+                AppState.watchpoints_flat.length() > 0,
+                rx.vstack(
+                    rx.foreach(AppState.watchpoints_flat, _wp_row),
+                    spacing="0",
                     width="100%",
-                    default_value=AppState.watchpoint_groups.map(
-                        lambda g: g["symbol"]
-                    ),
                 ),
                 rx.center(
                     rx.text(
