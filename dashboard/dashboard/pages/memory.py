@@ -213,6 +213,22 @@ def _actions_section() -> rx.Component:
             ),
             rx.fragment(),
         ),
+        _action_button(
+            "Backfill Clusters", "brain", "#a5b4fc",
+            AppState.run_cluster_backfill,
+            is_loading=AppState.cluster_backfill_running,
+        ),
+        # Cluster backfill result display
+        rx.cond(
+            AppState.cluster_backfill_result != "",
+            rx.text(
+                AppState.cluster_backfill_result,
+                font_size="0.7rem",
+                color="#525252",
+                padding="0.25rem 0.625rem",
+            ),
+            rx.fragment(),
+        ),
         # Decay result display
         rx.cond(
             AppState.decay_result != "",

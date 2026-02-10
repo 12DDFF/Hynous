@@ -1319,6 +1319,9 @@ class AppState(rx.State):
     backfill_running: bool = False
     backfill_result: str = ""
 
+    cluster_backfill_running: bool = False
+    cluster_backfill_result: str = ""
+
     @_background
     async def load_memory_page(self):
         """Load all memory management data."""
@@ -1562,6 +1565,89 @@ class AppState(rx.State):
         embedded = result.get("embedded", 0)
         total = result.get("total", 0)
         return f"Embedded {embedded}/{total} nodes"
+
+    @_background
+    async def run_cluster_backfill(self):
+        """Retroactively assign all existing nodes to matching clusters."""
+        async with self:
+            self.cluster_backfill_running = True
+            self.cluster_backfill_result = ""
+        try:
+            result = await asyncio.to_thread(self._exec_cluster_backfill)
+            clusters = await asyncio.to_thread(self._fetch_clusters)
+            async with self:
+                self.cluster_backfill_result = result
+                self.cluster_backfill_running = False
+                self.cluster_displays = clusters["clusters"]
+                self.cluster_total = str(clusters["total"])
+        except Exception as e:
+            async with self:
+                self.cluster_backfill_result = f"Error: {e}"
+                self.cluster_backfill_running = False
+
+    @staticmethod
+    def _exec_cluster_backfill() -> str:
+        """Scan all ACTIVE nodes and assign to matching clusters."""
+        import re as _re
+        import json as _json
+        from hynous.nous.client import get_client
+
+        client = get_client()
+        clusters = client.list_clusters()
+        if not clusters:
+            return "No clusters to backfill"
+
+        nodes = client.list_nodes(lifecycle="ACTIVE", limit=500)
+        if not nodes:
+            return "No active nodes"
+
+        assigned = 0
+        for node in nodes:
+            nid = node.get("id")
+            subtype = node.get("subtype", "") or node.get("content_subtype", "")
+            title = node.get("content_title", "")
+            body = node.get("content_body", "")
+            # Extract text from JSON body
+            if body and body.startswith("{"):
+                try:
+                    body = _json.loads(body).get("text", body)
+                except Exception:
+                    pass
+            text_upper = f"{title} {body}".upper()
+
+            for cl in clusters:
+                cid = cl.get("id")
+                if not cid:
+                    continue
+                matched = False
+
+                # Strategy 1: Subtype match
+                auto_subs = cl.get("auto_subtypes")
+                if auto_subs:
+                    if isinstance(auto_subs, str):
+                        try:
+                            auto_subs = _json.loads(auto_subs)
+                        except Exception:
+                            auto_subs = None
+                    if isinstance(auto_subs, list) and subtype in auto_subs:
+                        matched = True
+
+                # Strategy 2: Keyword match (cluster name in content)
+                if not matched:
+                    cluster_name = (cl.get("name") or "").upper()
+                    if cluster_name and len(cluster_name) >= 2:
+                        pattern = r'(?<![A-Z])' + _re.escape(cluster_name) + r'(?![A-Z])'
+                        if _re.search(pattern, text_upper):
+                            matched = True
+
+                if matched:
+                    try:
+                        client.add_to_cluster(cid, node_id=nid)
+                        assigned += 1
+                    except Exception:
+                        pass
+
+        return f"Scanned {len(nodes)} nodes, {assigned} assignments made"
 
     @_background
     async def resolve_all_conflicts(self):
