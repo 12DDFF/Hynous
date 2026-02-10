@@ -179,6 +179,30 @@ def _create_watchpoint(
     if condition not in valid_conditions:
         return f"Error: condition must be one of: {', '.join(sorted(valid_conditions))}"
 
+    # Dedup check — reject if an active watchpoint with same symbol+condition+value exists
+    existing = client.list_nodes(
+        subtype="custom:watchpoint", lifecycle="ACTIVE", limit=50,
+    )
+    for wp in existing:
+        try:
+            wp_body = json.loads(wp.get("content_body", "{}"))
+            wp_trigger = wp_body.get("trigger", {})
+            if (
+                wp_trigger.get("symbol", "").upper() == symbol.upper()
+                and wp_trigger.get("condition") == condition
+                and wp_trigger.get("value") == value
+            ):
+                wp_title = wp.get("content_title", "Untitled")
+                wp_id = wp.get("id", "?")
+                return (
+                    f"Duplicate rejected: you already have an active watchpoint "
+                    f"\"{wp_title}\" ({wp_id}) with the same trigger "
+                    f"({symbol} {condition.replace('_', ' ')} {value}). "
+                    f"Delete it first if you want to replace it."
+                )
+        except (json.JSONDecodeError, TypeError):
+            continue
+
     # Build expiry
     expiry = (datetime.now(timezone.utc) + timedelta(days=expiry_days)).isoformat()
 
