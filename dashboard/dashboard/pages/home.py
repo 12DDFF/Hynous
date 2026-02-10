@@ -932,7 +932,7 @@ def _wp_accordion_item(group) -> rx.Component:
         ),
         rx.accordion.content(
             rx.vstack(
-                rx.foreach(group.items, _wp_item_card),
+                rx.foreach(group.entries, _wp_item_card),
                 spacing="2",
                 width="100%",
                 padding_bottom="0.5rem",

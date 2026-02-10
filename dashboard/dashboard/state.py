@@ -157,7 +157,7 @@ class WatchpointGroup(BaseModel):
     """Watchpoint group for a single symbol (used in accordion)."""
     symbol: str = ""
     count: str = "0"
-    items: List[WatchpointItem] = []
+    entries: List[WatchpointItem] = []
 
 
 # --- Agent + Daemon singletons (shared across all sessions) ---
@@ -958,7 +958,7 @@ class AppState(rx.State):
 
             # Build groups
             groups = [
-                WatchpointGroup(symbol=sym, count=str(len(items)), items=items)
+                WatchpointGroup(symbol=sym, count=str(len(items)), entries=items)
                 for sym, items in sorted(by_symbol.items())
             ]
 
