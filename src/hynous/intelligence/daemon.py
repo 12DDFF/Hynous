@@ -125,6 +125,7 @@ class Daemon:
         # Timing trackers
         self._last_review: float = 0
         self._last_curiosity_check: float = 0
+        self._last_learning_session: float = 0  # Cooldown to prevent runaway loop
 
         # Data-change gate: watchpoints only checked when data is fresh
         self._data_changed: bool = False
@@ -899,7 +900,15 @@ class Daemon:
             logger.info("%s complete (%d chars)", review_type, len(response))
 
     def _check_curiosity(self):
-        """Check if curiosity queue is large enough for a learning session."""
+        """Check if curiosity queue is large enough for a learning session.
+
+        Enforces a 1-hour cooldown between learning sessions to prevent
+        runaway loops where each session creates new curiosity items.
+        """
+        # Cooldown: max 1 learning session per hour
+        if time.time() - self._last_learning_session < 3600:
+            return
+
         try:
             nous = self._get_nous()
             curiosity_items = nous.list_nodes(
@@ -934,6 +943,7 @@ class Daemon:
             response = self._wake_agent(message, max_coach_cycles=0)
             if response:
                 self.learning_sessions += 1
+                self._last_learning_session = time.time()
                 # Mark addressed curiosity items as WEAK so they don't re-trigger
                 for item in curiosity_items[:5]:
                     try:
@@ -1074,7 +1084,7 @@ class Daemon:
             # === 4. Assemble wake message ===
             parts = []
             if briefing_text:
-                parts.append(f"[Briefing]\n{briefing_text}")
+                parts.append(f"[Briefing]\n{briefing_text}\n[End Briefing]")
             if code_questions or haiku_questions:
                 all_q = code_questions + haiku_questions
                 parts.append("[Questions]\n" + "\n".join(f"- {q}" for q in all_q))

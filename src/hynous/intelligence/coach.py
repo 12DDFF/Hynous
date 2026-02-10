@@ -110,10 +110,13 @@ class Coach:
             questions = []
             for line in text.split("\n"):
                 line = line.strip().strip('"').strip("'").strip("-").strip("•").strip()
-                # Skip empty, too-short, markdown headings, and numbering artifacts
+                # Strip numbered list prefixes: "1.", "2)", "1:"
+                if len(line) > 2 and line[0].isdigit() and line[1] in ".):":
+                    line = line[2:].strip()
+                # Skip empty, too-short, markdown headings, and dividers
                 if not line or len(line) <= 10:
                     continue
-                if line.startswith("#"):
+                if line.startswith("#") or line.startswith("---") or line.startswith("**"):
                     continue
                 questions.append(line)
 

@@ -563,10 +563,12 @@ def handle_execute_trade(
     if result["status"] != "filled" or fill_sz == 0:
         return f"Order not filled. Status: {result['status']}. Try again or adjust size."
 
-    # Invalidate snapshot cache so next chat() gets fresh position data
+    # Invalidate snapshot + briefing cache so next chat() gets fresh position data
     try:
         from ..context_snapshot import invalidate_snapshot
+        from ..briefing import invalidate_briefing_cache
         invalidate_snapshot()
+        invalidate_briefing_cache()
     except Exception:
         pass
 
@@ -965,10 +967,12 @@ def handle_close_position(
         exit_px = result.get("avg_px", 0)
         closed_sz = result.get("filled_sz", close_size or full_size)
 
-    # Invalidate snapshot cache so next chat() gets fresh position data
+    # Invalidate snapshot + briefing cache so next chat() gets fresh position data
     try:
         from ..context_snapshot import invalidate_snapshot
+        from ..briefing import invalidate_briefing_cache
         invalidate_snapshot()
+        invalidate_briefing_cache()
     except Exception:
         pass
 
@@ -1258,10 +1262,12 @@ def handle_modify_position(
         except Exception as e:
             changes.append(f"Leverage update FAILED: {e}")
 
-    # Invalidate snapshot cache so next chat() gets fresh data
+    # Invalidate snapshot + briefing cache so next chat() gets fresh data
     try:
         from ..context_snapshot import invalidate_snapshot
+        from ..briefing import invalidate_briefing_cache
         invalidate_snapshot()
+        invalidate_briefing_cache()
     except Exception:
         pass
 

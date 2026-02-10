@@ -290,15 +290,17 @@ def build_briefing(
     provider,       # For portfolio/position data
     daemon,         # For daily PnL, circuit breaker
     config,
+    user_state: dict | None = None,
 ) -> str:
     """Build a ~500-800 token briefing document for daemon wakes.
 
     Replaces [Live State] for daemon wakes — Sonnet sees all data upfront.
+    Pass user_state to avoid redundant provider.get_user_state() calls.
     """
     sections = []
 
     # --- Portfolio + Positions (reuses context_snapshot logic) ---
-    portfolio_section = _build_portfolio_section(provider, daemon, config)
+    portfolio_section = _build_portfolio_section(provider, daemon, config, user_state=user_state)
     if portfolio_section:
         sections.append(portfolio_section)
 
@@ -321,13 +323,13 @@ def build_briefing(
     return "\n\n".join(sections)
 
 
-def _build_portfolio_section(provider, daemon, config) -> str:
+def _build_portfolio_section(provider, daemon, config, user_state: dict | None = None) -> str:
     """Portfolio value + positions with SL/TP."""
     if provider is None:
         return ""
 
     try:
-        state = provider.get_user_state()
+        state = user_state or provider.get_user_state()
     except Exception:
         return "Portfolio: unavailable"
 
@@ -632,10 +634,11 @@ def _get_daemon():
     return get_active_daemon()
 
 
-def _capture_state(daemon, now: float) -> InjectedState:
-    """Capture current market/portfolio state for delta computation."""
-    from ..data.providers.hyperliquid import get_provider
+def _capture_state(daemon, now: float, user_state: dict | None = None) -> InjectedState:
+    """Capture current market/portfolio state for delta computation.
 
+    Pass user_state to avoid redundant provider.get_user_state() calls.
+    """
     state = InjectedState(
         timestamp=now,
         datacache_poll_time=daemon._data_cache._last_fetch,
@@ -647,10 +650,11 @@ def _capture_state(daemon, now: float) -> InjectedState:
         state.funding = dict(daemon.snapshot.funding)
         state.fear_greed = daemon.snapshot.fear_greed
 
-    # Portfolio + positions from provider
+    # Portfolio + positions from provider (reuse if passed)
     try:
-        provider = get_provider()
-        user_state = provider.get_user_state()
+        if user_state is None:
+            from ..data.providers.hyperliquid import get_provider
+            user_state = get_provider().get_user_state()
         state.portfolio_value = user_state.get("account_value", 0)
         state.unrealized_pnl = user_state.get("unrealized_pnl", 0)
         for p in user_state.get("positions", []):
@@ -721,13 +725,17 @@ def _build_and_store_full(daemon, now: float, datacache_time: float) -> str | No
         from ..data.providers.hyperliquid import get_provider
         provider = get_provider()
 
+        # Fetch user state ONCE — shared by briefing and state capture
+        user_state = provider.get_user_state()
+
         briefing = build_briefing(
             daemon._data_cache, daemon.snapshot, provider, daemon, daemon.config,
+            user_state=user_state,
         )
         if not briefing:
             return None
 
-        _last_state = _capture_state(daemon, now)
+        _last_state = _capture_state(daemon, now, user_state=user_state)
         _last_full_briefing_time = now
 
         return (

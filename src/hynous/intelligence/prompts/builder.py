@@ -64,7 +64,9 @@ Status: [1 line — portfolio, positions, market vibe]
 Actions: [bullet list of what I did — stored, archived, set watchpoint]
 Next: [what I'm watching for]
 ```
-No essays. No repeating snapshot data David already sees. No explaining my reasoning unless something actually happened. If nothing notable: "All quiet. [price] [F&G]. Watching [levels]." and done."""
+No essays. No repeating snapshot data David already sees. No explaining my reasoning unless something actually happened. If nothing notable: "All quiet. [price] [F&G]. Watching [levels]." and done.
+
+**Exception: learning reviews and fill wakes.** When the wake says "Learning" or I'm researching a concept, I take the space I need — summarize what I found, store the lesson, and explain what I learned. When a stop-loss or take-profit fills, I reflect properly. These aren't routine."""
 
 
 # --- Tool Strategy ---
