@@ -168,6 +168,51 @@ def _auto_link(node_id: str, title: str, content: str, explicit_ids: list | None
     threading.Thread(target=_link, daemon=True).start()
 
 
+def _auto_assign_clusters(
+    client, node_id: str, subtype: str, exclude_cluster: str | None = None,
+):
+    """Auto-assign node to clusters whose auto_subtypes include this subtype.
+
+    Runs in background thread to avoid blocking the store response.
+    Skips the exclude_cluster (already assigned explicitly).
+    """
+    def _assign():
+        try:
+            clusters = client.list_clusters()
+            for cl in clusters:
+                cid = cl.get("id")
+                if not cid:
+                    continue
+                # Skip if already explicitly assigned
+                if exclude_cluster and cid == exclude_cluster:
+                    continue
+
+                auto_subs = cl.get("auto_subtypes")
+                if not auto_subs:
+                    continue
+
+                # Handle both parsed list and raw JSON string
+                if isinstance(auto_subs, str):
+                    try:
+                        auto_subs = json.loads(auto_subs)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                if not isinstance(auto_subs, list):
+                    continue
+
+                if subtype in auto_subs:
+                    try:
+                        client.add_to_cluster(cid, node_id=node_id)
+                    except Exception:
+                        continue
+
+        except Exception as e:
+            logger.debug("Cluster auto-assignment failed for %s: %s", node_id, e)
+
+    threading.Thread(target=_assign, daemon=True).start()
+
+
 # Memory type → (@nous/core type, subtype)
 _TYPE_MAP = {
     "watchpoint": ("concept", "custom:watchpoint"),
@@ -217,6 +262,11 @@ STORE_TOOL_DEF = {
         "is worth remembering — it's instant (queued, not stored yet). All memories "
         "flush to Nous after your response is complete. Call multiple store_memory "
         "in one response for related memories. Use [[wikilinks]] to cross-reference."
+        "\n\n"
+        "DEDUPLICATION: Lessons and curiosity items are checked for duplicates before "
+        "storing. If a very similar memory already exists (95%+ match), the new one "
+        "won't be created — you'll see which existing memory matched. If a moderately "
+        "similar memory exists (90-95% match), the new one is created and linked to it."
     ),
     "parameters": {
         "type": "object",
@@ -272,6 +322,15 @@ STORE_TOOL_DEF = {
                     "Episodes, trades, and signals auto-set to now if not provided."
                 ),
             },
+            "cluster": {
+                "type": "string",
+                "description": (
+                    "Cluster ID to assign this memory to (optional). "
+                    "Get cluster IDs from manage_clusters(action=\"list\"). "
+                    "Memories are also auto-assigned to clusters based on "
+                    "their type if the cluster has matching auto_subtypes."
+                ),
+            },
         },
         "required": ["content", "memory_type", "title"],
     },
@@ -286,6 +345,7 @@ def handle_store_memory(
     signals: Optional[dict] = None,
     link_ids: Optional[list] = None,
     event_time: Optional[str] = None,
+    cluster: Optional[str] = None,
 ) -> str:
     """Store a memory — queues if queue mode active, stores directly otherwise."""
     if memory_type not in _TYPE_MAP:
@@ -293,14 +353,17 @@ def handle_store_memory(
 
     kwargs = dict(
         content=content, memory_type=memory_type, title=title,
-        trigger=trigger, signals=signals, link_ids=link_ids, event_time=event_time,
+        trigger=trigger, signals=signals, link_ids=link_ids,
+        event_time=event_time, cluster=cluster,
     )
 
-    if _queue_mode:
+    if _queue_mode and memory_type not in ("lesson", "curiosity"):
         with _queue_lock:
             _memory_queue.append(kwargs)
         wikilinks = _WIKILINK_RE.findall(content)
         result = f"Queued: \"{title}\""
+        if cluster:
+            result += f" [→ cluster: {cluster}]"
         if wikilinks:
             result += f" (will link: {', '.join(wikilinks)})"
         return result
@@ -316,9 +379,29 @@ def _store_memory_impl(
     signals: Optional[dict] = None,
     link_ids: Optional[list] = None,
     event_time: Optional[str] = None,
+    cluster: Optional[str] = None,
 ) -> str:
     """Actually store a memory in Nous (HTTP calls + linking)."""
+    from ...core.config import load_config
+    from ..gate_filter import check_content
+
+    # --- Gate filter (MF-15) ---
+    # Reject junk content before any HTTP calls to Nous.
+    # Runs on ALL memory types. For synchronous stores (lesson/curiosity),
+    # the agent sees the rejection feedback. For queued stores, the rejection
+    # is logged but silent to the agent (acceptable — rules are conservative).
+    cfg = load_config()
+    if cfg.memory.gate_filter_enabled:
+        gate_result = check_content(content)
+        if not gate_result.passed:
+            logger.info(
+                "Gate filter rejected %s \"%s\": %s",
+                memory_type, title[:50], gate_result.reason,
+            )
+            return f"Not stored: {gate_result.detail}"
+
     from ...nous.client import get_client
+    client = get_client()
 
     node_type, subtype = _TYPE_MAP[memory_type]
 
@@ -347,6 +430,57 @@ def _store_memory_impl(
     # Create the summary from first ~500 chars of content
     summary = content[:500] if len(content) > 500 else None
 
+    # --- Dedup check for eligible types (MF-0) ---
+    # Only lesson and curiosity go through dedup. All other types create immediately.
+    # This check calls POST /v1/nodes/check-similar on Nous to compare the new
+    # content's embedding against existing nodes of the same subtype.
+    _connect_matches = []
+    if memory_type in ("lesson", "curiosity"):
+        try:
+            similar = client.check_similar(
+                content=content,
+                title=title,
+                subtype=subtype,
+                limit=5,
+            )
+
+            recommendation = similar.get("recommendation", "unique")
+            matches = similar.get("matches", [])
+
+            # DUPLICATE (>= 0.95 cosine): drop the new node entirely
+            if recommendation == "duplicate_found" and matches:
+                top = matches[0]  # Highest similarity match (sorted by Nous)
+                dup_title = top.get("title", "Untitled")
+                dup_id = top.get("node_id", "?")
+                dup_lifecycle = top.get("lifecycle", "ACTIVE")
+                dup_sim = top.get("similarity", 0)
+                sim_pct = int(dup_sim * 100)
+
+                logger.info(
+                    "Dedup: dropped %s \"%s\" — duplicate of \"%s\" (%s, %d%% similar)",
+                    memory_type, title, dup_title, dup_id, sim_pct,
+                )
+
+                result_msg = (
+                    f"Duplicate: already stored as \"{dup_title}\" ({dup_id})"
+                )
+                if dup_lifecycle != "ACTIVE":
+                    result_msg += f" [{dup_lifecycle}]"
+                    result_msg += ". Use update_memory to reactivate if needed"
+                result_msg += f". Not created. ({sim_pct}% similar)"
+                return result_msg
+
+            # CONNECT tier matches (0.90-0.95) — save for edge creation after node is created
+            _connect_matches = [
+                m for m in matches if m.get("action") == "connect"
+            ]
+
+        except Exception as e:
+            # Dedup check failed — fall back to creating normally.
+            # A duplicate is better than a lost memory. Dedup is optimization, not safety.
+            logger.warning("Dedup check failed, creating normally: %s", e)
+            _connect_matches = []
+
     try:
         from ...core.memory_tracker import get_tracker
         tracker = get_tracker()
@@ -364,6 +498,7 @@ def _store_memory_impl(
         )
 
         node_id = node.get("id", "?")
+        contradiction_flag = node.get("_contradiction_detected", False)
 
         # Track mutation
         tracker.record_create(subtype, title, node_id)
@@ -386,10 +521,47 @@ def _store_memory_impl(
         _resolve_wikilinks(node_id, content, explicit_ids=link_ids)
 
         # Auto-link to related memories by title (background)
-        _auto_link(node_id, title, content, explicit_ids=link_ids)
+        # Include connect-tier match IDs in skip list to avoid duplicate edges
+        connect_ids = [m.get("node_id") for m in _connect_matches if m.get("node_id")]
+        all_skip = (link_ids or []) + connect_ids
+        _auto_link(node_id, title, content, explicit_ids=all_skip if all_skip else link_ids)
+
+        # Create edges for connect-tier matches from dedup check (0.90-0.95 similarity)
+        if _connect_matches:
+            for match in _connect_matches:
+                match_id = match.get("node_id")
+                if match_id:
+                    try:
+                        client.create_edge(
+                            source_id=node_id,
+                            target_id=match_id,
+                            type="relates_to",
+                        )
+                    except Exception as e:
+                        logger.debug("Failed to link connect-tier match %s → %s: %s", node_id, match_id, e)
+
+        # ---- Cluster assignment (MF-13) ----
+        # 1. Explicit cluster (synchronous — agent gets feedback)
+        if cluster:
+            try:
+                client.add_to_cluster(cluster, node_id=node_id)
+            except Exception as e:
+                logger.debug("Explicit cluster assignment failed: %s", e)
+
+        # 2. Auto-assign based on cluster auto_subtypes (background)
+        _auto_assign_clusters(client, node_id, subtype, exclude_cluster=cluster)
 
         logger.info("Stored %s: \"%s\" (%s)", memory_type, title, node_id)
-        return f"Stored: \"{title}\" ({node_id})"
+        result_msg = f"Stored: \"{title}\" ({node_id})"
+        if cluster:
+            result_msg += f" [→ cluster: {cluster}]"
+        if contradiction_flag:
+            logger.warning("Contradiction detected on store: %s (%s)", title, node_id)
+            result_msg += (
+                "\n\n⚠ Contradiction detected — this content may conflict with "
+                "existing memories. Use manage_conflicts(action=\"list\") to review."
+            )
+        return result_msg
 
     except Exception as e:
         logger.error("store_memory failed: %s", e)
@@ -407,20 +579,36 @@ def _store_memory_impl(
 RECALL_TOOL_DEF = {
     "name": "recall_memory",
     "description": (
-        "Search your persistent memory. Use this to recall past analyses, theses, "
-        "lessons, watchpoints, or any stored knowledge.\n\n"
-        "Examples:\n"
+        "Search or browse your persistent memory.\n\n"
+        "Two modes:\n"
+        "  search (default) — Semantic search by query. Requires query.\n"
+        "  browse — List memories by type/lifecycle. No query needed.\n\n"
+        "Search examples:\n"
         '  {"query": "BTC support levels"} → search all memories\n'
-        '  {"query": "funding", "memory_type": "signal"} → search only signal snapshots\n'
-        '  {"query": "watchpoint", "memory_type": "watchpoint", "active_only": true} '
-        "→ active watchpoints only"
+        '  {"query": "funding", "memory_type": "signal"} → search only signals\n\n'
+        "Browse examples:\n"
+        '  {"mode": "browse", "memory_type": "thesis", "active_only": true} '
+        "→ all active theses\n"
+        '  {"mode": "browse", "memory_type": "trade_entry", "limit": 5} '
+        "→ recent trade entries\n"
+        '  {"mode": "browse"} → most recent memories (all types)\n\n'
+        "Time-range search (search mode only):\n"
+        '  {"query": "BTC", "time_start": "2026-01-01", "time_end": "2026-01-31"} '
+        "→ BTC memories from January\n"
+        '  {"query": "trade entry", "time_start": "2026-02-01", "time_type": "event"} '
+        "→ trades since Feb 1st"
     ),
     "parameters": {
         "type": "object",
         "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["search", "browse"],
+                "description": "search (default) = semantic search by query. browse = list by type/lifecycle.",
+            },
             "query": {
                 "type": "string",
-                "description": "What to search for in your memories.",
+                "description": "What to search for (required for search mode, ignored in browse mode).",
             },
             "memory_type": {
                 "type": "string",
@@ -442,19 +630,98 @@ RECALL_TOOL_DEF = {
                 "type": "integer",
                 "description": "Max results to return. Default 10.",
             },
+            "time_start": {
+                "type": "string",
+                "description": "ISO date/datetime — only return memories after this time. Search mode only.",
+            },
+            "time_end": {
+                "type": "string",
+                "description": "ISO date/datetime — only return memories before this time. Search mode only.",
+            },
+            "time_type": {
+                "type": "string",
+                "enum": ["event", "ingestion", "any"],
+                "description": (
+                    "Which timestamp to filter on. "
+                    "event = when the event happened, "
+                    "ingestion = when stored, "
+                    "any = either. Default: any."
+                ),
+            },
+            "cluster": {
+                "type": "string",
+                "description": (
+                    "Cluster ID to search within (search mode only). "
+                    "Only returns memories that belong to this cluster. "
+                    "Get cluster IDs from manage_clusters(action=\"list\")."
+                ),
+            },
         },
-        "required": ["query"],
+        "required": [],
     },
 }
 
 
+def _format_memory_results(results: list[dict], header: str) -> str:
+    """Format a list of Nous nodes for display to the agent."""
+    if not results:
+        return header
+
+    lines = [header]
+    for i, node in enumerate(results, 1):
+        title = node.get("content_title", "Untitled")
+        ntype = node.get("subtype", node.get("type", "?"))
+        # Strip custom: prefix for display
+        if ntype.startswith("custom:"):
+            ntype = ntype[7:]
+        date = node.get("provenance_created_at", "?")[:10]
+        node_id = node.get("id", "?")
+        lifecycle = node.get("state_lifecycle", "")
+
+        # Preview from body (primary) or summary (fallback)
+        body = node.get("content_body", "") or ""
+        summary = node.get("content_summary", "") or ""
+
+        # Parse JSON bodies first (trades, watchpoints store JSON with "text" key)
+        preview = ""
+        if body.startswith("{"):
+            try:
+                parsed = json.loads(body)
+                preview = parsed.get("text", "")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Use body as primary, summary only as fallback when body is empty
+        if not preview:
+            preview = body or summary
+
+        lifecycle_tag = f" [{lifecycle}]" if lifecycle and lifecycle != "ACTIVE" else ""
+        lines.append(f"{i}. [{ntype}] {title} ({date}, {node_id}){lifecycle_tag}")
+        if preview:
+            lines.append(f"   {preview}")
+
+        # Show SSA score + primary signal when available (search mode only)
+        score = node.get("score")
+        primary = node.get("primary_signal")
+        if score:
+            score_pct = int(float(score) * 100)
+            lines.append(f"   Score: {score_pct}%{f' (via {primary})' if primary else ''}")
+
+    return "\n".join(lines)
+
+
 def handle_recall_memory(
-    query: str,
+    mode: str = "search",
+    query: Optional[str] = None,
     memory_type: Optional[str] = None,
     active_only: bool = False,
     limit: int = 10,
+    time_start: Optional[str] = None,
+    time_end: Optional[str] = None,
+    time_type: Optional[str] = None,
+    cluster: Optional[str] = None,
 ) -> str:
-    """Search memories in Nous."""
+    """Search or browse memories in Nous."""
     from ...nous.client import get_client
 
     # Map memory_type to subtype filter
@@ -467,55 +734,64 @@ def handle_recall_memory(
 
     try:
         client = get_client()
-        results = client.search(
-            query=query,
-            type=node_type,
-            subtype=subtype,
-            lifecycle=lifecycle,
-            limit=limit,
-        )
 
-        if not results:
-            return f"No memories found for: \"{query}\""
+        if mode == "browse":
+            # Browse mode — list by type/lifecycle, no query needed
+            results = client.list_nodes(
+                type=node_type,
+                subtype=subtype,
+                lifecycle=lifecycle,
+                limit=limit,
+            )
 
-        lines = [f"Found {len(results)} memories:\n"]
-        for i, node in enumerate(results, 1):
-            title = node.get("content_title", "Untitled")
-            ntype = node.get("subtype", node.get("type", "?"))
-            # Strip custom: prefix for display
-            if ntype.startswith("custom:"):
-                ntype = ntype[7:]
-            date = node.get("provenance_created_at", "?")[:10]
-            node_id = node.get("id", "?")
+            if not results:
+                filters = []
+                if memory_type:
+                    filters.append(f"type={memory_type}")
+                if active_only:
+                    filters.append("active only")
+                filter_str = f" ({', '.join(filters)})" if filters else ""
+                return f"No memories found{filter_str}."
 
-            # Preview from body or summary — show enough to be useful
-            body = node.get("content_body", "") or ""
-            summary = node.get("content_summary", "") or ""
-            preview = summary or body[:400]
+            type_label = memory_type or "all types"
+            header = f"Found {len(results)} memories ({type_label}):\n"
+            return _format_memory_results(results, header)
 
-            # Try to extract text from JSON body
-            if preview.startswith("{"):
-                try:
-                    parsed = json.loads(body)
-                    preview = parsed.get("text", body[:400])
-                except (json.JSONDecodeError, TypeError):
-                    preview = body[:400]
+        else:
+            # Search mode (default) — semantic search by query
+            if not query:
+                return "Error: query is required for search mode. Use mode=\"browse\" to list without a query."
 
-            if len(preview) > 400:
-                preview = preview[:397] + "..."
+            # Build time_range filter if any time parameters provided
+            time_range = None
+            if time_start or time_end:
+                time_range = {"type": time_type or "any"}
+                if time_start:
+                    time_range["start"] = time_start
+                if time_end:
+                    time_range["end"] = time_end
 
-            lines.append(f"{i}. [{ntype}] {title} ({date}, {node_id})")
-            if preview:
-                lines.append(f"   {preview}")
+            results = client.search(
+                query=query,
+                type=node_type,
+                subtype=subtype,
+                lifecycle=lifecycle,
+                limit=limit,
+                time_range=time_range,
+                cluster_ids=[cluster] if cluster else None,
+            )
 
-            # Show SSA score + primary signal when available
-            score = node.get("score")
-            primary = node.get("primary_signal")
-            if score:
-                score_pct = int(float(score) * 100)
-                lines.append(f"   Score: {score_pct}%{f' (via {primary})' if primary else ''}")
+            if not results:
+                return f"No memories found for: \"{query}\""
 
-        return "\n".join(lines)
+            # Hebbian: strengthen edges between co-retrieved memories (MF-1)
+            # Higher amount (0.05) than auto-retrieval (0.03) since agent explicitly asked
+            if len(results) > 1:
+                from ..memory_manager import _strengthen_co_retrieved
+                _strengthen_co_retrieved(client, results, amount=0.05)
+
+            header = f"Found {len(results)} memories:\n"
+            return _format_memory_results(results, header)
 
     except Exception as e:
         logger.error("recall_memory failed: %s", e)
@@ -523,7 +799,148 @@ def handle_recall_memory(
 
 
 # =============================================================================
-# 3. REGISTRATION
+# 3. UPDATE MEMORY
+# =============================================================================
+
+UPDATE_TOOL_DEF = {
+    "name": "update_memory",
+    "description": (
+        "Update an existing memory node. Use this instead of delete + re-create — "
+        "it preserves the node ID, all edges, and FSRS stability.\n\n"
+        "Use cases:\n"
+        "  - Append new evidence to an existing thesis\n"
+        "  - Correct errors in stored memories\n"
+        "  - Annotate old predictions with outcomes\n"
+        "  - Change a memory's lifecycle state\n\n"
+        "You need the node_id — get it from recall_memory results.\n\n"
+        "For appending: use append_text to add content to the existing body "
+        "without replacing it. A separator line is added automatically."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "node_id": {
+                "type": "string",
+                "description": "ID of the memory to update (from recall_memory results).",
+            },
+            "title": {
+                "type": "string",
+                "description": "New title for the memory.",
+            },
+            "content": {
+                "type": "string",
+                "description": "New body content (replaces existing body entirely).",
+            },
+            "summary": {
+                "type": "string",
+                "description": "New summary for the memory.",
+            },
+            "append_text": {
+                "type": "string",
+                "description": (
+                    "Text to append to the existing body (doesn't replace). "
+                    "For JSON bodies (trades, watchpoints), appends to the 'text' field."
+                ),
+            },
+            "lifecycle": {
+                "type": "string",
+                "enum": ["ACTIVE", "WEAK", "DORMANT"],
+                "description": "Change the memory's lifecycle state.",
+            },
+        },
+        "required": ["node_id"],
+    },
+}
+
+
+def handle_update_memory(
+    node_id: str,
+    title: Optional[str] = None,
+    content: Optional[str] = None,
+    summary: Optional[str] = None,
+    append_text: Optional[str] = None,
+    lifecycle: Optional[str] = None,
+) -> str:
+    """Update an existing memory node in Nous."""
+    from ...nous.client import get_client
+
+    # Must provide at least one field to update
+    if not any([title, content, summary, append_text, lifecycle]):
+        return "Error: provide at least one field to update (title, content, summary, append_text, or lifecycle)."
+
+    # Can't both replace and append content
+    if content and append_text:
+        return "Error: provide either content (replace) or append_text (append), not both."
+
+    try:
+        client = get_client()
+
+        # Verify node exists
+        node = client.get_node(node_id)
+        if not node:
+            return f"Error: node {node_id} not found."
+
+        old_title = node.get("content_title", "Untitled")
+
+        # Build update dict with correct Nous field names
+        updates = {}
+
+        if title:
+            updates["content_title"] = title
+
+        if summary:
+            updates["content_summary"] = summary
+
+        if lifecycle:
+            updates["state_lifecycle"] = lifecycle
+
+        if content:
+            updates["content_body"] = content
+
+        if append_text:
+            existing_body = node.get("content_body", "") or ""
+
+            # Handle JSON bodies (trades, watchpoints store JSON with "text" key)
+            if existing_body.startswith("{"):
+                try:
+                    parsed = json.loads(existing_body)
+                    existing_text = parsed.get("text", "")
+                    parsed["text"] = existing_text + "\n\n---\n\n" + append_text
+                    updates["content_body"] = json.dumps(parsed)
+                except (json.JSONDecodeError, TypeError):
+                    # Malformed JSON — treat as plain text
+                    updates["content_body"] = existing_body + "\n\n---\n\n" + append_text
+            else:
+                # Plain text body — just append
+                updates["content_body"] = existing_body + "\n\n---\n\n" + append_text
+
+        # Apply the update
+        client.update_node(node_id, **updates)
+
+        # Build confirmation message
+        changed = []
+        if title:
+            changed.append(f"title → \"{title}\"")
+        if content:
+            changed.append("content (replaced)")
+        if append_text:
+            changed.append("content (appended)")
+        if summary:
+            changed.append("summary")
+        if lifecycle:
+            changed.append(f"lifecycle → {lifecycle}")
+
+        display_title = title or old_title
+        logger.info("Updated memory: \"%s\" (%s) — %s", display_title, node_id, ", ".join(changed))
+        return f"Updated: \"{display_title}\" ({node_id}) — {', '.join(changed)}"
+
+    except Exception as e:
+        logger.error("update_memory failed: %s", e)
+        return f"Error updating memory: {e}"
+
+
+# =============================================================================
+# 4. REGISTRATION
 # =============================================================================
 
 def register(registry):
@@ -535,7 +952,7 @@ def register(registry):
         description=STORE_TOOL_DEF["description"],
         parameters=STORE_TOOL_DEF["parameters"],
         handler=handle_store_memory,
-        background=True,
+        background=False,
     ))
 
     registry.register(Tool(
@@ -543,4 +960,11 @@ def register(registry):
         description=RECALL_TOOL_DEF["description"],
         parameters=RECALL_TOOL_DEF["parameters"],
         handler=handle_recall_memory,
+    ))
+
+    registry.register(Tool(
+        name=UPDATE_TOOL_DEF["name"],
+        description=UPDATE_TOOL_DEF["description"],
+        parameters=UPDATE_TOOL_DEF["parameters"],
+        handler=handle_update_memory,
     ))

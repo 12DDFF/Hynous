@@ -126,6 +126,13 @@ class Daemon:
         self._last_review: float = 0
         self._last_curiosity_check: float = 0
         self._last_learning_session: float = 0  # Cooldown to prevent runaway loop
+        self._last_decay_cycle: float = 0
+        self._last_conflict_check: float = 0
+        self._last_health_check: float = 0
+        self._last_embedding_backfill: float = 0
+
+        # Nous health state
+        self._nous_healthy: bool = True
 
         # Data-change gate: watchpoints only checked when data is fresh
         self._data_changed: bool = False
@@ -159,6 +166,10 @@ class Daemon:
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
         self.learning_sessions: int = 0
+        self.decay_cycles_run: int = 0
+        self.conflict_checks: int = 0
+        self.health_checks: int = 0
+        self.embedding_backfills: int = 0
         self.polls: int = 0
         self._review_count: int = 0
 
@@ -195,11 +206,15 @@ class Daemon:
             target=self._loop, daemon=True, name="hynous-daemon",
         )
         self._thread.start()
-        logger.info("Daemon started (price=%ds, deriv=%ds, review=%ds, curiosity=%ds)",
+        logger.info("Daemon started (price=%ds, deriv=%ds, review=%ds, curiosity=%ds, decay=%ds, conflicts=%ds, health=%ds, backfill=%ds)",
                      self.config.daemon.price_poll_interval,
                      self.config.daemon.deriv_poll_interval,
                      self.config.daemon.periodic_interval,
-                     self.config.daemon.curiosity_check_interval)
+                     self.config.daemon.curiosity_check_interval,
+                     self.config.daemon.decay_interval,
+                     self.config.daemon.conflict_check_interval,
+                     self.config.daemon.health_check_interval,
+                     self.config.daemon.embedding_backfill_interval)
 
     def stop(self):
         """Stop the daemon loop gracefully."""
@@ -305,12 +320,19 @@ class Daemon:
 
     def _loop(self):
         """The daemon's heartbeat. Runs in a background thread."""
+        # Startup health check — verify Nous is reachable
+        self._check_health(startup=True)
+
         # Initial data fetch
         self._poll_prices()
         self._poll_derivatives()
         self._init_position_tracking()
         self._last_review = time.time()
         self._last_curiosity_check = time.time()
+        self._last_decay_cycle = time.time()
+        self._last_conflict_check = time.time()
+        self._last_health_check = time.time()
+        self._last_embedding_backfill = time.time()
         self._last_fill_check = time.time()
 
         while self._running:
@@ -352,6 +374,26 @@ class Daemon:
                 if now - self._last_review >= review_interval:
                     self._last_review = now
                     self._wake_for_review()
+
+                # 6. FSRS batch decay (default every 6 hours)
+                if now - self._last_decay_cycle >= self.config.daemon.decay_interval:
+                    self._last_decay_cycle = now
+                    self._run_decay_cycle()
+
+                # 7. Contradiction queue check (default every 30 min)
+                if now - self._last_conflict_check >= self.config.daemon.conflict_check_interval:
+                    self._last_conflict_check = now
+                    self._check_conflicts()
+
+                # 8. Nous health check (default every 1 hour)
+                if now - self._last_health_check >= self.config.daemon.health_check_interval:
+                    self._last_health_check = now
+                    self._check_health()
+
+                # 9. Embedding backfill (default every 12 hours)
+                if now - self._last_embedding_backfill >= self.config.daemon.embedding_backfill_interval:
+                    self._last_embedding_backfill = now
+                    self._run_embedding_backfill()
 
             except Exception as e:
                 log_event(DaemonEvent("error", "Loop error", str(e)))
@@ -1063,6 +1105,215 @@ class Daemon:
             })
             _notify_discord("Review", review_type, response)
             logger.info("%s complete (%d chars)", review_type, len(response))
+
+    def _run_decay_cycle(self):
+        """Run FSRS batch decay across all Nous nodes.
+
+        Recomputes retrievability and transitions lifecycle states
+        (ACTIVE → WEAK → DORMANT). Logs transition stats.
+        """
+        try:
+            nous = self._get_nous()
+            result = nous.run_decay()
+
+            processed = result.get("processed", 0)
+            transitions_count = result.get("transitions_count", 0)
+            transitions = result.get("transitions", [])
+
+            self.decay_cycles_run += 1
+
+            if transitions_count > 0:
+                # Log each transition for visibility
+                for t in transitions:
+                    logger.info("Decay transition: %s — %s → %s",
+                                t.get("id", "?"), t.get("from", "?"), t.get("to", "?"))
+
+                log_event(DaemonEvent(
+                    "decay", "FSRS decay cycle",
+                    f"{processed} nodes, {transitions_count} transitions",
+                ))
+            else:
+                logger.debug("Decay cycle: %d nodes processed, no transitions", processed)
+
+        except Exception as e:
+            logger.debug("Decay cycle failed: %s", e)
+
+    def _run_embedding_backfill(self):
+        """Backfill embeddings for any nodes missing them.
+
+        Nodes created during an OpenAI outage have no vector embedding,
+        making them invisible to semantic search (SSA vector component).
+        This periodic task ensures all nodes eventually get embeddings.
+        """
+        try:
+            nous = self._get_nous()
+            result = nous.backfill_embeddings()
+
+            embedded = result.get("embedded", 0)
+            total = result.get("total", 0)
+
+            self.embedding_backfills += 1
+
+            if embedded > 0:
+                logger.info("Embedding backfill: %d/%d nodes embedded", embedded, total)
+                log_event(DaemonEvent(
+                    "backfill", "Embedding backfill",
+                    f"{embedded}/{total} nodes embedded",
+                ))
+            else:
+                logger.debug("Embedding backfill: all nodes have embeddings")
+
+        except Exception as e:
+            logger.debug("Embedding backfill failed: %s", e)
+
+    def _check_conflicts(self):
+        """Poll the Nous contradiction queue for pending conflicts.
+
+        If conflicts exist, wake the agent with details so it can
+        review and resolve them using the manage_conflicts tool.
+        """
+        try:
+            nous = self._get_nous()
+            conflicts = nous.get_conflicts(status="pending")
+
+            self.conflict_checks += 1
+
+            if not conflicts:
+                logger.debug("Conflict check: no pending conflicts")
+                return
+
+            # Build wake message with conflict details
+            lines = [
+                "[DAEMON WAKE — Contradiction Review]",
+                f"You have {len(conflicts)} pending contradiction(s) in your knowledge base.",
+                "Review them and decide how to resolve each one.",
+                "",
+            ]
+
+            for conflict in conflicts[:5]:  # Show at most 5 to avoid overwhelming
+                cid = conflict.get("id", "?")
+                old_id = conflict.get("old_node_id", "?")
+                new_id = conflict.get("new_node_id")
+                new_content = conflict.get("new_content", "")
+                ctype = conflict.get("conflict_type", "?")
+                confidence = conflict.get("detection_confidence", 0)
+
+                # Fetch old node full content
+                old_title = old_id
+                old_body = ""
+                try:
+                    old_node = nous.get_node(old_id)
+                    if old_node:
+                        old_title = old_node.get("content_title", old_id)
+                        old_body = old_node.get("content_body", "") or ""
+                except Exception:
+                    pass
+
+                # Fetch new node full content if it exists
+                new_title = ""
+                new_body = ""
+                if new_id:
+                    try:
+                        new_node = nous.get_node(new_id)
+                        if new_node:
+                            new_title = new_node.get("content_title", "")
+                            new_body = new_node.get("content_body", "") or ""
+                    except Exception:
+                        pass
+
+                lines.append(f"Conflict {cid} ({ctype}, {confidence:.0%} confidence):")
+
+                # Old node
+                old_preview = old_body[:500] if old_body else "(no content)"
+                if len(old_body) > 500:
+                    old_preview += "..."
+                lines.append(f"  OLD: \"{old_title}\" ({old_id})")
+                lines.append(f"  {old_preview}")
+
+                # New node or content
+                if new_id and new_title:
+                    new_preview = new_body[:500] if new_body else "(no content)"
+                    if len(new_body) > 500:
+                        new_preview += "..."
+                    lines.append(f"  NEW: \"{new_title}\" ({new_id})")
+                    lines.append(f"  {new_preview}")
+                else:
+                    new_preview = new_content[:500]
+                    if len(new_content) > 500:
+                        new_preview += "..."
+                    lines.append(f"  NEW CONTENT: {new_preview}")
+                lines.append("")
+
+            if len(conflicts) > 5:
+                lines.append(f"... and {len(conflicts) - 5} more. Use manage_conflicts(action=\"list\") to see all.")
+                lines.append("")
+
+            lines.extend([
+                "Use your manage_conflicts tool to:",
+                "1. List all conflicts: {\"action\": \"list\"}",
+                "2. Resolve each one: {\"action\": \"resolve\", \"conflict_id\": \"c_...\", "
+                "\"resolution\": \"new_is_current\"}",
+                "",
+                "Resolutions: old_is_current, new_is_current, keep_both, merge",
+            ])
+
+            message = "\n".join(lines)
+            response = self._wake_agent(message)
+            if response:
+                log_event(DaemonEvent(
+                    "conflict", "Contradiction review",
+                    f"{len(conflicts)} pending conflicts",
+                ))
+                logger.info("Contradiction review wake: %d conflicts, agent responded (%d chars)",
+                            len(conflicts), len(response))
+
+        except Exception as e:
+            logger.debug("Conflict check failed: %s", e)
+
+    def _check_health(self, startup: bool = False):
+        """Check Nous server health and log knowledge base stats.
+
+        On startup: logs a clear pass/fail message.
+        Periodic: logs node/edge counts and lifecycle distribution.
+        Sets self._nous_healthy for other methods to check.
+        """
+        try:
+            nous = self._get_nous()
+            result = nous.health()
+
+            self._nous_healthy = True
+            self.health_checks += 1
+
+            status = result.get("status", "?")
+            node_count = result.get("node_count", 0)
+            edge_count = result.get("edge_count", 0)
+            lifecycle = result.get("lifecycle", {})
+
+            if startup:
+                logger.info("Nous health OK — %d nodes, %d edges (ACTIVE=%d, WEAK=%d, DORMANT=%d)",
+                            node_count, edge_count,
+                            lifecycle.get("ACTIVE", 0),
+                            lifecycle.get("WEAK", 0),
+                            lifecycle.get("DORMANT", 0))
+            else:
+                logger.info("Nous health: %s — %d nodes, %d edges (A=%d W=%d D=%d)",
+                            status, node_count, edge_count,
+                            lifecycle.get("ACTIVE", 0),
+                            lifecycle.get("WEAK", 0),
+                            lifecycle.get("DORMANT", 0))
+
+        except Exception as e:
+            was_healthy = self._nous_healthy
+            self._nous_healthy = False
+
+            if startup:
+                logger.warning("Nous health check FAILED on startup: %s — memory tools will fail", e)
+            elif was_healthy:
+                # Transitioned from healthy to unhealthy — warn loudly
+                logger.warning("Nous health check FAILED: %s — memory operations may fail", e)
+                log_event(DaemonEvent("health", "Nous unreachable", str(e)))
+            else:
+                logger.debug("Nous still unreachable: %s", e)
 
     def _check_curiosity(self):
         """Check if curiosity queue is large enough for a learning session.

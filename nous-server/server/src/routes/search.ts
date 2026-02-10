@@ -40,7 +40,7 @@ function makeSsaEmbed(useEmbeddings: boolean) {
 
 search.post('/search', async (c) => {
   const body = await c.req.json();
-  const { query, type, subtype, lifecycle, limit: rawLimit, time_range } = body;
+  const { query, type, subtype, lifecycle, limit: rawLimit, time_range, cluster_ids } = body;
 
   if (!query || typeof query !== 'string') {
     return c.json({ error: 'query string is required' }, 400);
@@ -62,15 +62,23 @@ search.post('/search', async (c) => {
 
   try {
     // Execute full SSA pipeline from @nous/core
-    const context = createSSAContext();
+    const hasClusterFilter = Array.isArray(cluster_ids) && cluster_ids.length > 0;
+    const context = createSSAContext(
+      hasClusterFilter ? { includeClusterData: true } : undefined,
+    );
 
     const ssaResult = await executeSSA({
       request: {
         query,
         // Over-fetch for post-filtering — QCS adjusts multiplier
         limit: limit * ssaMultiplier,
-        // SSA supports type filtering natively
-        filters: type ? { types: [type] } : undefined,
+        // SSA supports type and cluster filtering natively
+        filters: (type || hasClusterFilter)
+          ? {
+              ...(type ? { types: [type] } : {}),
+              ...(hasClusterFilter ? { clusters: cluster_ids } : {}),
+            }
+          : undefined,
       },
       context,
       embed: makeSsaEmbed(needsEmbedding && !!process.env.OPENAI_API_KEY),

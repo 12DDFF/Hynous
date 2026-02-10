@@ -10,6 +10,11 @@ export function edgeId(): string {
   return `e_${nanoid(12)}`;
 }
 
+/** Generate a cluster ID: cl_ + 12 chars */
+export function clusterId(): string {
+  return `cl_${nanoid(12)}`;
+}
+
 /** Current ISO timestamp */
 export function now(): string {
   return new Date().toISOString();

@@ -269,7 +269,7 @@ def _list_watchpoints(client, include_inactive: bool) -> str:
             trigger_str = f"{sym} {cond} {val}"
             if expiry:
                 trigger_str += f" (expires {expiry})"
-            context_str = data.get("text", "")[:200]
+            context_str = data.get("text", "")[:1500]
         except (json.JSONDecodeError, TypeError):
             pass
 

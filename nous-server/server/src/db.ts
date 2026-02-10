@@ -150,6 +150,35 @@ export async function initSchema(): Promise<void> {
     )
   `);
   await client.execute('CREATE INDEX IF NOT EXISTS idx_conflict_status ON conflict_queue (status)');
+
+  // Migration: add resolution tracking columns to conflict_queue (MF-12)
+  await safeAddColumn(client, 'conflict_queue', 'resolution', 'TEXT');
+  await safeAddColumn(client, 'conflict_queue', 'resolved_at', 'TEXT');
+
+  // ---- Clusters (MF-13) ----
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS clusters (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      icon TEXT,
+      pinned INTEGER DEFAULT 0,
+      source TEXT DEFAULT 'user_created',
+      auto_subtypes TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS cluster_memberships (
+      cluster_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      weight REAL DEFAULT 1.0,
+      pinned INTEGER DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (cluster_id, node_id)
+    )
+  `);
 }
 
 /**

@@ -21,9 +21,10 @@
 If you're an AI agent:
 
 1. Start with `../ARCHITECTURE.md` — understand the system
-2. Check `../hynous-brainstorm/` — design decisions are documented there
-3. Follow patterns in existing code
-4. Update docs when you make changes
+2. Check `../revisions/` — known issues and planned work are documented there
+3. Check `../hynous-brainstorm/` — design decisions are documented there
+4. Follow patterns in existing code
+5. Update docs when you make changes
 
 ---
 
@@ -43,3 +44,9 @@ If you're an AI agent:
 ### Design
 - `../hynous-brainstorm/` — All brainstorm documents
 - `DECISIONS.md` — Key technical decisions log
+
+### Revisions & Known Issues
+- `../revisions/revision-exploration.md` — Master issue list (19 issues, P0-P3)
+- `../revisions/nous-wiring/executive-summary.md` — Nous integration overview (start here)
+- `../revisions/nous-wiring/nous-wiring-revisions.md` — Wiring issues (NW-1 to NW-10) — all FIXED
+- `../revisions/nous-wiring/more-functionality.md` — Nous features (MF-0 to MF-15) — 14 DONE, 2 SKIPPED, 0 remaining

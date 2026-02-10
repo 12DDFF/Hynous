@@ -129,4 +129,13 @@ def get_registry() -> ToolRegistry:
     from . import trade_stats
     trade_stats.register(registry)
 
+    from . import explore_memory
+    explore_memory.register(registry)
+
+    from . import conflicts
+    conflicts.register(registry)
+
+    from . import clusters
+    clusters.register(registry)
+
     return registry

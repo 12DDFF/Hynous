@@ -7,7 +7,7 @@
 
 import { Hono } from 'hono';
 import { getDb } from '../db.js';
-import { now } from '../utils.js';
+import { now, edgeId } from '../utils.js';
 import { nanoid } from 'nanoid';
 import { runTier2Pattern, generateConflictId } from '@nous/core/contradiction';
 
@@ -120,23 +120,158 @@ contradiction.post('/contradiction/queue', async (c) => {
 });
 
 /**
- * POST /contradiction/resolve — Resolve a conflict.
- * resolution: 'old_is_current' | 'new_is_current' | 'keep_both' | 'merge'
+ * POST /contradiction/resolve — Resolve a conflict and execute the resolution.
+ *
+ * Strategies:
+ *   new_is_current — Old node → DORMANT, create supersedes edge (new → old)
+ *   old_is_current — New node → DORMANT, create supersedes edge (old → new)
+ *   keep_both     — Create relates_to edge between both nodes
+ *   merge         — Append new content to old node body, delete new node if it exists
  */
 contradiction.post('/contradiction/resolve', async (c) => {
-  const { conflict_id, resolution } = await c.req.json();
+  const body = await c.req.json();
+  const { conflict_id, resolution, merged_content } = body;
 
   if (!conflict_id || !resolution) {
     return c.json({ error: 'conflict_id and resolution are required' }, 400);
   }
 
+  const validResolutions = ['old_is_current', 'new_is_current', 'keep_both', 'merge'];
+  if (!validResolutions.includes(resolution)) {
+    return c.json({
+      error: `Invalid resolution: ${resolution}. Must be one of: ${validResolutions.join(', ')}`,
+    }, 400);
+  }
+
   const db = getDb();
-  await db.execute({
-    sql: 'UPDATE conflict_queue SET status = ? WHERE id = ?',
-    args: ['resolved', conflict_id],
+  const ts = now();
+
+  // 1. Fetch the conflict to get node IDs
+  const conflictResult = await db.execute({
+    sql: 'SELECT * FROM conflict_queue WHERE id = ?',
+    args: [conflict_id],
   });
 
-  return c.json({ ok: true, conflict_id, resolution });
+  if (conflictResult.rows.length === 0) {
+    return c.json({ error: `Conflict ${conflict_id} not found` }, 404);
+  }
+
+  const conflict = conflictResult.rows[0] as any;
+  const oldNodeId: string = conflict.old_node_id;
+  const newNodeId: string | null = conflict.new_node_id ?? null;
+
+  // Track what was done for the response
+  const actions: string[] = [];
+
+  // 2. Execute the resolution strategy
+  try {
+    if (resolution === 'new_is_current') {
+      // Old node becomes DORMANT — it's been superseded
+      await db.execute({
+        sql: `UPDATE nodes SET state_lifecycle = 'DORMANT', last_modified = ?, version = version + 1 WHERE id = ?`,
+        args: [ts, oldNodeId],
+      });
+      actions.push(`Old node ${oldNodeId} → DORMANT`);
+
+      // Create supersedes edge: new → old (new supersedes old)
+      if (newNodeId) {
+        const eid = edgeId();
+        await db.execute({
+          sql: `INSERT INTO edges (id, type, source_id, target_id, neural_weight, strength, confidence, created_at)
+                VALUES (?, 'supersedes', ?, ?, 0.5, 0.5, 1.0, ?)`,
+          args: [eid, newNodeId, oldNodeId, ts],
+        });
+        actions.push(`Edge ${eid}: ${newNodeId} supersedes ${oldNodeId}`);
+      }
+    } else if (resolution === 'old_is_current') {
+      // New node becomes DORMANT — the old one was correct
+      if (newNodeId) {
+        await db.execute({
+          sql: `UPDATE nodes SET state_lifecycle = 'DORMANT', last_modified = ?, version = version + 1 WHERE id = ?`,
+          args: [ts, newNodeId],
+        });
+        actions.push(`New node ${newNodeId} → DORMANT`);
+
+        // Create supersedes edge: old → new (old supersedes new)
+        const eid = edgeId();
+        await db.execute({
+          sql: `INSERT INTO edges (id, type, source_id, target_id, neural_weight, strength, confidence, created_at)
+                VALUES (?, 'supersedes', ?, ?, 0.5, 0.5, 1.0, ?)`,
+          args: [eid, oldNodeId, newNodeId, ts],
+        });
+        actions.push(`Edge ${eid}: ${oldNodeId} supersedes ${newNodeId}`);
+      } else {
+        // No new node — just acknowledge the old one is correct
+        actions.push(`Old node ${oldNodeId} confirmed current (no new node to deprecate)`);
+      }
+    } else if (resolution === 'keep_both') {
+      // Both are valid — create relates_to edge
+      if (newNodeId) {
+        const eid = edgeId();
+        await db.execute({
+          sql: `INSERT INTO edges (id, type, source_id, target_id, neural_weight, strength, confidence, created_at)
+                VALUES (?, 'relates_to', ?, ?, 0.5, 0.5, 1.0, ?)`,
+          args: [eid, oldNodeId, newNodeId, ts],
+        });
+        actions.push(`Edge ${eid}: ${oldNodeId} relates_to ${newNodeId}`);
+      } else {
+        actions.push('Both kept (no new node to link)');
+      }
+    } else if (resolution === 'merge') {
+      // Append new content to old node's body
+      const oldNodeResult = await db.execute({
+        sql: 'SELECT content_body FROM nodes WHERE id = ?',
+        args: [oldNodeId],
+      });
+
+      if (oldNodeResult.rows.length > 0) {
+        const oldBody = (oldNodeResult.rows[0] as any).content_body || '';
+
+        // Use merged_content if provided, otherwise use conflict's new_content
+        const appendContent = merged_content || conflict.new_content || '';
+        const separator = '\n\n--- Merged (' + ts.substring(0, 10) + ') ---\n\n';
+        const newBody = oldBody + separator + appendContent;
+
+        await db.execute({
+          sql: `UPDATE nodes SET content_body = ?, last_modified = ?, version = version + 1 WHERE id = ?`,
+          args: [newBody, ts, oldNodeId],
+        });
+        actions.push(`Merged content into old node ${oldNodeId}`);
+      }
+
+      // Delete the new node if it exists (content is now merged into old)
+      if (newNodeId) {
+        await db.execute({
+          sql: 'DELETE FROM nodes WHERE id = ?',
+          args: [newNodeId],
+        });
+        actions.push(`Deleted new node ${newNodeId} (merged into ${oldNodeId})`);
+      }
+    }
+  } catch (e: any) {
+    return c.json({
+      error: `Resolution execution failed: ${e.message}`,
+      conflict_id,
+      resolution,
+      partial_actions: actions,
+    }, 500);
+  }
+
+  // 3. Mark the conflict as resolved
+  await db.execute({
+    sql: `UPDATE conflict_queue SET status = 'resolved', resolution = ?, resolved_at = ? WHERE id = ?`,
+    args: [resolution, ts, conflict_id],
+  });
+
+  return c.json({
+    ok: true,
+    conflict_id,
+    resolution,
+    old_node_id: oldNodeId,
+    new_node_id: newNodeId,
+    actions,
+    resolved_at: ts,
+  });
 });
 
 export default contradiction;

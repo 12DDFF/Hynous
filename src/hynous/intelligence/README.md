@@ -8,24 +8,38 @@
 
 ```
 intelligence/
-├── agent.py           # Core agent (Claude wrapper, tool loop)
-├── daemon.py          # Background loop for autonomous operation
+├── agent.py              # Core agent (Claude wrapper, tool loop)
+├── daemon.py             # Background loop for autonomous operation
+├── memory_manager.py     # Auto-retrieval + compression for context injection
 │
-├── prompts/           # System prompts
-│   ├── identity.py    # Who Hynous is (personality, values)
-│   ├── trading.py     # Trading knowledge (principles, not rules)
-│   └── builder.py     # Assembles full prompt from parts
+├── prompts/              # System prompts
+│   ├── identity.py       # Who Hynous is (personality, values)
+│   ├── trading.py        # Trading knowledge (principles, not rules)
+│   └── builder.py        # Assembles full prompt from parts
 │
-├── tools/             # Tool definitions
-│   ├── registry.py    # Tool registration and lookup
-│   ├── market.py      # get_price, get_funding, get_ohlcv
-│   ├── memory.py      # search_memory, store_insight
-│   ├── trading.py     # execute_trade, get_position
-│   └── analysis.py    # Future: technical analysis tools
+├── tools/                # Tool definitions (17 modules, see tools/README.md)
+│   ├── registry.py       # Tool dataclass + registration
+│   ├── market.py         # get_market_data
+│   ├── orderbook.py      # get_orderbook
+│   ├── funding.py        # get_funding_history
+│   ├── multi_timeframe.py # get_multi_timeframe
+│   ├── liquidations.py   # get_liquidations
+│   ├── sentiment.py      # get_sentiment
+│   ├── options.py        # get_options_data
+│   ├── institutional.py  # get_institutional_flows
+│   ├── web_search.py     # web_search
+│   ├── costs.py          # estimate_costs
+│   ├── memory.py         # store_memory, recall_memory, update_memory
+│   ├── delete_memory.py  # delete_memory
+│   ├── trading.py        # execute_trade, close_position, modify_position, get_positions, get_balance
+│   ├── watchpoints.py    # manage_watchpoints
+│   ├── explore_memory.py # explore_memory (graph traversal, link/unlink)
+│   ├── conflicts.py      # manage_conflicts (contradiction list/resolve)
+│   └── clusters.py       # manage_clusters (cluster CRUD, membership, health)
 │
-└── events/            # Event detection
-    ├── detector.py    # Checks for significant market events
-    └── handlers.py    # Event → Agent analysis triggers
+└── events/               # Event detection
+    ├── detector.py       # Checks for significant market events
+    └── handlers.py       # Event → Agent analysis triggers
 ```
 
 ---
@@ -34,23 +48,10 @@ intelligence/
 
 ### Adding a New Tool
 
-```python
-# tools/my_new_tool.py
+See `tools/README.md` for the full pattern. In short:
 
-from .registry import tool
-
-@tool(
-    name="my_tool",
-    description="Does something useful",
-    parameters={
-        "param1": {"type": "string", "description": "..."}
-    }
-)
-async def my_tool(param1: str) -> str:
-    """Implementation here."""
-    result = do_something(param1)
-    return result
-```
+1. Create `tools/my_tool.py` with `TOOL_DEF` dict + handler function + `register()` function
+2. Import and call `register()` from `tools/registry.py`
 
 ### Modifying the Prompt
 
@@ -59,10 +60,58 @@ Edit files in `prompts/` — they're combined by `builder.py`.
 - `identity.py` — Hynous's personality (from storm-011)
 - `trading.py` — Trading principles (from storm-010)
 
+### Daemon Cron Tasks
+
+The daemon runs 24/7 and has timed tasks:
+
+| Task | Interval | Method |
+|------|----------|--------|
+| Price polling | 60s | `_poll_prices()` |
+| Watchpoint evaluation | every price poll | `_check_watchpoints()` |
+| Periodic market review | 1h (2h weekends) | `_wake_for_review()` |
+| Curiosity check | 15m | `_check_curiosity()` |
+| FSRS batch decay | 6h | `_run_decay_cycle()` |
+| Contradiction polling | 30m | `_check_conflicts()` |
+| Nous health check | 1h (+ startup) | `_check_health()` |
+| Embedding backfill | 12h | `_run_embedding_backfill()` |
+
+To add a new cron task: add a timing tracker in `__init__`, initialize in `_loop()`, add interval check in main loop, implement method.
+
 ---
 
 ## Dependencies
 
 - `anthropic` — Claude API
-- `nous/` — Memory retrieval
+- `nous/` — Memory retrieval (via HTTP client)
 - `data/` — Market data
+
+---
+
+## Known Issues
+
+All NW wiring issues (NW-1 through NW-10) are resolved. See revision docs for details:
+
+- **`revisions/nous-wiring/executive-summary.md`** — Overview of all issue categories
+- **`revisions/revision-exploration.md`** — Master issue list (19 issues, P0-P3)
+
+Resolved issues in this module:
+- ~~`memory_manager.py` truncated retrieved memory content~~ — FIXED: now shows full `content_body`, parses JSON, `content_summary` only as fallback
+- ~~`daemon.py` used wrong field name `lifecycle_state`~~ — FIXED: now uses `state_lifecycle` correctly
+- ~~`tools/memory.py` had no `update_memory` tool~~ — FIXED: full update with replace, append (JSON-aware), and lifecycle changes
+- ~~`store_memory` was fire-and-forget~~ — FIXED: now synchronous, agent sees real feedback
+- ~~No contradiction handling~~ — FIXED: `manage_conflicts` tool + daemon polling + inline flag check
+- ~~No graph traversal~~ — FIXED: `explore_memory` tool with explore/link/unlink actions
+- ~~No browse-by-type~~ — FIXED: `recall_memory` browse mode via `list_nodes()`
+- ~~No batch FSRS decay~~ — FIXED: daemon runs `_run_decay_cycle()` every 6h
+
+Remaining:
+- ~~`store_memory` always creates new nodes without checking for existing related memories (MF-0)~~ — FIXED: `_store_memory_impl()` calls `check_similar()` for lesson/curiosity types before creating. Duplicates (>= 0.95 cosine) are dropped with feedback, similar matches (0.90-0.95) get `relates_to` edges
+- ~~Edge strengthening / Hebbian learning not wired (MF-1)~~ — FIXED: `strengthen_edge()` client method + auto-strengthen on co-retrieval (memory_manager 0.03, recall_memory 0.05) + trade lifecycle edges (0.1)
+- ~~No time-range search parameters exposed to agent (MF-7)~~ — FIXED: `recall_memory` now accepts `time_start`, `time_end`, `time_type`
+- ~~No health check monitoring (MF-8)~~ — FIXED: daemon `_check_health()` on startup + every hour
+- ~~No embedding backfill daemon task (MF-9)~~ — FIXED: daemon `_run_embedding_backfill()` every 12h
+- ~~No visibility into QCS search classification (MF-10)~~ — FIXED: `NousClient.search()` logs QCS metadata (query_type, embeddings, disqualified) at DEBUG level
+- ~~No cluster management (MF-13)~~ — FIXED: `manage_clusters` tool with 8 actions (list, create, update, delete, add, remove, members, health). Cluster-scoped search via `recall_memory(cluster=...)`. Auto-assignment via `auto_subtypes`. 9 NousClient cluster methods.
+- ~~No pre-storage quality gate (MF-15)~~ — FIXED: `gate_filter.py` module with 6 rejection rules (too_short, gibberish, spam, repeated_chars, filler, empty_semantic, social_only). Gate runs in `_store_memory_impl()` before dedup and `get_client()`. Config toggle: `gate_filter_enabled`.
+
+All 16 MF items and all 10 NW wiring issues are now resolved. No remaining Nous integration work.

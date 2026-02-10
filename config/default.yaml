@@ -39,6 +39,10 @@ daemon:
   periodic_interval: 3600          # Periodic market review wake (seconds, 60 min)
   curiosity_threshold: 1           # Pending curiosity items before learning session
   curiosity_check_interval: 900    # Curiosity queue check interval (seconds, 15 min)
+  decay_interval: 21600              # FSRS batch decay cycle interval (seconds, 6 hours)
+  conflict_check_interval: 1800      # Contradiction queue polling interval (seconds, 30 min)
+  health_check_interval: 3600        # Nous health check interval (seconds, 1 hour)
+  embedding_backfill_interval: 43200 # Embedding backfill interval (seconds, 12 hours)
   max_daily_loss_usd: 100            # Circuit breaker: pause trading after this daily loss
   max_open_positions: 3              # Max simultaneous open positions
   max_wakes_per_hour: 6              # Rate limit on agent wakes per hour
@@ -63,7 +67,7 @@ nous:
 # Tiered memory settings (working window + Nous-backed compression)
 memory:
   window_size: 6                 # Complete exchanges to keep in working window
-  max_context_tokens: 800        # Token budget for recalled context injected per call
+  max_context_tokens: 4000       # Token budget for recalled context injected per call (~1000 words)
   retrieve_limit: 5              # Max memories to retrieve per query
   compression_model: "claude-haiku-4-5-20251001"  # Model for compressing evicted exchanges
   compress_enabled: true         # Enable/disable automatic compression

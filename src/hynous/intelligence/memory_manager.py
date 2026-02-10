@@ -113,6 +113,10 @@ class MemoryManager:
             if not results:
                 return None
 
+            # Hebbian: strengthen edges between co-retrieved memories (MF-1)
+            if len(results) > 1:
+                _strengthen_co_retrieved(nous, results, amount=0.03)
+
             return _format_context(results, self.config.memory.max_context_tokens)
 
         except Exception as e:
@@ -396,21 +400,22 @@ def _format_context(results: list[dict], max_tokens: int) -> Optional[str]:
             subtype = subtype[7:]
         date = node.get("provenance_created_at", "")[:10]
 
-        # Get preview text
+        # Get preview text — prefer full body over summary
         body = node.get("content_body", "") or ""
         summary = node.get("content_summary", "") or ""
-        preview = summary or body[:300]
 
-        # Parse JSON bodies (watchpoints, signals store JSON)
-        if preview.startswith("{"):
+        # Parse JSON bodies first (trades, watchpoints store JSON with "text" key)
+        preview = ""
+        if body.startswith("{"):
             try:
                 parsed = json.loads(body)
-                preview = parsed.get("text", body[:300])
+                preview = parsed.get("text", "")
             except (json.JSONDecodeError, TypeError):
-                preview = body[:300]
+                pass
 
-        if len(preview) > 300:
-            preview = preview[:297] + "..."
+        # Use body as primary, summary only as fallback when body is empty
+        if not preview:
+            preview = body or summary
 
         entry = f"- [{subtype}] {title} ({date}): {preview}"
         entry_chars = len(entry)
@@ -542,6 +547,57 @@ def _auto_link_summary(nous, node_id: str, title: str) -> None:
             logger.info("Auto-linked turn summary %s to %d memories", node_id, linked)
     except Exception as e:
         logger.debug("Auto-link failed for turn summary %s: %s", node_id, e)
+
+
+def _strengthen_co_retrieved(client, results: list[dict], amount: float = 0.03) -> None:
+    """Hebbian: strengthen edges between nodes co-retrieved in the same search.
+
+    When multiple memories surface together, edges between them get stronger.
+    This makes SSA spreading activation preferentially flow through well-trodden
+    paths, surfacing the most useful related memories in future searches.
+
+    Runs in a background thread to avoid blocking the agent.
+
+    Args:
+        client: NousClient instance.
+        results: List of node dicts from search results.
+        amount: Strength increment per co-retrieval (default 0.03 for auto,
+                0.05 for explicit recall).
+    """
+    result_ids = {node.get("id") for node in results if node.get("id")}
+    if len(result_ids) < 2:
+        return
+
+    def _do_strengthen():
+        strengthened: set[str] = set()
+        try:
+            for node_id in result_ids:
+                try:
+                    edges = client.get_edges(node_id, direction="both")
+                    for edge in edges:
+                        eid = edge.get("id")
+                        if not eid or eid in strengthened:
+                            continue
+                        src = edge.get("source_id", "")
+                        tgt = edge.get("target_id", "")
+                        # Both ends must be in the result set
+                        if src in result_ids and tgt in result_ids:
+                            strengthened.add(eid)  # Mark seen before call to avoid retries
+                            try:
+                                client.strengthen_edge(eid, amount=amount)
+                            except Exception:
+                                continue
+                except Exception:
+                    continue
+            if strengthened:
+                logger.debug(
+                    "Hebbian: strengthened %d co-retrieved edge(s) (amount=%.2f)",
+                    len(strengthened), amount,
+                )
+        except Exception as e:
+            logger.debug("Hebbian co-retrieval strengthening failed: %s", e)
+
+    threading.Thread(target=_do_strengthen, daemon=True).start()
 
 
 def _record_compression_usage(response) -> None:

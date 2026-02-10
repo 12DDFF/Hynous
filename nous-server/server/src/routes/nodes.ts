@@ -10,6 +10,13 @@ import {
 import { embedTexts, buildNodeText, buildContextPrefix } from '../embed.js';
 import { runTier2Pattern } from '@nous/core/contradiction';
 import { nanoid } from 'nanoid';
+import {
+  cosineSimilarity,
+  truncateForComparison,
+  DEDUP_CHECK_THRESHOLD,
+  SIMILARITY_EDGE_THRESHOLD,
+  COMPARISON_DIMS,
+} from '@nous/core/embeddings';
 
 const nodes = new Hono();
 
@@ -139,6 +146,13 @@ nodes.get('/nodes/:id', async (c) => {
   );
 
   const ts = now();
+  // Preserve manually-set DORMANT (e.g., from contradiction resolution).
+  // FSRS can transition ACTIVE → WEAK → DORMANT naturally, but cannot
+  // promote a DORMANT node back to ACTIVE — use PATCH for explicit reactivation.
+  const persistLifecycle = row.state_lifecycle === 'DORMANT'
+    ? 'DORMANT'
+    : decayed.state_lifecycle;
+
   // Update neural fields in DB
   await db.execute({
     sql: `UPDATE nodes SET
@@ -148,11 +162,12 @@ nodes.get('/nodes/:id', async (c) => {
       neural_retrievability = ?,
       state_lifecycle = ?
       WHERE id = ?`,
-    args: [ts, newStability, decayed.neural_retrievability, decayed.state_lifecycle, id],
+    args: [ts, newStability, decayed.neural_retrievability, persistLifecycle, id],
   });
 
   return c.json({
     ...decayed,
+    state_lifecycle: persistLifecycle,
     neural_stability: newStability,
     neural_access_count: row.neural_access_count + 1,
     neural_last_accessed: ts,
@@ -238,8 +253,134 @@ nodes.patch('/nodes/:id', async (c) => {
 nodes.delete('/nodes/:id', async (c) => {
   const id = c.req.param('id');
   const db = getDb();
+  await db.execute({ sql: 'DELETE FROM cluster_memberships WHERE node_id = ?', args: [id] });
   await db.execute({ sql: 'DELETE FROM nodes WHERE id = ?', args: [id] });
   return c.json({ ok: true });
+});
+
+// ---- CHECK SIMILAR (dedup pre-check for lesson/curiosity) ----
+nodes.post('/nodes/check-similar', async (c) => {
+  const body = await c.req.json();
+  const { content, title, subtype, limit = 5 } = body;
+
+  if (!content || !title || !subtype) {
+    return c.json({ error: 'content, title, and subtype are required' }, 400);
+  }
+
+  // Step 1: Build embedding text using the SAME functions used by POST /nodes
+  // and POST /nodes/backfill-embeddings — ensures apples-to-apples comparison.
+  const text = buildNodeText(title, null, content);
+  const prefix = buildContextPrefix('concept', subtype);
+
+  // Step 2: Generate embedding via OpenAI text-embedding-3-small (1536 dims)
+  let newEmbedding: Float32Array;
+  try {
+    const [emb] = await embedTexts([prefix + ' ' + text]);
+    if (!emb || emb.length === 0) {
+      return c.json({ error: 'embedding generation failed: empty result' }, 500);
+    }
+    newEmbedding = emb;
+  } catch (e: any) {
+    return c.json({ error: `embedding generation failed: ${e.message}` }, 500);
+  }
+
+  // Step 3: Fetch candidate nodes of the same subtype that have embeddings.
+  const db = getDb();
+  let candidates: any[];
+  try {
+    const result = await db.execute({
+      sql: `SELECT id, content_title, state_lifecycle, embedding_vector
+            FROM nodes
+            WHERE subtype = ? AND embedding_vector IS NOT NULL
+            ORDER BY provenance_created_at DESC
+            LIMIT ?`,
+      args: [subtype, limit * 3],
+    });
+    candidates = result.rows as any[];
+  } catch (e: any) {
+    return c.json({ error: `similarity search failed: ${e.message}` }, 500);
+  }
+
+  // No candidates = unique by definition
+  if (candidates.length === 0) {
+    return c.json({ matches: [], recommendation: 'unique' });
+  }
+
+  // Step 4: Compare new embedding against each candidate using cosine similarity.
+  const truncatedNew = truncateForComparison(newEmbedding, COMPARISON_DIMS);
+
+  interface Match {
+    node_id: string;
+    title: string;
+    similarity: number;
+    action: 'duplicate' | 'connect';
+    lifecycle: string;
+  }
+
+  const matches: Match[] = [];
+
+  for (const row of candidates) {
+    const blob = row.embedding_vector;
+    if (!blob) continue;
+
+    let candidateVec: Float32Array;
+    try {
+      if (blob instanceof ArrayBuffer) {
+        candidateVec = new Float32Array(blob);
+      } else if (blob instanceof Uint8Array || Buffer.isBuffer(blob)) {
+        const aligned = new Uint8Array(blob).buffer;
+        candidateVec = new Float32Array(aligned);
+      } else {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+
+    const truncatedCandidate = truncateForComparison(candidateVec, COMPARISON_DIMS);
+
+    let similarity: number;
+    try {
+      similarity = cosineSimilarity(truncatedNew, truncatedCandidate);
+    } catch {
+      continue;
+    }
+
+    let action: 'duplicate' | 'connect' | 'none';
+    if (similarity >= DEDUP_CHECK_THRESHOLD) {
+      action = 'duplicate';
+    } else if (similarity >= SIMILARITY_EDGE_THRESHOLD) {
+      action = 'connect';
+    } else {
+      action = 'none';
+    }
+
+    if (action !== 'none') {
+      matches.push({
+        node_id: row.id as string,
+        title: (row.content_title as string) ?? 'Untitled',
+        similarity: Math.round(similarity * 10000) / 10000,
+        action,
+        lifecycle: (row.state_lifecycle as string) ?? 'ACTIVE',
+      });
+    }
+  }
+
+  // Step 5: Sort by similarity descending, take top `limit`
+  matches.sort((a, b) => b.similarity - a.similarity);
+  const topMatches = matches.slice(0, limit);
+
+  // Step 6: Determine recommendation
+  let recommendation: 'duplicate_found' | 'similar_found' | 'unique';
+  if (topMatches.some((m) => m.action === 'duplicate')) {
+    recommendation = 'duplicate_found';
+  } else if (topMatches.length > 0) {
+    recommendation = 'similar_found';
+  } else {
+    recommendation = 'unique';
+  }
+
+  return c.json({ matches: topMatches, recommendation });
 });
 
 // ---- BACKFILL EMBEDDINGS ----

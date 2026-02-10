@@ -61,6 +61,7 @@ class MemoryConfig:
     retrieve_limit: int = 5         # Max Nous results per retrieval
     compression_model: str = "claude-haiku-4-5-20251001"
     compress_enabled: bool = True   # Master switch for automatic compression
+    gate_filter_enabled: bool = True  # Pre-storage quality gate (MF-15)
 
 
 @dataclass
@@ -72,6 +73,14 @@ class DaemonConfig:
     periodic_interval: int = 3600         # Seconds between periodic market reviews
     curiosity_threshold: int = 3          # Pending curiosity items before learning session
     curiosity_check_interval: int = 900   # Seconds between curiosity queue checks
+    # FSRS memory decay
+    decay_interval: int = 21600           # Seconds between batch decay cycles (6 hours)
+    # Contradiction queue polling
+    conflict_check_interval: int = 1800   # Seconds between conflict queue checks (30 min)
+    # Nous health monitoring
+    health_check_interval: int = 3600     # Seconds between Nous health checks (1 hour)
+    # Embedding backfill
+    embedding_backfill_interval: int = 43200  # Seconds between embedding backfill runs (12 hours)
     # Risk guardrails
     max_daily_loss_usd: float = 100       # Pause trading after this daily loss
     max_open_positions: int = 3           # Max simultaneous positions
@@ -166,6 +175,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
             retrieve_limit=mem_raw.get("retrieve_limit", 5),
             compression_model=mem_raw.get("compression_model", "claude-haiku-4-5-20251001"),
             compress_enabled=mem_raw.get("compress_enabled", True),
+            gate_filter_enabled=mem_raw.get("gate_filter_enabled", True),
         ),
         hyperliquid=HyperliquidConfig(
             mainnet_url=hl_raw.get("mainnet_url", "https://api.hyperliquid.xyz"),
@@ -181,6 +191,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
             periodic_interval=daemon_raw.get("periodic_interval", 3600),
             curiosity_threshold=daemon_raw.get("curiosity_threshold", 3),
             curiosity_check_interval=daemon_raw.get("curiosity_check_interval", 900),
+            decay_interval=daemon_raw.get("decay_interval", 21600),
+            conflict_check_interval=daemon_raw.get("conflict_check_interval", 1800),
+            health_check_interval=daemon_raw.get("health_check_interval", 3600),
+            embedding_backfill_interval=daemon_raw.get("embedding_backfill_interval", 43200),
             max_daily_loss_usd=daemon_raw.get("max_daily_loss_usd", 100),
             max_open_positions=daemon_raw.get("max_open_positions", 3),
             max_wakes_per_hour=daemon_raw.get("max_wakes_per_hour", 6),

@@ -31,11 +31,11 @@
 │      ┌───────┼───────┬───────────────┐                                  │
 │      │       │       │               │                                  │
 │      ▼       ▼       ▼               ▼                                  │
-│  ┌───────┐ ┌───────┐ ┌───────┐ ┌─────────┐                             │
-│  │ Hydra │ │ Nous  │ │Events │ │ Daemon  │                             │
-│  │ Tools │ │Client │ │       │ │         │                             │
-│  │(direct)│ │(HTTP) │ │detect │ │24/7 loop│                             │
-│  └───┬───┘ └───┬───┘ └───────┘ └─────────┘                             │
+│  ┌───────┐ ┌───────┐ ┌───────┐ ┌──────────┐                            │
+│  │ Hydra │ │ Nous  │ │Events │ │ Daemon   │                            │
+│  │ Tools │ │Client │ │       │ │          │                            │
+│  │(direct)│ │(HTTP) │ │detect │ │24/7 loop │                            │
+│  └───┬───┘ └───┬───┘ └───────┘ └──────────┘                            │
 └──────┼─────────┼────────────────────────────────────────────────────────┘
        │         │
        │         │ HTTP (~5ms)
@@ -159,7 +159,7 @@ intelligence/agent.py (process_message)
     ├──► tools/memory.py (if needs memory)
     │       │
     │       ▼
-    │    nous/store.py
+    │    nous/client.py → Nous API (:3100)
     │
     ▼
 Response returned to dashboard
@@ -270,11 +270,31 @@ tests/
 
 ---
 
+## Known Issues & Revisions
+
+The `revisions/` directory contains documented issues and planned improvements, organized by scope:
+
+### `revisions/revision-exploration.md`
+
+Master list of 19 issues across the entire codebase, prioritized P0 through P3. Covers retrieval bugs, daemon failures, missing tools, and system prompt inaccuracies.
+
+### `revisions/nous-wiring/`
+
+Focused on the Nous ↔ Python integration layer. Start with `executive-summary.md` for the high-level issue categories, then dive into:
+
+- **`nous-wiring-revisions.md`** — 10 wiring issues (NW-1 to NW-10) — **all 10 FIXED** (field name mismatches, retrieval truncation, silent failures, missing tools)
+- **`more-functionality.md`** — 16 Nous capabilities (MF-0 to MF-15). **14 DONE, 2 SKIPPED (MF-11, MF-14), 0 remaining.** All items resolved. Completed: MF-0 (search-before-store dedup), MF-1 through MF-10 (Hebbian learning, batch decay, contradiction queue, update tool, graph traversal, browse-by-type, time-range search, health check, embedding backfill, QCS logging), MF-12 (contradiction resolution execution), MF-13 (cluster management), MF-15 (gate filter for memory quality). Skipped: MF-11 (working memory — overlaps with FSRS decay + dedup + Hebbian), MF-14 (edge decay — Hebbian strengthening already provides signal discrimination)
+
+**If you're working on Nous integration, read the executive summary first.** It explains the overall landscape and current status.
+
+---
+
 ## For Future Agents
 
 When working on this codebase:
 
-1. **Check existing patterns** — Don't reinvent, extend
-2. **Keep modules focused** — One responsibility per file
-3. **Update this doc** — If you change architecture, document it
-4. **Test your changes** — Don't break what works
+1. **Check revisions first** — `revisions/` has known issues that may affect your work
+2. **Check existing patterns** — Don't reinvent, extend
+3. **Keep modules focused** — One responsibility per file
+4. **Update this doc** — If you change architecture, document it
+5. **Test your changes** — Don't break what works

@@ -11,6 +11,7 @@ import decay from './routes/decay.js';
 import graph from './routes/graph.js';
 import contradiction from './routes/contradiction.js';
 import classify from './routes/classify.js';
+import clusters from './routes/clusters.js';
 import { mkdirSync } from 'fs';
 import { resolve } from 'path';
 
@@ -29,6 +30,7 @@ app.route('/', decay);
 app.route('/', graph);
 app.route('/', contradiction);
 app.route('/', classify);
+app.route('/', clusters);
 
 // Root redirect
 app.get('/', (c) => c.json({ name: 'nous-server', version: '0.1.0' }));

@@ -24,13 +24,42 @@ import { getDb, getGraphMetrics } from './db.js';
  * Create an SSAGraphContext backed by the libSQL database.
  * Each method maps to SQL queries against the nodes/edges tables.
  */
-export function createSSAContext(): SSAGraphContext {
+export function createSSAContext(options?: {
+  includeClusterData?: boolean;
+}): SSAGraphContext {
   return {
     /**
      * Fetch minimal node info for filter evaluation during spreading.
+     * When includeClusterData is true, JOINs cluster_memberships to
+     * populate the clusters field (needed for cluster-scoped search).
      */
     async getNode(id: string): Promise<FilterNodeInput | null> {
       const db = getDb();
+
+      if (options?.includeClusterData) {
+        const r = await db.execute({
+          sql: `SELECT n.id, n.type, n.created_at,
+                COALESCE(n.neural_last_accessed, n.provenance_created_at) as last_accessed,
+                GROUP_CONCAT(cm.cluster_id) as cluster_ids
+                FROM nodes n
+                LEFT JOIN cluster_memberships cm ON cm.node_id = n.id
+                WHERE n.id = ?
+                GROUP BY n.id`,
+          args: [id],
+        });
+        if (r.rows.length === 0) return null;
+        const row = r.rows[0]!;
+        const clusterStr = row.cluster_ids as string | null;
+        return {
+          id: row.id as string,
+          type: row.type as string,
+          created_at: row.created_at as string,
+          last_accessed: row.last_accessed as string,
+          clusters: clusterStr ? clusterStr.split(',') : [],
+        };
+      }
+
+      // Standard path — no cluster data (zero overhead)
       const r = await db.execute({
         sql: `SELECT id, type, created_at,
               COALESCE(neural_last_accessed, provenance_created_at) as last_accessed

@@ -24,6 +24,7 @@ Standard tool module pattern:
 
 import json
 import logging
+import threading
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -1041,6 +1042,10 @@ def handle_close_position(
         edge_type="part_of",
     )
 
+    # Hebbian: strengthen the trade lifecycle edge (MF-1)
+    if close_node_id and entry_node_id:
+        _strengthen_trade_edge(entry_node_id, close_node_id)
+
     lines_append_id = None
     if close_node_id:
         msg = f"Outcome stored in memory (id: {close_node_id})"
@@ -1330,7 +1335,38 @@ def handle_modify_position(
 
 
 # =============================================================================
-# 5. REGISTRATION
+# 5. HEBBIAN EDGE STRENGTHENING
+# =============================================================================
+
+def _strengthen_trade_edge(entry_node_id: str, close_node_id: str) -> None:
+    """Hebbian: strengthen the part_of edge between trade entry and close nodes.
+
+    The close event confirms the trade lifecycle connection is real and important.
+    Runs in background thread to avoid blocking the tool response.
+    """
+    def _do_strengthen():
+        try:
+            from ...nous.client import get_client
+            client = get_client()
+            edges = client.get_edges(entry_node_id, direction="out")
+            for edge in edges:
+                if edge.get("target_id") == close_node_id:
+                    eid = edge.get("id")
+                    if eid:
+                        client.strengthen_edge(eid, amount=0.1)
+                        logger.info(
+                            "Hebbian: strengthened trade lifecycle edge %s (entry→close)",
+                            eid,
+                        )
+                    break
+        except Exception as e:
+            logger.debug("Trade edge strengthening failed: %s", e)
+
+    threading.Thread(target=_do_strengthen, daemon=True).start()
+
+
+# =============================================================================
+# 6. REGISTRATION
 # =============================================================================
 
 def register(registry) -> None:
