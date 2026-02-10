@@ -148,26 +148,19 @@ app = rx.App(
 app.add_page(index, route="/", title="Hynous", on_load=AppState.load_page)
 
 
-# Eagerly start agent + daemon when the backend server starts.
-# Uses Reflex lifespan task so it only runs in the actual backend worker,
-# not in Reflex's compiler/frontend subprocesses.
-import logging as _logging
-
-_boot_logger = _logging.getLogger("hynous.boot")
-
-
+# Eagerly start agent + daemon when the ASGI backend starts.
+# This runs via Reflex's lifespan task system (Starlette lifespan protocol).
 async def _eager_agent_start():
-    """Lifespan task: start agent+daemon 3s after backend boots."""
-    import asyncio
+    import asyncio, sys
     await asyncio.sleep(3)
     try:
         from .state import _get_agent
         agent = await asyncio.to_thread(_get_agent)
         if agent:
-            _boot_logger.info("Agent + daemon started eagerly on boot")
+            print("[hynous] Agent + daemon started eagerly on boot", file=sys.stderr, flush=True)
         else:
-            _boot_logger.warning("Agent failed to start on boot")
+            print("[hynous] Agent failed to start on boot", file=sys.stderr, flush=True)
     except Exception as e:
-        _boot_logger.error("Eager start error: %s", e)
+        print(f"[hynous] Eager start error: {e}", file=sys.stderr, flush=True)
 
 app.register_lifespan_task(_eager_agent_start)

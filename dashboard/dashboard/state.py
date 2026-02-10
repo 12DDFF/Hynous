@@ -472,8 +472,13 @@ class AppState(rx.State):
             except Exception as e:
                 logger.error(f"Failed to load persisted chat: {e}")
 
-        # Start background tasks
-        return [AppState.poll_portfolio, AppState.load_watchpoints, AppState.load_clusters]
+        # Start background tasks (init_daemon ensures agent+daemon start)
+        return [AppState.init_daemon, AppState.poll_portfolio, AppState.load_watchpoints, AppState.load_clusters]
+
+    @_background
+    async def init_daemon(self):
+        """Ensure agent + daemon are initialized (runs in background on page load)."""
+        await asyncio.to_thread(_get_agent)
 
     def _save_chat(self, agent=None):
         """Persist current messages and agent history to disk."""
