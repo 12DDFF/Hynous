@@ -636,6 +636,7 @@ class Daemon:
                 events = provider.check_triggers(self.snapshot.prices)
                 for event in events:
                     self._update_daily_pnl(event["realized_pnl"])
+                    self._record_trigger_close(event)
                     self._wake_for_fill(
                         event["coin"], event["side"], event["entry_px"],
                         event["exit_px"], event["realized_pnl"],
@@ -730,8 +731,78 @@ class Daemon:
         # Update daily PnL for circuit breaker
         self._update_daily_pnl(realized_pnl)
 
+        # Record to Nous (SL/TP auto-fills aren't written by agent)
+        if classification in ("stop_loss", "take_profit", "liquidation"):
+            self._record_trigger_close({
+                "coin": coin, "side": side, "entry_px": entry_px,
+                "exit_px": exit_px, "realized_pnl": realized_pnl,
+                "classification": classification,
+            })
+
         # Wake the agent with the appropriate message
         self._wake_for_fill(coin, side, entry_px, exit_px, realized_pnl, classification)
+
+    def _record_trigger_close(self, event: dict):
+        """Write a trade_close node to Nous when paper SL/TP/liquidation fires.
+
+        This ensures auto-fills are persisted in memory just like manual closes.
+        Reuses the same _store_to_nous / _find_trade_entry pattern from trading tools.
+        """
+        try:
+            from .tools.trading import _store_to_nous, _find_trade_entry
+
+            coin = event["coin"]
+            side = event["side"]
+            entry_px = event["entry_px"]
+            exit_px = event["exit_px"]
+            pnl = event["realized_pnl"]
+            classification = event["classification"]  # stop_loss, take_profit, liquidation
+
+            pnl_pct = ((exit_px - entry_px) / entry_px * 100) if entry_px else 0
+            if side == "short":
+                pnl_pct = -pnl_pct
+
+            label = classification.replace("_", " ").title()
+            sign = "+" if pnl >= 0 else ""
+            title = f"CLOSED {side.upper()} {coin} @ ${exit_px:,.2f}"
+            summary = (
+                f"CLOSED {side.upper()} {coin} | ${entry_px:,.2f} → ${exit_px:,.2f} "
+                f"| PnL {sign}${pnl:.4f} ({sign}{pnl_pct:.2f}%)"
+            )
+            content = (
+                f"Closed full {side} {coin}.\n"
+                f"Entry: ${entry_px:,.2f} → Exit: ${exit_px:,.2f}\n"
+                f"PnL: {sign}${pnl:.4f} ({sign}{pnl_pct:.2f}%)\n"
+                f"Reason: {label} triggered automatically."
+            )
+            signals = {
+                "action": "close",
+                "side": side,
+                "symbol": coin,
+                "entry": entry_px,
+                "exit": exit_px,
+                "pnl_usd": round(pnl, 4),
+                "pnl_pct": round(pnl_pct, 2),
+                "close_type": classification,
+            }
+
+            # Find the matching entry node for edge linking
+            entry_id = _find_trade_entry(coin)
+
+            node_id = _store_to_nous(
+                subtype="custom:trade_close",
+                title=title,
+                content=content,
+                summary=summary,
+                signals=signals,
+                link_to=entry_id,
+            )
+            if node_id:
+                logger.info("Recorded %s close for %s in Nous: %s", classification, coin, node_id)
+            else:
+                logger.warning("Failed to record %s close for %s in Nous", classification, coin)
+        except Exception as e:
+            logger.error("_record_trigger_close failed for %s: %s", event.get("coin", "?"), e)
 
     def _classify_fill(
         self, coin: str, fill: dict | None, triggers: list[dict],
