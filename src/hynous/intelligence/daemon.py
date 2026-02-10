@@ -1389,7 +1389,7 @@ class Daemon:
 
             # Type clusters (subtype-based auto-assignment)
             type_clusters = [
-                ("Theses", "Active and archived trade theses", ["custom:thesis"]),
+                ("Thesis", "Active and archived trade theses", ["custom:thesis"]),
                 ("Lessons", "Lessons learned from experience and research", ["custom:lesson"]),
                 ("Trade History", "Trade entries, modifications, and closes", [
                     "custom:trade_entry", "custom:trade_close", "custom:trade_modify",

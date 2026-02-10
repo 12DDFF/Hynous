@@ -505,6 +505,7 @@ class AppState(rx.State):
                 return
             self._polling = True
 
+        _cluster_tick = 0
         while True:
             try:
                 # Run sync Hyperliquid API call in a thread so it doesn't
@@ -549,6 +550,17 @@ class AppState(rx.State):
                     self._save_chat(_agent)
             except Exception:
                 pass
+
+            # Refresh clusters every ~60s (4 polls)
+            _cluster_tick += 1
+            if _cluster_tick % 4 == 0:
+                try:
+                    cluster_data = await asyncio.to_thread(self._fetch_clusters)
+                    async with self:
+                        self.cluster_displays = cluster_data["clusters"]
+                        self.cluster_total = str(cluster_data["total"])
+                except Exception:
+                    pass
 
             await asyncio.sleep(_POLL_INTERVAL)
 
@@ -1141,6 +1153,7 @@ class AppState(rx.State):
                 "BTC": "#f7931a",
                 "ETH": "#627eea",
                 "SOL": "#9945ff",
+                "Thesis": "#60a5fa",
                 "Theses": "#60a5fa",
                 "Lessons": "#a3e635",
                 "Trade History": "#f59e0b",
