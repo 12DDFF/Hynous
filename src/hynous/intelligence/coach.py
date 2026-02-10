@@ -109,8 +109,12 @@ class Coach:
             questions = []
             for line in text.split("\n"):
                 line = line.strip().strip('"').strip("'").strip("-").strip("•").strip()
-                if line and len(line) > 10:
-                    questions.append(line)
+                # Skip empty, too-short, markdown headings, and numbering artifacts
+                if not line or len(line) <= 10:
+                    continue
+                if line.startswith("#"):
+                    continue
+                questions.append(line)
 
             # Cap at 2
             questions = questions[:2]
