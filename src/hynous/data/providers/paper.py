@@ -657,8 +657,15 @@ class PaperProvider:
             "fills": self.fills[-100:],  # Keep last 100 fills
         }
         try:
-            with open(self._storage_path, "w") as f:
-                json.dump(data, f, indent=2)
+            import tempfile
+            dir_name = os.path.dirname(self._storage_path)
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=dir_name, delete=False, suffix=".tmp",
+            ) as tmp:
+                json.dump(data, tmp, indent=2)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            os.replace(tmp.name, self._storage_path)
         except Exception as e:
             logger.error("Failed to save paper state: %s", e)
 
