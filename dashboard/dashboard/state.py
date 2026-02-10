@@ -1309,8 +1309,8 @@ class AppState(rx.State):
                 d_pct = 100 - a_pct - w_pct
 
                 bar = (
-                    '<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;'
-                    'background:#1a1a1a;margin:8px 0">'
+                    '<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;'
+                    'background:#1a1a1a;margin:8px 0 10px 0;width:100%">'
                 )
                 if a_pct > 0:
                     bar += f'<div style="width:{a_pct}%;background:#22c55e"></div>'
@@ -1321,10 +1321,10 @@ class AppState(rx.State):
                 bar += '</div>'
 
                 labels = (
-                    f'<div style="display:flex;justify-content:space-between;font-size:0.7rem">'
-                    f'<span style="color:#22c55e">{active} active</span>'
-                    f'<span style="color:#eab308">{weak} weak</span>'
-                    f'<span style="color:#525252">{dormant} dormant</span>'
+                    f'<div style="display:flex;gap:12px;font-size:0.68rem;flex-wrap:wrap">'
+                    f'<span style="color:#22c55e;white-space:nowrap">{active} active</span>'
+                    f'<span style="color:#eab308;white-space:nowrap">{weak} weak</span>'
+                    f'<span style="color:#525252;white-space:nowrap">{dormant} dormant</span>'
                     f'</div>'
                 )
                 lifecycle_html = bar + labels
@@ -1353,7 +1353,7 @@ class AppState(rx.State):
                 return {"html": "", "count": "0"}
 
             parts = []
-            for c in conflicts[:20]:  # Cap display at 20
+            for c in conflicts[:50]:  # Cap display at 50
                 cid = c.get("id", "?")
                 old_id = c.get("old_node_id", "?")
                 new_id = c.get("new_node_id")
