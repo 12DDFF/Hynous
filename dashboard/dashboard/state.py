@@ -551,14 +551,25 @@ class AppState(rx.State):
             except Exception:
                 pass
 
-            # Refresh clusters every ~60s (4 polls)
+            # Refresh memory data every ~60s (4 polls)
             _cluster_tick += 1
             if _cluster_tick % 4 == 0:
                 try:
-                    cluster_data = await asyncio.to_thread(self._fetch_clusters)
+                    cluster_data, health_data, conflict_data = await asyncio.to_thread(
+                        lambda: (
+                            AppState._fetch_clusters(),
+                            AppState._fetch_memory_health(),
+                            AppState._fetch_conflicts(),
+                        )
+                    )
                     async with self:
                         self.cluster_displays = cluster_data["clusters"]
                         self.cluster_total = str(cluster_data["total"])
+                        self.memory_node_count = health_data["node_count"]
+                        self.memory_edge_count = health_data["edge_count"]
+                        self.memory_health_ratio = health_data["health_ratio"]
+                        self.memory_lifecycle_html = health_data["lifecycle_html"]
+                        self.conflict_count = conflict_data["count"]
                 except Exception:
                     pass
 
@@ -1018,9 +1029,10 @@ class AppState(rx.State):
         """Navigate to chat page."""
         self.current_page = "chat"
 
-    def go_to_graph(self):
-        """Navigate to memory graph page."""
-        self.current_page = "graph"
+    def go_to_memory(self):
+        """Navigate to memory management page and load data."""
+        self.current_page = "memory"
+        return AppState.load_memory_page
 
     def go_to_chat_with_message(self, msg: str):
         """Navigate to chat and send a message."""
@@ -1227,6 +1239,326 @@ class AppState(rx.State):
             return {"clusters": displays, "total": total_nodes}
         except Exception:
             return {"clusters": [], "total": 0}
+
+    # === Memory Management State ===
+
+    memory_node_count: str = "0"
+    memory_edge_count: str = "0"
+    memory_health_ratio: str = "0%"
+    memory_lifecycle_html: str = ""
+
+    conflict_html: str = ""  # Pre-rendered conflict list
+    conflict_count: str = "0"
+    show_conflicts: bool = False
+
+    stale_html: str = ""  # Pre-rendered dormant node list
+    stale_count: str = "0"
+    show_stale: bool = False
+
+    decay_running: bool = False
+    decay_result: str = ""
+
+    @_background
+    async def load_memory_page(self):
+        """Load all memory management data."""
+        health, conflicts, stale, clusters = await asyncio.to_thread(
+            self._fetch_memory_page_data
+        )
+        async with self:
+            self.memory_node_count = health["node_count"]
+            self.memory_edge_count = health["edge_count"]
+            self.memory_health_ratio = health["health_ratio"]
+            self.memory_lifecycle_html = health["lifecycle_html"]
+            self.conflict_html = conflicts["html"]
+            self.conflict_count = conflicts["count"]
+            self.stale_html = stale["html"]
+            self.stale_count = stale["count"]
+            self.cluster_displays = clusters["clusters"]
+            self.cluster_total = str(clusters["total"])
+
+    @staticmethod
+    def _fetch_memory_page_data() -> tuple:
+        """Fetch all memory page data in one thread."""
+        health = AppState._fetch_memory_health()
+        conflicts = AppState._fetch_conflicts()
+        stale = AppState._fetch_stale()
+        clusters = AppState._fetch_clusters()
+        return health, conflicts, stale, clusters
+
+    @staticmethod
+    def _fetch_memory_health() -> dict:
+        """Fetch overall memory health from Nous."""
+        try:
+            from hynous.nous.client import get_client
+            client = get_client()
+            h = client.health()
+
+            nodes = h.get("node_count", 0)
+            edges = h.get("edge_count", 0)
+            lifecycle = h.get("lifecycle", {})
+            active = lifecycle.get("ACTIVE", 0)
+            weak = lifecycle.get("WEAK", 0)
+            dormant = lifecycle.get("DORMANT", 0)
+            total = active + weak + dormant
+            ratio = round(active / total * 100) if total > 0 else 0
+
+            # Pre-render lifecycle bar
+            if total > 0:
+                a_pct = round(active / total * 100)
+                w_pct = round(weak / total * 100)
+                d_pct = 100 - a_pct - w_pct
+
+                bar = (
+                    '<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;'
+                    'background:#1a1a1a;margin:8px 0">'
+                )
+                if a_pct > 0:
+                    bar += f'<div style="width:{a_pct}%;background:#22c55e"></div>'
+                if w_pct > 0:
+                    bar += f'<div style="width:{w_pct}%;background:#eab308"></div>'
+                if d_pct > 0:
+                    bar += f'<div style="width:{d_pct}%;background:#404040"></div>'
+                bar += '</div>'
+
+                labels = (
+                    f'<div style="display:flex;justify-content:space-between;font-size:0.7rem">'
+                    f'<span style="color:#22c55e">{active} active</span>'
+                    f'<span style="color:#eab308">{weak} weak</span>'
+                    f'<span style="color:#525252">{dormant} dormant</span>'
+                    f'</div>'
+                )
+                lifecycle_html = bar + labels
+            else:
+                lifecycle_html = '<div style="color:#404040;font-size:0.7rem">No memories yet</div>'
+
+            return {
+                "node_count": str(nodes),
+                "edge_count": str(edges),
+                "health_ratio": f"{ratio}%",
+                "lifecycle_html": lifecycle_html,
+            }
+        except Exception:
+            return {"node_count": "0", "edge_count": "0", "health_ratio": "0%", "lifecycle_html": ""}
+
+    @staticmethod
+    def _fetch_conflicts() -> dict:
+        """Fetch pending conflicts with pre-rendered HTML."""
+        try:
+            from hynous.nous.client import get_client
+            from html import escape
+            client = get_client()
+            conflicts = client.get_conflicts(status="pending")
+
+            if not conflicts:
+                return {"html": "", "count": "0"}
+
+            parts = []
+            for c in conflicts[:20]:  # Cap display at 20
+                cid = c.get("id", "?")
+                old_id = c.get("old_node_id", "?")
+                new_id = c.get("new_node_id")
+                new_content = c.get("new_content", "")
+                confidence = c.get("detection_confidence", 0)
+                ctype = c.get("conflict_type", "?")
+
+                # Fetch old node
+                old_title, old_body = old_id, ""
+                try:
+                    old_node = client.get_node(old_id)
+                    if old_node:
+                        old_title = old_node.get("content_title", old_id)
+                        old_body = (old_node.get("content_body", "") or "")[:200]
+                except Exception:
+                    pass
+
+                # Fetch new node
+                new_title, new_body = "", ""
+                if new_id:
+                    try:
+                        new_node = client.get_node(new_id)
+                        if new_node:
+                            new_title = new_node.get("content_title", "")
+                            new_body = (new_node.get("content_body", "") or "")[:200]
+                    except Exception:
+                        pass
+
+                conf_pct = f"{confidence:.0%}" if isinstance(confidence, float) else str(confidence)
+
+                parts.append(
+                    f'<div style="padding:0.75rem;background:#0d0d0d;border:1px solid #1a1a1a;'
+                    f'border-radius:8px;margin-bottom:0.5rem" data-cid="{escape(cid)}">'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">'
+                    f'<span style="color:#eab308;font-size:0.72rem;font-weight:500">{escape(ctype)}</span>'
+                    f'<span style="color:#525252;font-size:0.7rem">{conf_pct} confidence</span></div>'
+                    f'<div style="padding:0.5rem;background:#111;border-left:2px solid #ef4444;'
+                    f'border-radius:0 4px 4px 0;margin-bottom:0.375rem">'
+                    f'<div style="color:#a3a3a3;font-size:0.7rem;margin-bottom:2px">OLD</div>'
+                    f'<div style="color:#fafafa;font-size:0.78rem;font-weight:500">{escape(old_title)}</div>'
+                    f'<div style="color:#737373;font-size:0.7rem;margin-top:2px">{escape(old_body)}</div></div>'
+                    f'<div style="padding:0.5rem;background:#111;border-left:2px solid #22c55e;'
+                    f'border-radius:0 4px 4px 0">'
+                    f'<div style="color:#a3a3a3;font-size:0.7rem;margin-bottom:2px">NEW</div>'
+                    f'<div style="color:#fafafa;font-size:0.78rem;font-weight:500">'
+                    f'{escape(new_title or new_content[:80])}</div>'
+                    f'<div style="color:#737373;font-size:0.7rem;margin-top:2px">'
+                    f'{escape(new_body or new_content[:200])}</div></div></div>'
+                )
+
+            return {"html": "".join(parts), "count": str(len(conflicts))}
+        except Exception:
+            return {"html": "", "count": "0"}
+
+    @staticmethod
+    def _fetch_stale() -> dict:
+        """Fetch dormant memories with pre-rendered HTML."""
+        try:
+            from hynous.nous.client import get_client
+            from html import escape
+            from datetime import datetime, timezone
+            client = get_client()
+            nodes = client.list_nodes(lifecycle="DORMANT", limit=30)
+
+            if not nodes:
+                return {"html": "", "count": "0"}
+
+            now = datetime.now(timezone.utc)
+            parts = []
+            for n in nodes:
+                nid = n.get("id", "?")
+                title = n.get("content_title", "Untitled")
+                subtype = (n.get("content_subtype", "") or "").replace("custom:", "")
+                created = n.get("created_at", "")
+                retrievability = n.get("neural_retrievability", 0)
+                retr_pct = f"{retrievability:.0%}" if isinstance(retrievability, float) else "?"
+
+                # Compute age
+                days_old = "?"
+                try:
+                    ct = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    days_old = f"{(now - ct).days}d"
+                except Exception:
+                    pass
+
+                parts.append(
+                    f'<div style="display:flex;align-items:center;gap:0.75rem;padding:0.625rem 0;'
+                    f'border-bottom:1px solid #1a1a1a" data-nid="{escape(nid)}">'
+                    f'<div style="flex:1;min-width:0">'
+                    f'<div style="color:#fafafa;font-size:0.78rem;font-weight:500;'
+                    f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{escape(title)}</div>'
+                    f'<div style="display:flex;gap:0.5rem;font-size:0.65rem;margin-top:2px">'
+                    f'<span style="color:#525252">{escape(subtype)}</span>'
+                    f'<span style="color:#404040">{days_old} old</span>'
+                    f'<span style="color:#404040">recall: {retr_pct}</span></div></div></div>'
+                )
+
+            return {"html": "".join(parts), "count": str(len(nodes))}
+        except Exception:
+            return {"html": "", "count": "0"}
+
+    @_background
+    async def run_decay(self):
+        """Run FSRS decay cycle."""
+        async with self:
+            self.decay_running = True
+            self.decay_result = ""
+        try:
+            result = await asyncio.to_thread(self._exec_decay)
+            # Refresh health after decay
+            health = await asyncio.to_thread(self._fetch_memory_health)
+            async with self:
+                self.decay_result = result
+                self.decay_running = False
+                self.memory_node_count = health["node_count"]
+                self.memory_edge_count = health["edge_count"]
+                self.memory_health_ratio = health["health_ratio"]
+                self.memory_lifecycle_html = health["lifecycle_html"]
+        except Exception as e:
+            async with self:
+                self.decay_result = f"Error: {e}"
+                self.decay_running = False
+
+    @staticmethod
+    def _exec_decay() -> str:
+        from hynous.nous.client import get_client
+        client = get_client()
+        result = client.run_decay()
+        transitioned = result.get("transitioned", 0)
+        processed = result.get("processed", 0)
+        return f"Processed {processed} nodes, {transitioned} transitioned"
+
+    @_background
+    async def resolve_all_conflicts(self):
+        """Batch resolve all pending conflicts as new_is_current."""
+        try:
+            result = await asyncio.to_thread(self._exec_batch_resolve, "new_is_current")
+            # Refresh conflicts
+            conflicts = await asyncio.to_thread(self._fetch_conflicts)
+            health = await asyncio.to_thread(self._fetch_memory_health)
+            async with self:
+                self.conflict_html = conflicts["html"]
+                self.conflict_count = conflicts["count"]
+                self.memory_node_count = health["node_count"]
+                self.memory_health_ratio = health["health_ratio"]
+                self.memory_lifecycle_html = health["lifecycle_html"]
+        except Exception:
+            pass
+
+    @_background
+    async def resolve_all_keep_both(self):
+        """Batch resolve all pending conflicts as keep_both."""
+        try:
+            result = await asyncio.to_thread(self._exec_batch_resolve, "keep_both")
+            conflicts = await asyncio.to_thread(self._fetch_conflicts)
+            async with self:
+                self.conflict_html = conflicts["html"]
+                self.conflict_count = conflicts["count"]
+        except Exception:
+            pass
+
+    @staticmethod
+    def _exec_batch_resolve(resolution: str) -> dict:
+        from hynous.nous.client import get_client
+        client = get_client()
+        conflicts = client.get_conflicts(status="pending")
+        if not conflicts:
+            return {"resolved": 0}
+        items = [{"conflict_id": c["id"], "resolution": resolution} for c in conflicts]
+        return client.batch_resolve_conflicts(items)
+
+    @_background
+    async def bulk_archive_stale(self):
+        """Archive all dormant memories."""
+        try:
+            await asyncio.to_thread(self._exec_bulk_archive)
+            stale = await asyncio.to_thread(self._fetch_stale)
+            health = await asyncio.to_thread(self._fetch_memory_health)
+            async with self:
+                self.stale_html = stale["html"]
+                self.stale_count = stale["count"]
+                self.memory_node_count = health["node_count"]
+                self.memory_health_ratio = health["health_ratio"]
+                self.memory_lifecycle_html = health["lifecycle_html"]
+        except Exception:
+            pass
+
+    @staticmethod
+    def _exec_bulk_archive():
+        from hynous.nous.client import get_client
+        client = get_client()
+        nodes = client.list_nodes(lifecycle="DORMANT", limit=100)
+        for n in nodes:
+            try:
+                client.update_node(n["id"], lifecycle="ARCHIVE")
+            except Exception:
+                pass
+
+    def toggle_conflicts(self):
+        """Toggle conflicts dialog."""
+        self.show_conflicts = not self.show_conflicts
+
+    def toggle_stale(self):
+        """Toggle stale memories dialog."""
+        self.show_stale = not self.show_stale
 
     # === Journal State ===
 

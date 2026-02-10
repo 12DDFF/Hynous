@@ -11,7 +11,7 @@ Run with:
 import reflex as rx
 from .state import AppState
 from .components import navbar
-from .pages import home_page, chat_page, graph_page, journal_page
+from .pages import home_page, chat_page, graph_page, journal_page, memory_page
 
 
 def index() -> rx.Component:
@@ -79,7 +79,7 @@ def index() -> rx.Component:
                 on_home=AppState.go_to_home,
                 on_chat=AppState.go_to_chat,
                 on_journal=AppState.go_to_journal,
-                on_graph=AppState.go_to_graph,
+                on_memory=AppState.go_to_memory,
             ),
             position="fixed",
             top="0",
@@ -102,7 +102,7 @@ def index() -> rx.Component:
                     rx.cond(
                         AppState.current_page == "journal",
                         journal_page(),
-                        graph_page(),
+                        memory_page(),
                     ),
                 ),
             ),
