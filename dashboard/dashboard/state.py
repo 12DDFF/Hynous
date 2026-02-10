@@ -146,6 +146,14 @@ class ClosedTrade(BaseModel):
     date: str = ""  # Pre-formatted date string (YYYY-MM-DD)
 
 
+class DaemonActivityFormatted(BaseModel):
+    """Daemon activity with pre-formatted relative time."""
+    type: str = ""
+    title: str = ""
+    detail: str = ""
+    time_display: str = ""  # "3m ago"
+
+
 class WatchpointGroup(BaseModel):
     """Watchpoint group for a single symbol (used in accordion)."""
     symbol: str = ""
@@ -749,6 +757,168 @@ class AppState(rx.State):
             from hynous.core.daemon_log import get_events
             raw = get_events(limit=20)
             return [DaemonActivity(**e) for e in raw]
+        except Exception:
+            return []
+
+    @rx.var(cache=False)
+    def events_text(self) -> str:
+        """Cached event calendar text from daemon."""
+        if _daemon is None:
+            return ""
+        return _daemon.cached_events_text or ""
+
+    @rx.var(cache=False)
+    def events_age_str(self) -> str:
+        """How long ago events were fetched."""
+        if _daemon is None:
+            return ""
+        age = _daemon.events_age_seconds
+        if age == float("inf"):
+            return ""
+        mins = int(age / 60)
+        if mins < 60:
+            return f"Updated {mins}m ago"
+        hours = mins // 60
+        return f"Updated {hours}h ago"
+
+    @rx.var(cache=False)
+    def events_funding_html(self) -> str:
+        """Pre-rendered HTML badges for current funding rates."""
+        if _daemon is None:
+            return ""
+        rates = _daemon.current_funding_rates
+        if not rates:
+            return ""
+        from html import escape
+        parts = []
+        for sym in sorted(rates.keys()):
+            rate = rates[sym]
+            pct = rate * 100
+            color = "#4ade80" if rate >= 0 else "#f87171"
+            bg = "rgba(74,222,128,0.08)" if rate >= 0 else "rgba(248,113,113,0.08)"
+            sign = "+" if rate >= 0 else ""
+            parts.append(
+                f'<span style="display:inline-flex;align-items:center;gap:4px;'
+                f'padding:3px 8px;border-radius:6px;background:{bg};'
+                f'border:1px solid {color}22;margin:2px 4px 2px 0;font-size:0.75rem">'
+                f'<span style="color:#a3a3a3;font-weight:500">{escape(sym)}</span>'
+                f'<span style="color:{color};font-weight:600">{sign}{pct:.4f}%</span>'
+                f'</span>'
+            )
+        return "".join(parts)
+
+    @rx.var(cache=False)
+    def daemon_next_review(self) -> str:
+        """Countdown to next periodic review."""
+        if _daemon is None or not _daemon.is_running:
+            return "—"
+        secs = _daemon.next_review_seconds
+        if secs <= 0:
+            return "Soon"
+        mins = secs // 60
+        if mins >= 60:
+            return f"{mins // 60}h {mins % 60}m"
+        return f"{mins}m"
+
+    @rx.var(cache=False)
+    def daemon_cooldown(self) -> str:
+        """Wake cooldown status."""
+        if _daemon is None or not _daemon.is_running:
+            return "—"
+        remaining = _daemon.cooldown_remaining
+        if remaining <= 0:
+            return "Ready"
+        return f"{remaining}s"
+
+    @rx.var(cache=False)
+    def daemon_cooldown_active(self) -> bool:
+        """Whether wake cooldown is active."""
+        if _daemon is None:
+            return False
+        return _daemon.cooldown_remaining > 0
+
+    @rx.var(cache=False)
+    def daemon_wake_rate(self) -> str:
+        """Wakes this hour / max."""
+        if _daemon is None or not _daemon.is_running:
+            return "—"
+        current = _daemon.wakes_this_hour
+        max_h = _daemon.config.daemon.max_wakes_per_hour
+        return f"{current}/{max_h}"
+
+    @rx.var(cache=False)
+    def daemon_reviews_until_learning(self) -> str:
+        """Reviews until next learning session."""
+        if _daemon is None or not _daemon.is_running:
+            return "—"
+        n = _daemon.reviews_until_learning
+        if n <= 1:
+            return "Next review"
+        return f"In {n} reviews"
+
+    @rx.var(cache=False)
+    def daemon_last_wake_ago(self) -> str:
+        """Time since last wake."""
+        if _daemon is None or not _daemon.is_running:
+            return "—"
+        ts = _daemon.last_wake_time
+        if not ts:
+            return "Never"
+        import time as _time
+        elapsed = int(_time.time() - ts)
+        if elapsed < 60:
+            return "Just now"
+        mins = elapsed // 60
+        if mins < 60:
+            return f"{mins}m ago"
+        hours = mins // 60
+        return f"{hours}h {mins % 60}m ago"
+
+    @rx.var(cache=False)
+    def daemon_review_count(self) -> str:
+        """Total reviews completed."""
+        if _daemon is None:
+            return "0"
+        return str(_daemon.review_count)
+
+    @rx.var(cache=False)
+    def daemon_today_wakes(self) -> list[DaemonActivityFormatted]:
+        """Today's daemon events with relative timestamps."""
+        try:
+            from hynous.core.daemon_log import get_events
+            from datetime import datetime, timezone, timedelta
+            raw = get_events(limit=50)
+            today = datetime.now(timezone.utc).date()
+            result = []
+            for e in raw:
+                ts_str = e.get("timestamp", "")
+                if not ts_str:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if ts.date() != today:
+                    continue
+                # Skip "skip" events for cleaner display
+                if e.get("type") == "skip":
+                    continue
+                # Format relative time
+                now = datetime.now(timezone.utc)
+                delta = int((now - ts).total_seconds())
+                if delta < 60:
+                    age = "Just now"
+                elif delta < 3600:
+                    age = f"{delta // 60}m ago"
+                else:
+                    age = f"{delta // 3600}h {(delta % 3600) // 60}m ago"
+                result.append(DaemonActivityFormatted(
+                    type=e.get("type", ""),
+                    title=e.get("title", ""),
+                    detail=e.get("detail", ""),
+                    time_display=age,
+                ))
+            return result[:15]  # Cap at 15
         except Exception:
             return []
 

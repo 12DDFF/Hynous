@@ -1,7 +1,7 @@
 """Home page — Hynous profile + dashboard."""
 
 import reflex as rx
-from ..state import AppState, DaemonActivity
+from ..state import AppState, DaemonActivity, DaemonActivityFormatted
 from ..components import stat_card, ticker_badge
 
 
@@ -551,8 +551,76 @@ def _daemon_event_row(event: DaemonActivity) -> rx.Component:
     )
 
 
+def _schedule_row(label: str, value: rx.Var[str]) -> rx.Component:
+    """Single row in the daemon schedule section."""
+    return rx.hstack(
+        rx.text(label, font_size="0.8rem", color="#737373"),
+        rx.spacer(),
+        rx.text(value, font_size="0.8rem", font_weight="500", color="#e5e5e5"),
+        width="100%",
+        align="center",
+    )
+
+
+def _daemon_wake_row(event: DaemonActivityFormatted) -> rx.Component:
+    """Timeline-style row for today's daemon wakes."""
+    icon = _event_icon(event.type)
+    color = _event_color(event.type)
+    bg = _event_bg(event.type)
+
+    return rx.hstack(
+        # Time on left
+        rx.text(
+            event.time_display,
+            font_size="0.7rem",
+            color="#525252",
+            width="60px",
+            flex_shrink="0",
+            text_align="right",
+        ),
+        # Icon
+        rx.box(
+            rx.icon(icon, size=12, color=color),
+            width="24px",
+            height="24px",
+            border_radius="6px",
+            background=bg,
+            display="flex",
+            align_items="center",
+            justify_content="center",
+            flex_shrink="0",
+        ),
+        # Title + detail
+        rx.vstack(
+            rx.text(
+                event.title,
+                font_size="0.75rem",
+                font_weight="500",
+                color="#e5e5e5",
+                line_height="1.3",
+            ),
+            rx.cond(
+                event.detail != "",
+                rx.text(
+                    event.detail,
+                    font_size="0.65rem",
+                    color="#525252",
+                    line_height="1.3",
+                ),
+                rx.fragment(),
+            ),
+            spacing="0",
+            min_width="0",
+        ),
+        spacing="2",
+        align="start",
+        width="100%",
+        padding_y="0.25rem",
+    )
+
+
 def _daemon_detail() -> rx.Component:
-    """Detail view for the Daemon dialog — activity feed + controls."""
+    """Detail view for the Daemon dialog — schedule, rates, timeline, controls."""
     return rx.vstack(
         # Daily PnL
         rx.hstack(
@@ -580,7 +648,46 @@ def _daemon_detail() -> rx.Component:
 
         rx.divider(border_color="#1a1a1a"),
 
-        # Toggle
+        # Schedule section
+        rx.text(
+            "SCHEDULE",
+            font_size="0.6rem",
+            font_weight="600",
+            color="#525252",
+            letter_spacing="0.05em",
+        ),
+        _schedule_row("Last wake", AppState.daemon_last_wake_ago),
+        _schedule_row("Next review", AppState.daemon_next_review),
+        _schedule_row("Next learning", AppState.daemon_reviews_until_learning),
+        _schedule_row("Reviews done", AppState.daemon_review_count),
+
+        rx.divider(border_color="#1a1a1a"),
+
+        # Rate limits
+        rx.text(
+            "RATE LIMITS",
+            font_size="0.6rem",
+            font_weight="600",
+            color="#525252",
+            letter_spacing="0.05em",
+        ),
+        _schedule_row("Wakes this hour", AppState.daemon_wake_rate),
+        rx.hstack(
+            rx.text("Cooldown", font_size="0.8rem", color="#737373"),
+            rx.spacer(),
+            rx.text(
+                AppState.daemon_cooldown,
+                font_size="0.8rem",
+                font_weight="500",
+                color=rx.cond(AppState.daemon_cooldown_active, "#fbbf24", "#4ade80"),
+            ),
+            width="100%",
+            align="center",
+        ),
+
+        rx.divider(border_color="#1a1a1a"),
+
+        # Toggle + Wake button
         rx.hstack(
             rx.text("Daemon", font_size="0.85rem", color="#e5e5e5"),
             rx.spacer(),
@@ -593,8 +700,6 @@ def _daemon_detail() -> rx.Component:
             width="100%",
             align="center",
         ),
-
-        # Manual wake button
         rx.cond(
             AppState.daemon_running,
             rx.button(
@@ -631,21 +736,21 @@ def _daemon_detail() -> rx.Component:
 
         rx.divider(border_color="#1a1a1a"),
 
-        # Activity feed
+        # Today's wakes timeline
         rx.text(
-            "RECENT ACTIVITY",
-            font_size="0.65rem",
+            "TODAY'S WAKES",
+            font_size="0.6rem",
             font_weight="600",
             color="#525252",
             letter_spacing="0.05em",
         ),
         rx.cond(
-            AppState.daemon_activities.length() > 0,
+            AppState.daemon_today_wakes.length() > 0,
             rx.vstack(
-                rx.foreach(AppState.daemon_activities, _daemon_event_row),
+                rx.foreach(AppState.daemon_today_wakes, _daemon_wake_row),
                 spacing="0",
                 width="100%",
-                max_height="300px",
+                max_height="180px",
                 overflow_y="auto",
                 style={
                     "scrollbar_width": "thin",
@@ -653,10 +758,60 @@ def _daemon_detail() -> rx.Component:
                 },
             ),
             rx.text(
-                "No activity yet. Enable the daemon to start watching markets.",
+                "No wakes today",
                 font_size="0.8rem",
                 color="#404040",
-                padding_y="1rem",
+                padding_y="0.5rem",
+            ),
+        ),
+
+        # View all activity — nested dialog
+        rx.dialog.root(
+            rx.dialog.trigger(
+                rx.text(
+                    "View all activity →",
+                    font_size="0.75rem",
+                    color="#818cf8",
+                    cursor="pointer",
+                    _hover={"text_decoration": "underline"},
+                ),
+            ),
+            rx.dialog.content(
+                rx.dialog.title(
+                    "All Daemon Activity",
+                    font_size="1rem",
+                    font_weight="600",
+                    color="#fafafa",
+                ),
+                rx.cond(
+                    AppState.daemon_activities.length() > 0,
+                    rx.vstack(
+                        rx.foreach(AppState.daemon_activities, _daemon_event_row),
+                        spacing="0",
+                        width="100%",
+                        max_height="400px",
+                        overflow_y="auto",
+                        style={
+                            "scrollbar_width": "thin",
+                            "scrollbar_color": "#262626 transparent",
+                        },
+                    ),
+                    rx.text("No activity yet.", font_size="0.8rem", color="#404040", padding_y="1rem"),
+                ),
+                rx.dialog.close(
+                    rx.button(
+                        "Close",
+                        variant="ghost",
+                        color="#525252",
+                        cursor="pointer",
+                        _hover={"color": "#a3a3a3"},
+                    ),
+                ),
+                background="#111111",
+                border="1px solid #1a1a1a",
+                border_radius="14px",
+                padding="1.25rem",
+                max_width="480px",
             ),
         ),
 
@@ -746,7 +901,7 @@ def _daemon_card() -> rx.Component:
             border="1px solid #1a1a1a",
             border_radius="14px",
             padding="1.25rem",
-            max_width="420px",
+            max_width="480px",
         ),
     )
 
@@ -961,6 +1116,109 @@ def _watchlist_card() -> rx.Component:
     )
 
 
+def _events_card() -> rx.Component:
+    """Event calendar card — upcoming events + funding rates."""
+    return rx.box(
+        rx.vstack(
+            # Header
+            rx.hstack(
+                rx.hstack(
+                    rx.icon("calendar", size=14, color="#a78bfa"),
+                    rx.text(
+                        "Events",
+                        font_size="0.75rem",
+                        font_weight="600",
+                        color="#737373",
+                        text_transform="uppercase",
+                        letter_spacing="0.05em",
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+                rx.spacer(),
+                rx.cond(
+                    AppState.events_age_str != "",
+                    rx.text(
+                        AppState.events_age_str,
+                        font_size="0.65rem",
+                        color="#525252",
+                    ),
+                    rx.fragment(),
+                ),
+                width="100%",
+                align="center",
+            ),
+
+            # Funding rates section
+            rx.cond(
+                AppState.events_funding_html != "",
+                rx.vstack(
+                    rx.text(
+                        "FUNDING RATES",
+                        font_size="0.6rem",
+                        font_weight="600",
+                        color="#525252",
+                        letter_spacing="0.05em",
+                    ),
+                    rx.html(AppState.events_funding_html),
+                    spacing="1",
+                    width="100%",
+                ),
+                rx.fragment(),
+            ),
+
+            # Events text
+            rx.cond(
+                AppState.events_text != "",
+                rx.vstack(
+                    rx.text(
+                        "UPCOMING",
+                        font_size="0.6rem",
+                        font_weight="600",
+                        color="#525252",
+                        letter_spacing="0.05em",
+                    ),
+                    rx.text(
+                        AppState.events_text,
+                        font_size="0.78rem",
+                        color="#a3a3a3",
+                        line_height="1.6",
+                        white_space="pre-wrap",
+                    ),
+                    spacing="1",
+                    width="100%",
+                ),
+                rx.center(
+                    rx.vstack(
+                        rx.icon("calendar-off", size=20, color="#333"),
+                        rx.text(
+                            "No events cached yet",
+                            font_size="0.8rem",
+                            color="#404040",
+                        ),
+                        rx.text(
+                            "Daemon polls Perplexity every 6h",
+                            font_size="0.7rem",
+                            color="#333",
+                        ),
+                        spacing="1",
+                        align="center",
+                    ),
+                    padding="1.5rem",
+                ),
+            ),
+
+            spacing="3",
+            width="100%",
+        ),
+        background="#111111",
+        border="1px solid #1a1a1a",
+        border_radius="12px",
+        padding="1rem",
+        height="100%",
+    )
+
+
 def _suggestion(text: str, icon_name: str) -> rx.Component:
     """Single suggestion card."""
     return rx.box(
@@ -1141,10 +1399,13 @@ def home_page() -> rx.Component:
                     flex_wrap="wrap",
                 ),
 
-                # Positions + Watchlist side by side
+                # Positions — full width
+                rx.box(positions_section(), width="100%"),
+
+                # Watchlist + Events side by side
                 rx.hstack(
-                    rx.box(positions_section(), flex="1 1 300px", min_width="0"),
                     rx.box(_watchlist_card(), flex="1 1 260px", min_width="0"),
+                    rx.box(_events_card(), flex="1 1 260px", min_width="0"),
                     spacing="4",
                     width="100%",
                     align_items="stretch",

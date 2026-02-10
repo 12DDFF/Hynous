@@ -271,6 +271,66 @@ class Daemon:
             },
         }
 
+    @property
+    def next_review_seconds(self) -> int:
+        """Seconds until next periodic review (doubled on weekends)."""
+        if not self._last_review:
+            return 0
+        interval = self.config.daemon.periodic_interval
+        if datetime.now(timezone.utc).weekday() >= 5:
+            interval *= 2
+        elapsed = time.time() - self._last_review
+        remaining = int(interval - elapsed)
+        return max(remaining, 0)
+
+    @property
+    def cooldown_remaining(self) -> int:
+        """Seconds remaining in wake cooldown (0 = ready)."""
+        if not self._last_wake_time:
+            return 0
+        cooldown = self.config.daemon.wake_cooldown_seconds
+        elapsed = time.time() - self._last_wake_time
+        remaining = int(cooldown - elapsed)
+        return max(remaining, 0)
+
+    @property
+    def wakes_this_hour(self) -> int:
+        """Number of wakes in the last 60 minutes."""
+        cutoff = time.time() - 3600
+        return len([t for t in self._wake_timestamps if t > cutoff])
+
+    @property
+    def reviews_until_learning(self) -> int:
+        """Reviews until next learning session (every 3rd review)."""
+        return 3 - (self._review_count % 3)
+
+    @property
+    def cached_events_text(self) -> str:
+        """Cached event calendar text from Perplexity."""
+        return self._cached_events
+
+    @property
+    def events_age_seconds(self) -> float:
+        """Seconds since last event poll."""
+        if not self._last_event_poll:
+            return float("inf")
+        return time.time() - self._last_event_poll
+
+    @property
+    def current_funding_rates(self) -> dict[str, float]:
+        """Current funding rates from snapshot."""
+        return dict(self.snapshot.funding)
+
+    @property
+    def review_count(self) -> int:
+        """Total periodic reviews completed."""
+        return self._review_count
+
+    @property
+    def last_wake_time(self) -> float:
+        """Unix timestamp of last wake."""
+        return self._last_wake_time
+
     # ================================================================
     # Main Loop
     # ================================================================
