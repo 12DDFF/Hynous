@@ -90,6 +90,27 @@ class DaemonConfig:
 
 
 @dataclass
+class ScannerConfig:
+    """Market scanner — anomaly detection across all Hyperliquid pairs."""
+    enabled: bool = True                       # Master switch (requires daemon enabled)
+    wake_threshold: float = 0.5                # Min severity to wake agent (0.0-1.0)
+    max_anomalies_per_wake: int = 5            # Max anomalies bundled per wake
+    dedup_ttl_minutes: int = 30                # Don't re-alert same anomaly within window
+    # Price thresholds
+    price_spike_5min_pct: float = 3.0          # % move in 5min
+    price_spike_15min_pct: float = 5.0         # % move in 15min
+    # Derivatives thresholds
+    funding_extreme_percentile: float = 95     # Percentile cutoff
+    funding_extreme_absolute: float = 0.001    # Absolute threshold (0.1%/8h)
+    oi_surge_pct: float = 10.0                 # % OI change in 5min
+    # Liquidation thresholds (USD)
+    liq_cascade_min_usd: float = 5_000_000     # Per-coin 1h threshold
+    liq_wave_min_usd: float = 50_000_000       # Market-wide 1h threshold
+    # Noise filter
+    min_oi_usd: float = 1_000_000              # Skip low-liquidity pairs
+
+
+@dataclass
 class DiscordConfig:
     """Discord bot settings — chat relay + daemon notifications."""
     enabled: bool = False
@@ -114,6 +135,7 @@ class Config:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     hyperliquid: HyperliquidConfig = field(default_factory=HyperliquidConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
+    scanner: ScannerConfig = field(default_factory=ScannerConfig)
     discord: DiscordConfig = field(default_factory=DiscordConfig)
 
     # Paths
@@ -148,6 +170,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
     mem_raw = raw.get("memory", {})
     hl_raw = raw.get("hyperliquid", {})
     daemon_raw = raw.get("daemon", {})
+    scanner_raw = raw.get("scanner", {})
     discord_raw = raw.get("discord", {})
 
     return Config(
@@ -199,6 +222,20 @@ def load_config(config_path: Optional[str] = None) -> Config:
             max_open_positions=daemon_raw.get("max_open_positions", 3),
             max_wakes_per_hour=daemon_raw.get("max_wakes_per_hour", 6),
             wake_cooldown_seconds=daemon_raw.get("wake_cooldown_seconds", 120),
+        ),
+        scanner=ScannerConfig(
+            enabled=scanner_raw.get("enabled", True),
+            wake_threshold=scanner_raw.get("wake_threshold", 0.5),
+            max_anomalies_per_wake=scanner_raw.get("max_anomalies_per_wake", 5),
+            dedup_ttl_minutes=scanner_raw.get("dedup_ttl_minutes", 30),
+            price_spike_5min_pct=scanner_raw.get("price_spike_5min_pct", 3.0),
+            price_spike_15min_pct=scanner_raw.get("price_spike_15min_pct", 5.0),
+            funding_extreme_percentile=scanner_raw.get("funding_extreme_percentile", 95),
+            funding_extreme_absolute=scanner_raw.get("funding_extreme_absolute", 0.001),
+            oi_surge_pct=scanner_raw.get("oi_surge_pct", 10.0),
+            liq_cascade_min_usd=scanner_raw.get("liq_cascade_min_usd", 5_000_000),
+            liq_wave_min_usd=scanner_raw.get("liq_wave_min_usd", 50_000_000),
+            min_oi_usd=scanner_raw.get("min_oi_usd", 1_000_000),
         ),
         discord=DiscordConfig(
             enabled=discord_raw.get("enabled", False),

@@ -48,6 +48,20 @@ daemon:
   max_wakes_per_hour: 6              # Rate limit on agent wakes per hour
   wake_cooldown_seconds: 120         # Min seconds between non-priority wakes
 
+# Market scanner (anomaly detection across ALL Hyperliquid pairs)
+scanner:
+  enabled: true
+  wake_threshold: 0.5              # Min severity to wake agent (0.0-1.0)
+  max_anomalies_per_wake: 5
+  dedup_ttl_minutes: 30
+  price_spike_5min_pct: 3.0        # % move in 5min to flag
+  price_spike_15min_pct: 5.0       # % move in 15min to flag
+  funding_extreme_percentile: 95   # Percentile cutoff for funding extremes
+  oi_surge_pct: 10.0               # % OI change in 5min to flag
+  liq_cascade_min_usd: 5000000     # Per-coin 1h liquidation threshold
+  liq_wave_min_usd: 50000000       # Market-wide 1h liquidation threshold
+  min_oi_usd: 1000000              # Skip pairs with OI below this
+
 # Discord bot (chat relay + daemon notifications)
 discord:
   enabled: true                                # Master switch

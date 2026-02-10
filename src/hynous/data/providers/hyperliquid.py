@@ -763,6 +763,30 @@ class HyperliquidProvider:
                 }
         return result
 
+    def get_all_asset_contexts(self) -> dict[str, dict]:
+        """Get context for ALL trading pairs in a single API call.
+
+        Same as get_multi_asset_contexts but without symbol filtering.
+        Used by the market scanner to track the full Hyperliquid universe.
+
+        Returns dict mapping symbol → context dict.
+        """
+        meta_and_ctxs = self._info.meta_and_asset_ctxs()
+        universe = meta_and_ctxs[0]["universe"]
+        ctxs = meta_and_ctxs[1]
+
+        result = {}
+        for i, asset in enumerate(universe):
+            ctx = ctxs[i]
+            result[asset["name"]] = {
+                "funding": float(ctx.get("funding", "0")),
+                "open_interest": float(ctx.get("openInterest", "0")),
+                "day_volume": float(ctx.get("dayNtlVlm", "0")),
+                "mark_price": float(ctx["markPx"]) if ctx.get("markPx") else None,
+                "prev_day_price": float(ctx.get("prevDayPx", "0")),
+            }
+        return result
+
     def get_asset_context(self, symbol: str) -> dict | None:
         """Get current context for an asset (funding, OI, volume, etc.).
 

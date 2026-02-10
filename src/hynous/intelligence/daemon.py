@@ -162,9 +162,17 @@ class Daemon:
         self._pending_thoughts: list[str] = []       # Haiku questions (max 3)
         self._wake_fingerprints: list[frozenset] = []  # Last 5 tool+mutation fingerprints
 
+        # Market scanner (anomaly detection across all pairs)
+        self._scanner = None
+        if config.scanner.enabled:
+            from .scanner import MarketScanner
+            self._scanner = MarketScanner(config.scanner)
+            self._scanner.execution_symbols = set(config.execution.symbols)
+
         # Stats
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
+        self.scanner_wakes: int = 0
         self.learning_sessions: int = 0
         self.decay_cycles_run: int = 0
         self.conflict_checks: int = 0
@@ -206,7 +214,9 @@ class Daemon:
             target=self._loop, daemon=True, name="hynous-daemon",
         )
         self._thread.start()
-        logger.info("Daemon started (price=%ds, deriv=%ds, review=%ds, curiosity=%ds, decay=%ds, conflicts=%ds, health=%ds, backfill=%ds)",
+        scanner_status = "ON" if self._scanner else "OFF"
+        logger.info("Daemon started (price=%ds, deriv=%ds, review=%ds, curiosity=%ds, "
+                     "decay=%ds, conflicts=%ds, health=%ds, backfill=%ds, scanner=%s)",
                      self.config.daemon.price_poll_interval,
                      self.config.daemon.deriv_poll_interval,
                      self.config.daemon.periodic_interval,
@@ -214,7 +224,8 @@ class Daemon:
                      self.config.daemon.decay_interval,
                      self.config.daemon.conflict_check_interval,
                      self.config.daemon.health_check_interval,
-                     self.config.daemon.embedding_backfill_interval)
+                     self.config.daemon.embedding_backfill_interval,
+                     scanner_status)
 
     def stop(self):
         """Stop the daemon loop gracefully."""
@@ -255,6 +266,7 @@ class Daemon:
             "running": self.is_running,
             "wake_count": self.wake_count,
             "watchpoint_fires": self.watchpoint_fires,
+            "scanner_wakes": self.scanner_wakes,
             "fill_fires": self._fill_fires,
             "learning_sessions": self.learning_sessions,
             "polls": self.polls,
@@ -364,6 +376,17 @@ class Daemon:
                     for wp in triggered:
                         self._wake_for_watchpoint(wp)
 
+                # 3b. Market scanner anomaly detection (runs after each data refresh)
+                if self._scanner:
+                    try:
+                        # Update position awareness before detection
+                        self._scanner.position_symbols = set(self._prev_positions.keys())
+                        anomalies = self._scanner.detect()
+                        if anomalies:
+                            self._wake_for_scanner(anomalies)
+                    except Exception as e:
+                        logger.debug("Scanner detect failed: %s", e)
+
                 # 4. Curiosity check (default every 15 min)
                 if now - self._last_curiosity_check >= self.config.daemon.curiosity_check_interval:
                     self._last_curiosity_check = now
@@ -418,6 +441,10 @@ class Daemon:
                 if sym in all_prices:
                     self.snapshot.prices[sym] = all_prices[sym]
 
+            # Feed scanner with ALL prices (not just tracked symbols)
+            if self._scanner:
+                self._scanner.ingest_prices(all_prices)
+
             self.snapshot.last_price_poll = time.time()
             self._data_changed = True
             self.polls += 1
@@ -451,6 +478,25 @@ class Daemon:
                     self.snapshot.fear_greed = int(float(data_list[-1]))
         except Exception as e:
             logger.debug("Coinglass poll failed: %s", e)
+
+        # Feed scanner: all asset contexts (single API call, already cached)
+        if self._scanner:
+            try:
+                provider = self._get_provider()
+                all_contexts = provider.get_all_asset_contexts()
+                self._scanner.ingest_derivatives(all_contexts)
+            except Exception as e:
+                logger.debug("Scanner deriv ingest failed: %s", e)
+
+            # Feed scanner: liquidation data from Coinglass
+            try:
+                from ..data.providers.coinglass import get_provider as cg_get
+                cg = cg_get()
+                liq_data = cg.get_liquidation_coins()
+                if liq_data:
+                    self._scanner.ingest_liquidations(liq_data)
+            except Exception as e:
+                logger.debug("Scanner liq ingest failed: %s", e)
 
         # Refresh trigger orders cache for fill classification
         self._refresh_trigger_cache()
@@ -961,6 +1007,45 @@ class Daemon:
             })
             _notify_discord("Watchpoint", title, response)
             logger.info("Watchpoint wake complete: %s (%d chars)", title, len(response))
+
+    def _wake_for_scanner(self, anomalies: list):
+        """Wake the agent when the market scanner detects anomalies.
+
+        Filters by wake threshold, formats message, respects rate limits.
+        Non-priority wake (shares cooldown with other wakes).
+        """
+        from .scanner import format_scanner_wake
+
+        cfg = self.config.scanner
+        # Filter to anomalies above wake threshold
+        wake_worthy = [a for a in anomalies if a.severity >= cfg.wake_threshold]
+        if not wake_worthy:
+            return
+
+        # Cap to max anomalies per wake
+        top = wake_worthy[:cfg.max_anomalies_per_wake]
+
+        # Format the wake message
+        message = format_scanner_wake(top)
+
+        response = self._wake_agent(message, max_coach_cycles=0)
+        if response:
+            self.scanner_wakes += 1
+            self._scanner.wakes_triggered += 1
+            top_event = top[0]
+            title = f"Scanner: {top_event.headline}"
+            log_event(DaemonEvent(
+                "scanner", title,
+                f"{len(top)} anomalies (top: {top_event.type} {top_event.symbol} sev={top_event.severity:.2f})",
+            ))
+            _daemon_chat_queue.put({
+                "type": "Scanner",
+                "title": title,
+                "response": response,
+            })
+            _notify_discord("Scanner", title, response)
+            logger.info("Scanner wake: %d anomalies, agent responded (%d chars)",
+                        len(top), len(response))
 
     def _wake_for_fill(
         self,
