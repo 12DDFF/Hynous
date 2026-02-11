@@ -83,10 +83,18 @@ def save(ui_messages: list[dict], agent_history: list[dict]) -> None:
 
     serialized_history = []
     for msg in agent_history[-_MAX_AGENT_HISTORY:]:
-        serialized_history.append({
+        entry = {
             "role": msg["role"],
             "content": _serialize_content(msg["content"]),
-        })
+        }
+        # Preserve OpenAI-format fields for tool calling
+        if "tool_calls" in msg:
+            entry["tool_calls"] = msg["tool_calls"]
+        if "tool_call_id" in msg:
+            entry["tool_call_id"] = msg["tool_call_id"]
+        if msg.get("role") == "tool" and "name" in msg:
+            entry["name"] = msg["name"]
+        serialized_history.append(entry)
 
     data = {
         "ui_messages": ui_messages[-_MAX_UI_MESSAGES:],

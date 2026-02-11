@@ -15,7 +15,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Generator
 
 import litellm
-from litellm.exceptions import APIError as LitellmAPIError
 
 from .prompts import build_system_prompt
 from .memory_manager import MemoryManager
@@ -522,8 +521,8 @@ class Agent:
                 while True:
                     try:
                         response = litellm.completion(**kwargs)
-                    except LitellmAPIError as e:
-                        logger.error(f"LLM API error: {e}")
+                    except Exception as e:
+                        logger.error("LLM API error (%s): %s", type(e).__name__, e)
                         error_msg = "I'm having trouble connecting right now. Give me a moment."
                         self._history.append({"role": "assistant", "content": error_msg})
                         self._active_context = None
@@ -668,8 +667,8 @@ class Agent:
                                     if tc_chunk.function and tc_chunk.function.arguments:
                                         collected_tool_calls[idx]["arguments"] += tc_chunk.function.arguments
 
-                    except LitellmAPIError as e:
-                        logger.error(f"LLM API error: {e}")
+                    except Exception as e:
+                        logger.error("LLM API error (%s): %s", type(e).__name__, e)
                         error_msg = "I'm having trouble connecting right now. Give me a moment."
                         self._history.append({"role": "assistant", "content": error_msg})
                         self._active_context = None
@@ -775,11 +774,29 @@ class Agent:
 
     @staticmethod
     def _sanitize_history(history: list[dict]) -> list[dict]:
-        """Remove orphaned tool results from the start of a loaded history.
+        """Sanitize loaded history for LiteLLM/OpenAI format compatibility.
 
-        On restore, the history might start with tool result messages whose
-        matching assistant tool_calls were trimmed in a previous session.
+        Handles:
+        1. Old Anthropic-format messages (content as list of blocks with
+           tool_use/tool_result types) — these are incompatible with OpenAI
+           format and must be discarded.
+        2. Orphaned tool results at the start of history.
         """
+        # Detect old Anthropic format: any message with content as list
+        # containing tool_use/tool_result blocks is pre-migration history.
+        for entry in history:
+            content = entry.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") in (
+                        "tool_use", "tool_result",
+                    ):
+                        logger.warning(
+                            "Discarding %d old Anthropic-format history entries",
+                            len(history),
+                        )
+                        return []
+
         # Find first safe message (user with string content, or assistant without tool context issues)
         for i, entry in enumerate(history):
             if entry["role"] == "user" and isinstance(entry.get("content"), str):
