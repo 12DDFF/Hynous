@@ -282,10 +282,12 @@ def _build_activity(daemon) -> str:
         return ""
 
     today = getattr(daemon, '_entries_today', 0)
+    micro = getattr(daemon, '_micro_entries_today', 0)
     week = getattr(daemon, '_entries_this_week', 0)
     last = getattr(daemon, 'last_trade_ago', "never")
 
-    return f"Activity: {today} entries today, {week} this week | Last trade: {last} ago"
+    micro_str = f" ({micro}/2 micro)" if micro > 0 else ""
+    return f"Activity: {today} entries today{micro_str}, {week} this week | Last trade: {last} ago"
 
 
 def _fg_label(value: int) -> str:

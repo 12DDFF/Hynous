@@ -303,7 +303,7 @@ TRADE_TOOL_DEF = {
         "  E.g. size_usd=500 at 20x → $25 margin from account, $500 notional exposure.\n"
         "- size: Size in base asset (e.g. 0.03 BTC)\n\n"
         "Risk management (ALL required):\n"
-        "- leverage: REQUIRED, minimum 20x\n"
+        "- leverage: REQUIRED, minimum 5x (micro requires 20x)\n"
         "- stop_loss: Where my thesis is wrong — auto-placed as trigger order\n"
         "- take_profit: Where I take profit — auto-placed as trigger order\n"
         "- reasoning: My full thesis for this trade — stored in memory\n"
@@ -549,17 +549,96 @@ def handle_execute_trade(
                 f"{'limit' if order_type == 'limit' else 'current'} price ({_fmt_price(ref_price)}) for a short."
             )
 
-    # --- Micro trade SL/TP distance warnings ---
-    _micro_warnings: list[str] = []
+    # --- Micro trade SL/TP distance validation ---
+    _warnings: list[str] = []
     if trade_type == "micro" and ref_price and ref_price > 0:
         if stop_loss is not None:
             sl_dist = abs(stop_loss - ref_price) / ref_price
-            if sl_dist > 0.005:
-                _micro_warnings.append(f"Note: SL distance {sl_dist*100:.1f}% is wider than 0.5% recommended for micro trades")
+            if sl_dist < 0.002:
+                return (
+                    f"Error: SL distance {sl_dist*100:.2f}% is way too tight for a micro trade "
+                    f"(minimum 0.3%). At 20x that's {sl_dist*100*20:.1f}% ROE — pure noise. "
+                    f"Recalculate: entry {_fmt_price(ref_price)}, 0.3% = {_fmt_price(ref_price * (1 - 0.003) if is_buy else ref_price * (1 + 0.003))}."
+                )
+            if sl_dist < 0.003:
+                _warnings.append(
+                    f"Warning: SL distance {sl_dist*100:.2f}% is tighter than 0.3% recommended for micro — high risk of noise stop"
+                )
+            elif sl_dist > 0.005:
+                _warnings.append(f"Note: SL distance {sl_dist*100:.1f}% is wider than 0.5% recommended for micro trades")
         if take_profit is not None:
             tp_dist = abs(take_profit - ref_price) / ref_price
             if tp_dist > 0.01:
-                _micro_warnings.append(f"Note: TP distance {tp_dist*100:.1f}% is wider than 1% recommended for micro trades")
+                _warnings.append(f"Note: TP distance {tp_dist*100:.1f}% is wider than 1% recommended for micro trades")
+
+    # --- SL/TP distances (used by R:R, leverage coherence, portfolio risk) ---
+    sl_distance_pct = 0.0
+    tp_distance_pct = 0.0
+    if ref_price and ref_price > 0:
+        if stop_loss is not None:
+            sl_distance_pct = abs(stop_loss - ref_price) / ref_price
+        if take_profit is not None:
+            tp_distance_pct = abs(take_profit - ref_price) / ref_price
+
+    # --- R:R Floor ---
+    if stop_loss is not None and take_profit is not None and sl_distance_pct > 0:
+        if is_buy:
+            risk_dist = ref_price - stop_loss
+            reward_dist = take_profit - ref_price
+        else:
+            risk_dist = stop_loss - ref_price
+            reward_dist = ref_price - take_profit
+        pre_rr = reward_dist / risk_dist if risk_dist > 0 else 0
+
+        if pre_rr < 1.0:
+            return (
+                f"REJECTED: R:R is {pre_rr:.2f}:1 — risking more than the potential gain.\n"
+                f"  Risk: {sl_distance_pct*100:.2f}% to SL ({_fmt_price(stop_loss)})\n"
+                f"  Reward: {tp_distance_pct*100:.2f}% to TP ({_fmt_price(take_profit)})\n"
+                f"Fix: Widen TP or tighten SL. Minimum 1.5:1."
+            )
+        if pre_rr < 1.5:
+            _warnings.append(
+                f"Warning: R:R is {pre_rr:.2f}:1 — thin edge. Standard minimum is 1.5:1."
+            )
+
+    # --- Leverage-SL Coherence (macro only) ---
+    if trade_type != "micro" and sl_distance_pct > 0 and leverage is not None:
+        roe_at_stop = leverage * sl_distance_pct * 100
+        suggested_lev = max(5, min(20, round(15 / (sl_distance_pct * 100))))
+
+        if roe_at_stop > 25:
+            return (
+                f"REJECTED: {leverage}x with {sl_distance_pct*100:.1f}% SL = "
+                f"{roe_at_stop:.0f}% ROE at stop — near liquidation.\n"
+                f"  Math: {leverage}x × {sl_distance_pct*100:.1f}% = {roe_at_stop:.0f}% of margin lost at SL\n"
+                f"  Suggested: {suggested_lev}x → {suggested_lev * sl_distance_pct * 100:.0f}% ROE at stop\n"
+                f"Fix: Use {suggested_lev}x, or tighten SL to {_fmt_pct(15 / leverage)}."
+            )
+        if roe_at_stop > 15:
+            _warnings.append(
+                f"Warning: {leverage}x × {sl_distance_pct*100:.1f}% SL = {roe_at_stop:.0f}% ROE at stop. "
+                f"Consider {suggested_lev}x ({suggested_lev * sl_distance_pct * 100:.0f}% ROE)."
+            )
+
+    # --- Portfolio Risk Cap ---
+    if sl_distance_pct > 0 and actual_margin and portfolio and portfolio > 0:
+        loss_at_stop = actual_margin * (leverage * sl_distance_pct)
+        portfolio_risk_pct = (loss_at_stop / portfolio) * 100
+
+        if portfolio_risk_pct > 10:
+            return (
+                f"REJECTED: This trade risks {portfolio_risk_pct:.1f}% of portfolio at stop.\n"
+                f"  Margin: ${actual_margin:,.0f} × {leverage}x × {sl_distance_pct*100:.1f}% SL "
+                f"= ${loss_at_stop:,.0f} loss\n"
+                f"  Portfolio: ${portfolio:,.0f} → {portfolio_risk_pct:.1f}% at risk\n"
+                f"Max: 10%. Reduce size or leverage."
+            )
+        if portfolio_risk_pct > 5:
+            _warnings.append(
+                f"Warning: {portfolio_risk_pct:.1f}% of portfolio at risk at stop "
+                f"(${loss_at_stop:,.0f} / ${portfolio:,.0f}). Target: under 3%."
+            )
 
     # --- Set leverage if specified ---
     if leverage is not None:
@@ -625,7 +704,7 @@ def handle_execute_trade(
                 trade_type=trade_type,
             )
 
-            lines.extend(_micro_warnings)
+            lines.extend(_warnings)
             return "\n".join(lines)
 
     else:
@@ -694,12 +773,13 @@ def handle_execute_trade(
     elif confidence is not None:
         lines.append(f"Confidence: {confidence:.0%}")
 
-    # --- Record entry for activity tracking ---
+    # --- Record entry for activity tracking + position type registry ---
     try:
         from ...intelligence.daemon import get_active_daemon
         daemon = get_active_daemon()
         if daemon:
             daemon.record_trade_entry()
+            daemon.register_position_type(symbol, trade_type)
             if trade_type == "micro":
                 daemon.record_micro_entry()
     except Exception:
@@ -723,7 +803,7 @@ def handle_execute_trade(
         trade_type=trade_type,
     )
 
-    lines.extend(_micro_warnings)
+    lines.extend(_warnings)
     return "\n".join(lines)
 
 

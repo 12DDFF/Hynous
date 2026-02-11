@@ -248,18 +248,25 @@ def _check_no_watchpoints(provider, memory_state: dict, warnings: list):
 
 
 def _check_profit_at_risk(provider, warnings: list):
-    """Check 5: Position with big unrealized gain — tighten stop or take profit."""
+    """Check 5: Position with big unrealized gain — tighten stop or take profit.
+
+    Uses leverage-aware thresholds: high leverage (scalps) trigger at lower ROE,
+    low leverage (swings) trigger at higher ROE — matching the daemon's profit monitor.
+    """
     if provider is None:
         return
     try:
+        from .daemon import Daemon
         state = provider.get_user_state()
         for p in state.get("positions", []):
             ret_pct = p.get("return_pct", 0)
             coin = p["coin"]
-            if ret_pct >= 10:
-                warnings.append(f"{coin} is up {ret_pct:.1f}% — that's exceptional. Tighten stop or take profit NOW. Don't let this become 0%.")
-            elif ret_pct >= 7:
-                warnings.append(f"{coin} is up {ret_pct:.1f}% — tighten stop to lock in at least half this gain")
+            leverage = p.get("leverage", 20)
+            nudge, take, _urgent, _ = Daemon._profit_thresholds(leverage)
+            if ret_pct >= take:
+                warnings.append(f"{coin} is up {ret_pct:.1f}% — that's exceptional. Tighten stop or take profit NOW.")
+            elif ret_pct >= nudge:
+                warnings.append(f"{coin} is up {ret_pct:.1f}% — tighten stop to lock in gains")
     except Exception:
         pass
 

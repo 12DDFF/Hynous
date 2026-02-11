@@ -384,6 +384,11 @@ def _build_portfolio_section(provider, daemon, config, user_state: dict | None =
     except Exception:
         pass
 
+    # Position type info from daemon (for scalp/swing labels)
+    pos_types = {}
+    if daemon:
+        pos_types = getattr(daemon, '_position_types', {})
+
     lines = [header]
     for p in positions:
         coin = p["coin"]
@@ -392,9 +397,23 @@ def _build_portfolio_section(provider, daemon, config, user_state: dict | None =
         mark = p["mark_px"]
         pnl_pct = p["return_pct"]
         pnl_usd = p["unrealized_pnl"]
+        leverage = p.get("leverage", 20)
+
+        # Trade type label (e.g., "Scalp 20x, 12m" or "Swing 10x, 4h")
+        ptype = pos_types.get(coin, {})
+        type_name = "Scalp" if ptype.get("type") == "micro" else "Swing"
+        hold_str = ""
+        entry_time = ptype.get("entry_time", 0)
+        if entry_time > 0:
+            hold_mins = max(0, int((time.time() - entry_time) / 60))
+            if hold_mins < 60:
+                hold_str = f", {hold_mins}m"
+            else:
+                hold_str = f", {hold_mins // 60}h{hold_mins % 60}m"
+        type_tag = f" ({type_name} {leverage}x{hold_str})"
 
         pos_str = (
-            f"  {coin} {side} @ ${entry:,.0f} -> ${mark:,.0f} "
+            f"  {coin} {side}{type_tag} @ ${entry:,.0f} -> ${mark:,.0f} "
             f"({pnl_pct:+.1f}%, {'+' if pnl_usd >= 0 else ''}${pnl_usd:.0f})"
         )
 

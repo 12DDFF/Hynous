@@ -1228,15 +1228,22 @@ def _severity_label(sev: float) -> str:
     return "LOW"
 
 
-def format_scanner_wake(anomalies: list[AnomalyEvent]) -> str:
+def format_scanner_wake(
+    anomalies: list[AnomalyEvent],
+    position_types: dict[str, dict] | None = None,
+) -> str:
     """Format anomalies into a daemon wake message.
 
     Categorizes by type and formats differently:
-    - Position risk: urgent, listed first
+    - Position risk: urgent, listed first (adapts to scalp vs swing)
     - News: breaking news with position awareness
     - Pure micro: tight stops guidance
     - Pure macro: signal-or-noise assessment
     - Mixed: both micro and macro guidance
+
+    Args:
+        anomalies: Detected anomaly events.
+        position_types: {coin: {"type": "micro"|"macro", ...}} from daemon.
     """
     # Separate by category
     risk = [a for a in anomalies if a.type == "position_adverse_book"]
@@ -1279,7 +1286,12 @@ def format_scanner_wake(anomalies: list[AnomalyEvent]) -> str:
 
     # Footer based on wake type
     if has_risk:
-        lines.append("Check data, decide: close early, tighten stop, or hold. 1-2 sentences.")
+        risk_coin = risk[0].symbol
+        ptype = (position_types or {}).get(risk_coin, {}).get("type", "macro")
+        if ptype == "micro":
+            lines.append("This is a scalp — book flipped against you. Close or tighten SL now. Don't hold a micro against the flow. 1-2 sentences.")
+        else:
+            lines.append("Swing position — book pressure building. Check if your thesis still holds. Tighten stop or hold if conviction is strong. 1-2 sentences.")
     elif has_news and not has_micro and not has_macro:
         # Check if any news symbol matches a position
         news_syms = {a.symbol for a in news}

@@ -148,6 +148,10 @@ class Daemon:
         self._profit_alerts: dict[str, dict[str, float]] = {}
         self._profit_sides: dict[str, str] = {}  # coin → side (detect flips)
 
+        # Position type registry: {coin: {"type": "micro"|"macro", "entry_time": float}}
+        # Populated by trading tool via register_position_type(), inferred on restart
+        self._position_types: dict[str, dict] = {}
+
         # Risk guardrails (circuit breaker)
         self._daily_realized_pnl: float = 0.0
         self._daily_reset_date: str = ""    # YYYY-MM-DD UTC
@@ -280,6 +284,23 @@ class Daemon:
     def record_micro_entry(self):
         """Record a micro trade entry (called by trading tool when trade_type='micro')."""
         self._micro_entries_today += 1
+
+    def register_position_type(self, coin: str, trade_type: str = "macro"):
+        """Register trade type for a position. Called by trading tool on entry."""
+        self._position_types[coin] = {
+            "type": trade_type,
+            "entry_time": time.time(),
+        }
+
+    def get_position_type(self, coin: str) -> dict:
+        """Get trade type info for a position. Infers from leverage if unregistered."""
+        if coin in self._position_types:
+            return self._position_types[coin]
+        # Fallback: infer from leverage in _prev_positions
+        prev = self._prev_positions.get(coin, {})
+        leverage = prev.get("leverage", 20)
+        inferred = "micro" if leverage >= 15 else "macro"
+        return {"type": inferred, "entry_time": 0}
 
     @property
     def last_trade_ago(self) -> str:
@@ -755,6 +776,15 @@ class Daemon:
                     "leverage": p.get("leverage", 20),
                 }
 
+            # Infer position types for pre-existing positions (daemon restart)
+            for coin, data in self._prev_positions.items():
+                if coin not in self._position_types:
+                    lev = data.get("leverage", 20)
+                    self._position_types[coin] = {
+                        "type": "micro" if lev >= 15 else "macro",
+                        "entry_time": 0,  # Unknown — daemon just started
+                    }
+
             # Initial trigger cache
             self._refresh_trigger_cache()
             logger.info("Position tracking initialized: %d position(s)",
@@ -803,6 +833,9 @@ class Daemon:
                     )
                 # Refresh cached positions after any closes
                 if events:
+                    # Clean up position types for closed positions (after wake_for_fill used them)
+                    for event in events:
+                        self._position_types.pop(event["coin"], None)
                     state = provider.get_user_state()
                     positions = state.get("positions", [])
                     self._prev_positions = {
@@ -824,10 +857,16 @@ class Daemon:
                 }
 
             # Detect closed positions: was in _prev but not in current
+            closed_coins = []
             for coin, prev_data in self._prev_positions.items():
                 if coin not in current:
                     # Position closed — find the fill details
                     self._handle_position_close(provider, coin, prev_data)
+                    closed_coins.append(coin)
+
+            # Clean up position types for closed positions (after wake_for_fill used them)
+            for coin in closed_coins:
+                self._position_types.pop(coin, None)
 
             # Update snapshot
             self._prev_positions = current
@@ -1006,7 +1045,16 @@ class Daemon:
     # Profit Level Monitoring
     # ================================================================
 
-    _PROFIT_ALERT_COOLDOWN = 1800  # 30min between alerts for same position+tier
+    @staticmethod
+    def _alert_cooldown(trade_type: str) -> int:
+        """Cooldown between repeated profit alerts for same position+tier.
+
+        Scalps are short-lived — need faster re-alerts.
+        Swings are patient — longer gaps are fine.
+        """
+        if trade_type == "micro":
+            return 900   # 15 min
+        return 2700      # 45 min
 
     @staticmethod
     def _profit_thresholds(leverage: int) -> tuple[float, float, float, float]:
@@ -1059,23 +1107,32 @@ class Daemon:
                     self._profit_alerts[coin] = {}
                 alerts = self._profit_alerts[coin]
 
+                # Look up trade type for this position
+                type_info = self.get_position_type(coin)
+                trade_type = type_info["type"]
+
                 # Leverage-aware thresholds
                 nudge, take, urgent, risk = self._profit_thresholds(leverage)
 
                 # Check profit tiers (highest first for priority)
                 if roe_pct >= urgent:
-                    self._maybe_alert(coin, "urgent_profit", roe_pct, side, entry_px, mark_px, now, alerts)
+                    self._maybe_alert(coin, "urgent_profit", roe_pct, side, entry_px, mark_px, now, alerts, trade_type)
                 elif roe_pct >= take:
-                    self._maybe_alert(coin, "take_profit", roe_pct, side, entry_px, mark_px, now, alerts)
+                    self._maybe_alert(coin, "take_profit", roe_pct, side, entry_px, mark_px, now, alerts, trade_type)
                 elif roe_pct >= nudge:
-                    self._maybe_alert(coin, "profit_nudge", roe_pct, side, entry_px, mark_px, now, alerts)
+                    self._maybe_alert(coin, "profit_nudge", roe_pct, side, entry_px, mark_px, now, alerts, trade_type)
 
                 # Check risk: significant loss with no stop loss
                 if roe_pct <= risk:
                     triggers = self._tracked_triggers.get(coin, [])
                     has_sl = any(t.get("order_type") == "stop_loss" for t in triggers)
                     if not has_sl:
-                        self._maybe_alert(coin, "risk_no_sl", roe_pct, side, entry_px, mark_px, now, alerts)
+                        self._maybe_alert(coin, "risk_no_sl", roe_pct, side, entry_px, mark_px, now, alerts, trade_type)
+
+                # Check micro overstay (>60 min)
+                if trade_type == "micro" and type_info["entry_time"] > 0:
+                    if now - type_info["entry_time"] > 3600:
+                        self._maybe_alert(coin, "micro_overstay", roe_pct, side, entry_px, mark_px, now, alerts, "micro")
 
             # Clean up alerts + sides for closed positions
             open_coins = {p["coin"] for p in positions}
@@ -1090,37 +1147,78 @@ class Daemon:
     def _maybe_alert(
         self, coin: str, tier: str, roe_pct: float,
         side: str, entry_px: float, mark_px: float,
-        now: float, alerts: dict,
+        now: float, alerts: dict, trade_type: str = "macro",
     ):
         """Fire profit alert if not on cooldown."""
         last = alerts.get(tier, 0)
-        if now - last < self._PROFIT_ALERT_COOLDOWN:
+        cooldown = self._alert_cooldown(trade_type)
+        if now - last < cooldown:
             return
         alerts[tier] = now
-        self._wake_for_profit(coin, side, entry_px, mark_px, roe_pct, tier)
+        self._wake_for_profit(coin, side, entry_px, mark_px, roe_pct, tier, trade_type)
 
     def _wake_for_profit(
         self, coin: str, side: str, entry_px: float,
         mark_px: float, roe_pct: float, tier: str,
+        trade_type: str = "macro",
     ):
-        """Wake the agent with a profit/risk alert."""
-        pnl_line = f"{coin} {side.upper()} | Entry: ${entry_px:,.0f} → Mark: ${mark_px:,.0f} | ROE: {roe_pct:+.1f}%"
+        """Wake the agent with a profit/risk alert. Adapts tone to trade type."""
+        type_info = self.get_position_type(coin)
+        leverage = self._prev_positions.get(coin, {}).get("leverage", 20)
+        is_scalp = trade_type == "micro"
+        type_label = f"scalp {leverage}x" if is_scalp else f"swing {leverage}x"
 
-        if tier == "urgent_profit":
+        # Hold duration (if known)
+        hold_str = ""
+        hold_mins = 0
+        if type_info["entry_time"] > 0:
+            hold_mins = max(0, int((time.time() - type_info["entry_time"]) / 60))
+            if hold_mins < 60:
+                hold_str = f" | Held: {hold_mins}m"
+            else:
+                hold_str = f" | Held: {hold_mins // 60}h{hold_mins % 60}m"
+
+        pnl_line = (
+            f"{coin} {side.upper()} ({type_label})"
+            f" | Entry: ${entry_px:,.0f} → Mark: ${mark_px:,.0f}"
+            f" | ROE: {roe_pct:+.1f}%{hold_str}"
+        )
+
+        if tier == "micro_overstay":
+            overstay_mins = hold_mins or 60
+            header = f"[DAEMON WAKE — Micro Overstay: {coin} {side.upper()} {overstay_mins}m]"
+            footer = (
+                f"This scalp has been open {overstay_mins} minutes — micro trades should be 15-60 min. "
+                f"You're at {roe_pct:+.1f}% ROE. Close it, or if your thesis evolved, acknowledge it's now a swing."
+            )
+            priority = False
+        elif tier == "urgent_profit":
             header = f"[DAEMON WAKE — TAKE PROFIT: {coin} {side.upper()} +{roe_pct:.0f}%]"
-            footer = "15% is exceptional. Lock this in. What's your reason to hold past this?"
+            if is_scalp:
+                footer = f"This scalp is up {roe_pct:+.0f}%. That's a clean win — close it and move on."
+            else:
+                footer = f"Swing up {roe_pct:+.0f}% — your thesis played out. Take profit or give a clear reason to hold."
             priority = True
         elif tier == "take_profit":
             header = f"[DAEMON WAKE — Profit Alert: {coin} {side.upper()} +{roe_pct:.0f}%]"
-            footer = "You're up 10%. This is where you take profits. Tighten stop or close."
+            if is_scalp:
+                footer = f"Scalp up {roe_pct:+.0f}%. Lock in the gain — don't let a quick win turn into a hold."
+            else:
+                footer = f"Swing position up {roe_pct:+.0f}%. Consider taking some off the table or trail your stop."
             priority = True
         elif tier == "profit_nudge":
             header = f"[DAEMON WAKE — {coin} {side.upper()} +{roe_pct:.0f}%]"
-            footer = "Consider tightening your stop to lock in gains."
+            if is_scalp:
+                footer = f"Scalp up {roe_pct:+.0f}%. Tighten your stop — this is what micro profits look like."
+            else:
+                footer = f"Swing building nicely at +{roe_pct:.0f}%. Trail your stop to lock in the move."
             priority = False
         elif tier == "risk_no_sl":
             header = f"[DAEMON WAKE — RISK: {coin} {side.upper()} {roe_pct:+.0f}%]"
-            footer = "You're down with no stop loss. Set one NOW or close."
+            if is_scalp:
+                footer = f"Scalp down {roe_pct:+.0f}% with no SL. Close or set a tight stop immediately."
+            else:
+                footer = f"Swing down {roe_pct:+.0f}% with no stop loss. Your thesis needs a line in the sand — set one."
             priority = True
         else:
             return
@@ -1130,7 +1228,7 @@ class Daemon:
         if response:
             log_event(DaemonEvent(
                 "profit", f"{tier}: {coin} {side}",
-                f"ROE {roe_pct:+.1f}% | Entry ${entry_px:,.0f} → ${mark_px:,.0f}",
+                f"ROE {roe_pct:+.1f}% ({type_label}) | Entry ${entry_px:,.0f} → ${mark_px:,.0f}",
             ))
             _daemon_chat_queue.put({
                 "type": "Profit",
@@ -1138,7 +1236,7 @@ class Daemon:
                 "response": response,
             })
             _notify_discord("Profit", f"{tier.replace('_', ' ').title()}: {coin}", response)
-            logger.info("Profit alert: %s %s %s (ROE %+.1f%%)", tier, coin, side, roe_pct)
+            logger.info("Profit alert: %s %s %s (ROE %+.1f%%, %s)", tier, coin, side, roe_pct, trade_type)
 
     # ================================================================
     # News Polling
@@ -1272,8 +1370,8 @@ class Daemon:
         # Cap to max anomalies per wake
         top = wake_worthy[:cfg.max_anomalies_per_wake]
 
-        # Format the wake message
-        message = format_scanner_wake(top)
+        # Format the wake message (pass position types for risk context)
+        message = format_scanner_wake(top, position_types=self._position_types)
 
         response = self._wake_agent(message, max_coach_cycles=0)
         if response:
@@ -1303,38 +1401,52 @@ class Daemon:
         realized_pnl: float,
         classification: str,
     ):
-        """Wake the agent when a position closes. Tone depends on SL/TP/manual."""
+        """Wake the agent when a position closes. Adapts tone to trade type + classification."""
+        # Look up trade type BEFORE cleanup (still in registry at this point)
+        type_info = self._position_types.get(coin, {"type": "macro", "entry_time": 0})
+        trade_type = type_info["type"]
+        is_scalp = trade_type == "micro"
+        type_label = "Scalp" if is_scalp else "Swing"
+
         pnl_sign = "+" if realized_pnl >= 0 else ""
         pnl_pct = ((exit_px - entry_px) / entry_px * 100) if entry_px > 0 else 0
         if side == "short":
             pnl_pct = -pnl_pct
 
+        # Hold duration
+        hold_str = ""
+        if type_info["entry_time"] > 0:
+            hold_mins = max(0, int((time.time() - type_info["entry_time"]) / 60))
+            if hold_mins < 60:
+                hold_str = f" | Held: {hold_mins}m"
+            else:
+                hold_str = f" | Held: {hold_mins // 60}h{hold_mins % 60}m"
+
         pnl_line = (
             f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
-            f"PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)"
+            f"PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%){hold_str}"
         )
 
         if classification == "stop_loss":
-            lines = [
-                f"[DAEMON WAKE — Stop Loss: {coin} {side.upper()}]",
-                "", pnl_line,
-                "",
-                "Stopped out. Recall your thesis, store a real lesson (what would you do differently?), archive the thesis, clean up watchpoints, and scan for what's next.",
-            ]
+            header = f"[DAEMON WAKE — Stop Loss: {coin} {side.upper()} ({type_label})]"
+            if is_scalp:
+                footer = "Scalp stopped out. Quick review: was the entry timing right? Was the SL appropriate for the timeframe? One lesson, then move on."
+            else:
+                footer = "Stopped out of swing position. Recall your thesis — what invalidated it? Store a real lesson (what would you do differently?), archive the thesis, clean up watchpoints, and scan for what's next."
         elif classification == "take_profit":
-            lines = [
-                f"[DAEMON WAKE — Take Profit: {coin} {side.upper()}]",
-                "", pnl_line,
-                "",
-                "TP hit. Recall your thesis, store a lesson (what worked, what's repeatable?), archive the thesis, clean up watchpoints, and look for follow-up setups.",
-            ]
+            header = f"[DAEMON WAKE — Take Profit: {coin} {side.upper()} ({type_label})]"
+            if is_scalp:
+                footer = "Scalp TP hit — clean trade. What made this setup work? Store the pattern for next time."
+            else:
+                footer = "Swing TP hit. Recall your thesis — what confirmed it? Store a lesson (what worked, what's repeatable?), archive the thesis, clean up watchpoints, and look for follow-up setups."
         else:
-            lines = [
-                f"[DAEMON WAKE — Position Closed: {coin} {side.upper()}]",
-                "", pnl_line,
-                "",
-                "Position closed. Store why if intentional, clean up watchpoints, scan the market.",
-            ]
+            header = f"[DAEMON WAKE — Position Closed: {coin} {side.upper()} ({type_label})]"
+            if is_scalp:
+                footer = "Scalp closed. Was the exit timing right? Store the lesson."
+            else:
+                footer = "Swing position closed. Store why if intentional, clean up watchpoints, scan the market."
+
+        lines = [header, "", pnl_line, "", footer]
 
         # Append circuit breaker warning if trading is paused
         if self._trading_paused:
@@ -1350,7 +1462,7 @@ class Daemon:
         response = self._wake_agent(message, priority=True, max_coach_cycles=0)
         if response:
             self._fill_fires += 1
-            fill_title = f"{classification.replace('_', ' ').title()}: {coin} {side}"
+            fill_title = f"{classification.replace('_', ' ').title()}: {coin} {side} ({type_label})"
             log_event(DaemonEvent(
                 "fill", fill_title,
                 f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
@@ -1362,8 +1474,8 @@ class Daemon:
                 "response": response,
             })
             _notify_discord("Fill", fill_title, response)
-            logger.info("Fill wake complete: %s %s %s (PnL: %s%.2f)",
-                         classification, coin, side, pnl_sign, abs(realized_pnl))
+            logger.info("Fill wake complete: %s %s %s %s (PnL: %s%.2f)",
+                         classification, trade_type, coin, side, pnl_sign, abs(realized_pnl))
 
     def _wake_for_review(self):
         """Periodic market review — alternates between normal and learning reviews.
