@@ -5,11 +5,13 @@ Central state management for the Hynous dashboard.
 All reactive state lives here.
 """
 
+import json
 import re
 import asyncio
 import threading
 import reflex as rx
 import logging
+from pathlib import Path
 from pydantic import BaseModel
 from datetime import datetime
 from typing import List, Optional
@@ -72,6 +74,28 @@ _TOOL_DISPLAY = {
     "manage_watchpoints": "Managing watchpoints",
     "get_trade_stats": "Checking trade stats",
 }
+# --- Model preference persistence ---
+_MODEL_PREFS_FILE = Path(__file__).resolve().parents[2] / "storage" / "model_prefs.json"
+
+def _save_model_prefs(main: str, sub: str) -> None:
+    """Persist model selection to disk so it survives restarts."""
+    try:
+        _MODEL_PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _MODEL_PREFS_FILE.write_text(json.dumps({"model": main, "sub_model": sub}))
+    except Exception:
+        pass
+
+def _load_model_prefs() -> tuple[str, str] | None:
+    """Load saved model preferences, or None if not saved."""
+    try:
+        if _MODEL_PREFS_FILE.exists():
+            d = json.loads(_MODEL_PREFS_FILE.read_text())
+            return d.get("model", ""), d.get("sub_model", "")
+    except Exception:
+        pass
+    return None
+
+
 # --- Model selection options (label, litellm model ID) ---
 _MODEL_OPTIONS: list[tuple[str, str]] = [
     # Anthropic
@@ -264,6 +288,16 @@ def _get_agent():
             _agent = Agent()
             _agent_error = None
             logger.info("Hynous agent initialized successfully")
+
+            # Apply saved model preferences (survives restarts)
+            prefs = _load_model_prefs()
+            if prefs:
+                main, sub = prefs
+                if main:
+                    _agent.config.agent.model = main
+                if sub:
+                    _agent.config.memory.compression_model = sub
+                logger.info("Applied saved model prefs: %s / %s", main, sub)
 
             if _agent.config.daemon.enabled and _daemon is None:
                 from hynous.intelligence.daemon import Daemon
@@ -1216,6 +1250,7 @@ class AppState(rx.State):
         agent = _get_agent()
         if agent:
             agent.config.agent.model = model_id
+        _save_model_prefs(model_id, self.selected_sub_model)
 
     def set_sub_model(self, label: str):
         """Switch the sub-agent (coach/compression) model at runtime."""
@@ -1224,6 +1259,7 @@ class AppState(rx.State):
         agent = _get_agent()
         if agent:
             agent.config.memory.compression_model = model_id
+        _save_model_prefs(self.selected_model, model_id)
 
     # === Watchlist State ===
 
