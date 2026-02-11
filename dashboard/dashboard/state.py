@@ -343,12 +343,13 @@ class AppState(rx.State):
         expected = os.getenv("DASHBOARD_PASSWORD", "")
         if not expected:
             self.is_authenticated = True
-            return
+            return AppState.load_page
         if hmac.compare_digest(password, expected):
             token = hashlib.sha256(expected.encode()).hexdigest()
             self._session_token = token
             self.is_authenticated = True
             self.login_error = ""
+            return AppState.load_page
         else:
             self.login_error = "Wrong password"
 
