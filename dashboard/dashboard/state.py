@@ -696,10 +696,9 @@ class AppState(rx.State):
                     async with self:
                         self.is_waking = False  # Clear manual wake indicator
                         for item in new_daemon_msgs:
-                            header = f"**Daemon Wake — {item['type']}: {item['title']}**"
                             self._append_msg(Message(
                                 sender="hynous",
-                                content=_highlight(f"> {header}\n\n{item['response']}"),
+                                content=_highlight(item['response']),
                                 timestamp=self._format_time(),
                                 tools_used=["daemon"],
                             ))

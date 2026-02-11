@@ -1018,10 +1018,7 @@ class Daemon:
 
         lines.extend([
             "",
-            "This alert is now DEAD — it will never fire again.",
-            "Run your tools, compare current vs then, and decide what to do.",
-            "If you take action (trade, update thesis), store it in memory.",
-            "If you want to keep monitoring, use manage_watchpoints to set a new alert.",
+            "This alert is now DEAD. Decide: act on it, or set a new one. Keep your response to 1-3 sentences.",
         ])
 
         message = "\n".join(lines)
@@ -1104,37 +1101,21 @@ class Daemon:
                 f"[DAEMON WAKE — Stop Loss: {coin} {side.upper()}]",
                 "", pnl_line,
                 "",
-                "DO ALL OF THIS:",
-                "1. Recall your thesis — what was the setup? What invalidated it?",
-                "2. Store a real lesson — not just 'stops work'. What would you do differently?",
-                "3. Archive the thesis (it's done)",
-                "4. Delete or update any watchpoints tied to this position",
-                "5. Scan the current market — what's the structure now? Any setups forming?",
-                "6. Set new watchpoints for levels you're watching",
-                "Take the space you need. This isn't routine.",
+                "Stopped out. Recall your thesis, store a real lesson (what would you do differently?), archive the thesis, clean up watchpoints, and scan for what's next.",
             ]
         elif classification == "take_profit":
             lines = [
                 f"[DAEMON WAKE — Take Profit: {coin} {side.upper()}]",
                 "", pnl_line,
                 "",
-                "DO ALL OF THIS:",
-                "1. Recall your thesis — what worked? What was the edge?",
-                "2. Store a lesson — what pattern can you repeat?",
-                "3. Archive the thesis",
-                "4. Clean up watchpoints tied to this position",
-                "5. Scan the market — ride the momentum or wait? Any follow-up setups?",
-                "6. Set new watchpoints for what you're watching next",
-                "Take the space you need.",
+                "TP hit. Recall your thesis, store a lesson (what worked, what's repeatable?), archive the thesis, clean up watchpoints, and look for follow-up setups.",
             ]
         else:
             lines = [
                 f"[DAEMON WAKE — Position Closed: {coin} {side.upper()}]",
                 "", pnl_line,
                 "",
-                "1. If intentional, store why you closed early",
-                "2. Clean up related watchpoints",
-                "3. Quick market scan — what are you watching now?",
+                "Position closed. Store why if intentional, clean up watchpoints, scan the market.",
             ]
 
         # Append circuit breaker warning if trading is paused
@@ -1181,15 +1162,8 @@ class Daemon:
                 "[DAEMON WAKE — Periodic Review + Learning]",
                 "",
                 "Briefing has market data. Address [Warnings] and [Questions] first.",
-                "",
-                "Then pick ONE:",
-                "a) A concept from this session you want to understand deeper — "
-                "research it with search_web, store the lesson",
-                "b) A pattern you've noticed but can't explain — look into the theory",
-                "c) Something from memory that contradicts what you're seeing — investigate",
-                "",
-                "Store what you learn. Store curiosity items for things to explore later.",
-                "If nothing sparks interest: normal review (under 100 words).",
+                "Then pick one thing to learn — a concept, pattern, or contradiction — research it, store the lesson.",
+                "Keep your response to 1-3 sentences plus any tool actions.",
             ]
             review_type = "Periodic review + learning"
         else:
@@ -1197,15 +1171,8 @@ class Daemon:
                 "[DAEMON WAKE — Periodic Market Review]",
                 "",
                 "Briefing has market data. Address [Warnings] and [Questions] first.",
-                "",
-                "EVERY review you MUST:",
-                "1. Check ALL symbols (BTC, ETH, SOL) — not just your positions. "
-                "What's moving? Any divergence between them?",
-                "2. Check your watchpoints — still relevant? Need new ones?",
-                "3. If you have NO watchpoints set: set at least 2 right now.",
-                "4. If any asset moved >2% since last review: note it, consider a thesis.",
-                "",
-                "Keep status brief. But always leave with active watchpoints.",
+                "Check all symbols, check your watchpoints (set new ones if you have none).",
+                "Keep your response to 1-3 sentences.",
             ]
             review_type = "Periodic market review"
 
@@ -1847,8 +1814,7 @@ class Daemon:
         lines = [
             "[DAEMON WAKE — Manual Review (triggered from dashboard)]",
             "",
-            "David wants an update. Briefing has market data.",
-            "Address [Warnings]/[Questions] if any, then give a sharp update.",
+            "David wants a quick update. Briefing has market data. 1-3 sentences.",
         ]
 
         message = "\n".join(lines)

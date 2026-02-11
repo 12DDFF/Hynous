@@ -51,7 +51,7 @@ daemon:
 # Market scanner (anomaly detection across ALL Hyperliquid pairs)
 scanner:
   enabled: true
-  wake_threshold: 0.5              # Min severity to wake agent (0.0-1.0)
+  wake_threshold: 0.6              # Min severity to wake agent (0.0-1.0)
   max_anomalies_per_wake: 5
   dedup_ttl_minutes: 30
   price_spike_5min_pct: 3.0        # % move in 5min to flag

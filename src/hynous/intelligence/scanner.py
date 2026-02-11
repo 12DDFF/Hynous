@@ -833,12 +833,7 @@ def format_scanner_wake(anomalies: list[AnomalyEvent]) -> str:
         lines.append("")
 
     lines.extend([
-        "Assess these signals:",
-        "1. Does any setup match your thesis or watchlist criteria?",
-        "2. If you see a trade: research it (orderbook, funding history, trend) -> open position or store thesis",
-        "3. If it's noise: note what made it look interesting but wasn't — store as a lesson",
-        "4. Check existing positions — if an anomaly affects a held asset, reassess SL/TP",
-        "5. Set watchpoints for any follow-up levels worth monitoring",
+        "Quick assessment: signal or noise? If it matters for your positions or thesis, act on it. Keep your response to 1-3 sentences.",
     ])
 
     return "\n".join(lines)
