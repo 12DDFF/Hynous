@@ -545,15 +545,16 @@ def handle_execute_trade(
             )
 
     # --- Micro trade SL/TP distance warnings ---
+    _micro_warnings: list[str] = []
     if trade_type == "micro" and ref_price and ref_price > 0:
         if stop_loss is not None:
             sl_dist = abs(stop_loss - ref_price) / ref_price
             if sl_dist > 0.005:
-                logger.info("Micro trade: SL distance %.1f%% > 0.5%% recommended", sl_dist * 100)
+                _micro_warnings.append(f"Note: SL distance {sl_dist*100:.1f}% is wider than 0.5% recommended for micro trades")
         if take_profit is not None:
             tp_dist = abs(take_profit - ref_price) / ref_price
             if tp_dist > 0.01:
-                logger.info("Micro trade: TP distance %.1f%% > 1%% recommended", tp_dist * 100)
+                _micro_warnings.append(f"Note: TP distance {tp_dist*100:.1f}% is wider than 1% recommended for micro trades")
 
     # --- Set leverage if specified ---
     if leverage is not None:
@@ -619,6 +620,7 @@ def handle_execute_trade(
                 trade_type=trade_type,
             )
 
+            lines.extend(_micro_warnings)
             return "\n".join(lines)
 
     else:
@@ -716,6 +718,7 @@ def handle_execute_trade(
         trade_type=trade_type,
     )
 
+    lines.extend(_micro_warnings)
     return "\n".join(lines)
 
 

@@ -276,11 +276,10 @@ class MarketScanner:
             self._seen_news_ids.add(aid)
             self._news.append(a)
 
-        # Cap buffers
+        # Cap buffers — rebuild seen IDs from the kept articles (deterministic)
         if len(self._news) > 50:
             self._news = self._news[-50:]
-        if len(self._seen_news_ids) > 200:
-            self._seen_news_ids = set(list(self._seen_news_ids)[-150:])
+            self._seen_news_ids = {a.get("id", "") for a in self._news}
 
     # -----------------------------------------------------------------
     # Public Accessors
@@ -394,6 +393,16 @@ class MarketScanner:
 
     def get_status(self) -> dict:
         """Export scanner state for dashboard display."""
+        # Recent news for dashboard (unfiltered, newest first)
+        news_for_dash = []
+        for n in reversed(self._news[-10:]):
+            news_for_dash.append({
+                "title": n.get("title", "")[:80],
+                "source": n.get("source", ""),
+                "published_on": n.get("published_on", 0),
+                "categories": n.get("categories", ""),
+            })
+
         return {
             "active": self._warmup_logged or self._price_polls >= _WARMUP_PRICES,
             "warming_up": not self._warmup_logged and self._price_polls < _WARMUP_PRICES,
@@ -412,6 +421,7 @@ class MarketScanner:
                 }
                 for a in reversed(self._recent_anomalies)
             ],
+            "news": news_for_dash,
         }
 
     # -----------------------------------------------------------------
@@ -1181,9 +1191,11 @@ class MarketScanner:
             detail = f"Source: {source} | {age_min}m ago | {article.get('body', '')[:150]}"
 
             self._alerted_news_ids.add(aid)
-            # Cap alerted IDs
-            if len(self._alerted_news_ids) > 200:
-                self._alerted_news_ids = set(list(self._alerted_news_ids)[-150:])
+
+        # Cap alerted IDs — keep only IDs still in news buffer (deterministic)
+        if len(self._alerted_news_ids) > 200:
+            current_ids = {a.get("id", "") for a in self._news}
+            self._alerted_news_ids &= current_ids
 
             # Use first relevant symbol for the event
             primary_sym = relevant_syms[0] if relevant_syms else "MARKET"

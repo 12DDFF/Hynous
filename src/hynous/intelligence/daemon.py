@@ -146,7 +146,7 @@ class Daemon:
 
         # Profit level tracking: {coin: {tier: last_alert_timestamp}}
         self._profit_alerts: dict[str, dict[str, float]] = {}
-        _PROFIT_ALERT_COOLDOWN = 1800  # 30min cooldown per position+tier
+        self._profit_sides: dict[str, str] = {}  # coin → side (detect flips)
 
         # Risk guardrails (circuit breaker)
         self._daily_realized_pnl: float = 0.0
@@ -362,6 +362,11 @@ class Daemon:
         """Unix timestamp of last wake."""
         return self._last_wake_time
 
+    @property
+    def micro_entries_today(self) -> int:
+        """Number of micro trades entered today."""
+        return self._micro_entries_today
+
     # ================================================================
     # Main Loop
     # ================================================================
@@ -398,8 +403,8 @@ class Daemon:
 
                 # 1b. Position tracking — detect SL/TP fills + profit monitoring
                 if now - self._last_fill_check >= self.config.daemon.price_poll_interval:
-                    self._check_positions()
-                    self._check_profit_levels()
+                    live_positions = self._check_positions()
+                    self._check_profit_levels(live_positions)
                     self._last_fill_check = now
 
                 # 2. Derivatives polling (default every 300s)
@@ -774,12 +779,16 @@ class Daemon:
         except Exception as e:
             logger.debug("Trigger cache refresh failed: %s", e)
 
-    def _check_positions(self):
-        """Compare current positions to cached snapshot. Detect closes."""
+    def _check_positions(self) -> list[dict] | None:
+        """Compare current positions to cached snapshot. Detect closes.
+
+        Returns the raw positions list from get_user_state() so callers
+        (_check_profit_levels) can reuse it without a second API call.
+        """
         try:
             provider = self._get_provider()
             if not provider.can_trade:
-                return
+                return None
 
             # Paper mode: check SL/TP/liquidation triggers internally
             if hasattr(provider, "check_triggers") and self.snapshot.prices:
@@ -795,16 +804,18 @@ class Daemon:
                 # Refresh cached positions after any closes
                 if events:
                     state = provider.get_user_state()
+                    positions = state.get("positions", [])
                     self._prev_positions = {
                         p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"], "leverage": p.get("leverage", 20)}
-                        for p in state.get("positions", [])
+                        for p in positions
                     }
-                    return
+                    return positions
 
             # Testnet/live flow: detect closes by comparing snapshots
             state = provider.get_user_state()
+            positions = state.get("positions", [])
             current = {}
-            for p in state.get("positions", []):
+            for p in positions:
                 current[p["coin"]] = {
                     "side": p["side"],
                     "size": p["size"],
@@ -820,9 +831,11 @@ class Daemon:
 
             # Update snapshot
             self._prev_positions = current
+            return positions
 
         except Exception as e:
             logger.debug("Position check failed: %s", e)
+            return None
 
     def _handle_position_close(self, provider, coin: str, prev_data: dict):
         """Handle a detected position close — find fills, classify, wake agent."""
@@ -995,22 +1008,20 @@ class Daemon:
 
     _PROFIT_ALERT_COOLDOWN = 1800  # 30min between alerts for same position+tier
 
-    def _check_profit_levels(self):
+    def _check_profit_levels(self, positions: list[dict] | None = None):
         """Check unrealized P&L on open positions and wake agent at thresholds.
 
         Uses live return_pct from provider — no manual ROE computation needed.
         Tiers: +7% nudge, +10% take profit, +15% urgent, -7% no SL risk.
+
+        Args:
+            positions: Raw positions list from _check_positions(). If None,
+                       skips this cycle (avoids redundant API call).
         """
+        if not positions:
+            return
+
         try:
-            provider = self._get_provider()
-            if not provider.can_trade:
-                return
-
-            state = provider.get_user_state()
-            positions = state.get("positions", [])
-            if not positions:
-                return
-
             now = time.time()
 
             for p in positions:
@@ -1019,6 +1030,12 @@ class Daemon:
                 entry_px = p["entry_px"]
                 mark_px = p["mark_px"]
                 roe_pct = p["return_pct"]  # Already leveraged return on margin
+
+                # Reset alerts if position side flipped (close long → open short)
+                prev_side = self._profit_sides.get(coin)
+                if prev_side and prev_side != side:
+                    self._profit_alerts.pop(coin, None)
+                self._profit_sides[coin] = side
 
                 if coin not in self._profit_alerts:
                     self._profit_alerts[coin] = {}
@@ -1039,11 +1056,12 @@ class Daemon:
                     if not has_sl:
                         self._maybe_alert(coin, "risk_no_sl", roe_pct, side, entry_px, mark_px, now, alerts)
 
-            # Clean up alerts for closed positions
+            # Clean up alerts + sides for closed positions
             open_coins = {p["coin"] for p in positions}
             for coin in list(self._profit_alerts.keys()):
                 if coin not in open_coins:
                     del self._profit_alerts[coin]
+                    self._profit_sides.pop(coin, None)
 
         except Exception as e:
             logger.debug("Profit level check failed: %s", e)

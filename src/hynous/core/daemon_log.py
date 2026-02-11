@@ -77,7 +77,7 @@ def _flush_to_disk():
 @dataclass
 class DaemonEvent:
     """A single daemon activity event."""
-    type: str       # "wake", "watchpoint", "fill", "learning", "review", "error", "skip", "circuit_breaker"
+    type: str       # "wake", "watchpoint", "fill", "learning", "review", "error", "skip", "circuit_breaker", "profit", "news"
     title: str      # Human-readable summary
     detail: str     # Extra context (PnL, trigger condition, etc.)
     timestamp: str = ""  # ISO 8601 — auto-filled if empty

@@ -744,6 +744,7 @@ class AppState(rx.State):
                         self.scanner_anomalies_total = scanner_data["anomalies_detected"]
                         self.scanner_wakes_total = scanner_data["wakes_triggered"]
                         self.scanner_recent = scanner_data["recent"]
+                        self.scanner_news = scanner_data.get("news", [])
                 except Exception:
                     pass
 
@@ -1529,6 +1530,7 @@ class AppState(rx.State):
     scanner_wakes_total: int = 0
     scanner_recent: list[dict] = []
     scanner_expanded: bool = False
+    scanner_news: list[dict] = []  # Recent news headlines from CryptoCompare
 
     def toggle_scanner_expanded(self):
         """Toggle scanner detail panel."""
@@ -1630,8 +1632,56 @@ class AppState(rx.State):
             "active": False, "warming_up": False,
             "price_polls": 0, "deriv_polls": 0,
             "pairs_count": 0, "anomalies_detected": 0,
-            "wakes_triggered": 0, "recent": [],
+            "wakes_triggered": 0, "recent": [], "news": [],
         }
+
+    @rx.var(cache=False)
+    def news_feed_html(self) -> str:
+        """Pre-rendered HTML for news headlines card."""
+        import time as _time
+        if not self.scanner_news:
+            return (
+                '<div style="font-size:0.8rem;color:#404040;text-align:center;padding:1rem 0;">'
+                'No news yet — scanner polls every 5 min</div>'
+            )
+        rows = []
+        now = _time.time()
+        for n in self.scanner_news[:8]:
+            pub = n.get("published_on", 0)
+            age_s = int(now - pub) if pub else 0
+            if age_s < 60:
+                age = "now"
+            elif age_s < 3600:
+                age = f"{age_s // 60}m"
+            else:
+                age = f"{age_s // 3600}h"
+            title = n.get("title", "")
+            source = n.get("source", "")
+            from html import escape
+            title = escape(title)
+            source = escape(source)
+            rows.append(
+                f'<div style="display:flex;gap:0.5rem;padding:0.35rem 0;border-bottom:1px solid #1a1a1a;align-items:baseline;">'
+                f'<span style="width:28px;color:#525252;flex-shrink:0;font-size:0.7rem;text-align:right">{age}</span>'
+                f'<span style="flex:1;color:#a3a3a3;font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{title}</span>'
+                f'<span style="color:#525252;font-size:0.65rem;flex-shrink:0">{source}</span>'
+                f'</div>'
+            )
+        return '<div style="font-family:inherit;">' + "".join(rows) + '</div>'
+
+    @rx.var(cache=False)
+    def micro_entries_today(self) -> str:
+        """Micro trades entered today."""
+        if _daemon is None:
+            return "0"
+        return str(_daemon.micro_entries_today)
+
+    @rx.var(cache=False)
+    def entries_today(self) -> str:
+        """Total trades entered today."""
+        if _daemon is None:
+            return "0"
+        return str(_daemon._entries_today)
 
     # === Memory Management State ===
 

@@ -475,6 +475,8 @@ _DAEMON_EVENT_STYLES = {
     "error": ("alert-triangle", "#ef4444"),
     "skip": ("pause", "#525252"),
     "circuit_breaker": ("shield-alert", "#ef4444"),
+    "profit": ("trending-up", "#f59e0b"),
+    "news": ("newspaper", "#22d3ee"),
 }
 
 
@@ -490,6 +492,8 @@ def _event_icon(event_type: rx.Var[str]) -> rx.Var[str]:
         ("error", "alert-triangle"),
         ("skip", "pause"),
         ("circuit_breaker", "shield-alert"),
+        ("profit", "trending-up"),
+        ("news", "newspaper"),
         "circle",
     )
 
@@ -506,6 +510,8 @@ def _event_color(event_type: rx.Var[str]) -> rx.Var[str]:
         ("error", "#ef4444"),
         ("skip", "#525252"),
         ("circuit_breaker", "#ef4444"),
+        ("profit", "#f59e0b"),
+        ("news", "#22d3ee"),
         "#525252",
     )
 
@@ -522,6 +528,8 @@ def _event_bg(event_type: rx.Var[str]) -> rx.Var[str]:
         ("error", "color-mix(in srgb, #ef4444 12%, transparent)"),
         ("skip", "color-mix(in srgb, #525252 12%, transparent)"),
         ("circuit_breaker", "color-mix(in srgb, #ef4444 12%, transparent)"),
+        ("profit", "color-mix(in srgb, #f59e0b 12%, transparent)"),
+        ("news", "color-mix(in srgb, #22d3ee 12%, transparent)"),
         "color-mix(in srgb, #525252 12%, transparent)",
     )
 
@@ -637,6 +645,22 @@ def _daemon_detail() -> rx.Component:
                 font_size="0.9rem",
                 font_weight="600",
                 color=rx.cond(AppState.daemon_trading_paused, "#ef4444", "#fafafa"),
+            ),
+            width="100%",
+            align="center",
+        ),
+        # Trade activity row
+        rx.hstack(
+            rx.text("Trades today", font_size="0.8rem", color="#737373"),
+            rx.spacer(),
+            rx.hstack(
+                rx.text(AppState.entries_today, font_size="0.8rem", font_weight="500", color="#e5e5e5"),
+                rx.text("total", font_size="0.7rem", color="#525252"),
+                rx.text("\u00b7", color="#333"),
+                rx.text(AppState.micro_entries_today + "/2", font_size="0.8rem", font_weight="500", color="#22d3ee"),
+                rx.text("micro", font_size="0.7rem", color="#525252"),
+                spacing="1",
+                align="center",
             ),
             width="100%",
             align="center",
@@ -1417,6 +1441,44 @@ def _scanner_banner() -> rx.Component:
     )
 
 
+def _news_card() -> rx.Component:
+    """News feed card — recent crypto headlines from CryptoCompare."""
+    return rx.box(
+        rx.vstack(
+            rx.hstack(
+                rx.hstack(
+                    rx.icon("newspaper", size=14, color="#22d3ee"),
+                    rx.text(
+                        "News",
+                        font_size="0.75rem",
+                        font_weight="600",
+                        color="#737373",
+                        text_transform="uppercase",
+                        letter_spacing="0.05em",
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+                rx.spacer(),
+                rx.text(
+                    "via CryptoCompare",
+                    font_size="0.6rem",
+                    color="#404040",
+                ),
+                width="100%",
+                align="center",
+            ),
+            rx.html(AppState.news_feed_html),
+            spacing="3",
+            width="100%",
+        ),
+        background="#111111",
+        border="1px solid #1a1a1a",
+        border_radius="12px",
+        padding="1rem",
+    )
+
+
 def home_page() -> rx.Component:
     """Home page — profile card + dashboard info."""
     return rx.box(
@@ -1444,8 +1506,14 @@ def home_page() -> rx.Component:
                 # Scanner banner
                 _scanner_banner(),
 
-                # Positions — full width
-                rx.box(positions_section(), width="100%"),
+                # News + Positions row
+                rx.hstack(
+                    rx.box(_news_card(), flex="1", min_width="0"),
+                    rx.box(positions_section(), flex="1.5", min_width="0"),
+                    spacing="4",
+                    width="100%",
+                    align_items="start",
+                ),
 
                 # Watchlist
                 rx.box(_watchlist_card(), width="100%"),
