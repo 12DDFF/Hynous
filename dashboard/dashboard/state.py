@@ -755,47 +755,73 @@ class AppState(rx.State):
             return "This month"
 
     @rx.var(cache=False)
-    def wallet_claude_cost(self) -> str:
-        """Claude API cost string."""
+    def wallet_llm_cost(self) -> str:
+        """Total LLM API cost string."""
         try:
             from hynous.core.costs import get_month_summary
             s = get_month_summary()
-            c = s["claude"]
-            return f"${c['cost_usd']:.2f}"
+            return f"${s['llm']['total_cost_usd']:.2f}"
         except Exception:
             return "$0.00"
 
     @rx.var(cache=False)
-    def wallet_claude_calls(self) -> str:
-        """Claude API call count."""
+    def wallet_llm_calls(self) -> str:
+        """Total LLM API call count."""
         try:
             from hynous.core.costs import get_month_summary
-            return str(get_month_summary()["claude"]["calls"])
+            return str(get_month_summary()["llm"]["total_calls"])
         except Exception:
             return "0"
 
     @rx.var(cache=False)
-    def wallet_claude_tokens(self) -> str:
-        """Claude token usage string."""
+    def wallet_llm_tokens(self) -> str:
+        """Total LLM token usage string."""
         try:
             from hynous.core.costs import get_month_summary
-            c = get_month_summary()["claude"]
-            return f"{c['input_tokens']:,} in / {c['output_tokens']:,} out"
+            llm = get_month_summary()["llm"]
+            return f"{llm['total_input_tokens']:,} in / {llm['total_output_tokens']:,} out"
         except Exception:
             return "0 in / 0 out"
 
     @rx.var(cache=False)
-    def wallet_sonnet_cost(self) -> str:
-        """Sonnet model cost string."""
+    def wallet_models_html(self) -> str:
+        """Pre-rendered HTML for per-model cost breakdown in wallet dialog."""
         try:
             from hynous.core.costs import get_month_summary
-            return f"${get_month_summary()['claude']['sonnet']['cost_usd']:.2f}"
+            from html import escape
+            models = get_month_summary()["llm"]["models"]
+            if not models:
+                return '<div style="color:#404040;font-size:0.75rem">No LLM calls yet</div>'
+            rows = []
+            for m in models:
+                if m["calls"] == 0:
+                    continue
+                rows.append(
+                    f'<div style="display:flex;align-items:center;gap:0.5rem;padding:0.375rem 0;'
+                    f'border-bottom:1px solid #1a1a1a">'
+                    f'<div style="flex:1;min-width:0">'
+                    f'<div style="color:#d4d4d4;font-size:0.78rem;font-weight:500">'
+                    f'{escape(m["label"])}</div>'
+                    f'<div style="display:flex;gap:0.5rem;font-size:0.65rem;margin-top:2px">'
+                    f'<span style="color:#a78bfa;font-weight:500">${m["cost_usd"]:.2f}</span>'
+                    f'<span style="color:#404040">\u00b7</span>'
+                    f'<span style="color:#525252">{m["calls"]} calls</span>'
+                    f'<span style="color:#404040">\u00b7</span>'
+                    f'<span style="color:#404040">{m["input_tokens"]:,} in / {m["output_tokens"]:,} out</span>'
+                    f'</div></div></div>'
+                )
+            return "".join(rows)
         except Exception:
-            return "$0.00"
+            return ""
+
+    @rx.var(cache=False)
+    def wallet_sonnet_cost(self) -> str:
+        """Sonnet model cost string (legacy)."""
+        return "$0.00"
 
     @rx.var(cache=False)
     def wallet_sonnet_calls(self) -> str:
-        """Sonnet model call count."""
+        """Sonnet model call count (legacy)."""
         try:
             from hynous.core.costs import get_month_summary
             return str(get_month_summary()['claude']['sonnet']['calls'])

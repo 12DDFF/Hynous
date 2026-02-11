@@ -24,7 +24,7 @@ from .tools.memory import enable_queue_mode, disable_queue_mode, flush_memory_qu
 from ..core.config import Config, load_config
 from ..core.clock import stamp
 from ..core import persistence
-from ..core.costs import record_claude_usage
+from ..core.costs import record_llm_usage
 from ..core.memory_tracker import get_tracker
 
 logger = logging.getLogger(__name__)
@@ -788,17 +788,21 @@ class Agent:
                 return history[i:]
         return history
 
-    @staticmethod
-    def _record_usage(response) -> None:
-        """Record token usage from a LiteLLM API response."""
+    def _record_usage(self, response) -> None:
+        """Record token usage and cost from a LiteLLM API response."""
         try:
             usage = response.usage
             if usage:
-                record_claude_usage(
+                # Get actual cost from LiteLLM (knows pricing for all models)
+                try:
+                    cost = litellm.completion_cost(completion_response=response)
+                except Exception:
+                    cost = 0.0
+                record_llm_usage(
+                    model=self.config.agent.model,
                     input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
                     output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                    cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                    cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+                    cost_usd=cost,
                 )
         except Exception:
             pass  # Never let cost tracking break the agent

@@ -23,7 +23,7 @@ import litellm
 from litellm.exceptions import APIError as LitellmAPIError
 
 from ..core.config import Config
-from ..core.costs import record_claude_usage
+from ..core.costs import record_llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +285,7 @@ class MemoryManager:
             )
 
             # Track compression cost
-            _record_compression_usage(response)
+            _record_compression_usage(response, model=self.config.memory.compression_model)
 
             summary = response.choices[0].message.content.strip()
 
@@ -600,17 +600,20 @@ def _strengthen_co_retrieved(client, results: list[dict], amount: float = 0.03) 
     threading.Thread(target=_do_strengthen, daemon=True).start()
 
 
-def _record_compression_usage(response) -> None:
+def _record_compression_usage(response, model: str = "") -> None:
     """Record compression LLM token usage."""
     try:
         usage = response.usage
         if usage:
-            record_claude_usage(
+            try:
+                cost = litellm.completion_cost(completion_response=response)
+            except Exception:
+                cost = 0.0
+            record_llm_usage(
+                model=model,
                 input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
                 output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                cache_write_tokens=0,
-                cache_read_tokens=0,
-                model="haiku",
+                cost_usd=cost,
             )
     except Exception:
         pass
