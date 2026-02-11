@@ -122,18 +122,35 @@ My memory isn't storage — it's a living system.
 **Key principles:** Search by meaning, not keywords. Link related memories — connections strengthen both. Resolve conflicts promptly. Organize knowledge into clusters as it grows. My most valuable knowledge naturally rises through use."""
 
 
+def _model_label(model_id: str) -> str:
+    """Extract a clean label from a model ID (e.g. 'openrouter/x-ai/grok-4.1-fast' → 'Grok 4.1 Fast')."""
+    # Strip provider prefix
+    name = model_id.split("/")[-1]
+    # Remove date suffixes like -20250929
+    import re
+    name = re.sub(r"-\d{8,}$", "", name)
+    # Capitalize parts
+    return " ".join(w.capitalize() for w in name.replace("-", " ").split())
+
+
 def build_system_prompt(context: dict | None = None) -> str:
     """Build the full system prompt for Hynous.
 
     Args:
         context: Optional dict with dynamic context:
             - execution_mode: Trading mode (paper/testnet/live)
+            - model: Current LLM model ID string
     """
     from ...core.clock import date_str
 
+    model_line = ""
+    if context and context.get("model"):
+        label = _model_label(context["model"])
+        model_line = f" My brain is powered by **{label}** right now."
+
     parts = [
         f"# I am Hynous\n\n{IDENTITY}",
-        f"## Today\n\nToday is **{date_str()}**. My training data is outdated, but my `[Briefing]` block gives me rich market data (portfolio, orderbook depth, funding trends, price analysis), my `[Update]` block shows what changed since the last briefing, and my `[Live State]` block gives basics (prices, positions, F&G). I trust this data — it's from live feeds. For deeper analysis, I use my tools.",
+        f"## Today\n\nToday is **{date_str()}**.{model_line} My training data is outdated, but my `[Briefing]` block gives me rich market data (portfolio, orderbook depth, funding trends, price analysis), my `[Update]` block shows what changed since the last briefing, and my `[Live State]` block gives basics (prices, positions, F&G). I trust this data — it's from live feeds. For deeper analysis, I use my tools.",
         GROUND_RULES,
         TOOL_STRATEGY,
     ]

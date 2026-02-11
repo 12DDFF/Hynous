@@ -1250,6 +1250,7 @@ class AppState(rx.State):
         agent = _get_agent()
         if agent:
             agent.config.agent.model = model_id
+            agent.rebuild_system_prompt()
         _save_model_prefs(model_id, self.selected_sub_model)
 
     def set_sub_model(self, label: str):

@@ -67,7 +67,10 @@ class Agent:
         # Build system prompt — live portfolio data comes from [Live State]
         # snapshot injected per-message, not baked into system prompt.
         self.system_prompt = build_system_prompt(
-            context={"execution_mode": self.config.execution.mode}
+            context={
+                "execution_mode": self.config.execution.mode,
+                "model": self.config.agent.model,
+            }
         )
 
         # Tiered memory manager — retrieval + compression
@@ -823,6 +826,15 @@ class Agent:
                 )
         except Exception:
             pass  # Never let cost tracking break the agent
+
+    def rebuild_system_prompt(self):
+        """Rebuild the system prompt (e.g. after model change at runtime)."""
+        self.system_prompt = build_system_prompt(
+            context={
+                "execution_mode": self.config.execution.mode,
+                "model": self.config.agent.model,
+            }
+        )
 
     def clear_history(self):
         """Clear conversation history."""
