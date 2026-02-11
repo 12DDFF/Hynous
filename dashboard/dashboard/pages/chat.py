@@ -86,7 +86,7 @@ def messages_area() -> rx.Component:
                 spacing="0",
             ),
             width="100%",
-            max_width="800px",
+            max_width="960px",
             padding_x="24px",
             padding_y="24px",
             margin="0 auto",
@@ -113,7 +113,7 @@ def input_area() -> rx.Component:
                     is_loading=AppState.is_loading,
                 ),
                 width="100%",
-                max_width="800px",
+                max_width="960px",
             ),
             rx.text(
                 "Hynous can make mistakes. Always verify important information.",

@@ -79,6 +79,8 @@ _MD_STYLE = {
         "border_collapse": "collapse",
         "margin": "0.5em 0",
         "font_size": "0.85rem",
+        "display": "block",
+        "overflow_x": "auto",
     },
     "& thead": {
         "border_bottom": "1px solid #333",
@@ -91,11 +93,15 @@ _MD_STYLE = {
         "font_size": "0.75rem",
         "text_transform": "uppercase",
         "letter_spacing": "0.04em",
+        "word_break": "normal",
+        "white_space": "nowrap",
     },
     "& td": {
         "padding": "0.35em 0.6em",
         "color": "#e5e5e5",
         "border_bottom": "1px solid #1a1a1a",
+        "word_break": "normal",
+        "white_space": "nowrap",
     },
     "& tr:last-child td": {
         "border_bottom": "none",
