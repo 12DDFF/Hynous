@@ -223,12 +223,9 @@
   <script src="https://unpkg.com/force-graph@1.47.4/dist/force-graph.min.js"></script>
   <script>
     // ---- Configuration ----
-    // Try multiple addresses — browser may resolve localhost differently
+    // Fetch graph data through the Reflex backend proxy (avoids direct port 3100 access)
     const NOUS_URLS = [
-      `http://${window.location.hostname}:3100/v1/graph`,
-      'http://localhost:3100/v1/graph',
-      'http://127.0.0.1:3100/v1/graph',
-      'http://[::1]:3100/v1/graph',
+      `/api/nous/graph`,
     ];
 
     const COLORS = {

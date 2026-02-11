@@ -158,6 +158,28 @@ app = rx.App(
 app.add_page(index, route="/", title="Hynous", on_load=AppState.load_page)
 
 
+# Proxy Nous API through the Reflex backend so the browser doesn't need
+# direct access to port 3100 (blocked by UFW).
+async def _nous_proxy(request):
+    """Proxy /api/nous/* → localhost:3100/v1/*"""
+    import httpx
+    from starlette.responses import JSONResponse
+    path = request.path_params.get("path", "graph")
+    qs = str(request.query_params)
+    url = f"http://localhost:3100/v1/{path}"
+    if qs:
+        url += f"?{qs}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+            return JSONResponse(resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+app.api.add_api_route("/api/nous/{path:path}", _nous_proxy)
+
+
 # Eagerly start agent + daemon when the ASGI backend starts.
 # This runs via Reflex's lifespan task system (Starlette lifespan protocol).
 async def _eager_agent_start():
