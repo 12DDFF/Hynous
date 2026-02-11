@@ -27,7 +27,7 @@ def nav_item(
     )
 
 
-def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_journal: callable, on_memory: callable) -> rx.Component:
+def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_journal: callable, on_memory: callable, on_logout: callable = None) -> rx.Component:
     """Main navigation bar - fixed, clean, aligned."""
     return rx.hstack(
         # Left section - Logo (fixed width for consistency)
@@ -68,7 +68,7 @@ def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_j
             border="1px solid #1a1a1a",
         ),
 
-        # Right section - Status indicator (fixed width, right-aligned)
+        # Right section - Status + logout (fixed width, right-aligned)
         rx.box(
             rx.hstack(
                 rx.box(
@@ -79,6 +79,21 @@ def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_j
                     box_shadow="0 0 6px #22c55e",
                 ),
                 rx.text("Online", font_size="0.8rem", color="#525252"),
+                # Logout button
+                rx.button(
+                    rx.text("\u23FB", font_size="0.85rem"),
+                    on_click=on_logout,
+                    background="transparent",
+                    color="#525252",
+                    border="none",
+                    cursor="pointer",
+                    padding="4px 6px",
+                    border_radius="4px",
+                    min_width="auto",
+                    height="auto",
+                    _hover={"color": "#ef4444", "background": "rgba(239,68,68,0.1)"},
+                    title="Logout",
+                ),
                 spacing="2",
                 align="center",
             ),

@@ -11,11 +11,11 @@ Run with:
 import reflex as rx
 from .state import AppState
 from .components import navbar
-from .pages import home_page, chat_page, graph_page, journal_page, memory_page
+from .pages import home_page, chat_page, graph_page, journal_page, memory_page, login_page
 
 
-def index() -> rx.Component:
-    """Main application layout."""
+def _dashboard_content() -> rx.Component:
+    """Authenticated dashboard content."""
     return rx.box(
         # Smart auto-scroll — ChatGPT-style sticky bottom.
         #
@@ -80,6 +80,7 @@ def index() -> rx.Component:
                 on_chat=AppState.go_to_chat,
                 on_journal=AppState.go_to_journal,
                 on_memory=AppState.go_to_memory,
+                on_logout=AppState.logout,
             ),
             position="fixed",
             top="0",
@@ -122,6 +123,15 @@ def index() -> rx.Component:
         font_family="Inter, system-ui, sans-serif",
         overflow="hidden",
         overscroll_behavior="none",
+    )
+
+
+def index() -> rx.Component:
+    """Main entry point — gates on authentication."""
+    return rx.cond(
+        AppState.is_authenticated,
+        _dashboard_content(),
+        login_page(),
     )
 
 

@@ -329,6 +329,48 @@ def _reset_agent():
 class AppState(rx.State):
     """Main application state."""
 
+    # === Auth State ===
+    is_authenticated: bool = False
+    login_error: str = ""
+    _session_token: str = rx.Cookie(name="hynous_session", max_age=86400 * 7)
+
+    # === Auth Methods ===
+
+    def authenticate(self, form_data: dict):
+        """Validate password, set session cookie."""
+        import hashlib, hmac, os
+        password = form_data.get("password", "")
+        expected = os.getenv("DASHBOARD_PASSWORD", "")
+        if not expected:
+            self.is_authenticated = True
+            return
+        if hmac.compare_digest(password, expected):
+            token = hashlib.sha256(expected.encode()).hexdigest()
+            self._session_token = token
+            self.is_authenticated = True
+            self.login_error = ""
+        else:
+            self.login_error = "Wrong password"
+
+    def logout(self):
+        """Clear auth state and cookie."""
+        self.is_authenticated = False
+        self._session_token = ""
+
+    def _check_session(self):
+        """Validate session cookie against expected password hash."""
+        import hashlib, os
+        expected = os.getenv("DASHBOARD_PASSWORD", "")
+        if not expected:
+            self.is_authenticated = True
+            return True
+        valid_token = hashlib.sha256(expected.encode()).hexdigest()
+        if self._session_token == valid_token:
+            self.is_authenticated = True
+            return True
+        self.is_authenticated = False
+        return False
+
     # === Chat State ===
     messages: List[Message] = []
     current_input: str = ""
@@ -551,6 +593,10 @@ class AppState(rx.State):
 
     def load_page(self):
         """Load persisted messages + start portfolio polling on page load."""
+        # Check session cookie before loading anything
+        if not self._check_session():
+            return
+
         # Load chat history
         if not self.messages:
             try:
