@@ -300,10 +300,10 @@ TRADE_TOOL_DEF = {
         "- limit: Resting order at your price, fills when reached\n\n"
         "Position sizing (provide one):\n"
         "- size_usd: NOTIONAL size in USD. Margin from account = size_usd / leverage.\n"
-        "  E.g. size_usd=500 at 10x → $50 margin from account, $500 notional exposure.\n"
+        "  E.g. size_usd=500 at 20x → $25 margin from account, $500 notional exposure.\n"
         "- size: Size in base asset (e.g. 0.03 BTC)\n\n"
         "Risk management (ALL required):\n"
-        "- leverage: REQUIRED, minimum 10x\n"
+        "- leverage: REQUIRED, minimum 20x\n"
         "- stop_loss: Where my thesis is wrong — auto-placed as trigger order\n"
         "- take_profit: Where I take profit — auto-placed as trigger order\n"
         "- reasoning: My full thesis for this trade — stored in memory\n"
@@ -312,15 +312,15 @@ TRADE_TOOL_DEF = {
         "- slippage: Max slippage for market orders (default from config)\n\n"
         "Examples:\n"
         '  High conviction:\n'
-        '    {"symbol": "BTC", "side": "long", "size_usd": 150, "leverage": 10, "stop_loss": 66000, '
+        '    {"symbol": "BTC", "side": "long", "size_usd": 300, "leverage": 20, "stop_loss": 66000, '
         '"take_profit": 72000, "confidence": 0.85, '
         '"reasoning": "Funding reset, shorts crowding, support held with strong bid wall. R:R ~3:1."}\n'
         '  Medium conviction:\n'
-        '    {"symbol": "ETH", "side": "short", "size_usd": 75, "leverage": 15, "stop_loss": 3900, '
+        '    {"symbol": "ETH", "side": "short", "size_usd": 200, "leverage": 20, "stop_loss": 3900, '
         '"take_profit": 3400, "confidence": 0.65, '
         '"reasoning": "Bearish divergence on 4h, OI rising but price flat..."}\n'
         '  Speculative:\n'
-        '    {"symbol": "SOL", "side": "long", "size_usd": 37, "order_type": "limit", '
+        '    {"symbol": "SOL", "side": "long", "size_usd": 100, "order_type": "limit", '
         '"limit_price": 140, "stop_loss": 130, "take_profit": 165, "confidence": 0.5, '
         '"reasoning": "Key support zone, interesting divergence but uncertain..."}'
     ),
@@ -339,7 +339,7 @@ TRADE_TOOL_DEF = {
             "size_usd": {
                 "type": "number",
                 "description": "Notional position size in USD. Margin deducted from account = size_usd / leverage. "
-                               "E.g. size_usd=500 at 12x = $42 margin from account.",
+                               "E.g. size_usd=500 at 20x = $25 margin from account.",
                 "minimum": 10,
             },
             "size": {
@@ -358,8 +358,8 @@ TRADE_TOOL_DEF = {
             },
             "leverage": {
                 "type": "integer",
-                "description": "Leverage for this trade. REQUIRED — minimum 10x.",
-                "minimum": 10,
+                "description": "Leverage for this trade. REQUIRED — minimum 20x.",
+                "minimum": 20,
             },
             "stop_loss": {
                 "type": "number",
@@ -420,9 +420,9 @@ def handle_execute_trade(
     symbol = symbol.upper()
     is_buy = side == "long"
 
-    # --- Validate leverage (mandatory, minimum 10x) ---
-    if leverage is None or leverage < 10:
-        return "Error: leverage is required and must be at least 10x."
+    # --- Validate leverage (mandatory, minimum 20x) ---
+    if leverage is None or leverage < 20:
+        return "Error: leverage is required and must be at least 20x."
 
     # --- Validate sizing ---
     if size_usd is None and size is None:
@@ -471,15 +471,14 @@ def handle_execute_trade(
         except Exception:
             portfolio = 1000
 
-        base_margin = portfolio * 0.15  # 15% of portfolio as margin
         if confidence >= 0.8:
-            recommended_margin = base_margin
+            recommended_margin = portfolio * 0.30
             tier = "High"
         elif confidence >= 0.6:
-            recommended_margin = base_margin * 0.5
+            recommended_margin = portfolio * 0.20
             tier = "Medium"
         else:
-            recommended_margin = base_margin * 0.25
+            recommended_margin = portfolio * 0.10
             tier = "Speculative"
 
         # Compare actual margin vs recommended
@@ -1163,7 +1162,7 @@ MODIFY_TOOL_DEF = {
         '  {"symbol": "BTC", "stop_loss": 65000, "reasoning": "Trailing stop to breakeven after 3% move"}\n'
         '  {"symbol": "ETH", "take_profit": 4200, "stop_loss": 3400, '
         '"reasoning": "Tightening range — volatility compressing"}\n'
-        '  {"symbol": "SOL", "leverage": 10, "reasoning": "Thesis confirmed — increasing conviction"}\n'
+        '  {"symbol": "SOL", "leverage": 20, "reasoning": "Thesis confirmed — increasing conviction"}\n'
         '  {"symbol": "BTC", "cancel_orders": true, '
         '"reasoning": "Removing all triggers — managing manually on breakout"}\n'
         '  {"symbol": "ETH", "cancel_orders": true, "stop_loss": 3200, '
