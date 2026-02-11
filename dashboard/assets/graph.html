@@ -223,11 +223,21 @@
   <script src="https://unpkg.com/force-graph@1.47.4/dist/force-graph.min.js"></script>
   <script>
     // ---- Configuration ----
-    // Fetch graph data through the Reflex backend proxy (avoids direct port 3100 access)
-    // Backend runs on port 8000 — frontend (3000) doesn't proxy custom API routes
-    const NOUS_URLS = [
-      `${window.location.protocol}//${window.location.hostname}:8000/api/nous/graph`,
-    ];
+    // Graph data is fetched through the Reflex backend proxy (/api/nous/*).
+    // Backend URL is discovered from Reflex's env.json so it works in any
+    // environment (local dev, VPS, etc.) without hardcoded ports.
+    let NOUS_URLS = [];
+    async function _initUrls() {
+      try {
+        const env = await fetch('/env.json').then(r => r.json());
+        // env.PING = "http://host:8000/ping" — extract base URL
+        const base = env.PING.replace('/ping', '');
+        NOUS_URLS = [`${base}/api/nous/graph`];
+      } catch {
+        // Fallback: same host, port 8000
+        NOUS_URLS = [`${window.location.protocol}//${window.location.hostname}:8000/api/nous/graph`];
+      }
+    }
 
     const COLORS = {
       'custom:watchpoint':      '#b48a1a',
@@ -577,7 +587,7 @@
       // Only show error if graph never rendered
       if (!graphRendered) {
         loadingEl.className = 'loading error';
-        loadingEl.textContent = 'Could not connect to Nous server (port 3100). Make sure it is running.';
+        loadingEl.textContent = 'Could not connect to Nous server. Make sure it is running.';
       } else {
         loadingEl.style.display = 'none';
       }
@@ -611,7 +621,7 @@
     });
 
     // ---- Init ----
-    loadGraph();
+    _initUrls().then(() => loadGraph());
   </script>
 </body>
 </html>
