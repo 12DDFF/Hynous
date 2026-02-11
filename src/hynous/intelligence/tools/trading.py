@@ -453,8 +453,10 @@ def handle_execute_trade(
             )
 
     # --- Conviction-based size validation ---
+    # Sizing is in MARGIN (money from account), not notional.
+    # 15% base = 15% of portfolio at risk. Leverage amplifies exposure.
     tier = None
-    recommended = None
+    recommended_margin = None
     oversized = False
     if confidence is not None:
         if confidence < 0.4:
@@ -463,26 +465,27 @@ def handle_execute_trade(
                 f"Set a watchpoint and revisit when thesis strengthens."
             )
 
-        # Calculate recommended max from portfolio value + conviction tier
         try:
             pf_state = provider.get_user_state()
             portfolio = pf_state.get("account_value", 1000)
         except Exception:
             portfolio = 1000
 
-        base_size = portfolio * 0.15  # 15% of portfolio
+        base_margin = portfolio * 0.15  # 15% of portfolio as margin
         if confidence >= 0.8:
-            recommended = base_size
+            recommended_margin = base_margin
             tier = "High"
         elif confidence >= 0.6:
-            recommended = base_size * 0.5
+            recommended_margin = base_margin * 0.5
             tier = "Medium"
         else:
-            recommended = base_size * 0.25
+            recommended_margin = base_margin * 0.25
             tier = "Speculative"
 
-        effective = size_usd if size_usd else (size * price if size else 0)
-        oversized = effective > recommended * 1.5 if effective else False
+        # Compare actual margin vs recommended
+        effective_notional = size_usd if size_usd else (size * price if size else 0)
+        actual_margin = effective_notional / leverage if leverage else effective_notional
+        oversized = actual_margin > recommended_margin * 1.5 if actual_margin else False
 
     # --- Validate limit order ---
     if order_type == "limit":
@@ -639,11 +642,11 @@ def handle_execute_trade(
         lines.append(f"Risk/Reward: {rr:.1f}:1")
 
     # --- Conviction tier ---
-    if confidence is not None and tier:
-        lines.append(f"Confidence: {confidence:.0%} ({tier})")
-        lines.append(f"Recommended max: ${recommended:,.0f} (base ${portfolio * 0.15:,.0f} x tier)")
+    if confidence is not None and tier and recommended_margin:
+        pct_of_portfolio = recommended_margin / portfolio * 100 if portfolio else 0
+        lines.append(f"Confidence: {confidence:.0%} ({tier} — up to {pct_of_portfolio:.0f}% of account)")
         if oversized:
-            lines.append(f"Warning: Size ${effective:,.0f} exceeds conviction-recommended ${recommended:,.0f}")
+            lines.append(f"Warning: Margin ${actual_margin:,.0f} exceeds recommended ${recommended_margin:,.0f}")
     elif confidence is not None:
         lines.append(f"Confidence: {confidence:.0%}")
 

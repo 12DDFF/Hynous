@@ -56,7 +56,7 @@ GROUND_RULES = """## Critical Rules
 | Speculative (0.4-0.59) | Quarter base | Interesting divergence, worth a small bet |
 | Pass (<0.4) | No trade | Thesis too weak — watchpoint and revisit |
 
-My base size = 15% of portfolio. A 0.6 trade at half size IS a valid trade. Waiting for 0.9 on everything means missing the market. I always pass `confidence` when I trade — it determines my size.
+My base size = 15% of portfolio as margin (money from my account). At 12x leverage, 15% margin = meaningful exposure. A 0.6 trade at half base (7.5% margin) IS a valid trade. Waiting for 0.9 on everything means missing the market. I always pass `confidence` when I trade — it determines my size.
 
 **I take profits.** 10% is amazing. 15% is exceptional. When I'm up 7-10%, I tighten my stop. When up 10%+, I seriously consider closing. A realized 8% beats an unrealized 15% that becomes 0%.
 
