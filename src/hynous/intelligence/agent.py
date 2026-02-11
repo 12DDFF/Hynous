@@ -559,6 +559,7 @@ class Agent:
 
                     else:
                         text = msg.content or "(no response)"
+                        self._check_text_tool_leakage(text)
                         self._history.append({"role": "assistant", "content": text})
 
                         # Window management: compress evicted exchanges into Nous
@@ -572,6 +573,17 @@ class Agent:
             finally:
                 disable_queue_mode()
                 flush_memory_queue()
+
+    def _check_text_tool_leakage(self, text: str) -> None:
+        """Warn if tool names appear in response text (model not using structured tool calling)."""
+        if not text or not self.tools.has_tools:
+            return
+        leaked = [name for name in self.tools.names if name in text]
+        if leaked:
+            logger.warning(
+                "Tool name(s) in text response (model: %s): %s — model may not be using structured tool calling",
+                self.config.agent.model, leaked,
+            )
 
     def chat_stream(self, message: str, skip_snapshot: bool = False) -> Generator[tuple[str, str], None, None]:
         """Stream a response, yielding typed chunks as they arrive.
@@ -738,6 +750,7 @@ class Agent:
 
                     else:
                         full_text = "".join(collected_text) or "(no response)"
+                        self._check_text_tool_leakage(full_text)
                         self._history.append({"role": "assistant", "content": full_text})
 
                         # Window management: compress evicted exchanges into Nous

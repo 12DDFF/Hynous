@@ -78,6 +78,11 @@ class ToolRegistry:
         """Whether any tools are registered."""
         return len(self._tools) > 0
 
+    @property
+    def names(self) -> list[str]:
+        """All registered tool names."""
+        return list(self._tools.keys())
+
 
 def get_registry() -> ToolRegistry:
     """Create a registry with all tools.
