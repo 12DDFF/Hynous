@@ -224,8 +224,9 @@
   <script>
     // ---- Configuration ----
     // Fetch graph data through the Reflex backend proxy (avoids direct port 3100 access)
+    // Backend runs on port 8000 — frontend (3000) doesn't proxy custom API routes
     const NOUS_URLS = [
-      `/api/nous/graph`,
+      `${window.location.protocol}//${window.location.hostname}:8000/api/nous/graph`,
     ];
 
     const COLORS = {
