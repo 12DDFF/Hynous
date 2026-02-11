@@ -177,7 +177,7 @@ async def _nous_proxy(request):
         return JSONResponse({"error": str(e)}, status_code=502)
 
 
-app.api.add_api_route("/api/nous/{path:path}", _nous_proxy)
+app._api.add_api_route("/api/nous/{path:path}", _nous_proxy)
 
 
 # Eagerly start agent + daemon when the ASGI backend starts.
