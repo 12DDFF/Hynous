@@ -149,6 +149,12 @@ class Daemon:
         self._daily_reset_date: str = ""    # YYYY-MM-DD UTC
         self._trading_paused: bool = False
 
+        # Trade activity tracking (for conviction system awareness)
+        self._entries_today: int = 0
+        self._entries_this_week: int = 0
+        self._last_entry_time: float = 0
+        self._last_close_time: float = 0
+
         # Wake rate limiting
         self._wake_timestamps: list[float] = []
         self._last_wake_time: float = 0
@@ -258,6 +264,26 @@ class Daemon:
     def daily_realized_pnl(self) -> float:
         """Today's realized PnL (resets at UTC midnight)."""
         return self._daily_realized_pnl
+
+    def record_trade_entry(self):
+        """Record a new trade entry for activity tracking (called by trading tool)."""
+        self._check_daily_reset()
+        self._entries_today += 1
+        self._entries_this_week += 1
+        self._last_entry_time = time.time()
+
+    @property
+    def last_trade_ago(self) -> str:
+        """Human-readable time since last trade (entry or close)."""
+        last = max(self._last_entry_time, self._last_close_time)
+        if last == 0:
+            return "never"
+        elapsed = time.time() - last
+        if elapsed < 3600:
+            return f"{int(elapsed / 60)}m"
+        elif elapsed < 86400:
+            return f"{elapsed / 3600:.0f}h"
+        return f"{elapsed / 86400:.0f}d"
 
     @property
     def status(self) -> dict:
@@ -930,12 +956,17 @@ class Daemon:
                 logger.info("Circuit breaker reset — new day %s", today)
             self._daily_realized_pnl = 0.0
             self._trading_paused = False
+            self._entries_today = 0
+            # Weekly reset on Monday
+            if datetime.now(timezone.utc).weekday() == 0:
+                self._entries_this_week = 0
             self._daily_reset_date = today
 
     def _update_daily_pnl(self, realized_pnl: float):
         """Update daily PnL and check circuit breaker threshold."""
         self._check_daily_reset()
         self._daily_realized_pnl += realized_pnl
+        self._last_close_time = time.time()
 
         max_loss = self.config.daemon.max_daily_loss_usd
         if max_loss > 0 and self._daily_realized_pnl <= -max_loss and not self._trading_paused:
@@ -1177,6 +1208,17 @@ class Daemon:
                 "Keep status brief. But always leave with active watchpoints.",
             ]
             review_type = "Periodic market review"
+
+        # Activity awareness — nudge when too quiet or too active
+        if self._last_entry_time > 0:
+            idle_hours = (time.time() - self._last_entry_time) / 3600
+            if idle_hours > 48:
+                lines.append(
+                    f"\n⚠ No new entries in {idle_hours / 24:.0f} days. "
+                    "Are you being selective or stuck? A 0.6 conviction trade at half size is valid."
+                )
+        if self._entries_today >= 3:
+            lines.append(f"\n⚠ {self._entries_today} entries today. Check for overtrading.")
 
         message = "\n".join(lines)
         response = self._wake_agent(message, max_coach_cycles=1)

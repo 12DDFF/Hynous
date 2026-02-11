@@ -305,26 +305,23 @@ TRADE_TOOL_DEF = {
         "- leverage: REQUIRED, minimum 10x\n"
         "- stop_loss: Where my thesis is wrong — auto-placed as trigger order\n"
         "- take_profit: Where I take profit — auto-placed as trigger order\n"
-        "- reasoning: My full thesis for this trade — stored in memory\n\n"
+        "- reasoning: My full thesis for this trade — stored in memory\n"
+        "- confidence: REQUIRED conviction score (0.0-1.0) — determines size tier\n\n"
         "Optional:\n"
-        "- slippage: Max slippage for market orders (default from config)\n"
-        "- confidence: How sure I am (0.0-1.0), affects position sizing decisions\n\n"
+        "- slippage: Max slippage for market orders (default from config)\n\n"
         "Examples:\n"
-        '  Market entry:\n'
-        '    {"symbol": "BTC", "side": "long", "size_usd": 2000, "leverage": 10, "stop_loss": 66000, '
-        '"take_profit": 72000, "reasoning": "Funding reset from +0.03% to -0.01%, '
-        'shorts crowding, support held at 67K with strong bid wall. R:R ~3:1."}\n'
-        '  Higher leverage + confidence:\n'
-        '    {"symbol": "ETH", "side": "short", "size_usd": 1500, "leverage": 15, "stop_loss": 3900, '
-        '"take_profit": 3400, "confidence": 0.7, '
+        '  High conviction:\n'
+        '    {"symbol": "BTC", "side": "long", "size_usd": 150, "leverage": 10, "stop_loss": 66000, '
+        '"take_profit": 72000, "confidence": 0.85, '
+        '"reasoning": "Funding reset, shorts crowding, support held with strong bid wall. R:R ~3:1."}\n'
+        '  Medium conviction:\n'
+        '    {"symbol": "ETH", "side": "short", "size_usd": 75, "leverage": 15, "stop_loss": 3900, '
+        '"take_profit": 3400, "confidence": 0.65, '
         '"reasoning": "Bearish divergence on 4h, OI rising but price flat..."}\n'
-        '  Limit entry:\n'
-        '    {"symbol": "SOL", "side": "long", "size_usd": 1000, "order_type": "limit", '
-        '"limit_price": 140, "stop_loss": 130, "take_profit": 165, '
-        '"reasoning": "Key support zone, expecting bounce..."}\n'
-        '  Base-asset sizing:\n'
-        '    {"symbol": "BTC", "side": "long", "size": 0.01, "stop_loss": 95000, '
-        '"take_profit": 105000, "reasoning": "Range breakout setup..."}'
+        '  Speculative:\n'
+        '    {"symbol": "SOL", "side": "long", "size_usd": 37, "order_type": "limit", '
+        '"limit_price": 140, "stop_loss": 130, "take_profit": 165, "confidence": 0.5, '
+        '"reasoning": "Key support zone, interesting divergence but uncertain..."}'
     ),
     "parameters": {
         "type": "object",
@@ -378,7 +375,8 @@ TRADE_TOOL_DEF = {
             },
             "confidence": {
                 "type": "number",
-                "description": "Confidence in this trade (0.0-1.0). Stored with trade memory.",
+                "description": "Conviction score (0.0-1.0). REQUIRED — determines position size tier. "
+                               "0.8+ = full base, 0.6-0.79 = half, 0.4-0.59 = quarter, <0.4 = rejected.",
                 "minimum": 0,
                 "maximum": 1,
             },
@@ -387,7 +385,7 @@ TRADE_TOOL_DEF = {
                 "description": "Full trade thesis — why entering, what signals support it. Always stored in memory.",
             },
         },
-        "required": ["symbol", "side", "leverage", "stop_loss", "take_profit", "reasoning"],
+        "required": ["symbol", "side", "leverage", "stop_loss", "take_profit", "reasoning", "confidence"],
     },
 }
 
@@ -451,6 +449,38 @@ def handle_execute_trade(
             return (
                 f"Error: {size} {symbol} = ~${equiv_usd:,.0f} exceeds safety cap ${max_size:,.0f}."
             )
+
+    # --- Conviction-based size validation ---
+    tier = None
+    recommended = None
+    oversized = False
+    if confidence is not None:
+        if confidence < 0.4:
+            return (
+                f"Conviction too low ({confidence:.0%}). "
+                f"Set a watchpoint and revisit when thesis strengthens."
+            )
+
+        # Calculate recommended max from portfolio value + conviction tier
+        try:
+            pf_state = provider.get_user_state()
+            portfolio = pf_state.get("account_value", 1000)
+        except Exception:
+            portfolio = 1000
+
+        base_size = portfolio * 0.15  # 15% of portfolio
+        if confidence >= 0.8:
+            recommended = base_size
+            tier = "High"
+        elif confidence >= 0.6:
+            recommended = base_size * 0.5
+            tier = "Medium"
+        else:
+            recommended = base_size * 0.25
+            tier = "Speculative"
+
+        effective = size_usd if size_usd else (size * price if size else 0)
+        oversized = effective > recommended * 1.5 if effective else False
 
     # --- Validate limit order ---
     if order_type == "limit":
@@ -604,9 +634,23 @@ def handle_execute_trade(
         rr = reward / risk if risk > 0 else 0
         lines.append(f"Risk/Reward: {rr:.1f}:1")
 
-    # --- Confidence ---
-    if confidence is not None:
-        lines.append(f"Confidence: {confidence * 100:.0f}%")
+    # --- Conviction tier ---
+    if confidence is not None and tier:
+        lines.append(f"Confidence: {confidence:.0%} ({tier})")
+        lines.append(f"Recommended max: ${recommended:,.0f} (base ${portfolio * 0.15:,.0f} x tier)")
+        if oversized:
+            lines.append(f"Warning: Size ${effective:,.0f} exceeds conviction-recommended ${recommended:,.0f}")
+    elif confidence is not None:
+        lines.append(f"Confidence: {confidence:.0%}")
+
+    # --- Record entry for activity tracking ---
+    try:
+        from ...intelligence.daemon import get_active_daemon
+        daemon = get_active_daemon()
+        if daemon:
+            daemon.record_trade_entry()
+    except Exception:
+        pass
 
     # --- Store trade in memory (always — every trade is documented) ---
     rr_val = 0

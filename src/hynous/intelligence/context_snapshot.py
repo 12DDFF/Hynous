@@ -64,6 +64,11 @@ def build_snapshot(provider, daemon, nous_client, config) -> str:
     if memory_line:
         sections.append(memory_line)
 
+    # --- Trade activity (zero cost, daemon in-memory counters) ---
+    activity_line = _build_activity(daemon)
+    if activity_line:
+        sections.append(activity_line)
+
     result = "\n".join(sections)
     _snapshot_cache = result
     _snapshot_cache_time = now
@@ -265,6 +270,18 @@ def _build_memory_counts(nous_client, daemon=None) -> str:
 
     parts = [f"{v} {k}" for k, v in counts.items()]
     return f"Memory: {' | '.join(parts)}"
+
+
+def _build_activity(daemon) -> str:
+    """Trade activity stats — zero cost, uses daemon in-memory counters."""
+    if daemon is None:
+        return ""
+
+    today = getattr(daemon, '_entries_today', 0)
+    week = getattr(daemon, '_entries_this_week', 0)
+    last = getattr(daemon, 'last_trade_ago', "never")
+
+    return f"Activity: {today} entries today, {week} this week | Last trade: {last} ago"
 
 
 def _fg_label(value: int) -> str:
