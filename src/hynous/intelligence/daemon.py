@@ -1224,7 +1224,7 @@ class Daemon:
             return
 
         message = f"{header}\n\n{pnl_line}\n\n{footer}"
-        response = self._wake_agent(message, priority=priority, max_coach_cycles=0)
+        response = self._wake_agent(message, priority=priority, max_coach_cycles=0, max_tokens=1024)
         if response:
             log_event(DaemonEvent(
                 "profit", f"{tier}: {coin} {side}",
@@ -1338,7 +1338,7 @@ class Daemon:
         ])
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, max_coach_cycles=0)
+        response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1024)
         if response:
             self.watchpoint_fires += 1
             log_event(DaemonEvent(
@@ -1373,7 +1373,7 @@ class Daemon:
         # Format the wake message (pass position types for risk context)
         message = format_scanner_wake(top, position_types=self._position_types)
 
-        response = self._wake_agent(message, max_coach_cycles=0)
+        response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1024)
         if response:
             self.scanner_wakes += 1
             self._scanner.wakes_triggered += 1
@@ -1459,7 +1459,8 @@ class Daemon:
             ])
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, priority=True, max_coach_cycles=0)
+        fill_tokens = 1536 if classification in ("stop_loss", "take_profit") else 512
+        response = self._wake_agent(message, priority=True, max_coach_cycles=0, max_tokens=fill_tokens)
         if response:
             self._fill_fires += 1
             fill_title = f"{classification.replace('_', ' ').title()}: {coin} {side} ({type_label})"
@@ -1518,7 +1519,10 @@ class Daemon:
             lines.append(f"\n⚠ {self._entries_today} entries today. Check for overtrading.")
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, max_coach_cycles=1)
+        if is_learning:
+            response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1536)
+        else:
+            response = self._wake_agent(message, max_coach_cycles=1, max_tokens=512)
         if response:
             symbols = self.config.execution.symbols
             log_event(DaemonEvent(
@@ -1780,7 +1784,7 @@ class Daemon:
         ])
 
         message = "\n".join(lines)
-        response = self._wake_agent(message)
+        response = self._wake_agent(message, max_tokens=1024)
         if response:
             log_event(DaemonEvent(
                 "conflict", "Contradiction review",
@@ -1924,7 +1928,7 @@ class Daemon:
             ])
 
             message = "\n".join(lines)
-            response = self._wake_agent(message, max_coach_cycles=0)
+            response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1536)
             if response:
                 self.learning_sessions += 1
                 self._last_learning_session = time.time()
@@ -1957,6 +1961,7 @@ class Daemon:
     def _wake_agent(
         self, message: str, priority: bool = False,
         max_coach_cycles: int = 0,
+        max_tokens: int | None = None,
     ) -> str | None:
         """Send a daemon message to the agent with pre-built briefing.
 
@@ -2082,6 +2087,7 @@ class Daemon:
             # === 5. Agent responds (skip_snapshot since briefing has it all) ===
             response = self.agent.chat(
                 full_message, skip_snapshot=bool(briefing_text),
+                max_tokens=max_tokens,
             )
             if response is None:
                 return None
@@ -2148,7 +2154,7 @@ class Daemon:
         ]
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, priority=True, max_coach_cycles=1)
+        response = self._wake_agent(message, priority=True, max_coach_cycles=1, max_tokens=1024)
         if response:
             log_event(DaemonEvent(
                 "review", "Manual review (dashboard)",

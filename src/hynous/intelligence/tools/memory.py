@@ -257,34 +257,20 @@ _TYPE_MAP = {
 STORE_TOOL_DEF = {
     "name": "store_memory",
     "description": (
-        "Store something in your persistent memory. Write rich, detailed content — "
-        "your future self will thank you. Don't summarize when detail matters.\n\n"
-        "Memory types (choose ONE — if unsure, pick the closest):\n"
-        "  episode — WHAT happened. A specific event with a timestamp. "
-        "\"BTC pumped 5% in 2 hours on a short squeeze cascade.\"\n"
-        "  lesson — WHAT you learned. A takeaway from experience or research.\n"
-        "  thesis — WHAT you believe will happen and WHY. Forward-looking conviction.\n"
-        "  signal — RAW data snapshot. Numbers, not narrative.\n"
+        "Store something in your persistent memory. Include key context, reasoning, "
+        "and numbers — be complete but not padded.\n\n"
+        "Memory types:\n"
+        "  episode — A specific event. \"BTC pumped 5% on a short squeeze.\"\n"
+        "  lesson — A takeaway from experience or research.\n"
+        "  thesis — Forward-looking conviction. What you believe will happen and why.\n"
+        "  signal — Raw data snapshot. Numbers, not narrative.\n"
         "  watchpoint — An alert with trigger conditions. Include trigger object.\n"
         "  curiosity — A question to research later.\n"
         "  trade — Manual trade record.\n\n"
-        "Rule of thumb: episode=narrative of what happened, signal=raw numbers, "
-        "thesis=forward prediction, lesson=backward insight.\n\n"
-        "LINKING with [[wikilinks]]: Reference existing memories by writing "
-        "[[title or topic]] anywhere in your content. The system searches for "
-        "matching memories and creates edges automatically. Like Obsidian backlinks.\n"
-        "Example: \"BTC squeezed 5% today, similar pattern to [[BTC Jan 15 squeeze]]. "
-        "This confirms my [[funding rate divergence thesis]].\"\n\n"
-        "BATCHING: Don't stop to store memories mid-analysis. Keep thinking, keep "
-        "using tools, keep building your picture. Call store_memory whenever something "
-        "is worth remembering — it's instant (queued, not stored yet). All memories "
-        "flush to Nous after your response is complete. Call multiple store_memory "
-        "in one response for related memories. Use [[wikilinks]] to cross-reference."
-        "\n\n"
-        "DEDUPLICATION: Lessons and curiosity items are checked for duplicates before "
-        "storing. If a very similar memory already exists (95%+ match), the new one "
-        "won't be created — you'll see which existing memory matched. If a moderately "
-        "similar memory exists (90-95% match), the new one is created and linked to it."
+        "Use [[wikilinks]] in content to link to related memories: "
+        "\"This confirms my [[funding rate thesis]].\" "
+        "The system searches for matches and creates edges automatically.\n\n"
+        "Lessons and curiosity items are checked for duplicates automatically."
     ),
     "parameters": {
         "type": "object",
@@ -292,9 +278,7 @@ STORE_TOOL_DEF = {
             "content": {
                 "type": "string",
                 "description": (
-                    "The full content to remember. Be detailed — include context, "
-                    "reasoning, numbers, and anything that would help you understand "
-                    "this memory months from now. No need to be brief. "
+                    "The content to remember. Include context, reasoning, and key numbers. "
                     "Use [[title]] to link to related memories."
                 ),
             },
@@ -310,11 +294,9 @@ STORE_TOOL_DEF = {
             "trigger": {
                 "type": "object",
                 "description": (
-                    "Only for watchpoints. Alert conditions. Properties: "
-                    "condition (price_below, price_above, funding_above, funding_below, "
-                    "oi_change, liquidation_spike, fear_greed_extreme), "
-                    "symbol (e.g. BTC), value (threshold number), "
-                    "expiry (ISO date, optional, default 7 days)."
+                    "Watchpoints only. Conditions: price_below, price_above, funding_above, "
+                    "funding_below, fear_greed_extreme. Requires symbol and value. "
+                    "Optional expiry (ISO date, default 7 days)."
                 ),
                 "properties": {
                     "condition": {"type": "string"},
@@ -342,12 +324,7 @@ STORE_TOOL_DEF = {
             },
             "cluster": {
                 "type": "string",
-                "description": (
-                    "Cluster ID to assign this memory to (optional). "
-                    "Get cluster IDs from manage_clusters(action=\"list\"). "
-                    "Memories are also auto-assigned to clusters based on "
-                    "their type if the cluster has matching auto_subtypes."
-                ),
+                "description": "Cluster ID to assign to (optional). Auto-assignment also applies based on type.",
             },
         },
         "required": ["content", "memory_type", "title"],
@@ -598,23 +575,13 @@ RECALL_TOOL_DEF = {
     "name": "recall_memory",
     "description": (
         "Search or browse your persistent memory.\n\n"
-        "Two modes:\n"
+        "Modes:\n"
         "  search (default) — Semantic search by query. Requires query.\n"
-        "  browse — List memories by type/lifecycle. No query needed.\n\n"
-        "Search examples:\n"
-        '  {"query": "BTC support levels"} → search all memories\n'
-        '  {"query": "funding", "memory_type": "signal"} → search only signals\n\n'
-        "Browse examples:\n"
-        '  {"mode": "browse", "memory_type": "thesis", "active_only": true} '
-        "→ all active theses\n"
-        '  {"mode": "browse", "memory_type": "trade_entry", "limit": 5} '
-        "→ recent trade entries\n"
-        '  {"mode": "browse"} → most recent memories (all types)\n\n'
-        "Time-range search (search mode only):\n"
-        '  {"query": "BTC", "time_start": "2026-01-01", "time_end": "2026-01-31"} '
-        "→ BTC memories from January\n"
-        '  {"query": "trade entry", "time_start": "2026-02-01", "time_type": "event"} '
-        "→ trades since Feb 1st"
+        "  browse — List by type/lifecycle. No query needed.\n\n"
+        "Examples:\n"
+        '  {"query": "BTC support levels"}\n'
+        '  {"mode": "browse", "memory_type": "thesis", "active_only": true}\n'
+        '  {"query": "BTC", "time_start": "2026-01-01", "time_end": "2026-01-31"}'
     ),
     "parameters": {
         "type": "object",
@@ -634,11 +601,7 @@ RECALL_TOOL_DEF = {
                     "watchpoint", "curiosity", "lesson", "thesis", "episode", "trade", "signal",
                     "trade_entry", "trade_modify", "trade_close",
                 ],
-                "description": (
-                    "Filter by memory type. Trade lifecycle types: "
-                    "trade_entry (theses + entries), trade_close (outcomes + PnL), "
-                    "trade_modify (position adjustments)."
-                ),
+                "description": "Filter by memory type.",
             },
             "active_only": {
                 "type": "boolean",
@@ -659,20 +622,11 @@ RECALL_TOOL_DEF = {
             "time_type": {
                 "type": "string",
                 "enum": ["event", "ingestion", "any"],
-                "description": (
-                    "Which timestamp to filter on. "
-                    "event = when the event happened, "
-                    "ingestion = when stored, "
-                    "any = either. Default: any."
-                ),
+                "description": "Timestamp to filter: event (when it happened), ingestion (when stored), any (either). Default: any.",
             },
             "cluster": {
                 "type": "string",
-                "description": (
-                    "Cluster ID to search within (search mode only). "
-                    "Only returns memories that belong to this cluster. "
-                    "Get cluster IDs from manage_clusters(action=\"list\")."
-                ),
+                "description": "Cluster ID to search within (search mode only).",
             },
         },
         "required": [],

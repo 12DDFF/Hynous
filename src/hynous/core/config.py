@@ -24,7 +24,7 @@ def _find_project_root() -> Path:
 @dataclass
 class AgentConfig:
     model: str = "openrouter/anthropic/claude-sonnet-4-5-20250929"  # OpenRouter: 1 key, all models
-    max_tokens: int = 4096
+    max_tokens: int = 2048
     temperature: float = 0.7
 
 
@@ -56,7 +56,7 @@ class HyperliquidConfig:
 @dataclass
 class MemoryConfig:
     """Tiered memory settings — working window + Nous-backed compression."""
-    window_size: int = 6            # Complete exchanges to keep in working window
+    window_size: int = 4            # Complete exchanges to keep in working window
     max_context_tokens: int = 800   # Token budget for injected recalled context
     retrieve_limit: int = 5         # Max Nous results per retrieval
     compression_model: str = "openrouter/anthropic/claude-haiku-4-5-20251001"  # OpenRouter
@@ -187,7 +187,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         hyperliquid_private_key=os.environ.get("HYPERLIQUID_PRIVATE_KEY", ""),
         agent=AgentConfig(
             model=agent_raw.get("model", "openrouter/anthropic/claude-sonnet-4-5-20250929"),
-            max_tokens=agent_raw.get("max_tokens", 4096),
+            max_tokens=agent_raw.get("max_tokens", 2048),
             temperature=agent_raw.get("temperature", 0.7),
         ),
         nous=NousConfig(
@@ -202,7 +202,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
             symbols=exec_raw.get("symbols", ["BTC", "ETH", "SOL"]),
         ),
         memory=MemoryConfig(
-            window_size=mem_raw.get("window_size", 6),
+            window_size=mem_raw.get("window_size", 4),
             max_context_tokens=mem_raw.get("max_context_tokens", 800),
             retrieve_limit=mem_raw.get("retrieve_limit", 5),
             compression_model=mem_raw.get("compression_model", "openrouter/anthropic/claude-haiku-4-5-20251001"),

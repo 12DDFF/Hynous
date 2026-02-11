@@ -34,11 +34,40 @@ logger = logging.getLogger(__name__)
 # request (e.g. Coinglass timeout) from blocking the entire conversation.
 _TOOL_TIMEOUT = 30
 
-# Max characters per tool result to keep in history for older (already-processed)
-# tool results.  ~200 tokens.  The agent already saw the full result and made
-# its decision — keeping the full text in subsequent API calls is pure waste.
+# Tiered truncation limits for stale (already-processed) tool results.
+# The agent already saw the full result and made its decision — keeping
+# the full text in subsequent API calls is pure waste.
 # Fresh (unseen) tool results are always kept at full fidelity.
-_MAX_STALE_RESULT_CHARS = 800
+_STALE_TRUNCATION = {
+    # Confirmation tools — one-line ack messages
+    "store_memory": 150,
+    "update_memory": 150,
+    "delete_memory": 150,
+    "explore_memory": 150,
+    "manage_clusters": 150,
+    # Action tools — multi-line summaries of what was done
+    "execute_trade": 300,
+    "close_position": 300,
+    "modify_position": 300,
+    "manage_watchpoints": 300,
+    "manage_conflicts": 300,
+    # Data tools — market numbers the agent already analyzed
+    "get_market_data": 400,
+    "get_multi_timeframe": 400,
+    "get_orderbook": 400,
+    "get_funding_history": 400,
+    "get_liquidations": 400,
+    "get_options_flow": 400,
+    "get_institutional_flow": 400,
+    "get_global_sentiment": 400,
+    "get_trade_stats": 400,
+    "get_my_costs": 400,
+    "get_account": 400,
+    # Search tools — agent may reference specific results
+    "recall_memory": 600,
+    "search_web": 600,
+}
+_DEFAULT_STALE_LIMIT = 800  # Fallback for unclassified/new tools
 
 
 class Agent:
@@ -186,14 +215,14 @@ class Agent:
         API call even though the agent already incorporated them.
 
         This method:
-        1. Truncates all STALE tool results to ~200 tokens each
+        1. Truncates all STALE tool results with tiered limits per tool
         2. Strips [Live State] snapshot blocks from all but the latest user message
 
         Returns a modified copy — never mutates _history.
         """
         messages = self._build_messages()
 
-        # Find the last tool result message index
+        # Find the last tool result message index (keep fresh result at full fidelity)
         last_tool_idx = None
         for i in range(len(messages) - 1, -1, -1):
             if messages[i]["role"] == "tool":
@@ -202,11 +231,13 @@ class Agent:
 
         compacted = []
         for i, entry in enumerate(messages):
-            # Truncate stale tool results (keep fresh ones full)
+            # Truncate stale tool results with tiered limits per tool
             if entry["role"] == "tool" and i != last_tool_idx:
                 content = entry.get("content", "")
-                if len(content) > _MAX_STALE_RESULT_CHARS:
-                    content = content[:_MAX_STALE_RESULT_CHARS] + "\n...[truncated, already processed]"
+                tool_name = entry.get("name", "")
+                limit = _STALE_TRUNCATION.get(tool_name, _DEFAULT_STALE_LIMIT)
+                if len(content) > limit:
+                    content = content[:limit] + "\n...[truncated, already processed]"
                     compacted.append({**entry, "content": content})
                 else:
                     compacted.append(entry)
@@ -271,18 +302,21 @@ class Agent:
             ]}]
         return [{"role": "system", "content": self.system_prompt}]
 
-    def _api_kwargs(self) -> dict:
+    def _api_kwargs(self, max_tokens: int | None = None) -> dict:
         """Build API kwargs for litellm.completion().
 
         For Anthropic models, enables prompt caching via cache_control markers.
         For other providers, uses plain messages (cache_control is ignored).
+
+        Args:
+            max_tokens: Override for response token cap. Falls back to config default.
         """
         system_msgs = self._build_system_messages()
         conversation = self._sanitize_messages(self._compact_messages())
 
         kwargs = {
             "model": self.config.agent.model,
-            "max_tokens": self.config.agent.max_tokens,
+            "max_tokens": max_tokens or self.config.agent.max_tokens,
             "messages": system_msgs + conversation,
         }
 
@@ -463,7 +497,7 @@ class Agent:
 
     # ---- Chat methods ----
 
-    def chat(self, message: str, skip_snapshot: bool = False) -> str:
+    def chat(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None) -> str:
         """Send a message and get a response, handling any tool calls.
 
         Maintains conversation history across calls.
@@ -475,6 +509,7 @@ class Agent:
             message: The user/daemon message to send.
             skip_snapshot: If True, skip [Live State] injection (daemon wakes
                 with [Briefing] already contain all the data).
+            max_tokens: Override for response token cap. Falls back to config default.
 
         Thread-safe: acquires _chat_lock to prevent daemon/user interleaving.
         """
@@ -519,7 +554,7 @@ class Agent:
             # Enable memory queue — store_memory calls become instant during thinking.
             # All queued memories flush to Nous after the response is complete.
             enable_queue_mode()
-            kwargs = self._api_kwargs()
+            kwargs = self._api_kwargs(max_tokens=max_tokens)
 
             try:
                 while True:
@@ -631,7 +666,7 @@ class Agent:
         cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
         return cleaned.strip()
 
-    def chat_stream(self, message: str, skip_snapshot: bool = False) -> Generator[tuple[str, str], None, None]:
+    def chat_stream(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None) -> Generator[tuple[str, str], None, None]:
         """Stream a response, yielding typed chunks as they arrive.
 
         Yields tuples of (type, data):
@@ -641,6 +676,7 @@ class Agent:
         Args:
             message: The user/daemon message to send.
             skip_snapshot: If True, skip [Live State] injection.
+            max_tokens: Override for response token cap. Falls back to config default.
 
         Thread-safe: acquires _chat_lock for the entire generator lifetime.
         The lock is held from first next() until generator exits.
@@ -692,7 +728,7 @@ class Agent:
 
             # Enable memory queue — store_memory calls become instant during thinking.
             enable_queue_mode()
-            kwargs = self._api_kwargs()
+            kwargs = self._api_kwargs(max_tokens=max_tokens)
 
             try:
                 while True:
