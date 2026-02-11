@@ -454,6 +454,7 @@ class AppState(rx.State):
                     text_batch = []
                     tool_event = None
                     error_msg = None
+                    replace_text = None
 
                     # Drain all available chunks without blocking
                     while True:
@@ -475,14 +476,19 @@ class AppState(rx.State):
                         elif chunk_type == "tool":
                             tool_event = chunk_data
                             break  # Push tool events immediately
+                        elif chunk_type == "replace":
+                            replace_text = chunk_data
 
                     # Push batched updates in a single state lock
-                    if text_batch or tool_event or error_msg:
+                    if text_batch or tool_event or error_msg or replace_text:
                         async with self:
                             if error_msg:
                                 self.streaming_text += f"\n\nSomething went wrong: {error_msg}"
                                 self.agent_status = "error"
-                            if text_batch:
+                            if replace_text:
+                                # Agent stripped text tool calls — replace with clean version
+                                self.streaming_text = replace_text
+                            elif text_batch:
                                 self.active_tool = ""
                                 self.streaming_text += "".join(text_batch)
                             if tool_event:

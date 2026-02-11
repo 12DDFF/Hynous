@@ -10,6 +10,7 @@ and responds as Hynous.
 import logging
 import json
 import os
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Generator
@@ -559,6 +560,7 @@ class Agent:
 
                     else:
                         text = msg.content or "(no response)"
+                        text = self._strip_text_tool_calls(text)
                         self._check_text_tool_leakage(text)
                         self._history.append({"role": "assistant", "content": text})
 
@@ -584,6 +586,50 @@ class Agent:
                 "Tool name(s) in text response (model: %s): %s — model may not be using structured tool calling",
                 self.config.agent.model, leaked,
             )
+
+    def _strip_text_tool_calls(self, text: str) -> str:
+        """Strip tool-call-like text from response.
+
+        Some models (e.g. Grok) write tool calls as text instead of using
+        structured function calling. This strips those patterns to keep
+        responses clean. The tool calls in text never actually execute.
+        """
+        if not text or not self.tools.has_tools:
+            return text
+
+        names_pattern = '|'.join(re.escape(n) for n in self.tools.names)
+        result = []
+        last_end = 0
+        stripped_any = False
+
+        for match in re.finditer(rf'\b({names_pattern})\s*\(', text):
+            start = match.start()
+            # Walk forward counting parens to find matching close
+            depth = 0
+            end = None
+            for i in range(match.end() - 1, len(text)):
+                if text[i] == '(':
+                    depth += 1
+                elif text[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+
+            if end:
+                result.append(text[last_end:start])
+                last_end = end
+                stripped_any = True
+                logger.info("Stripped text tool call: %s", match.group(1))
+
+        if not stripped_any:
+            return text
+
+        result.append(text[last_end:])
+        cleaned = ''.join(result)
+        # Clean up excessive whitespace from removal
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        return cleaned.strip()
 
     def chat_stream(self, message: str, skip_snapshot: bool = False) -> Generator[tuple[str, str], None, None]:
         """Stream a response, yielding typed chunks as they arrive.
@@ -750,6 +796,10 @@ class Agent:
 
                     else:
                         full_text = "".join(collected_text) or "(no response)"
+                        stripped = self._strip_text_tool_calls(full_text)
+                        if stripped != full_text:
+                            yield ("replace", stripped)
+                            full_text = stripped
                         self._check_text_tool_leakage(full_text)
                         self._history.append({"role": "assistant", "content": full_text})
 
