@@ -358,8 +358,8 @@ TRADE_TOOL_DEF = {
             },
             "leverage": {
                 "type": "integer",
-                "description": "Leverage for this trade. REQUIRED — minimum 20x.",
-                "minimum": 20,
+                "description": "Leverage for this trade. REQUIRED. Micro: 20x always. Macro: 5-20x (lower = longer hold, more room).",
+                "minimum": 5,
             },
             "stop_loss": {
                 "type": "number",
@@ -446,9 +446,14 @@ def handle_execute_trade(
     symbol = symbol.upper()
     is_buy = side == "long"
 
-    # --- Validate leverage (mandatory, minimum 20x) ---
-    if leverage is None or leverage < 20:
-        return "Error: leverage is required and must be at least 20x."
+    # --- Validate leverage (mandatory, min depends on trade type) ---
+    min_lev = 20 if trade_type == "micro" else 5
+    if leverage is None or leverage < min_lev:
+        if trade_type == "micro":
+            return "Error: micro trades require 20x leverage."
+        return "Error: leverage is required and must be at least 5x."
+    if trade_type == "micro" and leverage < 20:
+        leverage = 20
 
     # --- Validate sizing ---
     if size_usd is None and size is None:

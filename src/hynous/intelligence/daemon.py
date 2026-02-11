@@ -1008,11 +1008,28 @@ class Daemon:
 
     _PROFIT_ALERT_COOLDOWN = 1800  # 30min between alerts for same position+tier
 
+    @staticmethod
+    def _profit_thresholds(leverage: int) -> tuple[float, float, float, float]:
+        """Get profit alert thresholds scaled by leverage.
+
+        Two regimes to keep price-move thresholds sensible:
+        - High leverage (>=15x, scalp): tight ROE thresholds (7/10/15/-7)
+        - Low leverage (<15x, swing): wider ROE thresholds (20/35/50/-15)
+
+        Price-move equivalents:
+          Scalp 20x: nudge 0.35%, take 0.5%, urgent 0.75%
+          Swing 10x: nudge 2%, take 3.5%, urgent 5%
+          Swing  5x: nudge 4%, take 7%, urgent 10%
+        """
+        if leverage >= 15:
+            return (7.0, 10.0, 15.0, -7.0)
+        return (20.0, 35.0, 50.0, -15.0)
+
     def _check_profit_levels(self, positions: list[dict] | None = None):
         """Check unrealized P&L on open positions and wake agent at thresholds.
 
         Uses live return_pct from provider — no manual ROE computation needed.
-        Tiers: +7% nudge, +10% take profit, +15% urgent, -7% no SL risk.
+        Thresholds scale with leverage: high lev = scalp (tight), low lev = swing (wide).
 
         Args:
             positions: Raw positions list from _check_positions(). If None,
@@ -1030,6 +1047,7 @@ class Daemon:
                 entry_px = p["entry_px"]
                 mark_px = p["mark_px"]
                 roe_pct = p["return_pct"]  # Already leveraged return on margin
+                leverage = p.get("leverage", 20)
 
                 # Reset alerts if position side flipped (close long → open short)
                 prev_side = self._profit_sides.get(coin)
@@ -1041,16 +1059,19 @@ class Daemon:
                     self._profit_alerts[coin] = {}
                 alerts = self._profit_alerts[coin]
 
+                # Leverage-aware thresholds
+                nudge, take, urgent, risk = self._profit_thresholds(leverage)
+
                 # Check profit tiers (highest first for priority)
-                if roe_pct >= 15:
+                if roe_pct >= urgent:
                     self._maybe_alert(coin, "urgent_profit", roe_pct, side, entry_px, mark_px, now, alerts)
-                elif roe_pct >= 10:
+                elif roe_pct >= take:
                     self._maybe_alert(coin, "take_profit", roe_pct, side, entry_px, mark_px, now, alerts)
-                elif roe_pct >= 7:
+                elif roe_pct >= nudge:
                     self._maybe_alert(coin, "profit_nudge", roe_pct, side, entry_px, mark_px, now, alerts)
 
-                # Check risk: down >7% with no stop loss
-                if roe_pct <= -7:
+                # Check risk: significant loss with no stop loss
+                if roe_pct <= risk:
                     triggers = self._tracked_triggers.get(coin, [])
                     has_sl = any(t.get("order_type") == "stop_loss" for t in triggers)
                     if not has_sl:
