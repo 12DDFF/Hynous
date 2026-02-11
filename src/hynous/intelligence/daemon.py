@@ -1065,7 +1065,7 @@ class Daemon:
             self.scanner_wakes += 1
             self._scanner.wakes_triggered += 1
             top_event = top[0]
-            title = f"Scanner: {top_event.headline}"
+            title = top_event.headline
             log_event(DaemonEvent(
                 "scanner", title,
                 f"{len(top)} anomalies (top: {top_event.type} {top_event.symbol} sev={top_event.severity:.2f})",
