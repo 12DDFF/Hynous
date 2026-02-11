@@ -19,7 +19,8 @@ import logging
 import threading
 from typing import Optional
 
-import anthropic
+import litellm
+from litellm.exceptions import APIError as LitellmAPIError
 
 from ..core.config import Config
 from ..core.costs import record_claude_usage
@@ -75,10 +76,8 @@ class MemoryManager:
     def __init__(
         self,
         config: Config,
-        anthropic_client: anthropic.Anthropic,
     ):
         self.config = config
-        self.client = anthropic_client
         self._compressing = False
 
     # ================================================================
@@ -276,17 +275,19 @@ class MemoryManager:
             return None
 
         try:
-            response = self.client.messages.create(
+            response = litellm.completion(
                 model=self.config.memory.compression_model,
                 max_tokens=_COMPRESSION_MAX_TOKENS,
-                system=_COMPRESSION_SYSTEM,
-                messages=[{"role": "user", "content": formatted}],
+                messages=[
+                    {"role": "system", "content": _COMPRESSION_SYSTEM},
+                    {"role": "user", "content": formatted},
+                ],
             )
 
             # Track compression cost
             _record_compression_usage(response)
 
-            summary = response.content[0].text.strip()
+            summary = response.choices[0].message.content.strip()
 
             # Haiku flagged as trivial
             if summary.upper() == "TRIVIAL":
@@ -299,8 +300,8 @@ class MemoryManager:
 
             return summary
 
-        except anthropic.APIError as e:
-            logger.warning("Haiku compression failed, using fallback: %s", e)
+        except LitellmAPIError as e:
+            logger.warning("Compression LLM call failed, using fallback: %s", e)
             return _fallback_compress(exchange)
         except Exception as e:
             logger.error("Unexpected compression error: %s", e)
@@ -374,14 +375,22 @@ def _is_trivial(query: str) -> bool:
 
 
 def _is_complete_exchange(entries: list[dict]) -> bool:
-    """Check if an exchange group is complete (has assistant response, ends with final text)."""
+    """Check if an exchange group is complete (has assistant response, ends with final text).
+
+    In OpenAI format, assistant messages with tool_calls are mid-loop — the exchange
+    is only complete when the last message is an assistant with plain text (no tool_calls).
+    """
     if not entries:
         return False
     has_assistant = any(e["role"] == "assistant" for e in entries)
     if not has_assistant:
         return False
     last = entries[-1]
-    return last["role"] == "assistant" and isinstance(last.get("content"), str)
+    return (
+        last["role"] == "assistant"
+        and isinstance(last.get("content"), str)
+        and not last.get("tool_calls")
+    )
 
 
 def _format_context(results: list[dict], max_tokens: int) -> Optional[str]:
@@ -433,52 +442,46 @@ def _format_context(results: list[dict], max_tokens: int) -> Optional[str]:
 
 
 def _format_exchange(exchange: list[dict]) -> str:
-    """Format an exchange for the Haiku compression prompt.
+    """Format an exchange for the compression prompt.
 
-    Converts raw history dicts into readable text.
+    Converts raw history dicts (OpenAI/LiteLLM format) into readable text.
     Tool results are truncated to keep the prompt manageable.
     """
     lines = []
     for entry in exchange:
         role = entry["role"]
-        content = entry["content"]
+        content = entry.get("content", "")
 
         if role == "user" and isinstance(content, str):
             lines.append(f"USER: {_extract_query(content)}")
 
-        elif role == "user" and isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_result":
-                    tool_content = block.get("content", "")
-                    is_error = block.get("is_error", False)
-                    if len(tool_content) > 800:
-                        tool_content = tool_content[:797] + "..."
-                    prefix = "TOOL ERROR" if is_error else "TOOL RESULT"
-                    lines.append(f"{prefix}: {tool_content}")
+        elif role == "tool":
+            # OpenAI format: tool result messages
+            tool_content = content or ""
+            tool_name = entry.get("name", "?")
+            if len(tool_content) > 800:
+                tool_content = tool_content[:797] + "..."
+            lines.append(f"TOOL RESULT ({tool_name}): {tool_content}")
 
         elif role == "assistant":
-            if isinstance(content, str):
+            # Check for tool_calls in the message
+            tool_calls = entry.get("tool_calls", [])
+            if tool_calls:
+                for tc in tool_calls:
+                    func = tc.get("function", {})
+                    name = func.get("name", "?")
+                    args_str = func.get("arguments", "{}")
+                    if len(args_str) > 200:
+                        args_str = args_str[:197] + "..."
+                    lines.append(f"AGENT CALLED: {name}({args_str})")
+            if isinstance(content, str) and content.strip():
                 lines.append(f"AGENT: {content}")
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        if block.get("type") == "text":
-                            text = block["text"]
-                            if text.strip():
-                                lines.append(f"AGENT: {text}")
-                        elif block.get("type") == "tool_use":
-                            name = block.get("name", "?")
-                            inp = block.get("input", {})
-                            compact = json.dumps(inp, separators=(",", ":"))
-                            if len(compact) > 200:
-                                compact = compact[:197] + "..."
-                            lines.append(f"AGENT CALLED: {name}({compact})")
 
     return "\n".join(lines)
 
 
 def _fallback_compress(exchange: list[dict]) -> Optional[str]:
-    """Rule-based fallback compression when Haiku is unavailable.
+    """Rule-based fallback compression when LLM is unavailable.
 
     Extracts: user question, tools called, truncated final response.
     """
@@ -488,21 +491,18 @@ def _fallback_compress(exchange: list[dict]) -> Optional[str]:
 
     for entry in exchange:
         role = entry["role"]
-        content = entry["content"]
+        content = entry.get("content", "")
 
         if role == "user" and isinstance(content, str) and user_msg is None:
             user_msg = _extract_query(content)
 
         elif role == "assistant":
-            if isinstance(content, str):
+            # Extract tool names from tool_calls
+            for tc in entry.get("tool_calls", []):
+                func = tc.get("function", {})
+                tools_called.append(func.get("name", "?"))
+            if isinstance(content, str) and content.strip():
                 final_response = content
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        if block.get("type") == "tool_use":
-                            tools_called.append(block.get("name", "?"))
-                        elif block.get("type") == "text" and block.get("text", "").strip():
-                            final_response = block["text"]
 
     parts = []
     if user_msg:
@@ -601,13 +601,13 @@ def _strengthen_co_retrieved(client, results: list[dict], amount: float = 0.03) 
 
 
 def _record_compression_usage(response) -> None:
-    """Record Haiku compression token usage."""
+    """Record compression LLM token usage."""
     try:
         usage = response.usage
         if usage:
             record_claude_usage(
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
                 cache_write_tokens=0,
                 cache_read_tokens=0,
                 model="haiku",

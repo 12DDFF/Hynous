@@ -1719,7 +1719,7 @@ class Daemon:
             if max_coach_cycles > 0 and briefing_text:
                 try:
                     from .coach import Coach
-                    coach = Coach(self.agent.client)
+                    coach = Coach(self.agent.config)
                     haiku_questions = coach.sharpen(
                         briefing_text, code_questions, memory_state,
                         self._format_wake_history(),

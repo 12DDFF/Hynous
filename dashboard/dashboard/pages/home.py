@@ -1,7 +1,7 @@
 """Home page — Hynous profile + dashboard."""
 
 import reflex as rx
-from ..state import AppState, DaemonActivity, DaemonActivityFormatted
+from ..state import AppState, DaemonActivity, DaemonActivityFormatted, MODEL_LABELS
 from ..components import stat_card, ticker_badge
 
 
@@ -1013,6 +1013,61 @@ def _messages_detail() -> rx.Component:
     )
 
 
+def _model_select(label: str, value: rx.Var[str], on_change) -> rx.Component:
+    """Single model selector dropdown."""
+    return rx.vstack(
+        rx.text(
+            label,
+            font_size="0.6rem",
+            font_weight="600",
+            color="#525252",
+            text_transform="uppercase",
+            letter_spacing="0.05em",
+        ),
+        rx.select(
+            MODEL_LABELS,
+            value=value,
+            on_change=on_change,
+            size="1",
+            variant="ghost",
+            width="100%",
+            color="#a3a3a3",
+            style={
+                "& button": {
+                    "background": "#0a0a0a",
+                    "border": "1px solid #1a1a1a",
+                    "border_radius": "8px",
+                    "color": "#a3a3a3",
+                    "font_size": "0.75rem",
+                    "width": "100%",
+                    "cursor": "pointer",
+                    "&:hover": {"border_color": "#2a2a2a"},
+                },
+            },
+        ),
+        spacing="1",
+        width="100%",
+    )
+
+
+def _model_selectors() -> rx.Component:
+    """Model selector dropdowns for main agent and sub-agent."""
+    return rx.vstack(
+        _model_select(
+            "Main Model",
+            AppState.selected_model_label,
+            AppState.set_agent_model,
+        ),
+        _model_select(
+            "Sub-Agent",
+            AppState.selected_sub_model_label,
+            AppState.set_sub_model,
+        ),
+        spacing="3",
+        width="100%",
+    )
+
+
 def profile_card() -> rx.Component:
     """Hynous profile card — left sidebar."""
     return rx.box(
@@ -1051,6 +1106,12 @@ def profile_card() -> rx.Component:
                 justify="center",
                 spacing="4",
             ),
+
+            # Divider
+            rx.divider(border_color="#1a1a1a"),
+
+            # Model selectors
+            _model_selectors(),
 
             # Divider
             rx.divider(border_color="#1a1a1a"),

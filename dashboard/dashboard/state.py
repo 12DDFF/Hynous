@@ -72,6 +72,56 @@ _TOOL_DISPLAY = {
     "manage_watchpoints": "Managing watchpoints",
     "get_trade_stats": "Checking trade stats",
 }
+# --- Model selection options (label, litellm model ID) ---
+_MODEL_OPTIONS: list[tuple[str, str]] = [
+    # Anthropic
+    ("Claude Opus 4.6", "openrouter/anthropic/claude-opus-4.6"),
+    ("Claude Opus 4.5", "openrouter/anthropic/claude-opus-4.5"),
+    ("Claude Sonnet 4.5", "openrouter/anthropic/claude-sonnet-4-5-20250929"),
+    ("Claude Haiku 4.5", "openrouter/anthropic/claude-haiku-4-5-20251001"),
+    # OpenAI — GPT-5.2
+    ("GPT-5.2 Pro", "openrouter/openai/gpt-5.2-pro"),
+    ("GPT-5.2", "openrouter/openai/gpt-5.2"),
+    ("GPT-5.2 Codex", "openrouter/openai/gpt-5.2-codex"),
+    ("GPT-5.2 Chat", "openrouter/openai/gpt-5.2-chat"),
+    # OpenAI — GPT-5.1
+    ("GPT-5.1", "openrouter/openai/gpt-5.1"),
+    ("GPT-5.1 Codex Max", "openrouter/openai/gpt-5.1-codex-max"),
+    ("GPT-5.1 Codex", "openrouter/openai/gpt-5.1-codex"),
+    ("GPT-5.1 Codex Mini", "openrouter/openai/gpt-5.1-codex-mini"),
+    ("GPT-5.1 Chat", "openrouter/openai/gpt-5.1-chat"),
+    # OpenAI — GPT-5
+    ("GPT-5", "openrouter/openai/gpt-5-2025-08-07"),
+    ("GPT-5 Mini", "openrouter/openai/gpt-5-mini-2025-08-07"),
+    ("GPT-5 Nano", "openrouter/openai/gpt-5-nano-2025-08-07"),
+    # OpenAI — GPT-4.1
+    ("GPT-4.1", "openrouter/openai/gpt-4.1-2025-04-14"),
+    ("GPT-4.1 Mini", "openrouter/openai/gpt-4.1-mini-2025-04-14"),
+    ("GPT-4.1 Nano", "openrouter/openai/gpt-4.1-nano-2025-04-14"),
+    # xAI — Grok
+    ("Grok 4.1 Fast", "openrouter/x-ai/grok-4.1-fast"),
+    ("Grok 4 Fast", "openrouter/x-ai/grok-4-fast"),
+    ("Grok 4", "openrouter/x-ai/grok-4-07-09"),
+    ("Grok 3", "openrouter/x-ai/grok-3"),
+    ("Grok 3 Mini", "openrouter/x-ai/grok-3-mini"),
+    ("Grok Code Fast", "openrouter/x-ai/grok-code-fast-1"),
+    # DeepSeek
+    ("DeepSeek V3.2", "openrouter/deepseek/deepseek-v3.2"),
+    ("DeepSeek V3.2 Speciale", "openrouter/deepseek/deepseek-v3.2-speciale"),
+    # Google
+    ("Gemini 3 Pro", "openrouter/google/gemini-3-pro-preview"),
+    ("Gemini 3 Flash", "openrouter/google/gemini-3-flash-preview"),
+    # Mistral
+    ("Mistral Large 3", "openrouter/mistralai/mistral-large-2512"),
+    ("Devstral 2", "openrouter/mistralai/devstral-2512"),
+    # Qwen
+    ("Qwen3 Max", "openrouter/qwen/qwen3-max-thinking"),
+    ("Qwen3 Coder", "openrouter/qwen/qwen3-coder-next"),
+]
+_LABEL_TO_MODEL = {label: model_id for label, model_id in _MODEL_OPTIONS}
+_MODEL_TO_LABEL = {model_id: label for label, model_id in _MODEL_OPTIONS}
+MODEL_LABELS = [label for label, _ in _MODEL_OPTIONS]
+
 _TOOL_TAG = {
     "get_market_data": "market data",
     "get_orderbook": "orderbook",
@@ -427,7 +477,7 @@ class AppState(rx.State):
             async with self:
                 self.streaming_text = (
                     f"I can't connect to my brain right now. "
-                    f"Make sure ANTHROPIC_API_KEY is set in your .env file.\n\n"
+                    f"Make sure OPENROUTER_API_KEY is set in your .env file.\n\n"
                     f"Error: {_agent_error or 'Unknown'}"
                 )
                 self.agent_status = "error"
@@ -478,7 +528,11 @@ class AppState(rx.State):
     @_background
     async def init_daemon(self):
         """Ensure agent + daemon are initialized (runs in background on page load)."""
-        await asyncio.to_thread(_get_agent)
+        agent = await asyncio.to_thread(_get_agent)
+        if agent:
+            async with self:
+                self.selected_model = agent.config.agent.model
+                self.selected_sub_model = agent.config.memory.compression_model
 
     def _save_chat(self, agent=None):
         """Persist current messages and agent history to disk."""
@@ -1114,6 +1168,36 @@ class AppState(rx.State):
         self.current_page = "chat"
         self._pending_input = msg
         return self.send_message()
+
+    # === Model Selection ===
+    selected_model: str = "openrouter/anthropic/claude-sonnet-4-5-20250929"
+    selected_sub_model: str = "openrouter/anthropic/claude-haiku-4-5-20251001"
+
+    @rx.var
+    def selected_model_label(self) -> str:
+        """Human-readable label for the currently selected main model."""
+        return _MODEL_TO_LABEL.get(self.selected_model, self.selected_model)
+
+    @rx.var
+    def selected_sub_model_label(self) -> str:
+        """Human-readable label for the currently selected sub-agent model."""
+        return _MODEL_TO_LABEL.get(self.selected_sub_model, self.selected_sub_model)
+
+    def set_agent_model(self, label: str):
+        """Switch the main agent model at runtime."""
+        model_id = _LABEL_TO_MODEL.get(label, label)
+        self.selected_model = model_id
+        agent = _get_agent()
+        if agent:
+            agent.config.agent.model = model_id
+
+    def set_sub_model(self, label: str):
+        """Switch the sub-agent (coach/compression) model at runtime."""
+        model_id = _LABEL_TO_MODEL.get(label, label)
+        self.selected_sub_model = model_id
+        agent = _get_agent()
+        if agent:
+            agent.config.memory.compression_model = model_id
 
     # === Watchlist State ===
 

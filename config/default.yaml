@@ -23,7 +23,7 @@ hyperliquid:
 
 # Agent settings
 agent:
-  model: "claude-sonnet-4-5-20250929"  # Claude model to use (Sonnet 4.5 - best cost/performance)
+  model: "openrouter/anthropic/claude-sonnet-4-5-20250929"  # OpenRouter: 1 key, all models
   max_tokens: 4096           # Max response tokens
   temperature: 0.7           # Creativity (0-1)
 
@@ -83,7 +83,7 @@ memory:
   window_size: 6                 # Complete exchanges to keep in working window
   max_context_tokens: 4000       # Token budget for recalled context injected per call (~1000 words)
   retrieve_limit: 5              # Max memories to retrieve per query
-  compression_model: "claude-haiku-4-5-20251001"  # Model for compressing evicted exchanges
+  compression_model: "openrouter/anthropic/claude-haiku-4-5-20251001"  # OpenRouter
   compress_enabled: true         # Enable/disable automatic compression
 
 # Event detection thresholds

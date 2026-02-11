@@ -12,8 +12,9 @@ Cost per call: ~$0.0003-0.0005 (Haiku, ~1.5K in + 80 out).
 
 import logging
 
-import anthropic
+import litellm
 
+from ..core.config import Config
 from ..core.costs import record_claude_usage
 
 logger = logging.getLogger(__name__)
@@ -54,8 +55,8 @@ RULES:
 class Coach:
     """Haiku-powered sharpener for daemon wake quality."""
 
-    def __init__(self, anthropic_client: anthropic.Anthropic):
-        self.client = anthropic_client
+    def __init__(self, config: Config):
+        self.config = config
 
     def sharpen(
         self,
@@ -79,28 +80,30 @@ class Coach:
                 briefing, code_questions, memory_state, wake_history,
             )
 
-            result = self.client.messages.create(
-                model="claude-haiku-4-5-20251001",
+            result = litellm.completion(
+                model=self.config.memory.compression_model,
                 max_tokens=120,
-                system=SHARPENER_PROMPT,
-                messages=[{"role": "user", "content": user_msg}],
+                messages=[
+                    {"role": "system", "content": SHARPENER_PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
             )
 
-            # Record Haiku usage for cost tracking
+            # Record usage for cost tracking
             try:
                 usage = result.usage
                 if usage:
                     record_claude_usage(
-                        input_tokens=usage.input_tokens,
-                        output_tokens=usage.output_tokens,
-                        cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                        cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+                        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                        cache_write_tokens=0,
+                        cache_read_tokens=0,
                         model="haiku",
                     )
             except Exception:
                 pass
 
-            text = result.content[0].text.strip()
+            text = result.choices[0].message.content.strip()
 
             if "ALL_CLEAR" in text:
                 logger.info("Coach: ALL_CLEAR")

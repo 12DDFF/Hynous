@@ -1,18 +1,21 @@
 """
 Hynous Agent
 
-The core reasoning engine. Wraps Claude API with tool calling support.
+The core reasoning engine. Wraps LiteLLM for multi-provider LLM support
+with tool calling. Supports Claude, GPT-4, DeepSeek, etc. via config.
 This is the brain — it receives messages, thinks, optionally uses tools,
 and responds as Hynous.
 """
 
 import logging
 import json
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Generator
 
-import anthropic
+import litellm
+from litellm.exceptions import APIError as LitellmAPIError
 
 from .prompts import build_system_prompt
 from .memory_manager import MemoryManager
@@ -39,7 +42,11 @@ _MAX_STALE_RESULT_CHARS = 800
 
 
 class Agent:
-    """Claude-powered agent with Hynous persona and tool access."""
+    """LLM-powered agent with Hynous persona and tool access.
+
+    Uses LiteLLM for multi-provider support (Claude, GPT-4, DeepSeek, etc.).
+    Provider is selected via the model config string (e.g. "anthropic/claude-sonnet-4-5-20250929").
+    """
 
     def __init__(
         self,
@@ -48,13 +55,10 @@ class Agent:
     ):
         self.config = config or load_config()
 
-        if not self.config.anthropic_api_key:
-            raise ValueError(
-                "ANTHROPIC_API_KEY not set. "
-                "Add it to your .env file or set the environment variable."
-            )
+        # Set OpenRouter API key — single key for all LLM providers
+        if self.config.openrouter_api_key:
+            os.environ["OPENROUTER_API_KEY"] = self.config.openrouter_api_key
 
-        self.client = anthropic.Anthropic(api_key=self.config.anthropic_api_key)
         self.tools = tool_registry or get_registry()
 
         # Initialize Hyperliquid provider with config (picks testnet URL + private key)
@@ -70,7 +74,6 @@ class Agent:
         # Tiered memory manager — retrieval + compression
         self.memory_manager = MemoryManager(
             config=self.config,
-            anthropic_client=self.client,
         )
         self._active_context: str | None = None
 
@@ -187,22 +190,23 @@ class Agent:
         """
         messages = self._build_messages()
 
-        # Is the last message a fresh (unseen) tool_result?
-        last_is_tools = (
-            len(messages) > 0
-            and messages[-1]["role"] == "user"
-            and isinstance(messages[-1].get("content"), list)
-        )
+        # Find the last tool result message index
+        last_tool_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i]["role"] == "tool":
+                last_tool_idx = i
+                break
 
         compacted = []
         for i, entry in enumerate(messages):
-            is_tool_entry = (
-                entry["role"] == "user"
-                and isinstance(entry.get("content"), list)
-            )
-            # Keep the last tool_result full if fresh; compact all others
-            if is_tool_entry and not (last_is_tools and i == len(messages) - 1):
-                compacted.append(self._truncate_tool_entry(entry))
+            # Truncate stale tool results (keep fresh ones full)
+            if entry["role"] == "tool" and i != last_tool_idx:
+                content = entry.get("content", "")
+                if len(content) > _MAX_STALE_RESULT_CHARS:
+                    content = content[:_MAX_STALE_RESULT_CHARS] + "\n...[truncated, already processed]"
+                    compacted.append({**entry, "content": content})
+                else:
+                    compacted.append(entry)
             else:
                 compacted.append(entry)
 
@@ -242,72 +246,72 @@ class Agent:
 
         return compacted
 
-    @staticmethod
-    def _truncate_tool_entry(entry: dict) -> dict:
-        """Create a copy of a tool_result entry with truncated content."""
-        new_blocks = []
-        for block in entry["content"]:
-            if isinstance(block, dict) and block.get("type") == "tool_result":
-                content = block.get("content", "")
-                if len(content) > _MAX_STALE_RESULT_CHARS:
-                    content = content[:_MAX_STALE_RESULT_CHARS] + "\n...[truncated, already processed]"
-                new_blocks.append({**block, "content": content})
-            else:
-                new_blocks.append(block)
-        return {"role": entry["role"], "content": new_blocks}
-
     # ---- API kwargs with prompt caching ----
 
-    def _api_kwargs(self) -> dict:
-        """Build API kwargs with prompt caching enabled.
+    def _is_anthropic(self) -> bool:
+        """Check if the current model is an Anthropic model (direct or via OpenRouter)."""
+        return "anthropic/" in self.config.agent.model
 
-        Anthropic caches content marked with cache_control for 5 minutes
-        (TTL refreshes on each hit).  The system prompt and tool schemas
-        are identical across every call in a conversation, so marking them
-        cacheable saves ~90% of input-token cost on the cached portion
-        after the first call.
+    def _build_system_messages(self) -> list[dict]:
+        """Build system message(s) for the API call.
 
-        Pricing (Sonnet 4.5):
-          - Cache write:  $3.75 / MTok  (25% premium, first call only)
-          - Cache read:   $0.30 / MTok  (90% savings, all subsequent)
-          - No-cache:     $3.00 / MTok  (what we pay today, every call)
+        For Anthropic models, uses cache_control for prompt caching (~90% savings).
+        For other providers, uses a plain system message.
         """
-        kwargs = {
-            "model": self.config.agent.model,
-            "max_tokens": self.config.agent.max_tokens,
-            "system": [
+        if self._is_anthropic():
+            return [{"role": "system", "content": [
                 {
                     "type": "text",
                     "text": self.system_prompt,
                     "cache_control": {"type": "ephemeral"},
                 }
-            ],
-            "messages": self._sanitize_messages(self._compact_messages()),
+            ]}]
+        return [{"role": "system", "content": self.system_prompt}]
+
+    def _api_kwargs(self) -> dict:
+        """Build API kwargs for litellm.completion().
+
+        For Anthropic models, enables prompt caching via cache_control markers.
+        For other providers, uses plain messages (cache_control is ignored).
+        """
+        system_msgs = self._build_system_messages()
+        conversation = self._sanitize_messages(self._compact_messages())
+
+        kwargs = {
+            "model": self.config.agent.model,
+            "max_tokens": self.config.agent.max_tokens,
+            "messages": system_msgs + conversation,
         }
 
         if self.tools.has_tools:
-            tools = self.tools.to_anthropic_format()
-            # Mark the last tool for caching.  The API caches everything
-            # up to and including the last cache_control breakpoint as a
-            # single prefix — so system prompt + all tool schemas are
-            # cached together in one read on subsequent calls.
-            tools[-1]["cache_control"] = {"type": "ephemeral"}
-            kwargs["tools"] = tools
+            kwargs["tools"] = self.tools.to_litellm_format()
 
         return kwargs
 
     @staticmethod
     def _sanitize_messages(messages: list[dict]) -> list[dict]:
-        """Ensure no message has empty content (API rejects it)."""
+        """Ensure no message has empty content (API rejects it).
+
+        Special handling:
+        - Assistant messages with tool_calls can have empty content (that's valid)
+        - Tool messages always have content from execution results
+        """
         sanitized = []
         for msg in messages:
+            role = msg.get("role", "")
             content = msg.get("content")
-            if not content and content != 0:
+            # Assistant messages with tool_calls are valid even with empty content
+            if role == "assistant" and msg.get("tool_calls"):
+                sanitized.append(msg)
+            elif role == "tool":
+                # Tool results should always have content; pass through
+                sanitized.append(msg)
+            elif not content and content != 0:
                 # Empty string, empty list, or None — replace with placeholder
-                logger.warning("Sanitized empty %s message (content=%r)", msg["role"], content)
+                logger.warning("Sanitized empty %s message (content=%r)", role, content)
                 sanitized.append({
-                    "role": msg["role"],
-                    "content": "(empty)" if msg["role"] == "assistant" else "(continued)",
+                    **msg,
+                    "content": "(empty)" if role == "assistant" else "(continued)",
                 })
             else:
                 sanitized.append(msg)
@@ -315,44 +319,42 @@ class Agent:
 
     # ---- Concurrent tool execution ----
 
-    def _execute_tools(self, tool_blocks: list) -> list[dict]:
-        """Execute tool calls and return tool_result dicts.
+    def _execute_tools(self, tool_calls: list[dict]) -> list[dict]:
+        """Execute tool calls and return tool result messages (OpenAI format).
+
+        Args:
+            tool_calls: List of parsed tool call dicts with keys:
+                id, name, arguments (dict, already parsed from JSON).
+
+        Returns list of {"role": "tool", "tool_call_id": ..., "name": ..., "content": ...} dicts.
 
         Tools marked background=True (e.g. store_memory) fire in daemon
         threads and get an immediate synthetic result — the agent doesn't
         wait for them.  All other tools run with full concurrency and
         timeout handling.
-
-        Single blocking tool  → runs inline (no thread overhead).
-        Multiple blocking     → ThreadPool so network calls overlap.
         """
-        def _run(name: str, kwargs: dict, tool_use_id: str) -> dict:
-            """Execute a tool call. Accepts only plain Python types to avoid
-            Pyo3 pointer issues when called from ThreadPoolExecutor threads."""
+        def _run(name: str, kwargs: dict, tool_call_id: str) -> dict:
+            """Execute a tool call."""
             logger.info("Tool call: %s(%s)", name, kwargs)
             try:
                 result = self.tools.call(name, **kwargs)
                 return {
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": name,
                     "content": json.dumps(result) if not isinstance(result, str) else result,
                 }
             except Exception as e:
                 logger.error("Tool error: %s — %s", name, e)
                 return {
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": name,
                     "content": f"Error: {e}",
-                    "is_error": True,
                 }
 
         def _bg_fire(name: str, kwargs: dict):
-            """Fire-and-forget: run in daemon thread, log errors only.
-
-            IMPORTANT: Only pass plain Python types (str, dict, list) into
-            this function — never Pyo3-backed SDK objects.  Dropping a Pyo3
-            pointer from a non-GIL thread causes a Rust panic.
-            """
+            """Fire-and-forget: run in daemon thread, log errors only."""
             try:
                 self.tools.call(name, **kwargs)
                 logger.info("Background tool done: %s", name)
@@ -362,55 +364,99 @@ class Agent:
         # Split into blocking and background
         blocking = []
         background = []
-        for block in tool_blocks:
-            tool = self.tools.get(block.name)
+        for tc in tool_calls:
+            tool = self.tools.get(tc["name"])
             if tool and tool.background:
-                background.append(block)
+                background.append(tc)
             else:
-                blocking.append(block)
+                blocking.append(tc)
 
         results = []
 
         # Background tools: fire daemon threads, return synthetic results
-        # Extract plain Python data from SDK blocks BEFORE spawning threads
-        # to avoid Pyo3 pointer drops on non-GIL threads.
-        for block in background:
-            name = str(block.name)
-            kwargs = dict(block.input)
-            tool_use_id = str(block.id)
+        for tc in background:
+            name = tc["name"]
+            kwargs = tc["arguments"]
+            tool_call_id = tc["id"]
             logger.info("Background tool call: %s(%s)", name, kwargs)
             threading.Thread(target=_bg_fire, args=(name, kwargs), daemon=True).start()
             results.append({
-                "type": "tool_result",
-                "tool_use_id": tool_use_id,
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": name,
                 "content": "Done.",
             })
 
-        # Extract plain Python data from SDK blocks before passing to threads.
-        blocking_plain = [
-            (str(b.name), dict(b.input), str(b.id)) for b in blocking
-        ]
-
         # Blocking tools: full execution with concurrency + timeouts
-        if len(blocking_plain) == 1:
-            name, kwargs, tid = blocking_plain[0]
-            results.append(_run(name, kwargs, tid))
-        elif blocking_plain:
-            with ThreadPoolExecutor(max_workers=len(blocking_plain)) as pool:
-                futures = [pool.submit(_run, n, k, t) for n, k, t in blocking_plain]
-                for future, (name, _, tid) in zip(futures, blocking_plain):
+        if len(blocking) == 1:
+            tc = blocking[0]
+            results.append(_run(tc["name"], tc["arguments"], tc["id"]))
+        elif blocking:
+            with ThreadPoolExecutor(max_workers=len(blocking)) as pool:
+                futures = [
+                    pool.submit(_run, tc["name"], tc["arguments"], tc["id"])
+                    for tc in blocking
+                ]
+                for future, tc in zip(futures, blocking):
                     try:
                         results.append(future.result(timeout=_TOOL_TIMEOUT))
                     except Exception as e:
-                        logger.error("Tool timeout: %s — %s", name, e)
+                        logger.error("Tool timeout: %s — %s", tc["name"], e)
                         results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tid,
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "name": tc["name"],
                             "content": f"Error: tool timed out after {_TOOL_TIMEOUT}s",
-                            "is_error": True,
                         })
 
         return results
+
+    # ---- Response parsing helpers ----
+
+    @staticmethod
+    def _parse_tool_calls(message) -> list[dict]:
+        """Parse tool calls from a LiteLLM response message into plain dicts.
+
+        Returns list of {"id": str, "name": str, "arguments": dict}.
+        """
+        tool_calls = []
+        for tc in (message.tool_calls or []):
+            try:
+                args = json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            tool_calls.append({
+                "id": tc.id,
+                "name": tc.function.name,
+                "arguments": args,
+            })
+        return tool_calls
+
+    @staticmethod
+    def _build_assistant_msg(message, tool_calls: list[dict] | None = None) -> dict:
+        """Build a clean assistant history entry from a LiteLLM response message.
+
+        For messages with tool calls, includes the tool_calls array.
+        For plain text, just content string.
+        """
+        content = message.content or ""
+        if tool_calls:
+            return {
+                "role": "assistant",
+                "content": content,
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["arguments"]) if isinstance(tc["arguments"], dict) else tc["arguments"],
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+        return {"role": "assistant", "content": content}
 
     # ---- Chat methods ----
 
@@ -475,37 +521,42 @@ class Agent:
             try:
                 while True:
                     try:
-                        response = self.client.messages.create(**kwargs)
-                    except anthropic.APIError as e:
-                        logger.error(f"Claude API error: {e}")
+                        response = litellm.completion(**kwargs)
+                    except LitellmAPIError as e:
+                        logger.error(f"LLM API error: {e}")
                         error_msg = "I'm having trouble connecting right now. Give me a moment."
                         self._history.append({"role": "assistant", "content": error_msg})
                         self._active_context = None
                         return error_msg
 
                     self._record_usage(response)
+                    msg = response.choices[0].message
+                    finish = response.choices[0].finish_reason
 
-                    if response.stop_reason == "tool_use":
-                        tool_blocks = [b for b in response.content if b.type == "tool_use"]
-                        tool_results = self._execute_tools(tool_blocks)
+                    if finish == "tool_calls" or (msg.tool_calls and len(msg.tool_calls) > 0):
+                        parsed_calls = self._parse_tool_calls(msg)
+                        tool_results = self._execute_tools(parsed_calls)
 
                         # Track tool calls with truncated results for coach
-                        for block, result in zip(tool_blocks, tool_results):
+                        for tc, result in zip(parsed_calls, tool_results):
                             content = result.get("content", "")
                             if len(content) > 400:
                                 content = content[:400] + "..."
                             self._last_tool_calls.append({
-                                "name": str(block.name),
-                                "input": dict(block.input),
+                                "name": tc["name"],
+                                "input": tc["arguments"],
                                 "result": content,
                             })
 
-                        self._history.append({"role": "assistant", "content": self._clean_content(response.content)})
-                        self._history.append({"role": "user", "content": tool_results})
-                        kwargs["messages"] = self._sanitize_messages(self._compact_messages())
+                        self._history.append(self._build_assistant_msg(msg, parsed_calls))
+                        self._history.extend(tool_results)
+                        kwargs["messages"] = (
+                            self._build_system_messages()
+                            + self._sanitize_messages(self._compact_messages())
+                        )
 
                     else:
-                        text = self._extract_text(response.content)
+                        text = msg.content or "(no response)"
                         self._history.append({"role": "assistant", "content": text})
 
                         # Window management: compress evicted exchanges into Nous
@@ -586,50 +637,105 @@ class Agent:
             try:
                 while True:
                     try:
-                        with self.client.messages.stream(**kwargs) as stream:
-                            collected = []
-                            for text in stream.text_stream:
-                                collected.append(text)
-                                yield ("text", text)
+                        stream_response = litellm.completion(**kwargs, stream=True)
 
-                            response = stream.get_final_message()
-                    except anthropic.APIError as e:
-                        logger.error(f"Claude API error: {e}")
+                        collected_text = []
+                        collected_tool_calls: dict[int, dict] = {}  # index → {id, name, arguments}
+
+                        for chunk in stream_response:
+                            delta = chunk.choices[0].delta
+                            finish = chunk.choices[0].finish_reason
+
+                            # Text chunk
+                            if delta.content:
+                                collected_text.append(delta.content)
+                                yield ("text", delta.content)
+
+                            # Tool call chunks (accumulated across multiple chunks)
+                            if delta.tool_calls:
+                                for tc_chunk in delta.tool_calls:
+                                    idx = tc_chunk.index
+                                    if idx not in collected_tool_calls:
+                                        collected_tool_calls[idx] = {
+                                            "id": tc_chunk.id or "",
+                                            "name": "",
+                                            "arguments": "",
+                                        }
+                                    if tc_chunk.id:
+                                        collected_tool_calls[idx]["id"] = tc_chunk.id
+                                    if tc_chunk.function and tc_chunk.function.name:
+                                        collected_tool_calls[idx]["name"] = tc_chunk.function.name
+                                    if tc_chunk.function and tc_chunk.function.arguments:
+                                        collected_tool_calls[idx]["arguments"] += tc_chunk.function.arguments
+
+                    except LitellmAPIError as e:
+                        logger.error(f"LLM API error: {e}")
                         error_msg = "I'm having trouble connecting right now. Give me a moment."
                         self._history.append({"role": "assistant", "content": error_msg})
                         self._active_context = None
                         yield ("text", error_msg)
                         return
 
-                    self._record_usage(response)
-
-                    if response.stop_reason == "tool_use":
-                        tool_blocks = [b for b in response.content if b.type == "tool_use"]
+                    # After stream ends — check if we got tool calls
+                    if collected_tool_calls:
+                        # Parse accumulated tool calls
+                        parsed_calls = []
+                        for idx in sorted(collected_tool_calls.keys()):
+                            tc = collected_tool_calls[idx]
+                            try:
+                                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                            except json.JSONDecodeError:
+                                args = {}
+                            parsed_calls.append({
+                                "id": tc["id"],
+                                "name": tc["name"],
+                                "arguments": args,
+                            })
 
                         # Signal all tools to the UI before executing
-                        for block in tool_blocks:
-                            yield ("tool", block.name)
+                        for tc in parsed_calls:
+                            yield ("tool", tc["name"])
 
                         # Execute tools (concurrent when multiple)
-                        tool_results = self._execute_tools(tool_blocks)
+                        tool_results = self._execute_tools(parsed_calls)
 
                         # Track tool calls with truncated results for coach
-                        for block, result in zip(tool_blocks, tool_results):
+                        for tc, result in zip(parsed_calls, tool_results):
                             content = result.get("content", "")
                             if len(content) > 400:
                                 content = content[:400] + "..."
                             self._last_tool_calls.append({
-                                "name": str(block.name),
-                                "input": dict(block.input),
+                                "name": tc["name"],
+                                "input": tc["arguments"],
                                 "result": content,
                             })
 
-                        self._history.append({"role": "assistant", "content": self._clean_content(response.content)})
-                        self._history.append({"role": "user", "content": tool_results})
-                        kwargs["messages"] = self._sanitize_messages(self._compact_messages())
+                        # Build assistant message with tool_calls for history
+                        assistant_content = "".join(collected_text)
+                        assistant_msg = {
+                            "role": "assistant",
+                            "content": assistant_content,
+                            "tool_calls": [
+                                {
+                                    "id": tc["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc["name"],
+                                        "arguments": json.dumps(tc["arguments"]),
+                                    },
+                                }
+                                for tc in parsed_calls
+                            ],
+                        }
+                        self._history.append(assistant_msg)
+                        self._history.extend(tool_results)
+                        kwargs["messages"] = (
+                            self._build_system_messages()
+                            + self._sanitize_messages(self._compact_messages())
+                        )
 
                     else:
-                        full_text = "".join(collected) or "(no response)"
+                        full_text = "".join(collected_text) or "(no response)"
                         self._history.append({"role": "assistant", "content": full_text})
 
                         # Window management: compress evicted exchanges into Nous
@@ -647,12 +753,12 @@ class Agent:
     def _trim_history(self, max_entries: int = 40):
         """Trim history to roughly max_entries without breaking tool pairs.
 
-        The API requires every tool_result to have a matching tool_use in the
-        preceding assistant message.  A naive slice can orphan tool_results.
+        The API requires every tool result message to have a matching tool_calls
+        in the preceding assistant message.  A naive slice can orphan tool results.
 
         Strategy: if trimming is needed, find the first safe cut point at or
         after the target index — a "user" message whose content is a plain
-        string (i.e., a real user message, not tool_results).
+        string (i.e., a real user message, not in the middle of a tool exchange).
         """
         if len(self._history) <= max_entries:
             return
@@ -661,7 +767,7 @@ class Agent:
         # Walk forward from target to find a safe boundary
         for i in range(target, len(self._history)):
             entry = self._history[i]
-            if entry["role"] == "user" and isinstance(entry["content"], str):
+            if entry["role"] == "user" and isinstance(entry.get("content"), str):
                 self._history = self._history[i:]
                 return
 
@@ -669,70 +775,35 @@ class Agent:
 
     @staticmethod
     def _sanitize_history(history: list[dict]) -> list[dict]:
-        """Remove orphaned tool_results from the start of a loaded history.
+        """Remove orphaned tool results from the start of a loaded history.
 
-        On restore, the history might start with a tool_result whose matching
-        tool_use was trimmed in a previous session.
+        On restore, the history might start with tool result messages whose
+        matching assistant tool_calls were trimmed in a previous session.
         """
-        # Find first safe message (user with string content)
+        # Find first safe message (user with string content, or assistant without tool context issues)
         for i, entry in enumerate(history):
             if entry["role"] == "user" and isinstance(entry.get("content"), str):
                 return history[i:]
-            if entry["role"] == "assistant":
+            if entry["role"] == "assistant" and not entry.get("tool_calls"):
                 return history[i:]
         return history
 
     @staticmethod
     def _record_usage(response) -> None:
-        """Record token usage from a Claude API response."""
+        """Record token usage from a LiteLLM API response."""
         try:
             usage = response.usage
             if usage:
                 record_claude_usage(
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
+                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
                     cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
                     cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
                 )
         except Exception:
             pass  # Never let cost tracking break the agent
 
-    @staticmethod
-    def _clean_content(content) -> list[dict]:
-        """Convert SDK content blocks to clean dicts for history storage.
-
-        The SDK response objects may include extra fields (e.g., parsed_output)
-        that the API rejects when sent back as input. Strip to only the fields
-        the API expects.
-        """
-        cleaned = []
-        for block in content:
-            if hasattr(block, "type"):
-                if block.type == "text":
-                    cleaned.append({"type": "text", "text": block.text})
-                elif block.type == "tool_use":
-                    cleaned.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    })
-                else:
-                    # Unknown block type — try dict conversion as fallback
-                    cleaned.append({"type": block.type})
-            elif isinstance(block, dict):
-                cleaned.append(block)
-        return cleaned
-
     def clear_history(self):
         """Clear conversation history."""
         self._history = []
         self._active_context = None
-
-    def _extract_text(self, content: list) -> str:
-        """Extract text from response content blocks."""
-        texts = []
-        for block in content:
-            if hasattr(block, "text") and block.text:
-                texts.append(block.text)
-        return "\n".join(texts) if texts else "(no response)"

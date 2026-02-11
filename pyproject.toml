@@ -16,7 +16,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
 
     # LLM
-    "anthropic>=0.40.0",
+    "litellm>=1.0.0",
+    "anthropic>=0.40.0",  # Used by litellm for Anthropic provider
 
     # Dashboard
     "reflex>=0.6.0",

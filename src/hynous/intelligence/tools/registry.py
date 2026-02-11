@@ -2,7 +2,7 @@
 Tool Registry
 
 Manages tools that Hynous can call during reasoning.
-Tools are registered here and converted to Anthropic's tool format for the API.
+Tools are registered here and converted to OpenAI/LiteLLM tool format for the API.
 
 Pattern for adding new tools:
   1. Create a new file in this directory (e.g., memory.py, trading.py)
@@ -32,12 +32,15 @@ class Tool:
     handler: Callable[..., Any]
     background: bool = False
 
-    def to_anthropic_format(self) -> dict:
-        """Convert to Anthropic API tool format."""
+    def to_litellm_format(self) -> dict:
+        """Convert to OpenAI/LiteLLM tool format."""
         return {
-            "name": self.name,
-            "description": self.description,
-            "input_schema": self.parameters,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
         }
 
 
@@ -59,9 +62,9 @@ class ToolRegistry:
         """List all registered tools."""
         return list(self._tools.values())
 
-    def to_anthropic_format(self) -> list[dict]:
-        """Convert all tools to Anthropic API format."""
-        return [tool.to_anthropic_format() for tool in self._tools.values()]
+    def to_litellm_format(self) -> list[dict]:
+        """Convert all tools to OpenAI/LiteLLM format."""
+        return [tool.to_litellm_format() for tool in self._tools.values()]
 
     def call(self, tool_name: str, **kwargs) -> Any:
         """Call a tool by name with arguments."""

@@ -23,7 +23,7 @@ def _find_project_root() -> Path:
 
 @dataclass
 class AgentConfig:
-    model: str = "claude-sonnet-4-5-20250929"
+    model: str = "openrouter/anthropic/claude-sonnet-4-5-20250929"  # OpenRouter: 1 key, all models
     max_tokens: int = 4096
     temperature: float = 0.7
 
@@ -59,7 +59,7 @@ class MemoryConfig:
     window_size: int = 6            # Complete exchanges to keep in working window
     max_context_tokens: int = 800   # Token budget for injected recalled context
     retrieve_limit: int = 5         # Max Nous results per retrieval
-    compression_model: str = "claude-haiku-4-5-20251001"
+    compression_model: str = "openrouter/anthropic/claude-haiku-4-5-20251001"  # OpenRouter
     compress_enabled: bool = True   # Master switch for automatic compression
     gate_filter_enabled: bool = True  # Pre-storage quality gate (MF-15)
 
@@ -125,7 +125,7 @@ class Config:
     """Main application configuration."""
 
     # API keys (from environment)
-    anthropic_api_key: str = ""
+    openrouter_api_key: str = ""    # Single key for all LLM providers via OpenRouter
     hyperliquid_private_key: str = ""
 
     # Sub-configs
@@ -174,10 +174,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
     discord_raw = raw.get("discord", {})
 
     return Config(
-        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+        openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
         hyperliquid_private_key=os.environ.get("HYPERLIQUID_PRIVATE_KEY", ""),
         agent=AgentConfig(
-            model=agent_raw.get("model", "claude-sonnet-4-5-20250929"),
+            model=agent_raw.get("model", "openrouter/anthropic/claude-sonnet-4-5-20250929"),
             max_tokens=agent_raw.get("max_tokens", 4096),
             temperature=agent_raw.get("temperature", 0.7),
         ),
@@ -196,7 +196,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
             window_size=mem_raw.get("window_size", 6),
             max_context_tokens=mem_raw.get("max_context_tokens", 800),
             retrieve_limit=mem_raw.get("retrieve_limit", 5),
-            compression_model=mem_raw.get("compression_model", "claude-haiku-4-5-20251001"),
+            compression_model=mem_raw.get("compression_model", "openrouter/anthropic/claude-haiku-4-5-20251001"),
             compress_enabled=mem_raw.get("compress_enabled", True),
             gate_filter_enabled=mem_raw.get("gate_filter_enabled", True),
         ),
