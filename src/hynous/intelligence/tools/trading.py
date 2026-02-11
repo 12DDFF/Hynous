@@ -299,7 +299,8 @@ TRADE_TOOL_DEF = {
         "- market (default): Immediate fill at current price\n"
         "- limit: Resting order at your price, fills when reached\n\n"
         "Position sizing (provide one):\n"
-        "- size_usd: Size in USD (e.g. 2000)\n"
+        "- size_usd: NOTIONAL size in USD. Margin from account = size_usd / leverage.\n"
+        "  E.g. size_usd=500 at 10x → $50 margin from account, $500 notional exposure.\n"
         "- size: Size in base asset (e.g. 0.03 BTC)\n\n"
         "Risk management (ALL required):\n"
         "- leverage: REQUIRED, minimum 10x\n"
@@ -337,7 +338,8 @@ TRADE_TOOL_DEF = {
             },
             "size_usd": {
                 "type": "number",
-                "description": "Position size in USD.",
+                "description": "Notional position size in USD. Margin deducted from account = size_usd / leverage. "
+                               "E.g. size_usd=500 at 12x = $42 margin from account.",
                 "minimum": 10,
             },
             "size": {
@@ -612,9 +614,11 @@ def handle_execute_trade(
 
     # --- Build result ---
     effective_usd = size_usd if size_usd else fill_sz * fill_px
+    margin_usd = effective_usd / leverage if leverage else effective_usd
     lines = [
         f"EXECUTED: {symbol} {side.upper()}",
-        f"Entry: {_fmt_price(fill_px)} (filled {fill_sz:.6g} {symbol}, ~{_fmt_big(effective_usd)})",
+        f"Entry: {_fmt_price(fill_px)} (filled {fill_sz:.6g} {symbol})",
+        f"Size: ${effective_usd:,.0f} notional | ${margin_usd:,.0f} margin (from account)",
     ]
 
     if leverage is not None:

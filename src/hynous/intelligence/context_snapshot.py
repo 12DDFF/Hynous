@@ -145,9 +145,13 @@ def _build_portfolio(provider, daemon, config) -> str:
         mark = p["mark_px"]
         pnl_pct = p["return_pct"]
         pnl_usd = p["unrealized_pnl"]
+        margin = p.get("margin_used", 0)
+        lev = p.get("leverage", 0)
 
+        margin_str = f" ${margin:,.0f} in" if margin else ""
+        lev_str = f" {lev}x" if lev else ""
         pos_str = (
-            f"  {coin} {side} @ ${entry:,.0f} -> ${mark:,.0f} "
+            f"  {coin} {side}{margin_str}{lev_str} @ ${entry:,.0f} -> ${mark:,.0f} "
             f"({pnl_pct:+.1f}%, {'+' if pnl_usd >= 0 else ''}${pnl_usd:.0f})"
         )
 
