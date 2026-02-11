@@ -61,6 +61,15 @@ scanner:
   liq_cascade_min_usd: 5000000     # Per-coin 1h liquidation threshold
   liq_wave_min_usd: 50000000       # Market-wide 1h liquidation threshold
   min_oi_usd: 1000000              # Skip pairs with OI below this
+  # Micro trading detectors (L2 + 5m candles)
+  book_poll_enabled: true            # Fetch L2 orderbooks + 5m candles for tracked symbols
+  book_imbalance_flip_pct: 15.0      # Imbalance swing % to trigger book_flip detector
+  momentum_5m_pct: 1.5               # 5m candle body % to trigger momentum_burst
+  momentum_volume_mult: 2.0          # Volume multiplier vs rolling avg for momentum
+  position_adverse_threshold: 0.40   # Imbalance threshold for adverse book signal
+  # News integration (CryptoCompare)
+  news_poll_enabled: true              # Poll CryptoCompare for news (every deriv cycle)
+  news_wake_max_age_minutes: 30        # Only alert on news < 30min old
 
 # Discord bot (chat relay + daemon notifications)
 discord:

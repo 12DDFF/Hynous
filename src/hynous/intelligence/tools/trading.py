@@ -386,6 +386,12 @@ TRADE_TOOL_DEF = {
                 "type": "string",
                 "description": "Full trade thesis — why entering, what signals support it. Always stored in memory.",
             },
+            "trade_type": {
+                "type": "string",
+                "enum": ["macro", "micro"],
+                "description": "Trade type. 'micro' = 15-60min hold, tight stops, Speculative size max. "
+                               "'macro' = hours-days, thesis-driven. Defaults to 'macro'.",
+            },
         },
         "required": ["symbol", "side", "leverage", "stop_loss", "take_profit", "reasoning", "confidence"],
     },
@@ -405,12 +411,32 @@ def handle_execute_trade(
     slippage: float | None = None,
     confidence: float | None = None,
     reasoning: str | None = None,
+    trade_type: str = "macro",
 ) -> str:
     """Handle the execute_trade tool call."""
     # Check circuit breaker and position limits BEFORE anything else
     blocked = _check_trading_allowed(is_new_entry=True)
     if blocked:
         return blocked
+
+    # --- Micro trade enforcement ---
+    if trade_type == "micro":
+        # Check daily micro limit
+        try:
+            from ...intelligence.daemon import get_active_daemon
+            daemon = get_active_daemon()
+            if daemon and daemon._micro_entries_today >= 2:
+                return (
+                    "Micro limit hit (2/day). Switch to macro if you have a strong thesis, "
+                    "or wait until tomorrow."
+                )
+        except Exception:
+            pass
+
+        # Cap confidence at Speculative tier max
+        if confidence is not None and confidence > 0.59:
+            logger.info("Micro trade: clamping confidence %.2f → 0.59", confidence)
+            confidence = 0.59
 
     provider, config = _get_trading_provider()
 
@@ -518,6 +544,17 @@ def handle_execute_trade(
                 f"{'limit' if order_type == 'limit' else 'current'} price ({_fmt_price(ref_price)}) for a short."
             )
 
+    # --- Micro trade SL/TP distance warnings ---
+    if trade_type == "micro" and ref_price and ref_price > 0:
+        if stop_loss is not None:
+            sl_dist = abs(stop_loss - ref_price) / ref_price
+            if sl_dist > 0.005:
+                logger.info("Micro trade: SL distance %.1f%% > 0.5%% recommended", sl_dist * 100)
+        if take_profit is not None:
+            tp_dist = abs(take_profit - ref_price) / ref_price
+            if tp_dist > 0.01:
+                logger.info("Micro trade: TP distance %.1f%% > 1%% recommended", tp_dist * 100)
+
     # --- Set leverage if specified ---
     if leverage is not None:
         try:
@@ -579,6 +616,7 @@ def handle_execute_trade(
                 side, symbol, f"LIMIT@{_fmt_price(limit_price)}",
                 limit_price, stop_loss, take_profit, confidence,
                 size_usd or (sz_placed * limit_price), sz_placed, rr_val, reasoning, lines,
+                trade_type=trade_type,
             )
 
             return "\n".join(lines)
@@ -655,6 +693,8 @@ def handle_execute_trade(
         daemon = get_active_daemon()
         if daemon:
             daemon.record_trade_entry()
+            if trade_type == "micro":
+                daemon.record_micro_entry()
     except Exception:
         pass
 
@@ -673,6 +713,7 @@ def handle_execute_trade(
         side, symbol, _fmt_price(fill_px), fill_px,
         stop_loss, take_profit, confidence,
         effective_usd, fill_sz, rr_val, reasoning, lines,
+        trade_type=trade_type,
     )
 
     return "\n".join(lines)
@@ -814,6 +855,7 @@ def _store_trade_memory(
     stop_loss: float, take_profit: float,
     confidence: float | None, size_usd: float, fill_sz: float,
     rr_ratio: float, reasoning: str, lines: list[str],
+    trade_type: str = "macro",
 ) -> str | None:
     """Store trade entry in Nous memory. Returns node_id or None.
 
@@ -858,6 +900,8 @@ def _store_trade_memory(
         signals["confidence"] = confidence
     if rr_ratio:
         signals["rr_ratio"] = rr_ratio
+    if trade_type != "macro":
+        signals["trade_type"] = trade_type
 
     node_id = _store_to_nous(
         subtype="custom:trade_entry",

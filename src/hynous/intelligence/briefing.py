@@ -313,7 +313,13 @@ def build_briefing(
     for sym in data_cache.symbols:
         asset = data_cache.get(sym)
         if asset:
-            sections.append(_format_asset_section(asset, snapshot))
+            sections.append(_format_asset_section(asset, snapshot, daemon=daemon))
+
+    # --- News headlines (from scanner) ---
+    if daemon and getattr(daemon, "_scanner", None):
+        news_section = _build_news_section(daemon, config)
+        if news_section:
+            sections.append(news_section)
 
     # --- Performance stats ---
     stats_line = _build_stats_line()
@@ -440,7 +446,7 @@ def _build_market_line(snapshot, config) -> str:
     return f"Market: {' | '.join(parts)}" if parts else ""
 
 
-def _format_asset_section(asset: AssetData, snapshot) -> str:
+def _format_asset_section(asset: AssetData, snapshot, daemon=None) -> str:
     """Format deep data for one asset."""
     sym = asset.symbol
     lines = [f"{sym}:"]
@@ -493,6 +499,110 @@ def _format_asset_section(asset: AssetData, snapshot) -> str:
             trend_parts.append(f"{_fmt_price(asset.low_7d)} - {_fmt_price(asset.high_7d)}")
         lines.append(f"  Trend 7d: {' | '.join(trend_parts)}")
 
+    # 5m sparkline (from scanner candle buffer)
+    if daemon and getattr(daemon, "_scanner", None):
+        candles = daemon._scanner.get_recent_candles(sym)
+        if candles:
+            sparkline = _format_sparkline(candles, sym)
+            if sparkline:
+                lines.append(sparkline)
+
+    return "\n".join(lines)
+
+
+def _build_news_section(daemon, config) -> str:
+    """Build news headlines section from scanner's news buffer."""
+    try:
+        # Gather symbols to filter by
+        pos_coins = list(daemon._prev_positions.keys()) if hasattr(daemon, "_prev_positions") else []
+        symbols = list(set(config.execution.symbols) | set(pos_coins))
+        news = daemon._scanner.get_recent_news(symbols=symbols, limit=5)
+        if not news:
+            return ""
+
+        lines = ["News:"]
+        for n in news:
+            age_sec = time.time() - n.get("published_on", 0)
+            age_min = int(age_sec / 60)
+            if age_min < 60:
+                age_str = f"{age_min}m ago"
+            else:
+                age_str = f"{age_min // 60}h ago"
+            title = n.get("title", "")[:60]
+            source = n.get("source", "")
+            lines.append(f'  "{title}" ({source}, {age_str})')
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _format_sparkline(candles: list[dict], symbol: str) -> str:
+    """Format recent 5m candles into a compact sparkline for the briefing.
+
+    Shows close prices as a sequence, plus range/trend/volume summary.
+    ~30 tokens per symbol.
+    """
+    if not candles:
+        return ""
+
+    closes = [c["c"] for c in candles]
+    volumes = [c["v"] for c in candles]
+
+    # Format prices compactly
+    def _compact(px: float) -> str:
+        if px >= 10000:
+            return f"{px / 1000:.1f}k"
+        elif px >= 1000:
+            return f"{px / 1000:.2f}k"
+        elif px >= 1:
+            return f"{px:.1f}"
+        elif px >= 0.01:
+            return f"{px:.4f}"
+        else:
+            return f"{px:.6f}"
+
+    price_seq = "->".join(_compact(c) for c in closes)
+
+    # Range
+    high = max(c["h"] for c in candles)
+    low = min(c["l"] for c in candles)
+
+    # Trend: first-third vs last-third avg
+    n = len(closes)
+    third = max(n // 3, 1)
+    first_avg = sum(closes[:third]) / third
+    last_avg = sum(closes[-third:]) / third
+    trend_pct = ((last_avg - first_avg) / first_avg) * 100 if first_avg else 0
+
+    if trend_pct > 0.5:
+        trend = f"up +{trend_pct:.1f}%"
+    elif trend_pct < -0.5:
+        trend = f"down {trend_pct:.1f}%"
+    else:
+        trend = "flat"
+
+    # Volume: last 3 vs first 3
+    if len(volumes) >= 6:
+        early_vol = sum(volumes[:3]) / 3
+        late_vol = sum(volumes[-3:]) / 3
+        if early_vol > 0:
+            ratio = late_vol / early_vol
+            if ratio > 1.3:
+                vol_label = "rising"
+            elif ratio < 0.7:
+                vol_label = "falling"
+            else:
+                vol_label = "steady"
+        else:
+            vol_label = "steady"
+    else:
+        vol_label = "warming up"
+
+    warmup = " (warming up)" if n < 6 else ""
+    lines = [
+        f"  Price 1h (5m): {price_seq}{warmup}",
+        f"    Range: {_fmt_price(low)}-{_fmt_price(high)} | Trend: {trend} | Vol: {vol_label}",
+    ]
     return "\n".join(lines)
 
 

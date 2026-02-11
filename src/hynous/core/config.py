@@ -108,6 +108,15 @@ class ScannerConfig:
     liq_wave_min_usd: float = 50_000_000       # Market-wide 1h threshold
     # Noise filter
     min_oi_usd: float = 1_000_000              # Skip low-liquidity pairs
+    # Micro trading (L2 + 5m candle detectors)
+    book_poll_enabled: bool = True             # Fetch L2 orderbooks + 5m candles
+    book_imbalance_flip_pct: float = 15.0      # Imbalance swing % to trigger book_flip
+    momentum_5m_pct: float = 1.5               # 5m candle body % to trigger momentum_burst
+    momentum_volume_mult: float = 2.0          # Volume multiplier vs rolling avg
+    position_adverse_threshold: float = 0.40   # Imbalance threshold for adverse book signal
+    # News integration (CryptoCompare)
+    news_poll_enabled: bool = True             # Poll CryptoCompare for news (every deriv cycle)
+    news_wake_max_age_minutes: int = 30        # Only alert on news < 30min old
 
 
 @dataclass
@@ -236,6 +245,13 @@ def load_config(config_path: Optional[str] = None) -> Config:
             liq_cascade_min_usd=scanner_raw.get("liq_cascade_min_usd", 5_000_000),
             liq_wave_min_usd=scanner_raw.get("liq_wave_min_usd", 50_000_000),
             min_oi_usd=scanner_raw.get("min_oi_usd", 1_000_000),
+            book_poll_enabled=scanner_raw.get("book_poll_enabled", True),
+            book_imbalance_flip_pct=scanner_raw.get("book_imbalance_flip_pct", 15.0),
+            momentum_5m_pct=scanner_raw.get("momentum_5m_pct", 1.5),
+            momentum_volume_mult=scanner_raw.get("momentum_volume_mult", 2.0),
+            position_adverse_threshold=scanner_raw.get("position_adverse_threshold", 0.40),
+            news_poll_enabled=scanner_raw.get("news_poll_enabled", True),
+            news_wake_max_age_minutes=scanner_raw.get("news_wake_max_age_minutes", 30),
         ),
         discord=DiscordConfig(
             enabled=discord_raw.get("enabled", False),

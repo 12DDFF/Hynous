@@ -51,6 +51,13 @@ class LiqSnapshot:
 
 
 @dataclass
+class BookSnapshot:
+    """L2 orderbook snapshot for tracked symbols."""
+    timestamp: float
+    books: dict[str, dict]  # sym → {bid_depth_usd, ask_depth_usd, imbalance, top_bid_wall, top_ask_wall, best_bid, best_ask}
+
+
+@dataclass
 class AnomalyEvent:
     """A detected market anomaly."""
     type: str           # "price_spike", "oi_surge", "funding_extreme", etc.
@@ -60,6 +67,7 @@ class AnomalyEvent:
     detail: str         # context for agent
     fingerprint: str    # dedup key
     detected_at: float  # unix timestamp
+    category: str = "macro"   # "micro" or "macro" — determines wake format
 
 
 # =============================================================================
@@ -117,6 +125,14 @@ class MarketScanner:
         self._prices = RollingBuffer(maxlen=30)     # 30min at 60s
         self._derivs = RollingBuffer(maxlen=12)     # 1h at 300s
         self._liqs = RollingBuffer(maxlen=6)        # 30min at 300s
+        self._books = RollingBuffer(maxlen=10)       # L2 every 60s = 10min window
+        self._candles_5m: dict[str, deque] = {}      # sym → deque(maxlen=12) = 1h of 5m candles
+        self.position_directions: dict[str, str] = {}  # sym → "long"/"short" (set by daemon)
+
+        # News buffer
+        self._news: list[dict] = []           # Recent articles (last 50)
+        self._seen_news_ids: set[str] = set() # Dedup by article ID
+        self._alerted_news_ids: set[str] = set()  # Already alerted
 
         # Dedup: fingerprint → expiry timestamp
         self._seen: dict[str, float] = {}
@@ -197,6 +213,103 @@ class MarketScanner:
             }
         self._liqs.append(LiqSnapshot(timestamp=time.time(), coins=coins))
 
+    def ingest_orderbooks(self, books: dict[str, dict]):
+        """Store an L2 orderbook snapshot for tracked symbols.
+
+        Args:
+            books: sym → raw L2 dict from provider.get_l2_book()
+                   Each has keys: bids, asks, best_bid, best_ask
+        """
+        processed = {}
+        for sym, book in books.items():
+            bids = book.get("bids", [])
+            asks = book.get("asks", [])
+
+            # Top 5 levels summed (USD = price × size)
+            bid_depth = sum(lv["price"] * lv["size"] for lv in bids[:5])
+            ask_depth = sum(lv["price"] * lv["size"] for lv in asks[:5])
+            total = bid_depth + ask_depth
+
+            # Imbalance: 0-1, >0.5 = bid-heavy
+            imbalance = bid_depth / total if total > 0 else 0.5
+
+            # Largest single level (wall detection)
+            top_bid_wall = max((lv["price"] * lv["size"] for lv in bids[:5]), default=0)
+            top_ask_wall = max((lv["price"] * lv["size"] for lv in asks[:5]), default=0)
+
+            processed[sym] = {
+                "bid_depth_usd": bid_depth,
+                "ask_depth_usd": ask_depth,
+                "imbalance": imbalance,
+                "top_bid_wall": top_bid_wall,
+                "top_ask_wall": top_ask_wall,
+                "best_bid": book.get("best_bid", 0),
+                "best_ask": book.get("best_ask", 0),
+            }
+
+        self._books.append(BookSnapshot(timestamp=time.time(), books=processed))
+
+    def ingest_candles(self, candles: dict[str, list[dict]]):
+        """Store completed 5m candles for tracked symbols.
+
+        Args:
+            candles: sym → list of candle dicts (already trimmed by daemon).
+                     Each candle has keys: t, o, h, l, c, v
+        """
+        for sym, candle_list in candles.items():
+            if sym not in self._candles_5m:
+                self._candles_5m[sym] = deque(maxlen=12)
+
+            buf = self._candles_5m[sym]
+            existing_ts = {c["t"] for c in buf}
+
+            for c in candle_list:
+                if c["t"] not in existing_ts:
+                    buf.append(c)
+
+    def ingest_news(self, articles: list[dict]):
+        """Store news articles from CryptoCompare. Deduplicates by article ID."""
+        for a in articles:
+            aid = a.get("id", "")
+            if not aid or aid in self._seen_news_ids:
+                continue
+            self._seen_news_ids.add(aid)
+            self._news.append(a)
+
+        # Cap buffers
+        if len(self._news) > 50:
+            self._news = self._news[-50:]
+        if len(self._seen_news_ids) > 200:
+            self._seen_news_ids = set(list(self._seen_news_ids)[-150:])
+
+    # -----------------------------------------------------------------
+    # Public Accessors
+    # -----------------------------------------------------------------
+
+    def get_recent_candles(self, symbol: str) -> list[dict]:
+        """Get recent 5m candles for a symbol (up to 12, oldest first)."""
+        buf = self._candles_5m.get(symbol)
+        return list(buf) if buf else []
+
+    def get_recent_news(self, symbols: list[str] | None = None, limit: int = 5) -> list[dict]:
+        """Get recent news articles, optionally filtered by symbol. Newest first."""
+        if not self._news:
+            return []
+
+        if symbols:
+            sym_set = {s.upper() for s in symbols}
+            filtered = []
+            for n in reversed(self._news):
+                cats = (n.get("categories", "") or "").upper()
+                title = (n.get("title", "") or "").upper()
+                if any(s in cats or s in title for s in sym_set):
+                    filtered.append(n)
+                    if len(filtered) >= limit:
+                        break
+            return filtered
+
+        return list(reversed(self._news[-limit:]))
+
     # -----------------------------------------------------------------
     # Detection — main entry point
     # -----------------------------------------------------------------
@@ -217,6 +330,13 @@ class MarketScanner:
         if self._price_polls >= _WARMUP_PRICES:
             anomalies.extend(self._detect_price_spikes())
 
+        # Tier 1.5: Micro (L2 + 5m candles, every 60s)
+        if len(self._books) >= 3:
+            anomalies.extend(self._detect_book_flip())
+            anomalies.extend(self._detect_position_adverse_book())
+        if any(len(c) >= 3 for c in self._candles_5m.values()):
+            anomalies.extend(self._detect_momentum_burst())
+
         # Tier 2: Derivatives (every 300s)
         if self._deriv_polls >= _WARMUP_DERIVS:
             anomalies.extend(self._detect_volume_surges())
@@ -227,17 +347,30 @@ class MarketScanner:
         if self._deriv_polls >= _WARMUP_DIVERGENCE:
             anomalies.extend(self._detect_oi_price_divergence())
 
+        # Tier 4: News alerts (no warmup needed)
+        if self._news:
+            anomalies.extend(self._detect_news_alert())
+
         # Tier 3: Liquidations (absolute thresholds, no warmup)
         if len(self._liqs) >= 1:
             anomalies.extend(self._detect_liquidation_cascades())
             anomalies.extend(self._detect_market_liq_wave())
 
-        # Dedup
+        # Dedup (per-type TTL)
         self._cleanup_seen()
         unique = []
         for a in anomalies:
             if not self._is_duplicate(a.fingerprint):
-                self._mark_seen(a.fingerprint, self.config.dedup_ttl_minutes * 60)
+                # Per-type dedup TTL
+                if a.type == "position_adverse_book":
+                    ttl = 600    # 10min — risk signals need repeat
+                elif a.category == "news":
+                    ttl = 3600   # 1h — news doesn't repeat
+                elif a.category == "micro":
+                    ttl = 900    # 15min — micro is fleeting
+                else:
+                    ttl = self.config.dedup_ttl_minutes * 60  # 30min — macro
+                self._mark_seen(a.fingerprint, ttl)
                 # Apply severity boosts
                 a.severity = self._boost_severity(a.symbol, a.severity)
                 unique.append(a)
@@ -800,6 +933,274 @@ class MarketScanner:
 
         return results
 
+    # -----------------------------------------------------------------
+    # Tier 1.5: Orderbook Imbalance Flip (Micro)
+    # -----------------------------------------------------------------
+
+    def _detect_book_flip(self) -> list[AnomalyEvent]:
+        """Detect orderbook imbalance reversals for tracked symbols."""
+        results = []
+        current = self._books.latest()
+        prev = self._books.previous()
+        if not current or not prev:
+            return results
+
+        now = current.timestamp
+        threshold = self.config.book_imbalance_flip_pct / 100.0
+        tracked = self.execution_symbols | self.position_symbols
+
+        for sym in tracked:
+            curr_data = current.books.get(sym)
+            prev_data = prev.books.get(sym)
+            if not curr_data or not prev_data:
+                continue
+
+            curr_imb = curr_data["imbalance"]
+            prev_imb = prev_data["imbalance"]
+            swing = curr_imb - prev_imb
+            abs_swing = abs(swing)
+
+            if abs_swing < threshold:
+                continue
+
+            direction = "bid→ask" if swing < 0 else "ask→bid"
+
+            severity = 0.5
+            if abs_swing >= 0.25:
+                severity += 0.2
+            # Volume confirmation from derivs
+            deriv = self._derivs.latest()
+            if deriv:
+                vol = deriv.volume.get(sym, 0)
+                prev_deriv = self._derivs.previous()
+                if prev_deriv:
+                    prev_vol = prev_deriv.volume.get(sym, 0)
+                    if prev_vol > 0 and vol > prev_vol * 1.1:
+                        severity += 0.1
+
+            headline = f"{sym} book flip {direction} ({abs_swing:.0%} swing)"
+            detail = (
+                f"Imbalance: {prev_imb:.2f} → {curr_imb:.2f} | "
+                f"Bid depth: ${curr_data['bid_depth_usd']:,.0f} | "
+                f"Ask depth: ${curr_data['ask_depth_usd']:,.0f}"
+            )
+
+            results.append(AnomalyEvent(
+                type="book_flip",
+                symbol=sym,
+                severity=min(severity, 1.0),
+                headline=headline,
+                detail=detail,
+                fingerprint=f"book_flip:{sym}:{direction}",
+                detected_at=now,
+                category="micro",
+            ))
+
+        return results
+
+    # -----------------------------------------------------------------
+    # Tier 1.5: Momentum Burst (Micro)
+    # -----------------------------------------------------------------
+
+    def _detect_momentum_burst(self) -> list[AnomalyEvent]:
+        """Detect 5m candle velocity + volume spikes."""
+        results = []
+        now = time.time()
+        move_threshold = self.config.momentum_5m_pct / 100.0
+        vol_mult = self.config.momentum_volume_mult
+
+        for sym, buf in self._candles_5m.items():
+            if len(buf) < 3:
+                continue
+
+            # Use second-to-last candle (latest may still be forming)
+            candles = list(buf)
+            candle = candles[-1]
+
+            # Body move %
+            if candle["o"] == 0:
+                continue
+            body_pct = abs(candle["c"] - candle["o"]) / candle["o"]
+            if body_pct < move_threshold:
+                continue
+
+            # Volume check: compare to rolling avg of prior candles
+            prior_vols = [c["v"] for c in candles[:-1]]
+            if not prior_vols:
+                continue
+            avg_vol = sum(prior_vols) / len(prior_vols)
+            if avg_vol <= 0:
+                continue
+            vol_ratio = candle["v"] / avg_vol
+            if vol_ratio < vol_mult:
+                continue
+
+            direction = "up" if candle["c"] > candle["o"] else "down"
+
+            severity = 0.5
+            if body_pct >= move_threshold * 2:
+                severity += 0.2
+            # OI confirmation from derivs
+            deriv = self._derivs.latest()
+            prev_deriv = self._derivs.previous()
+            if deriv and prev_deriv:
+                curr_oi = deriv.oi.get(sym, 0)
+                prev_oi = prev_deriv.oi.get(sym, 0)
+                if prev_oi > 0:
+                    oi_change = (curr_oi - prev_oi) / prev_oi
+                    # OI moving same direction as price = confirmation
+                    if (direction == "up" and oi_change > 0.01) or \
+                       (direction == "down" and oi_change > 0.01):
+                        severity += 0.1
+
+            headline = f"{sym} momentum burst {direction} ({body_pct:.1%} in 5m, {vol_ratio:.1f}x vol)"
+            detail = (
+                f"O: ${candle['o']:,.2f} H: ${candle['h']:,.2f} "
+                f"L: ${candle['l']:,.2f} C: ${candle['c']:,.2f} | "
+                f"Vol: {vol_ratio:.1f}x avg"
+            )
+
+            results.append(AnomalyEvent(
+                type="momentum_burst",
+                symbol=sym,
+                severity=min(severity, 1.0),
+                headline=headline,
+                detail=detail,
+                fingerprint=f"momentum_burst:{sym}:{direction}",
+                detected_at=now,
+                category="micro",
+            ))
+
+        return results
+
+    # -----------------------------------------------------------------
+    # Tier 1.5: Position Adverse Book (Micro/Risk)
+    # -----------------------------------------------------------------
+
+    def _detect_position_adverse_book(self) -> list[AnomalyEvent]:
+        """Detect orderbook flipping against open positions."""
+        results = []
+        current = self._books.latest()
+        if not current or not self.position_directions:
+            return results
+
+        now = current.timestamp
+        threshold = self.config.position_adverse_threshold
+
+        for sym, direction in self.position_directions.items():
+            book_data = current.books.get(sym)
+            if not book_data:
+                continue
+
+            imbalance = book_data["imbalance"]
+            adverse = False
+
+            if direction == "long" and imbalance < threshold:
+                adverse = True
+            elif direction == "short" and imbalance > (1.0 - threshold):
+                adverse = True
+
+            if not adverse:
+                continue
+
+            severity = 0.65
+            # Extreme adverse: <0.35 for long or >0.65 for short
+            if (direction == "long" and imbalance < 0.35) or \
+               (direction == "short" and imbalance > 0.65):
+                severity += 0.15
+
+            headline = f"[RISK] {sym} {direction.upper()} — book flipping against you"
+            detail = (
+                f"Position: {direction} | Book imbalance: {imbalance:.2f} "
+                f"(threshold: {threshold}) | "
+                f"Bid depth: ${book_data['bid_depth_usd']:,.0f} | "
+                f"Ask depth: ${book_data['ask_depth_usd']:,.0f}"
+            )
+
+            results.append(AnomalyEvent(
+                type="position_adverse_book",
+                symbol=sym,
+                severity=min(severity, 1.0),
+                headline=headline,
+                detail=detail,
+                fingerprint=f"position_adverse:{sym}",
+                detected_at=now,
+                category="micro",
+            ))
+
+        return results
+
+
+    # -----------------------------------------------------------------
+    # Tier 4: News Alerts
+    # -----------------------------------------------------------------
+
+    def _detect_news_alert(self) -> list[AnomalyEvent]:
+        """Detect important news articles for tracked/position symbols."""
+        results = []
+        now = time.time()
+        max_age = getattr(self.config, "news_wake_max_age_minutes", 30) * 60
+        tracked = self.execution_symbols | self.position_symbols
+
+        for article in self._news:
+            aid = article.get("id", "")
+            if aid in self._alerted_news_ids:
+                continue
+
+            # Age check
+            published = article.get("published_on", 0)
+            if now - published > max_age:
+                continue
+
+            # Relevance check: article categories or title contain tracked symbol
+            cats = (article.get("categories", "") or "").upper()
+            title = (article.get("title", "") or "").upper()
+            body = (article.get("body", "") or "").upper()
+
+            relevant_syms = []
+            for sym in tracked:
+                if sym in cats or sym in title:
+                    relevant_syms.append(sym)
+
+            if not relevant_syms:
+                continue
+
+            # Severity
+            severity = 0.6
+            # Boost if article mentions a position symbol (direct risk)
+            position_hit = any(s in self.position_symbols for s in relevant_syms)
+            if position_hit:
+                severity += 0.15
+            # Boost for regulatory/exchange news
+            if "REGULATION" in cats or "EXCHANGE" in cats:
+                severity += 0.1
+
+            headline = article.get("title", "")[:80]
+            source = article.get("source", "")
+            age_min = int((now - published) / 60)
+            detail = f"Source: {source} | {age_min}m ago | {article.get('body', '')[:150]}"
+
+            self._alerted_news_ids.add(aid)
+            # Cap alerted IDs
+            if len(self._alerted_news_ids) > 200:
+                self._alerted_news_ids = set(list(self._alerted_news_ids)[-150:])
+
+            # Use first relevant symbol for the event
+            primary_sym = relevant_syms[0] if relevant_syms else "MARKET"
+
+            results.append(AnomalyEvent(
+                type="news_alert",
+                symbol=primary_sym,
+                severity=min(severity, 1.0),
+                headline=headline,
+                detail=detail,
+                fingerprint=f"news:{aid}",
+                detected_at=now,
+                category="news",
+            ))
+
+        return results
+
 
 # =============================================================================
 # Wake Message Formatter
@@ -816,24 +1217,67 @@ def _severity_label(sev: float) -> str:
 
 
 def format_scanner_wake(anomalies: list[AnomalyEvent]) -> str:
-    """Format anomalies into a daemon wake message."""
+    """Format anomalies into a daemon wake message.
+
+    Categorizes by type and formats differently:
+    - Position risk: urgent, listed first
+    - News: breaking news with position awareness
+    - Pure micro: tight stops guidance
+    - Pure macro: signal-or-noise assessment
+    - Mixed: both micro and macro guidance
+    """
+    # Separate by category
+    risk = [a for a in anomalies if a.type == "position_adverse_book"]
+    news = [a for a in anomalies if a.category == "news"]
+    micro = [a for a in anomalies if a.category == "micro" and a.type != "position_adverse_book"]
+    macro = [a for a in anomalies if a.category == "macro"]
+
+    # Determine wake type and header
     top = anomalies[0]
+    has_risk = bool(risk)
+    has_news = bool(news)
+    has_micro = bool(micro)
+    has_macro = bool(macro)
+
+    if has_risk:
+        header = f"[DAEMON WAKE — POSITION RISK: {risk[0].headline}]"
+    elif has_news and not has_micro and not has_macro:
+        header = f"[DAEMON WAKE — Breaking News: {news[0].headline}]"
+    elif has_micro and not has_macro and not has_news:
+        header = f"[DAEMON WAKE — Micro Setup: {top.headline}]"
+    elif has_macro and not has_micro and not has_news:
+        header = f"[DAEMON WAKE — Market Scanner: {top.headline}]"
+    else:
+        header = f"[DAEMON WAKE — Market Signals: {top.headline}]"
 
     lines = [
-        f"[DAEMON WAKE — Market Scanner: {top.headline}]",
+        header,
         "",
-        f"Market scanner detected {len(anomalies)} anomal{'y' if len(anomalies) == 1 else 'ies'}:",
+        f"Scanner detected {len(anomalies)} anomal{'y' if len(anomalies) == 1 else 'ies'}:",
         "",
     ]
 
-    for i, a in enumerate(anomalies, 1):
+    # List risk signals first, then news, then micro, then macro
+    ordered = risk + news + micro + macro
+    for i, a in enumerate(ordered, 1):
         label = _severity_label(a.severity)
         lines.append(f"{i}. [{a.type.upper()}] {a.headline} ({label})")
         lines.append(f"   {a.detail}")
         lines.append("")
 
-    lines.extend([
-        "Quick assessment: signal or noise? If it matters for your positions or thesis, act on it. Keep your response to 1-3 sentences.",
-    ])
+    # Footer based on wake type
+    if has_risk:
+        lines.append("Check data, decide: close early, tighten stop, or hold. 1-2 sentences.")
+    elif has_news and not has_micro and not has_macro:
+        # Check if any news symbol matches a position
+        news_syms = {a.symbol for a in news}
+        # position_symbols is set on the scanner instance
+        lines.append("Signal or noise? If it matters for your positions or thesis, act on it. 1-2 sentences.")
+    elif has_micro and not has_macro:
+        lines.append("If entering, Speculative size, tight SL/TP (0.3-0.5% SL, 0.5-1% TP). 1-3 sentences.")
+    elif has_macro and not has_micro:
+        lines.append("Quick assessment: signal or noise? If it matters for your positions or thesis, act on it. Keep your response to 1-3 sentences.")
+    else:
+        lines.append("Micro = tight stops. Macro = wider thesis. News = check your thesis. 1-3 sentences.")
 
     return "\n".join(lines)

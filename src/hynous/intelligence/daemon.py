@@ -144,6 +144,10 @@ class Daemon:
         self._fill_fires: int = 0
         self._processed_fills: set[str] = set()       # Fill hashes already processed
 
+        # Profit level tracking: {coin: {tier: last_alert_timestamp}}
+        self._profit_alerts: dict[str, dict[str, float]] = {}
+        _PROFIT_ALERT_COOLDOWN = 1800  # 30min cooldown per position+tier
+
         # Risk guardrails (circuit breaker)
         self._daily_realized_pnl: float = 0.0
         self._daily_reset_date: str = ""    # YYYY-MM-DD UTC
@@ -151,6 +155,7 @@ class Daemon:
 
         # Trade activity tracking (for conviction system awareness)
         self._entries_today: int = 0
+        self._micro_entries_today: int = 0
         self._entries_this_week: int = 0
         self._last_entry_time: float = 0
         self._last_close_time: float = 0
@@ -272,6 +277,10 @@ class Daemon:
         self._entries_this_week += 1
         self._last_entry_time = time.time()
 
+    def record_micro_entry(self):
+        """Record a micro trade entry (called by trading tool when trade_type='micro')."""
+        self._micro_entries_today += 1
+
     @property
     def last_trade_ago(self) -> str:
         """Human-readable time since last trade (entry or close)."""
@@ -387,9 +396,10 @@ class Daemon:
                 if now - self.snapshot.last_price_poll >= self.config.daemon.price_poll_interval:
                     self._poll_prices()
 
-                # 1b. Position tracking — detect SL/TP fills (same interval as price)
+                # 1b. Position tracking — detect SL/TP fills + profit monitoring
                 if now - self._last_fill_check >= self.config.daemon.price_poll_interval:
                     self._check_positions()
+                    self._check_profit_levels()
                     self._last_fill_check = now
 
                 # 2. Derivatives polling (default every 300s)
@@ -408,6 +418,10 @@ class Daemon:
                     try:
                         # Update position awareness before detection
                         self._scanner.position_symbols = set(self._prev_positions.keys())
+                        self._scanner.position_directions = {
+                            sym: pos.get("side", "long")
+                            for sym, pos in self._prev_positions.items()
+                        }
                         anomalies = self._scanner.detect()
                         if anomalies:
                             self._wake_for_scanner(anomalies)
@@ -472,6 +486,35 @@ class Daemon:
             if self._scanner:
                 self._scanner.ingest_prices(all_prices)
 
+            # L2 orderbooks + 5m candles for micro trading (tracked symbols only)
+            if self._scanner and self.config.scanner.book_poll_enabled:
+                tracked = set(self.config.execution.symbols) | set(self._prev_positions.keys())
+
+                # L2 orderbooks (1 call per symbol)
+                books = {}
+                for sym in tracked:
+                    try:
+                        book = provider.get_l2_book(sym)
+                        if book:
+                            books[sym] = book
+                    except Exception as e:
+                        logger.debug("L2 book fetch failed for %s: %s", sym, e)
+                if books:
+                    self._scanner.ingest_orderbooks(books)
+
+                # 5m candles, last 1h (1 call per symbol)
+                now_ms = int(time.time() * 1000)
+                candles = {}
+                for sym in tracked:
+                    try:
+                        c = provider.get_candles(sym, "5m", now_ms - 3600_000, now_ms)
+                        if c and len(c) > 1:
+                            candles[sym] = c[:-1]  # Drop forming candle
+                    except Exception as e:
+                        logger.debug("5m candle fetch failed for %s: %s", sym, e)
+                if candles:
+                    self._scanner.ingest_candles(candles)
+
             self.snapshot.last_price_poll = time.time()
             self._data_changed = True
             self.polls += 1
@@ -524,6 +567,10 @@ class Daemon:
                     self._scanner.ingest_liquidations(liq_data)
             except Exception as e:
                 logger.debug("Scanner liq ingest failed: %s", e)
+
+            # Feed scanner: news from CryptoCompare
+            if self.config.scanner.news_poll_enabled:
+                self._poll_news()
 
         # Refresh trigger orders cache for fill classification
         self._refresh_trigger_cache()
@@ -700,6 +747,7 @@ class Daemon:
                     "side": p["side"],
                     "size": p["size"],
                     "entry_px": p["entry_px"],
+                    "leverage": p.get("leverage", 20),
                 }
 
             # Initial trigger cache
@@ -748,7 +796,7 @@ class Daemon:
                 if events:
                     state = provider.get_user_state()
                     self._prev_positions = {
-                        p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"]}
+                        p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"], "leverage": p.get("leverage", 20)}
                         for p in state.get("positions", [])
                     }
                     return
@@ -761,6 +809,7 @@ class Daemon:
                     "side": p["side"],
                     "size": p["size"],
                     "entry_px": p["entry_px"],
+                    "leverage": p.get("leverage", 20),
                 }
 
             # Detect closed positions: was in _prev but not in current
@@ -941,6 +990,135 @@ class Daemon:
         return "manual"
 
     # ================================================================
+    # Profit Level Monitoring
+    # ================================================================
+
+    _PROFIT_ALERT_COOLDOWN = 1800  # 30min between alerts for same position+tier
+
+    def _check_profit_levels(self):
+        """Check unrealized P&L on open positions and wake agent at thresholds.
+
+        Uses live return_pct from provider — no manual ROE computation needed.
+        Tiers: +7% nudge, +10% take profit, +15% urgent, -7% no SL risk.
+        """
+        try:
+            provider = self._get_provider()
+            if not provider.can_trade:
+                return
+
+            state = provider.get_user_state()
+            positions = state.get("positions", [])
+            if not positions:
+                return
+
+            now = time.time()
+
+            for p in positions:
+                coin = p["coin"]
+                side = p["side"]
+                entry_px = p["entry_px"]
+                mark_px = p["mark_px"]
+                roe_pct = p["return_pct"]  # Already leveraged return on margin
+
+                if coin not in self._profit_alerts:
+                    self._profit_alerts[coin] = {}
+                alerts = self._profit_alerts[coin]
+
+                # Check profit tiers (highest first for priority)
+                if roe_pct >= 15:
+                    self._maybe_alert(coin, "urgent_profit", roe_pct, side, entry_px, mark_px, now, alerts)
+                elif roe_pct >= 10:
+                    self._maybe_alert(coin, "take_profit", roe_pct, side, entry_px, mark_px, now, alerts)
+                elif roe_pct >= 7:
+                    self._maybe_alert(coin, "profit_nudge", roe_pct, side, entry_px, mark_px, now, alerts)
+
+                # Check risk: down >7% with no stop loss
+                if roe_pct <= -7:
+                    triggers = self._tracked_triggers.get(coin, [])
+                    has_sl = any(t.get("order_type") == "stop_loss" for t in triggers)
+                    if not has_sl:
+                        self._maybe_alert(coin, "risk_no_sl", roe_pct, side, entry_px, mark_px, now, alerts)
+
+            # Clean up alerts for closed positions
+            open_coins = {p["coin"] for p in positions}
+            for coin in list(self._profit_alerts.keys()):
+                if coin not in open_coins:
+                    del self._profit_alerts[coin]
+
+        except Exception as e:
+            logger.debug("Profit level check failed: %s", e)
+
+    def _maybe_alert(
+        self, coin: str, tier: str, roe_pct: float,
+        side: str, entry_px: float, mark_px: float,
+        now: float, alerts: dict,
+    ):
+        """Fire profit alert if not on cooldown."""
+        last = alerts.get(tier, 0)
+        if now - last < self._PROFIT_ALERT_COOLDOWN:
+            return
+        alerts[tier] = now
+        self._wake_for_profit(coin, side, entry_px, mark_px, roe_pct, tier)
+
+    def _wake_for_profit(
+        self, coin: str, side: str, entry_px: float,
+        mark_px: float, roe_pct: float, tier: str,
+    ):
+        """Wake the agent with a profit/risk alert."""
+        pnl_line = f"{coin} {side.upper()} | Entry: ${entry_px:,.0f} → Mark: ${mark_px:,.0f} | ROE: {roe_pct:+.1f}%"
+
+        if tier == "urgent_profit":
+            header = f"[DAEMON WAKE — TAKE PROFIT: {coin} {side.upper()} +{roe_pct:.0f}%]"
+            footer = "15% is exceptional. Lock this in. What's your reason to hold past this?"
+            priority = True
+        elif tier == "take_profit":
+            header = f"[DAEMON WAKE — Profit Alert: {coin} {side.upper()} +{roe_pct:.0f}%]"
+            footer = "You're up 10%. This is where you take profits. Tighten stop or close."
+            priority = True
+        elif tier == "profit_nudge":
+            header = f"[DAEMON WAKE — {coin} {side.upper()} +{roe_pct:.0f}%]"
+            footer = "Consider tightening your stop to lock in gains."
+            priority = False
+        elif tier == "risk_no_sl":
+            header = f"[DAEMON WAKE — RISK: {coin} {side.upper()} {roe_pct:+.0f}%]"
+            footer = "You're down with no stop loss. Set one NOW or close."
+            priority = True
+        else:
+            return
+
+        message = f"{header}\n\n{pnl_line}\n\n{footer}"
+        response = self._wake_agent(message, priority=priority, max_coach_cycles=0)
+        if response:
+            log_event(DaemonEvent(
+                "profit", f"{tier}: {coin} {side}",
+                f"ROE {roe_pct:+.1f}% | Entry ${entry_px:,.0f} → ${mark_px:,.0f}",
+            ))
+            _daemon_chat_queue.put({
+                "type": "Profit",
+                "title": f"{tier.replace('_', ' ').title()}: {coin}",
+                "response": response,
+            })
+            _notify_discord("Profit", f"{tier.replace('_', ' ').title()}: {coin}", response)
+            logger.info("Profit alert: %s %s %s (ROE %+.1f%%)", tier, coin, side, roe_pct)
+
+    # ================================================================
+    # News Polling
+    # ================================================================
+
+    def _poll_news(self):
+        """Fetch crypto news from CryptoCompare and feed to scanner. Zero tokens."""
+        try:
+            from ..data.providers.cryptocompare import get_provider as cc_get
+            cc = cc_get()
+            # Fetch news for tracked + position symbols
+            symbols = list(set(self.config.execution.symbols) | set(self._prev_positions.keys()))
+            articles = cc.get_news(categories=symbols, limit=30)
+            if articles and self._scanner:
+                self._scanner.ingest_news(articles)
+        except Exception as e:
+            logger.debug("News poll failed: %s", e)
+
+    # ================================================================
     # Risk Guardrails (Circuit Breaker)
     # ================================================================
 
@@ -957,6 +1135,7 @@ class Daemon:
             self._daily_realized_pnl = 0.0
             self._trading_paused = False
             self._entries_today = 0
+            self._micro_entries_today = 0
             # Weekly reset on Monday
             if datetime.now(timezone.utc).weekday() == 0:
                 self._entries_this_week = 0
@@ -1785,7 +1964,7 @@ class Daemon:
                 if provider.can_trade:
                     state = provider.get_user_state()
                     self._prev_positions = {
-                        p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"]}
+                        p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"], "leverage": p.get("leverage", 20)}
                         for p in state.get("positions", [])
                     }
             except Exception:

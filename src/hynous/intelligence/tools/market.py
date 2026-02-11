@@ -59,8 +59,8 @@ TOOL_DEF = {
             },
             "period": {
                 "type": "string",
-                "enum": ["24h", "7d", "30d", "90d"],
-                "description": "Analysis period. Omit for just current snapshot.",
+                "enum": ["5m", "15m", "30m", "1h", "2h", "4h", "8h", "24h", "7d", "30d", "90d"],
+                "description": "Analysis period. Short (5m-2h) for micro, longer (24h-90d) for swing.",
             },
             "start_date": {
                 "type": "string",
@@ -82,6 +82,13 @@ TOOL_DEF = {
 
 # Period string → timedelta
 _PERIODS = {
+    "5m": timedelta(minutes=5),
+    "15m": timedelta(minutes=15),
+    "30m": timedelta(minutes=30),
+    "1h": timedelta(hours=1),
+    "2h": timedelta(hours=2),
+    "4h": timedelta(hours=4),
+    "8h": timedelta(hours=8),
     "24h": timedelta(hours=24),
     "7d": timedelta(days=7),
     "30d": timedelta(days=30),
@@ -186,6 +193,13 @@ def _parse_date(date_str: str) -> datetime:
 
 def _pick_interval(duration: timedelta) -> str:
     """Auto-select candle interval based on time span."""
+    minutes = duration.total_seconds() / 60
+    if minutes <= 30:
+        return "1m"
+    elif minutes <= 120:
+        return "5m"
+    elif minutes <= 480:
+        return "15m"
     days = duration.total_seconds() / 86400
     if days <= 2:
         return "1h"
