@@ -1476,6 +1476,7 @@ def _news_card() -> rx.Component:
         border="1px solid #1a1a1a",
         border_radius="12px",
         padding="1rem",
+        overflow="hidden",
     )
 
 

@@ -1661,13 +1661,13 @@ class AppState(rx.State):
             title = escape(title)
             source = escape(source)
             rows.append(
-                f'<div style="display:flex;gap:0.5rem;padding:0.35rem 0;border-bottom:1px solid #1a1a1a;align-items:baseline;">'
+                f'<div style="display:flex;gap:0.5rem;padding:0.35rem 0;border-bottom:1px solid #1a1a1a;align-items:baseline;min-width:0;overflow:hidden;">'
                 f'<span style="width:28px;color:#525252;flex-shrink:0;font-size:0.7rem;text-align:right">{age}</span>'
-                f'<span style="flex:1;color:#a3a3a3;font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{title}</span>'
+                f'<span style="flex:1;min-width:0;color:#a3a3a3;font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{title}</span>'
                 f'<span style="color:#525252;font-size:0.65rem;flex-shrink:0">{source}</span>'
                 f'</div>'
             )
-        return '<div style="font-family:inherit;">' + "".join(rows) + '</div>'
+        return '<div style="font-family:inherit;overflow:hidden;width:100%;">' + "".join(rows) + '</div>'
 
     @rx.var(cache=False)
     def micro_entries_today(self) -> str:
