@@ -1507,14 +1507,11 @@ def home_page() -> rx.Component:
                 # Scanner banner
                 _scanner_banner(),
 
-                # News + Positions row
-                rx.hstack(
-                    rx.box(_news_card(), flex="1", min_width="0"),
-                    rx.box(positions_section(), flex="1.5", min_width="0"),
-                    spacing="4",
-                    width="100%",
-                    align_items="start",
-                ),
+                # News
+                rx.box(_news_card(), width="100%"),
+
+                # Open Positions
+                rx.box(positions_section(), width="100%"),
 
                 # Watchlist
                 rx.box(_watchlist_card(), width="100%"),
