@@ -609,6 +609,10 @@ class AppState(rx.State):
             except Exception as e:
                 logger.error(f"Failed to load persisted chat: {e}")
 
+        # Sync daemon status for this session (global _daemon may already be running)
+        if _daemon is not None and _daemon.is_running:
+            self.agent_status = "idle"
+
         # Start background tasks (init_daemon ensures agent+daemon start)
         return [AppState.init_daemon, AppState.poll_portfolio, AppState.load_watchpoints, AppState.load_clusters]
 
