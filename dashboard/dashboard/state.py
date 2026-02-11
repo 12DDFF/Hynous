@@ -52,6 +52,30 @@ def _highlight(text: str) -> str:
     text = _NEG_RE.sub(f'{_RED}\\1{_END}', text)
     return text
 
+# Portfolio value history for sparkline
+_portfolio_history: list[float] = []
+
+
+def _build_sparkline_svg(values: list[float], width: int = 80, height: int = 24, color: str = "#22c55e") -> str:
+    """Build a tiny SVG sparkline from a list of values."""
+    if len(values) < 2:
+        return ""
+    mn, mx = min(values), max(values)
+    rng = mx - mn if mx != mn else 1
+    points = []
+    for i, v in enumerate(values):
+        x = round(i / (len(values) - 1) * width, 1)
+        y = round(height - ((v - mn) / rng) * height, 1)
+        points.append(f"{x},{y}")
+    pts = " ".join(points)
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'xmlns="http://www.w3.org/2000/svg" style="display:block">'
+        f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5" '
+        f'stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/></svg>'
+    )
+
+
 # Human-readable names for tool indicators
 _TOOL_DISPLAY = {
     "get_market_data": "Fetching market data",
@@ -396,6 +420,14 @@ class AppState(rx.State):
     # === Navigation ===
     current_page: str = "home"
 
+    # === Unread Indicators ===
+    chat_unread: bool = False
+    journal_unread: bool = False
+    memory_unread: bool = False
+
+    # === Sparkline ===
+    portfolio_sparkline_svg: str = ""
+
     # === Chat Actions ===
 
     def set_input(self, value: str):
@@ -676,6 +708,10 @@ class AppState(rx.State):
 
                 if state_data is not None:
                     value, positions, initial = state_data
+                    # Track sparkline history
+                    _portfolio_history.append(round(value, 2))
+                    if len(_portfolio_history) > 20:
+                        _portfolio_history.pop(0)
                     async with self:
                         self.portfolio_value = round(value, 2)
                         if initial > 0:
@@ -684,6 +720,12 @@ class AppState(rx.State):
                                 ((value - initial) / initial) * 100, 2
                             )
                         self.positions = positions
+                        # Update sparkline SVG
+                        if len(_portfolio_history) >= 3:
+                            self.portfolio_sparkline_svg = _build_sparkline_svg(
+                                _portfolio_history, width=80, height=24,
+                                color="#22c55e" if self.portfolio_change >= 0 else "#ef4444",
+                            )
             except Exception as e:
                 logger.debug(f"Portfolio poll error: {e}")
 
@@ -707,6 +749,14 @@ class AppState(rx.State):
                                 timestamp=self._format_time(),
                                 tools_used=["daemon"],
                             ))
+                        # Unread indicators
+                        if self.current_page != "chat":
+                            self.chat_unread = True
+                        for item in new_daemon_msgs:
+                            if item.get('event_type') == 'fill':
+                                if self.current_page != "journal":
+                                    self.journal_unread = True
+                                break
                     # Persist after adding daemon messages
                     self._save_chat(_agent)
             except Exception:
@@ -732,6 +782,10 @@ class AppState(rx.State):
                         self.memory_edge_count = health_data["edge_count"]
                         self.memory_health_ratio = health_data["health_ratio"]
                         self.memory_lifecycle_html = health_data["lifecycle_html"]
+                        # Memory unread when new conflicts appear
+                        if conflict_data["count"] != "0" and self.conflict_count == "0":
+                            if self.current_page != "memory":
+                                self.memory_unread = True
                         self.conflict_count = conflict_data["count"]
                         self.watchpoint_groups = wp_data["groups"]
                         self.watchpoint_count = str(wp_data["count"])
@@ -1274,15 +1328,18 @@ class AppState(rx.State):
     def go_to_chat(self):
         """Navigate to chat page."""
         self.current_page = "chat"
+        self.chat_unread = False
 
     def go_to_memory(self):
         """Navigate to memory management page and load data."""
         self.current_page = "memory"
+        self.memory_unread = False
         return AppState.load_memory_page
 
     def go_to_chat_with_message(self, msg: str):
         """Navigate to chat and send a message."""
         self.current_page = "chat"
+        self.chat_unread = False
         self._pending_input = msg
         return self.send_message()
 
@@ -2176,6 +2233,7 @@ class AppState(rx.State):
     def go_to_journal(self):
         """Navigate to journal page and load data."""
         self.current_page = "journal"
+        self.journal_unread = False
         return AppState.load_journal
 
     @_background

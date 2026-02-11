@@ -1,21 +1,45 @@
 """Navigation components."""
 
 import reflex as rx
+from ..state import AppState
 
 
 def nav_item(
     label: str,
     is_active: rx.Var[bool],
     on_click: callable,
+    has_unread: rx.Var[bool] | None = None,
 ) -> rx.Component:
-    """Navigation tab item - text only, clean design."""
-    return rx.button(
+    """Navigation tab item - text only, clean design, optional unread dot."""
+    children = [
         rx.text(
             label,
             font_size="0.875rem",
             font_weight=rx.cond(is_active, "500", "400"),
         ),
+    ]
+    if has_unread is not None:
+        children.append(
+            rx.cond(
+                has_unread,
+                rx.box(
+                    width="6px",
+                    height="6px",
+                    border_radius="50%",
+                    background="#6366f1",
+                    box_shadow="0 0 6px rgba(99,102,241,0.6)",
+                    position="absolute",
+                    top="-2px",
+                    right="-2px",
+                    class_name="unread-dot",
+                ),
+                rx.fragment(),
+            )
+        )
+    return rx.button(
+        *children,
         on_click=on_click,
+        position="relative",
         background=rx.cond(is_active, "#1a1a1a", "transparent"),
         color=rx.cond(is_active, "#fafafa", "#737373"),
         padding="0.5rem 1rem",
@@ -58,9 +82,9 @@ def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_j
         # Center section - Nav items (centered)
         rx.hstack(
             nav_item("Home", current_page == "home", on_home),
-            nav_item("Chat", current_page == "chat", on_chat),
-            nav_item("Journal", current_page == "journal", on_journal),
-            nav_item("Memory", current_page == "memory", on_memory),
+            nav_item("Chat", current_page == "chat", on_chat, has_unread=AppState.chat_unread),
+            nav_item("Journal", current_page == "journal", on_journal, has_unread=AppState.journal_unread),
+            nav_item("Memory", current_page == "memory", on_memory, has_unread=AppState.memory_unread),
             spacing="1",
             padding="4px",
             background="#0f0f0f",
@@ -68,9 +92,19 @@ def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_j
             border="1px solid #1a1a1a",
         ),
 
-        # Right section - Status + logout (fixed width, right-aligned)
+        # Right section - Clock + status + logout (fixed width, right-aligned)
         rx.box(
             rx.hstack(
+                rx.el.span(
+                    "",
+                    id="live-clock",
+                    style={
+                        "font_size": "0.7rem",
+                        "color": "#404040",
+                        "font_family": "JetBrains Mono, monospace",
+                        "min_width": "70px",
+                    },
+                ),
                 rx.box(
                     width="6px",
                     height="6px",
@@ -97,7 +131,7 @@ def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_j
                 spacing="2",
                 align="center",
             ),
-            width="160px",
+            width="200px",
             display="flex",
             justify_content="flex-end",
         ),

@@ -17,17 +17,87 @@ from .pages import home_page, chat_page, graph_page, journal_page, memory_page, 
 def _dashboard_content() -> rx.Component:
     """Authenticated dashboard content."""
     return rx.box(
+        # Global animation keyframes
+        rx.el.style("""
+            @keyframes pnl-pulse-green {
+                0% { text-shadow: 0 0 0 rgba(74,222,128,0); }
+                50% { text-shadow: 0 0 12px rgba(74,222,128,0.4); }
+                100% { text-shadow: 0 0 0 rgba(74,222,128,0); }
+            }
+            @keyframes pnl-pulse-red {
+                0% { text-shadow: 0 0 0 rgba(248,113,113,0); }
+                50% { text-shadow: 0 0 12px rgba(248,113,113,0.4); }
+                100% { text-shadow: 0 0 0 rgba(248,113,113,0); }
+            }
+            @keyframes radar-sweep {
+                0% { opacity: 1; }
+                50% { opacity: 0.4; }
+                100% { opacity: 1; }
+            }
+            @keyframes unread-pulse {
+                0%, 100% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.3); opacity: 0.7; }
+            }
+            @keyframes fade-slide-in {
+                0% { opacity: 0; transform: translateY(4px); }
+                100% { opacity: 1; transform: translateY(0); }
+            }
+            .pnl-pulse-green { animation: pnl-pulse-green 0.8s ease-out; }
+            .pnl-pulse-red { animation: pnl-pulse-red 0.8s ease-out; }
+            .scanner-radar-active { animation: radar-sweep 2s ease-in-out infinite; }
+            .unread-dot { animation: unread-pulse 2s ease-in-out infinite; }
+        """),
+
+        # Live clock + animated number counter
+        rx.script("""
+            (function() {
+                // Live clock
+                setInterval(function() {
+                    var el = document.getElementById('live-clock');
+                    if (el) {
+                        var now = new Date();
+                        var h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+                        var ampm = h >= 12 ? 'PM' : 'AM';
+                        h = h % 12 || 12;
+                        el.textContent = h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s + ' ' + ampm;
+                    }
+                }, 1000);
+
+                // Tick counter — animates number changes
+                var prev = {};
+                setInterval(function() {
+                    document.querySelectorAll('[data-tick-target]').forEach(function(el) {
+                        var id = el.getAttribute('data-tick-target');
+                        var raw = el.getAttribute('data-tick-value');
+                        if (!raw) return;
+                        var target = parseFloat(raw);
+                        if (isNaN(target)) return;
+                        var current = prev[id];
+                        if (current === undefined) { prev[id] = target; return; }
+                        if (Math.abs(current - target) < 0.005) return;
+                        var start = current, startTime = Date.now(), duration = 600;
+                        var decimals = raw.includes('.') ? raw.split('.')[1].length : 0;
+                        function step() {
+                            var elapsed = Date.now() - startTime;
+                            var t = Math.min(elapsed / duration, 1);
+                            t = 1 - Math.pow(1 - t, 3);
+                            var v = start + (target - start) * t;
+                            el.textContent = el.getAttribute('data-tick-prefix') + v.toFixed(decimals) + el.getAttribute('data-tick-suffix');
+                            if (t < 1) requestAnimationFrame(step);
+                            else prev[id] = target;
+                        }
+                        prev[id] = target;
+                        el.classList.remove('pnl-pulse-green', 'pnl-pulse-red');
+                        if (target > current) el.classList.add('pnl-pulse-green');
+                        else el.classList.add('pnl-pulse-red');
+                        setTimeout(function() { el.classList.remove('pnl-pulse-green', 'pnl-pulse-red'); }, 800);
+                        requestAnimationFrame(step);
+                    });
+                }, 1000);
+            })();
+        """),
+
         # Smart auto-scroll — ChatGPT-style sticky bottom.
-        #
-        # How it works:
-        #   - wheel up → instantly breaks sticky (no fighting)
-        #   - scroll settles at very bottom → re-engages sticky (debounced)
-        #   - content changes + sticky → auto-scroll to bottom
-        #
-        # Key: wheel event only fires from user input, never from
-        # programmatic scrolling, so there are no race conditions.
-        # The debounced scroll handler prevents re-engage during
-        # active scrolling.
         rx.script("""
             (function() {
                 var sticky = {};

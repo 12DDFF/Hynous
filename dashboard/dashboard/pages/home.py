@@ -396,6 +396,64 @@ def _wallet_detail() -> rx.Component:
     )
 
 
+def _portfolio_card() -> rx.Component:
+    """Portfolio value card with gradient text + sparkline."""
+    return rx.box(
+        rx.vstack(
+            rx.hstack(
+                rx.text(
+                    "Portfolio Value",
+                    font_size="0.7rem",
+                    font_weight="600",
+                    color="#525252",
+                    text_transform="uppercase",
+                    letter_spacing="0.05em",
+                ),
+                rx.spacer(),
+                rx.html(AppState.portfolio_sparkline_svg),
+                width="100%",
+                align="center",
+            ),
+            rx.el.div(
+                AppState.portfolio_value_str,
+                data_tick_target="portfolio",
+                data_tick_value=AppState.portfolio_value.to(str),
+                data_tick_prefix="$",
+                data_tick_suffix="",
+                style={
+                    "font_size": "1.5rem",
+                    "font_weight": "600",
+                    "line_height": "1.2",
+                    "font_family": "JetBrains Mono, monospace",
+                    "background": rx.cond(
+                        AppState.portfolio_change >= 0,
+                        "linear-gradient(135deg, #22c55e 0%, #4ade80 50%, #86efac 100%)",
+                        "linear-gradient(135deg, #ef4444 0%, #f87171 50%, #fca5a5 100%)",
+                    ),
+                    "-webkit-background-clip": "text",
+                    "-webkit-text-fill-color": "transparent",
+                    "background-clip": "text",
+                },
+            ),
+            rx.text(
+                AppState.portfolio_change_str,
+                font_size="0.75rem",
+                color="#525252",
+            ),
+            align_items="start",
+            spacing="1",
+            height="100%",
+        ),
+        background="#111111",
+        border="1px solid #1a1a1a",
+        border_radius="12px",
+        padding="1rem",
+        flex="1",
+        min_height="100px",
+        height="100%",
+    )
+
+
 def _wallet_card() -> rx.Component:
     """Clickable wallet stat card that opens cost breakdown dialog."""
     return rx.dialog.root(
@@ -1288,21 +1346,35 @@ def position_row(pos) -> rx.Component:
         ),
         # Entry price
         rx.text("$" + pos.entry.to(str), color="#a3a3a3", font_size="0.85rem", width="18%"),
-        # P&L %
-        rx.text(
+        # P&L % (tick-animated)
+        rx.el.div(
             pos.pnl.to(str) + "%",
-            color=rx.cond(pos.pnl >= 0, "#22c55e", "#ef4444"),
-            font_size="0.85rem",
-            font_weight="500",
-            width="13%",
+            data_tick_target="pos-pnl-" + pos.symbol,
+            data_tick_value=pos.pnl.to(str),
+            data_tick_prefix="",
+            data_tick_suffix="%",
+            style={
+                "color": rx.cond(pos.pnl >= 0, "#22c55e", "#ef4444"),
+                "font_size": "0.85rem",
+                "font_weight": "500",
+                "width": "13%",
+                "font_family": "JetBrains Mono, monospace",
+            },
         ),
-        # P&L $
-        rx.text(
+        # P&L $ (tick-animated)
+        rx.el.div(
             rx.cond(pos.pnl_usd >= 0, "+$", "-$") + rx.cond(pos.pnl_usd >= 0, pos.pnl_usd, pos.pnl_usd * -1).to(str),
-            color=rx.cond(pos.pnl_usd >= 0, "#22c55e", "#ef4444"),
-            font_size="0.85rem",
-            font_weight="600",
-            width="13%",
+            data_tick_target="pos-usd-" + pos.symbol,
+            data_tick_value=pos.pnl_usd.to(str),
+            data_tick_prefix="$",
+            data_tick_suffix="",
+            style={
+                "color": rx.cond(pos.pnl_usd >= 0, "#22c55e", "#ef4444"),
+                "font_size": "0.85rem",
+                "font_weight": "600",
+                "width": "13%",
+                "font_family": "JetBrains Mono, monospace",
+            },
         ),
         width="100%",
         padding_y="0.625rem",
@@ -1368,7 +1440,10 @@ def _scanner_banner() -> rx.Component:
     return rx.box(
         # Header row (always visible)
         rx.hstack(
-            rx.icon("radar", size=16, color=AppState.scanner_status_color),
+            rx.box(
+                rx.icon("radar", size=16, color=AppState.scanner_status_color),
+                class_name=rx.cond(AppState.scanner_active, "scanner-radar-active", ""),
+            ),
             rx.text(
                 AppState.scanner_status_text,
                 font_size="0.8rem",
@@ -1491,12 +1566,7 @@ def home_page() -> rx.Component:
             rx.vstack(
                 # Stats row — portfolio + wallet + daemon
                 rx.hstack(
-                    stat_card(
-                        title="Portfolio Value",
-                        value=AppState.portfolio_value_str,
-                        subtitle=AppState.portfolio_change_str,
-                        value_color=AppState.portfolio_change_color,
-                    ),
+                    _portfolio_card(),
                     _wallet_card(),
                     _daemon_card(),
                     spacing="4",
