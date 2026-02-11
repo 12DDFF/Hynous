@@ -1054,7 +1054,18 @@ def handle_close_position(
     else:
         pnl_per_unit = entry_px - exit_px
     realized_pnl = pnl_per_unit * closed_sz
+    # Fee estimate (taker 0.035% per side)
+    fee_estimate = closed_sz * exit_px * 0.00035
+    realized_pnl_net = realized_pnl - fee_estimate
     pnl_pct = (pnl_per_unit / entry_px * 100) if entry_px > 0 else 0
+    # Leveraged return on margin for consistency with position display
+    margin_used = position.get("margin_used", 0)
+    if margin_used > 0 and partial_pct < 100:
+        lev_return = realized_pnl_net / (margin_used * partial_pct / 100) * 100
+    elif margin_used > 0:
+        lev_return = realized_pnl_net / margin_used * 100
+    else:
+        lev_return = pnl_pct
 
     # --- Cancel associated orders on full close ---
     cancelled = 0
@@ -1075,33 +1086,36 @@ def handle_close_position(
     # Find the entry node to link this close back to it (builds trade lifecycle graph)
     entry_node_id = _find_trade_entry(symbol)
 
-    pnl_sign = "+" if realized_pnl >= 0 else ""
+    pnl_sign = "+" if realized_pnl_net >= 0 else ""
+    action_label = "Partial close" if partial_pct < 100 else "Closed"
+    action_label_upper = "PARTIAL CLOSE" if partial_pct < 100 else "CLOSED"
     outcome_content = (
-        f"Closed {close_label} {position['side']} {symbol}.\n"
+        f"{action_label} {close_label} {position['side']} {symbol}.\n"
         f"Entry: {_fmt_price(entry_px)} → Exit: {_fmt_price(exit_px)}\n"
-        f"PnL: {pnl_sign}{_fmt_price(realized_pnl)} ({_fmt_pct(pnl_pct)})\n"
+        f"PnL: {pnl_sign}{_fmt_price(realized_pnl_net)} ({lev_return:+.1f}% on margin, {_fmt_pct(pnl_pct)} price)\n"
         f"Reason: {reasoning}"
     )
 
     outcome_summary = (
-        f"CLOSED {position['side'].upper()} {symbol} | "
+        f"{action_label_upper} {position['side'].upper()} {symbol} | "
         f"{_fmt_price(entry_px)} → {_fmt_price(exit_px)} | "
-        f"PnL {pnl_sign}{_fmt_price(realized_pnl)} ({_fmt_pct(pnl_pct)})"
+        f"PnL {pnl_sign}{_fmt_price(realized_pnl_net)} ({lev_return:+.1f}%)"
     )
 
     close_node_id = _store_to_nous(
         subtype="custom:trade_close",
-        title=f"CLOSED {position['side'].upper()} {symbol} @ {_fmt_price(exit_px)}",
+        title=f"{action_label_upper} {position['side'].upper()} {symbol} @ {_fmt_price(exit_px)}",
         content=outcome_content,
         summary=outcome_summary,
         signals={
-            "action": "close",
+            "action": "partial_close" if partial_pct < 100 else "close",
             "side": position["side"],
             "symbol": symbol,
             "entry": entry_px,
             "exit": exit_px,
-            "pnl_usd": round(realized_pnl, 2),
+            "pnl_usd": round(realized_pnl_net, 2),
             "pnl_pct": round(pnl_pct, 2),
+            "lev_return_pct": round(lev_return, 2),
             "close_type": close_label,
         },
         link_to=entry_node_id,  # Edge: entry --part_of--> close (SSA 0.85)
@@ -1121,9 +1135,9 @@ def handle_close_position(
 
     # --- Build result ---
     lines = [
-        f"CLOSED: {symbol} {position['side'].upper()} ({close_label})",
+        f"{action_label_upper}: {symbol} {position['side'].upper()} ({close_label})",
         f"Entry: {_fmt_price(entry_px)} → Exit: {_fmt_price(exit_px)}",
-        f"Realized PnL: {pnl_sign}{_fmt_price(realized_pnl)} ({_fmt_pct(pnl_pct)})",
+        f"Realized PnL: {pnl_sign}{_fmt_price(realized_pnl_net)} ({lev_return:+.1f}% on margin, {_fmt_pct(pnl_pct)} price move)",
         f"Size closed: {closed_sz:.6g} {symbol}",
     ]
     if cancelled > 0:
