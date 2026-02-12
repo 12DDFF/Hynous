@@ -1436,7 +1436,7 @@ class Daemon:
 
         response = self._wake_agent(
             message, max_coach_cycles=0, max_tokens=384,
-            source="daemon:scanner", skip_memory=True,
+            source="daemon:scanner",
         )
         if response:
             self.scanner_wakes += 1
