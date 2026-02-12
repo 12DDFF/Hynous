@@ -27,6 +27,8 @@ import re
 import threading
 from typing import Optional
 
+from ...core.request_tracer import get_tracer, SPAN_MEMORY_OP, SPAN_QUEUE_FLUSH
+
 logger = logging.getLogger(__name__)
 
 # Regex for [[wikilink]] extraction
@@ -67,6 +69,25 @@ def flush_memory_queue() -> int:
         return 0
 
     count = len(items)
+
+    # Record queue flush span (before background thread starts)
+    try:
+        from datetime import datetime, timezone
+        from ...core.request_tracer import get_active_trace
+        _tid = get_active_trace()
+        if _tid:
+            get_tracer().record_span(_tid, {
+                "type": SPAN_QUEUE_FLUSH,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "duration_ms": 0,
+                "items_count": count,
+                "items": [
+                    {"title": k.get("title", "")[:60], "type": k.get("memory_type", "")}
+                    for k in items[:10]
+                ],
+            })
+    except Exception:
+        pass
 
     def _flush():
         for kwargs in items:
@@ -393,6 +414,24 @@ def _store_memory_impl(
                 "Gate filter rejected %s \"%s\": %s",
                 memory_type, title[:50], gate_result.reason,
             )
+            # Record rejected memory op span
+            try:
+                from datetime import datetime, timezone
+                from ...core.request_tracer import get_active_trace
+                _tid = get_active_trace()
+                if _tid:
+                    get_tracer().record_span(_tid, {
+                        "type": SPAN_MEMORY_OP,
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                        "duration_ms": 0,
+                        "operation": "store",
+                        "memory_type": memory_type,
+                        "title": title[:100],
+                        "gate_filter": "rejected",
+                        "gate_reason": gate_result.reason,
+                    })
+            except Exception:
+                pass
             return f"Not stored: {gate_result.detail}"
 
     from ...nous.client import get_client
@@ -463,6 +502,25 @@ def _store_memory_impl(
                     result_msg += f" [{dup_lifecycle}]"
                     result_msg += ". Use update_memory to reactivate if needed"
                 result_msg += f". Not created. ({sim_pct}% similar)"
+                # Record dedup rejection span
+                try:
+                    from datetime import datetime, timezone
+                    from ...core.request_tracer import get_active_trace
+                    _tid = get_active_trace()
+                    if _tid:
+                        get_tracer().record_span(_tid, {
+                            "type": SPAN_MEMORY_OP,
+                            "started_at": datetime.now(timezone.utc).isoformat(),
+                            "duration_ms": 0,
+                            "operation": "store",
+                            "memory_type": memory_type,
+                            "title": title[:100],
+                            "dedup": "duplicate",
+                            "duplicate_of": dup_title[:60],
+                            "similarity": dup_sim,
+                        })
+                except Exception:
+                    pass
                 return result_msg
 
             # CONNECT tier matches (0.90-0.95) — save for edge creation after node is created
@@ -547,6 +605,25 @@ def _store_memory_impl(
         _auto_assign_clusters(client, node_id, subtype, title=title, content=content, exclude_cluster=cluster)
 
         logger.info("Stored %s: \"%s\" (%s)", memory_type, title, node_id)
+        # Record successful memory op span
+        try:
+            from datetime import datetime, timezone
+            from ...core.request_tracer import get_active_trace
+            _tid = get_active_trace()
+            if _tid:
+                get_tracer().record_span(_tid, {
+                    "type": SPAN_MEMORY_OP,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": 0,
+                    "operation": "store",
+                    "memory_type": memory_type,
+                    "title": title[:100],
+                    "node_id": node_id,
+                    "gate_filter": "passed" if cfg.memory.gate_filter_enabled else "disabled",
+                    "contradiction": contradiction_flag,
+                })
+        except Exception:
+            pass
         result_msg = f"Stored: \"{title}\" ({node_id})"
         if cluster:
             result_msg += f" [→ cluster: {cluster}]"
@@ -727,7 +804,25 @@ def handle_recall_memory(
 
             type_label = memory_type or "all types"
             header = f"Found {len(results)} memories ({type_label}):\n"
-            return _format_memory_results(results, header)
+            result_text = _format_memory_results(results, header)
+            # Record recall span (browse)
+            try:
+                from datetime import datetime, timezone
+                from ...core.request_tracer import get_active_trace
+                _tid = get_active_trace()
+                if _tid:
+                    get_tracer().record_span(_tid, {
+                        "type": SPAN_MEMORY_OP,
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                        "duration_ms": 0,
+                        "operation": "recall",
+                        "mode": "browse",
+                        "memory_type": memory_type,
+                        "results_count": len(results),
+                    })
+            except Exception:
+                pass
+            return result_text
 
         else:
             # Search mode (default) — semantic search by query
@@ -763,7 +858,25 @@ def handle_recall_memory(
                 _strengthen_co_retrieved(client, results, amount=0.05)
 
             header = f"Found {len(results)} memories:\n"
-            return _format_memory_results(results, header)
+            result_text = _format_memory_results(results, header)
+            # Record recall span
+            try:
+                from datetime import datetime, timezone
+                from ...core.request_tracer import get_active_trace
+                _tid = get_active_trace()
+                if _tid:
+                    get_tracer().record_span(_tid, {
+                        "type": SPAN_MEMORY_OP,
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                        "duration_ms": 0,
+                        "operation": "recall",
+                        "mode": mode,
+                        "query": query[:200] if query else None,
+                        "results_count": len(results),
+                    })
+            except Exception:
+                pass
+            return result_text
 
     except Exception as e:
         logger.error("recall_memory failed: %s", e)

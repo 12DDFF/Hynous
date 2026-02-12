@@ -12,7 +12,9 @@ import json
 import os
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Generator
 
 import litellm
@@ -26,6 +28,7 @@ from ..core.clock import stamp
 from ..core import persistence
 from ..core.costs import record_llm_usage
 from ..core.memory_tracker import get_tracker
+from ..core.request_tracer import get_tracer, SPAN_CONTEXT, SPAN_LLM_CALL, SPAN_TOOL_EXEC
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +366,7 @@ class Agent:
 
     # ---- Concurrent tool execution ----
 
-    def _execute_tools(self, tool_calls: list[dict]) -> list[dict]:
+    def _execute_tools(self, tool_calls: list[dict], _trace_id: str | None = None) -> list[dict]:
         """Execute tool calls and return tool result messages (OpenAI format).
 
         Args:
@@ -380,16 +383,45 @@ class Agent:
         def _run(name: str, kwargs: dict, tool_call_id: str) -> dict:
             """Execute a tool call."""
             logger.info("Tool call: %s(%s)", name, kwargs)
+            _tool_start = time.monotonic()
             try:
                 result = self.tools.call(name, **kwargs)
-                return {
+                _tool_result = {
                     "role": "tool",
                     "tool_call_id": tool_call_id,
                     "name": name,
                     "content": json.dumps(result) if not isinstance(result, str) else result,
                 }
+                # Record tool span (trace_id accessed via closure)
+                try:
+                    if _trace_id:
+                        get_tracer().record_span(_trace_id, {
+                            "type": SPAN_TOOL_EXEC,
+                            "started_at": datetime.now(timezone.utc).isoformat(),
+                            "duration_ms": int((time.monotonic() - _tool_start) * 1000),
+                            "tool_name": name,
+                            "input_args": kwargs,
+                            "output_preview": _tool_result["content"][:500],
+                            "success": True,
+                        })
+                except Exception:
+                    pass
+                return _tool_result
             except Exception as e:
                 logger.error("Tool error: %s — %s", name, e)
+                try:
+                    if _trace_id:
+                        get_tracer().record_span(_trace_id, {
+                            "type": SPAN_TOOL_EXEC,
+                            "started_at": datetime.now(timezone.utc).isoformat(),
+                            "duration_ms": int((time.monotonic() - _tool_start) * 1000),
+                            "tool_name": name,
+                            "input_args": kwargs,
+                            "error": str(e),
+                            "success": False,
+                        })
+                except Exception:
+                    pass
                 return {
                     "role": "tool",
                     "tool_call_id": tool_call_id,
@@ -504,7 +536,7 @@ class Agent:
 
     # ---- Chat methods ----
 
-    def chat(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None) -> str:
+    def chat(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None, source: str = "user_chat") -> str:
         """Send a message and get a response, handling any tool calls.
 
         Maintains conversation history across calls.
@@ -523,6 +555,18 @@ class Agent:
         with self._chat_lock:
             self._last_tool_calls = []  # Reset tool tracking
             get_tracker().reset()       # Reset mutation tracking for this cycle
+
+            # Begin debug trace
+            _trace_id: str | None = None
+            try:
+                _trace_id = get_tracer().begin_trace(source, message[:200])
+            except Exception:
+                pass
+            try:
+                from ..core.request_tracer import set_active_trace
+                set_active_trace(_trace_id)
+            except Exception:
+                pass
 
             # Build context injection:
             # - skip_snapshot=True (daemon wake with briefing): no injection
@@ -546,6 +590,21 @@ class Agent:
                 wrapped = message
                 self._last_snapshot = ""
 
+            # Record context span
+            try:
+                if _trace_id:
+                    _ctx_detail = {
+                        "type": SPAN_CONTEXT,
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                        "duration_ms": 0,
+                        "has_briefing": "[Briefing" in wrapped if not skip_snapshot else False,
+                        "has_snapshot": "[Live State" in wrapped if not skip_snapshot else False,
+                        "skip_snapshot": skip_snapshot,
+                    }
+                    get_tracer().record_span(_trace_id, _ctx_detail)
+            except Exception:
+                pass
+
             self._history.append({"role": "user", "content": stamp(wrapped)})
 
             # Retrieve relevant past context from Nous
@@ -555,7 +614,7 @@ class Agent:
                 search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
             else:
                 search_query = message
-            self._active_context = self.memory_manager.retrieve_context(search_query)
+            self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
             self._last_active_context = self._active_context  # Preserve for coach
 
             # Enable memory queue — store_memory calls become instant during thinking.
@@ -565,22 +624,70 @@ class Agent:
 
             try:
                 while True:
+                    _llm_start = time.monotonic()
                     try:
                         response = litellm.completion(**kwargs)
                     except Exception as e:
                         logger.error("LLM API error (%s): %s", type(e).__name__, e)
+                        # Record failed LLM span
+                        try:
+                            if _trace_id:
+                                get_tracer().record_span(_trace_id, {
+                                    "type": SPAN_LLM_CALL,
+                                    "started_at": datetime.now(timezone.utc).isoformat(),
+                                    "duration_ms": int((time.monotonic() - _llm_start) * 1000),
+                                    "model": self.config.agent.model,
+                                    "error": f"{type(e).__name__}: {e}",
+                                    "success": False,
+                                })
+                        except Exception:
+                            pass
                         error_msg = "I'm having trouble connecting right now. Give me a moment."
                         self._history.append({"role": "assistant", "content": error_msg})
                         self._active_context = None
+                        try:
+                            if _trace_id:
+                                get_tracer().end_trace(_trace_id, "error", error_msg, error=str(e))
+                        except Exception:
+                            pass
                         return error_msg
 
                     self._record_usage(response)
                     msg = response.choices[0].message
                     finish = response.choices[0].finish_reason
 
+                    # Record LLM call span
+                    try:
+                        if _trace_id:
+                            _usage = response.usage
+                            _llm_span = {
+                                "type": SPAN_LLM_CALL,
+                                "started_at": datetime.now(timezone.utc).isoformat(),
+                                "duration_ms": int((time.monotonic() - _llm_start) * 1000),
+                                "model": self.config.agent.model,
+                                "input_tokens": getattr(_usage, "prompt_tokens", 0) if _usage else 0,
+                                "output_tokens": getattr(_usage, "completion_tokens", 0) if _usage else 0,
+                                "stop_reason": finish,
+                                "has_tool_calls": bool(msg.tool_calls),
+                                "success": True,
+                            }
+                            # Store message payload by hash (avoids bloating trace)
+                            try:
+                                from ..core.trace_log import store_payload
+                                _llm_span["messages_hash"] = store_payload(
+                                    json.dumps(kwargs.get("messages", []), default=str)
+                                )
+                                if msg.content:
+                                    _llm_span["response_hash"] = store_payload(msg.content)
+                            except Exception:
+                                pass
+                            get_tracer().record_span(_trace_id, _llm_span)
+                    except Exception:
+                        pass
+
                     if finish == "tool_calls" or (msg.tool_calls and len(msg.tool_calls) > 0):
                         parsed_calls = self._parse_tool_calls(msg)
-                        tool_results = self._execute_tools(parsed_calls)
+                        tool_results = self._execute_tools(parsed_calls, _trace_id=_trace_id)
 
                         # Track tool calls with truncated results for coach
                         for tc, result in zip(parsed_calls, tool_results):
@@ -608,13 +715,27 @@ class Agent:
 
                         # Window management: compress evicted exchanges into Nous
                         self._active_context = None
-                        trimmed, did_compress = self.memory_manager.maybe_compress(self._history)
+                        trimmed, did_compress = self.memory_manager.maybe_compress(
+                            self._history, _trace_id=_trace_id,
+                        )
                         if did_compress:
                             self._history = trimmed
                         else:
                             self._trim_history()  # Safety net fallback
+
+                        # End debug trace
+                        try:
+                            if _trace_id:
+                                get_tracer().end_trace(_trace_id, "completed", text[:200])
+                        except Exception:
+                            pass
                         return text
             finally:
+                try:
+                    from ..core.request_tracer import set_active_trace
+                    set_active_trace(None)
+                except Exception:
+                    pass
                 disable_queue_mode()
                 flush_memory_queue()
 
@@ -673,7 +794,7 @@ class Agent:
         cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
         return cleaned.strip()
 
-    def chat_stream(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None) -> Generator[tuple[str, str], None, None]:
+    def chat_stream(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None, source: str = "user_chat") -> Generator[tuple[str, str], None, None]:
         """Stream a response, yielding typed chunks as they arrive.
 
         Yields tuples of (type, data):
@@ -699,6 +820,18 @@ class Agent:
             self._last_tool_calls = []  # Reset tool tracking
             get_tracker().reset()       # Reset mutation tracking for this cycle
 
+            # Begin debug trace
+            _trace_id: str | None = None
+            try:
+                _trace_id = get_tracer().begin_trace(source, message[:200])
+            except Exception:
+                pass
+            try:
+                from ..core.request_tracer import set_active_trace
+                set_active_trace(_trace_id)
+            except Exception:
+                pass
+
             # Build context injection:
             # - skip_snapshot=True (daemon wake with briefing): no injection
             # - skip_snapshot=False: try briefing injection first, fall back to snapshot
@@ -721,6 +854,20 @@ class Agent:
                 wrapped = message
                 self._last_snapshot = ""
 
+            # Record context span
+            try:
+                if _trace_id:
+                    get_tracer().record_span(_trace_id, {
+                        "type": SPAN_CONTEXT,
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                        "duration_ms": 0,
+                        "has_briefing": "[Briefing" in wrapped if not skip_snapshot else False,
+                        "has_snapshot": "[Live State" in wrapped if not skip_snapshot else False,
+                        "skip_snapshot": skip_snapshot,
+                    })
+            except Exception:
+                pass
+
             self._history.append({"role": "user", "content": stamp(wrapped)})
 
             # Retrieve relevant past context from Nous
@@ -730,7 +877,7 @@ class Agent:
                 search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
             else:
                 search_query = message
-            self._active_context = self.memory_manager.retrieve_context(search_query)
+            self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
             self._last_active_context = self._active_context  # Preserve for coach
 
             # Enable memory queue — store_memory calls become instant during thinking.
@@ -739,6 +886,7 @@ class Agent:
 
             try:
                 while True:
+                    _llm_start = time.monotonic()
                     try:
                         stream_response = litellm.completion(**kwargs, stream=True)
 
@@ -752,6 +900,11 @@ class Agent:
                                 partial = "".join(collected_text) or ""
                                 if partial:
                                     self._history.append({"role": "assistant", "content": partial})
+                                try:
+                                    if _trace_id:
+                                        get_tracer().end_trace(_trace_id, "completed", partial[:200])
+                                except Exception:
+                                    pass
                                 return
 
                             delta = chunk.choices[0].delta
@@ -779,11 +932,44 @@ class Agent:
                                     if tc_chunk.function and tc_chunk.function.arguments:
                                         collected_tool_calls[idx]["arguments"] += tc_chunk.function.arguments
 
+                        # End of stream — record LLM call span
+                        try:
+                            if _trace_id:
+                                get_tracer().record_span(_trace_id, {
+                                    "type": SPAN_LLM_CALL,
+                                    "started_at": datetime.now(timezone.utc).isoformat(),
+                                    "duration_ms": int((time.monotonic() - _llm_start) * 1000),
+                                    "model": self.config.agent.model,
+                                    "streamed": True,
+                                    "has_tool_calls": bool(collected_tool_calls),
+                                    "text_length": sum(len(t) for t in collected_text),
+                                    "success": True,
+                                })
+                        except Exception:
+                            pass
+
                     except Exception as e:
                         logger.error("LLM API error (%s): %s", type(e).__name__, e)
+                        try:
+                            if _trace_id:
+                                get_tracer().record_span(_trace_id, {
+                                    "type": SPAN_LLM_CALL,
+                                    "started_at": datetime.now(timezone.utc).isoformat(),
+                                    "duration_ms": int((time.monotonic() - _llm_start) * 1000),
+                                    "model": self.config.agent.model,
+                                    "error": f"{type(e).__name__}: {e}",
+                                    "success": False,
+                                })
+                        except Exception:
+                            pass
                         error_msg = "I'm having trouble connecting right now. Give me a moment."
                         self._history.append({"role": "assistant", "content": error_msg})
                         self._active_context = None
+                        try:
+                            if _trace_id:
+                                get_tracer().end_trace(_trace_id, "error", error_msg, error=str(e))
+                        except Exception:
+                            pass
                         yield ("text", error_msg)
                         return
 
@@ -809,6 +995,11 @@ class Agent:
                             partial = "".join(collected_text) or ""
                             if partial:
                                 self._history.append({"role": "assistant", "content": partial})
+                            try:
+                                if _trace_id:
+                                    get_tracer().end_trace(_trace_id, "completed", partial[:200])
+                            except Exception:
+                                pass
                             return
 
                         # Signal all tools to the UI before executing
@@ -816,7 +1007,7 @@ class Agent:
                             yield ("tool", tc["name"])
 
                         # Execute tools (concurrent when multiple)
-                        tool_results = self._execute_tools(parsed_calls)
+                        tool_results = self._execute_tools(parsed_calls, _trace_id=_trace_id)
 
                         # Track tool calls with truncated results for coach
                         for tc, result in zip(parsed_calls, tool_results):
@@ -864,13 +1055,27 @@ class Agent:
 
                         # Window management: compress evicted exchanges into Nous
                         self._active_context = None
-                        trimmed, did_compress = self.memory_manager.maybe_compress(self._history)
+                        trimmed, did_compress = self.memory_manager.maybe_compress(
+                            self._history, _trace_id=_trace_id,
+                        )
                         if did_compress:
                             self._history = trimmed
                         else:
                             self._trim_history()  # Safety net fallback
+
+                        # End debug trace
+                        try:
+                            if _trace_id:
+                                get_tracer().end_trace(_trace_id, "completed", full_text[:200])
+                        except Exception:
+                            pass
                         return
             finally:
+                try:
+                    from ..core.request_tracer import set_active_trace
+                    set_active_trace(None)
+                except Exception:
+                    pass
                 disable_queue_mode()
                 flush_memory_queue()
 

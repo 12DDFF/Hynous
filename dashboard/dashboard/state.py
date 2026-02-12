@@ -424,6 +424,14 @@ class AppState(rx.State):
     # === Activity State ===
     activities: List[Activity] = []
 
+    # === Debug State ===
+    debug_traces: list[dict] = []
+    debug_selected_trace_id: str = ""
+    debug_selected_trace: dict = {}
+    debug_filter_source: str = ""
+    debug_filter_status: str = ""
+    debug_selected_span_id: str = ""  # ID of currently expanded span (empty = none)
+
     # === Navigation ===
     current_page: str = "home"
 
@@ -831,6 +839,20 @@ class AppState(rx.State):
                         self.scanner_news = scanner_data.get("news", [])
                 except Exception:
                     pass
+
+            # Refresh debug traces when on debug page
+            try:
+                async with self:
+                    if self.current_page == "debug":
+                        self.load_debug_traces()
+                        # Also refresh selected trace if viewing one (live span updates)
+                        if self.debug_selected_trace_id:
+                            from hynous.core.request_tracer import get_tracer
+                            trace = get_tracer().get_trace(self.debug_selected_trace_id)
+                            if trace:
+                                self.debug_selected_trace = trace
+            except Exception:
+                pass
 
             await asyncio.sleep(_POLL_INTERVAL)
 
@@ -2292,6 +2314,131 @@ class AppState(rx.State):
         self.current_page = "journal"
         self.journal_unread = False
         return AppState.load_journal
+
+    def go_to_debug(self):
+        """Navigate to the debug page."""
+        self.current_page = "debug"
+        return AppState.load_debug_traces
+
+    def load_debug_traces(self):
+        """Load recent traces for the debug sidebar."""
+        try:
+            from hynous.core.request_tracer import get_tracer
+            tracer = get_tracer()
+            self.debug_traces = tracer.get_recent_traces(limit=50)
+        except Exception as e:
+            logger.error("Failed to load debug traces: %s", e)
+            self.debug_traces = []
+
+    def select_debug_trace(self, trace_id: str):
+        """Select a trace to view in detail."""
+        self.debug_selected_trace_id = trace_id
+        self.debug_selected_span_id = ""
+        try:
+            from hynous.core.request_tracer import get_tracer
+            trace = get_tracer().get_trace(trace_id)
+            if trace:
+                self.debug_selected_trace = trace
+            else:
+                self.debug_selected_trace = {}
+        except Exception as e:
+            logger.error("Failed to load trace %s: %s", trace_id, e)
+            self.debug_selected_trace = {}
+
+    def toggle_debug_span(self, span_id: str):
+        """Toggle expansion of a span in the trace detail view."""
+        if self.debug_selected_span_id == span_id:
+            self.debug_selected_span_id = ""
+        else:
+            self.debug_selected_span_id = span_id
+
+    def set_debug_filter_source(self, value: str):
+        """Set the source filter for debug traces."""
+        self.debug_filter_source = value
+        return AppState.load_debug_traces
+
+    def set_debug_filter_status(self, value: str):
+        """Set the status filter for debug traces."""
+        self.debug_filter_status = value
+        return AppState.load_debug_traces
+
+    def refresh_debug_traces(self):
+        """Refresh the trace list (called by manual refresh or polling)."""
+        return AppState.load_debug_traces
+
+    @rx.var(cache=False)
+    def debug_spans_display(self) -> list[dict]:
+        """Prepare spans for display with pre-computed fields.
+
+        Each span dict gets extra keys:
+        - "span_id": unique identifier for expand/collapse
+        - "label": display label ("LLM Call", "Tool", etc.)
+        - "color": hex color for the badge/border
+        - "summary": one-line description
+        - "detail_json": formatted JSON string for expanded view
+        - "is_error": bool for error indicator
+        """
+        import json as _json
+        spans = self.debug_selected_trace.get("spans", [])
+        result = []
+        for i, span in enumerate(spans):
+            span_type = span.get("type", "unknown")
+
+            # Map span type -> label + color
+            label_map = {
+                "context": ("Context", "#818cf8"),
+                "retrieval": ("Retrieval", "#34d399"),
+                "llm_call": ("LLM Call", "#f59e0b"),
+                "tool_execution": ("Tool", "#60a5fa"),
+                "memory_op": ("Memory", "#a78bfa"),
+                "compression": ("Compress", "#fb923c"),
+                "queue_flush": ("Queue", "#94a3b8"),
+            }
+            label, color = label_map.get(span_type, (span_type, "#525252"))
+
+            # Build summary based on span type
+            if span_type == "llm_call":
+                tokens = span.get("input_tokens", 0) + span.get("output_tokens", 0)
+                summary = f"{span.get('model', '?')} — {tokens} tok"
+            elif span_type == "tool_execution":
+                summary = span.get("tool_name", "")
+            elif span_type == "retrieval":
+                q = span.get("query", "")
+                n = span.get("results_count", 0)
+                summary = f'"{q[:50]}" -> {n} results' if q else ""
+            elif span_type == "memory_op":
+                summary = f"{span.get('operation', '')}: {span.get('title', '')}"
+            elif span_type == "context":
+                parts = []
+                if span.get("has_briefing"):
+                    parts.append("briefing")
+                if span.get("has_snapshot"):
+                    parts.append("snapshot")
+                summary = "Injected: " + ", ".join(parts) if parts else "Context injection"
+            elif span_type == "compression":
+                summary = f"{span.get('exchanges_evicted', 0)} exchanges evicted"
+            elif span_type == "queue_flush":
+                summary = f"{span.get('items_count', 0)} items"
+            else:
+                summary = ""
+
+            # JSON detail for expanded view
+            try:
+                detail = _json.dumps(span, indent=2, default=str)
+            except Exception:
+                detail = str(span)
+
+            result.append({
+                "span_id": f"span-{i}",
+                "type": span_type,
+                "label": label,
+                "color": color,
+                "summary": summary,
+                "duration_ms": span.get("duration_ms", 0),
+                "is_error": span.get("success") is False or "error" in span,
+                "detail_json": detail,
+            })
+        return result
 
     @_background
     async def load_journal(self):

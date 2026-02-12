@@ -1224,7 +1224,7 @@ class Daemon:
             return
 
         message = f"{header}\n\n{pnl_line}\n\n{footer}"
-        response = self._wake_agent(message, priority=priority, max_coach_cycles=0, max_tokens=1024)
+        response = self._wake_agent(message, priority=priority, max_coach_cycles=0, max_tokens=1024, source="daemon:profit")
         if response:
             log_event(DaemonEvent(
                 "profit", f"{tier}: {coin} {side}",
@@ -1338,7 +1338,7 @@ class Daemon:
         ])
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1024)
+        response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1024, source="daemon:watchpoint")
         if response:
             self.watchpoint_fires += 1
             log_event(DaemonEvent(
@@ -1373,7 +1373,7 @@ class Daemon:
         # Format the wake message (pass position types for risk context)
         message = format_scanner_wake(top, position_types=self._position_types)
 
-        response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1024)
+        response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1024, source="daemon:scanner")
         if response:
             self.scanner_wakes += 1
             self._scanner.wakes_triggered += 1
@@ -1460,7 +1460,7 @@ class Daemon:
 
         message = "\n".join(lines)
         fill_tokens = 1536 if classification in ("stop_loss", "take_profit") else 512
-        response = self._wake_agent(message, priority=True, max_coach_cycles=0, max_tokens=fill_tokens)
+        response = self._wake_agent(message, priority=True, max_coach_cycles=0, max_tokens=fill_tokens, source="daemon:fill")
         if response:
             self._fill_fires += 1
             fill_title = f"{classification.replace('_', ' ').title()}: {coin} {side} ({type_label})"
@@ -1520,9 +1520,9 @@ class Daemon:
 
         message = "\n".join(lines)
         if is_learning:
-            response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1536)
+            response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1536, source="daemon:review")
         else:
-            response = self._wake_agent(message, max_coach_cycles=1, max_tokens=512)
+            response = self._wake_agent(message, max_coach_cycles=1, max_tokens=512, source="daemon:review")
         if response:
             symbols = self.config.execution.symbols
             log_event(DaemonEvent(
@@ -1784,7 +1784,7 @@ class Daemon:
         ])
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, max_tokens=1024)
+        response = self._wake_agent(message, max_tokens=1024, source="daemon:conflict")
         if response:
             log_event(DaemonEvent(
                 "conflict", "Contradiction review",
@@ -1928,7 +1928,7 @@ class Daemon:
             ])
 
             message = "\n".join(lines)
-            response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1536)
+            response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1536, source="daemon:learning")
             if response:
                 self.learning_sessions += 1
                 self._last_learning_session = time.time()
@@ -1962,6 +1962,7 @@ class Daemon:
         self, message: str, priority: bool = False,
         max_coach_cycles: int = 0,
         max_tokens: int | None = None,
+        source: str = "daemon:unknown",
     ) -> str | None:
         """Send a daemon message to the agent with pre-built briefing.
 
@@ -2088,6 +2089,7 @@ class Daemon:
             response = self.agent.chat(
                 full_message, skip_snapshot=bool(briefing_text),
                 max_tokens=max_tokens,
+                source=source,
             )
             if response is None:
                 return None
@@ -2154,7 +2156,7 @@ class Daemon:
         ]
 
         message = "\n".join(lines)
-        response = self._wake_agent(message, priority=True, max_coach_cycles=1, max_tokens=1024)
+        response = self._wake_agent(message, priority=True, max_coach_cycles=1, max_tokens=1024, source="daemon:manual")
         if response:
             log_event(DaemonEvent(
                 "review", "Manual review (dashboard)",

@@ -11,7 +11,7 @@ Run with:
 import reflex as rx
 from .state import AppState
 from .components import navbar
-from .pages import home_page, chat_page, graph_page, journal_page, memory_page, login_page
+from .pages import home_page, chat_page, graph_page, journal_page, memory_page, login_page, debug_page
 
 
 def _dashboard_content() -> rx.Component:
@@ -150,6 +150,7 @@ def _dashboard_content() -> rx.Component:
                 on_chat=AppState.go_to_chat,
                 on_journal=AppState.go_to_journal,
                 on_memory=AppState.go_to_memory,
+                on_debug=AppState.go_to_debug,
                 on_logout=AppState.logout,
             ),
             position="fixed",
@@ -173,7 +174,11 @@ def _dashboard_content() -> rx.Component:
                     rx.cond(
                         AppState.current_page == "journal",
                         journal_page(),
-                        memory_page(),
+                        rx.cond(
+                            AppState.current_page == "debug",
+                            debug_page(),
+                            memory_page(),
+                        ),
                     ),
                 ),
             ),

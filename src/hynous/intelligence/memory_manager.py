@@ -17,6 +17,7 @@ Design principles:
 import json
 import logging
 import threading
+import time
 from typing import Optional
 
 import litellm
@@ -24,6 +25,7 @@ from litellm.exceptions import APIError as LitellmAPIError
 
 from ..core.config import Config
 from ..core.costs import record_llm_usage
+from ..core.request_tracer import get_tracer, SPAN_RETRIEVAL, SPAN_COMPRESSION, SPAN_QUEUE_FLUSH
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +86,12 @@ class MemoryManager:
     # 1. CONTEXT RETRIEVAL
     # ================================================================
 
-    def retrieve_context(self, message: str) -> Optional[str]:
+    def retrieve_context(self, message: str, _trace_id: str | None = None) -> Optional[str]:
         """Search Nous for relevant past context to inject into the API call.
 
         Args:
             message: The user's raw stamped message (e.g., "[2:34 PM ...] query").
+            _trace_id: Debug trace ID for span recording (optional).
 
         Returns:
             Formatted context string, or None if nothing relevant found
@@ -105,10 +108,31 @@ class MemoryManager:
         try:
             from ..nous.client import get_client
             nous = get_client()
+            _ret_start = time.monotonic()
             results = nous.search(
                 query=query,
                 limit=self.config.memory.retrieve_limit,
             )
+            _ret_ms = int((time.monotonic() - _ret_start) * 1000)
+
+            # Record retrieval span
+            try:
+                if _trace_id:
+                    from datetime import datetime, timezone
+                    get_tracer().record_span(_trace_id, {
+                        "type": SPAN_RETRIEVAL,
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                        "duration_ms": _ret_ms,
+                        "query": query[:200],
+                        "results_count": len(results) if results else 0,
+                        "scores": [
+                            {"title": r.get("content_title", "")[:60], "score": r.get("score", 0)}
+                            for r in (results or [])[:5]
+                        ],
+                    })
+            except Exception:
+                pass
+
             if not results:
                 return None
 
@@ -169,7 +193,7 @@ class MemoryManager:
     # 3. WINDOW MANAGEMENT
     # ================================================================
 
-    def maybe_compress(self, history: list[dict]) -> tuple[list[dict], bool]:
+    def maybe_compress(self, history: list[dict], _trace_id: str | None = None) -> tuple[list[dict], bool]:
         """Check if history exceeds window and handle overflow.
 
         Returns:
@@ -196,6 +220,22 @@ class MemoryManager:
         # Split: evict oldest, keep most recent
         evicted_exchanges = exchanges[:-window]
         kept_exchanges = exchanges[-window:]
+
+        # Record compression span
+        try:
+            if _trace_id:
+                from datetime import datetime, timezone
+                get_tracer().record_span(_trace_id, {
+                    "type": SPAN_COMPRESSION,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": 0,  # Compression runs in background
+                    "exchanges_evicted": len(evicted_exchanges),
+                    "exchanges_kept": len(kept_exchanges),
+                    "window_size": window,
+                    "background": True,
+                })
+        except Exception:
+            pass
 
         # Find the cut point in the original history list.
         # The first entry of the first kept exchange tells us where to slice.
