@@ -8,6 +8,7 @@ All reactive state lives here.
 import json
 import re
 import asyncio
+import time
 import threading
 import reflex as rx
 import logging
@@ -660,7 +661,7 @@ class AppState(rx.State):
         if not self._check_session():
             return
 
-        # Load chat history
+        # Load chat history (wake log is drained in poll_portfolio, not here)
         if not self.messages:
             try:
                 from hynous.core.persistence import load
@@ -769,6 +770,15 @@ class AppState(rx.State):
                         new_daemon_msgs.append(dq.get_nowait())
                     except Exception:
                         break
+                # Also drain persistent wake log (catches anything missed)
+                try:
+                    from hynous.core.persistence import drain_wake_log
+                    for entry in drain_wake_log():
+                        # Dedup: skip if already in queue batch
+                        if not any(d['response'] == entry['response'] for d in new_daemon_msgs):
+                            new_daemon_msgs.append(entry)
+                except Exception:
+                    pass
                 if new_daemon_msgs:
                     async with self:
                         self.is_waking = False  # Clear manual wake indicator
@@ -776,7 +786,7 @@ class AppState(rx.State):
                             self._append_msg(Message(
                                 sender="hynous",
                                 content=_highlight(item['response']),
-                                timestamp=self._format_time(),
+                                timestamp=item.get('timestamp', self._format_time()),
                                 tools_used=["daemon"],
                             ))
                         # Unread indicators
@@ -787,8 +797,8 @@ class AppState(rx.State):
                                 if self.current_page != "journal":
                                     self.journal_unread = True
                                 break
-                    # Persist after adding daemon messages
-                    self._save_chat(_agent)
+                        # Persist inside state lock so self.messages is current
+                        self._save_chat(_get_agent())
             except Exception:
                 pass
 
@@ -831,6 +841,22 @@ class AppState(rx.State):
                         self.scanner_news = scanner_data.get("news", [])
                 except Exception:
                     pass
+
+            # Daemon watchdog — restart if thread died or is hung
+            try:
+                if _daemon is not None:
+                    if not _daemon.is_running:
+                        logger.warning("Daemon thread died — restarting")
+                        _daemon.start()
+                    elif time.time() - _daemon._heartbeat > 180:
+                        logger.warning("Daemon thread hung (no heartbeat for 3min) — restarting")
+                        _daemon._running = False  # Signal loop to stop
+                        if _daemon._thread:
+                            _daemon._thread.join(timeout=5)
+                        _daemon._thread = None
+                        _daemon.start()
+            except Exception as e:
+                logger.debug(f"Daemon watchdog error: {e}")
 
             await asyncio.sleep(_POLL_INTERVAL)
 

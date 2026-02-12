@@ -83,6 +83,10 @@ class HyperliquidProvider:
 
     MAINNET_URL = "https://api.hyperliquid.xyz"
 
+    # HTTP timeout (seconds) — prevents daemon thread from hanging
+    # indefinitely on Hyperliquid API calls.
+    _TIMEOUT = 10
+
     def __init__(self, trade_url: str | None = None):
         """Initialize with mainnet data + optional separate trading endpoint.
 
@@ -91,13 +95,13 @@ class HyperliquidProvider:
                        go to mainnet. Data reads ALWAYS use mainnet for
                        accurate prices, funding rates, and OI.
         """
-        self._info = Info(base_url=self.MAINNET_URL, skip_ws=True)
+        self._info = Info(base_url=self.MAINNET_URL, skip_ws=True, timeout=self._TIMEOUT)
         self._exchange: Exchange | None = None
         self._wallet = None
         self._trade_url = trade_url or self.MAINNET_URL
         # Separate Info for account queries when trading on testnet
         # (positions/fills/orders live on the testnet chain, not mainnet)
-        self._trade_info = Info(base_url=self._trade_url, skip_ws=True) if trade_url else self._info
+        self._trade_info = Info(base_url=self._trade_url, skip_ws=True, timeout=self._TIMEOUT) if trade_url else self._info
         self._sz_decimals: dict[str, int] | None = None
         if trade_url:
             logger.info("HyperliquidProvider initialized (data=%s, trade=%s)", self.MAINNET_URL, trade_url)
@@ -120,6 +124,7 @@ class HyperliquidProvider:
         self._exchange = Exchange(
             wallet=self._wallet,
             base_url=self._trade_url,
+            timeout=self._TIMEOUT,
         )
         logger.info("Exchange initialized for %s (url=%s)", self._wallet.address, self._trade_url)
 

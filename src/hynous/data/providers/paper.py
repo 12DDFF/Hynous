@@ -401,6 +401,12 @@ class PaperProvider:
                             "avg_px": limit_px, "status": "filled",
                         }
 
+            # Block same-direction duplicate
+            if symbol in self.positions:
+                raise ValueError(
+                    f"Already have a {self.positions[symbol].side} position in {symbol}"
+                )
+
             # New position at limit price
             if margin + fee > self.balance:
                 raise ValueError(

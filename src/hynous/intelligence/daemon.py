@@ -23,6 +23,7 @@ Usage:
 import json
 import logging
 import queue as _queue_module
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -52,6 +53,58 @@ def _notify_discord(wake_type: str, title: str, response: str):
         notify(title, wake_type, response)
     except Exception:
         pass
+
+
+def _queue_and_persist(wake_type: str, title: str, response: str, event_type: str = ""):
+    """Put wake message in dashboard queue AND persistent wake log.
+
+    The in-memory queue gives instant UI updates when the dashboard is open.
+    The persistent log ensures messages survive restarts and are available
+    even if the dashboard wasn't open when the wake happened.
+    """
+    item = {"type": wake_type, "title": title, "response": response}
+    if event_type:
+        item["event_type"] = event_type
+    _daemon_chat_queue.put(item)
+    try:
+        from ..core.persistence import append_wake
+        append_wake(wake_type, title, response)
+    except Exception:
+        pass
+
+
+# Regex for detecting narrated trade entries in text (without actual tool calls).
+# Matches trade-specific phrases, NOT generic "entering" (which could be
+# "shorts entering the market" etc.). Patterns:
+#   "Entering SOL long"  "Entering BTC micro short"  "going long"
+#   "taking a short"  "Conviction: 0.68 — entering."
+_TRADE_NARRATION_RE = re.compile(
+    r'(?:'
+    r'(?:entering|opening)\s+\w+\s+(?:long|short|micro|macro)'
+    r'|going\s+(?:long|short)'
+    r'|taking\s+a\s+(?:long|short)'
+    r'|\u2014\s*entering\.'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _check_narrated_trade(response: str, agent) -> None:
+    """Warn if agent narrated a trade entry without calling execute_trade.
+
+    This catches the case where the model writes "Entering SOL long" in text
+    but never makes the actual tool call — the text gets posted to Discord
+    but no position is opened.
+    """
+    if not response or not _TRADE_NARRATION_RE.search(response):
+        return
+    if agent.last_chat_had_trade_tool():
+        return  # Tool was called — text is just confirmation, all good
+    logger.warning(
+        "NARRATED TRADE DETECTED — agent said trade-entry words but never called "
+        "execute_trade. Response: %s",
+        response[:300],
+    )
 
 
 def get_active_daemon() -> "Daemon | None":
@@ -172,6 +225,9 @@ class Daemon:
         self._active_watchpoint_count: int = 0
         self._active_thesis_count: int = 0
         self._pending_curiosity_count: int = 0
+
+        # Heartbeat — updated every loop iteration, checked by dashboard watchdog
+        self._heartbeat: float = time.time()
 
         # Coach cross-wake state
         self._pending_thoughts: list[str] = []       # Haiku questions (max 3)
@@ -414,6 +470,7 @@ class Daemon:
         while self._running:
             try:
                 now = time.time()
+                self._heartbeat = now
 
                 # 0. Daily reset check (circuit breaker)
                 self._check_daily_reset()
@@ -1230,11 +1287,7 @@ class Daemon:
                 "profit", f"{tier}: {coin} {side}",
                 f"ROE {roe_pct:+.1f}% ({type_label}) | Entry ${entry_px:,.0f} → ${mark_px:,.0f}",
             ))
-            _daemon_chat_queue.put({
-                "type": "Profit",
-                "title": f"{tier.replace('_', ' ').title()}: {coin}",
-                "response": response,
-            })
+            _queue_and_persist("Profit", f"{tier.replace('_', ' ').title()}: {coin}", response)
             _notify_discord("Profit", f"{tier.replace('_', ' ').title()}: {coin}", response)
             logger.info("Profit alert: %s %s %s (ROE %+.1f%%, %s)", tier, coin, side, roe_pct, trade_type)
 
@@ -1345,11 +1398,7 @@ class Daemon:
                 "watchpoint", title,
                 f"{symbol} {condition.replace('_', ' ')} {value} | F&G: {self.snapshot.fear_greed}",
             ))
-            _daemon_chat_queue.put({
-                "type": "Watchpoint",
-                "title": title,
-                "response": response,
-            })
+            _queue_and_persist("Watchpoint", title, response)
             _notify_discord("Watchpoint", title, response)
             logger.info("Watchpoint wake complete: %s (%d chars)", title, len(response))
 
@@ -1383,11 +1432,7 @@ class Daemon:
                 "scanner", title,
                 f"{len(top)} anomalies (top: {top_event.type} {top_event.symbol} sev={top_event.severity:.2f})",
             ))
-            _daemon_chat_queue.put({
-                "type": "Scanner",
-                "title": title,
-                "response": response,
-            })
+            _queue_and_persist("Scanner", title, response)
             _notify_discord("Scanner", title, response)
             logger.info("Scanner wake: %d anomalies, agent responded (%d chars)",
                         len(top), len(response))
@@ -1469,11 +1514,7 @@ class Daemon:
                 f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
                 f"PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
             ))
-            _daemon_chat_queue.put({
-                "type": "Fill",
-                "title": fill_title,
-                "response": response,
-            })
+            _queue_and_persist("Fill", fill_title, response, event_type="fill")
             _notify_discord("Fill", fill_title, response)
             logger.info("Fill wake complete: %s %s %s %s (PnL: %s%.2f)",
                          classification, trade_type, coin, side, pnl_sign, abs(realized_pnl))
@@ -1529,11 +1570,7 @@ class Daemon:
                 "review", review_type,
                 f"Symbols: {', '.join(symbols)} | F&G: {self.snapshot.fear_greed}",
             ))
-            _daemon_chat_queue.put({
-                "type": "Review",
-                "title": review_type,
-                "response": response,
-            })
+            _queue_and_persist("Review", review_type, response)
             _notify_discord("Review", review_type, response)
             logger.info("%s complete (%d chars)", review_type, len(response))
 
@@ -1943,11 +1980,7 @@ class Daemon:
                     "learning", "Curiosity learning session",
                     f"{len(curiosity_items)} items: {', '.join(topics)}",
                 ))
-                _daemon_chat_queue.put({
-                    "type": "Learning",
-                    "title": f"Curiosity: {', '.join(topics[:3])}",
-                    "response": response,
-                })
+                _queue_and_persist("Learning", f"Curiosity: {', '.join(topics[:3])}", response)
                 _notify_discord("Learning", f"Curiosity: {', '.join(topics[:3])}", response)
                 logger.info("Learning session complete (%d chars)", len(response))
 
@@ -2092,6 +2125,9 @@ class Daemon:
             if response is None:
                 return None
 
+            # === 5b. Narrated-trade check (while lock is held) ===
+            _check_narrated_trade(response, self.agent)
+
             # === 6. Update fingerprint for staleness detection ===
             try:
                 from ..core.memory_tracker import get_tracker
@@ -2160,11 +2196,7 @@ class Daemon:
                 "review", "Manual review (dashboard)",
                 f"Triggered by user | F&G: {self.snapshot.fear_greed}",
             ))
-            _daemon_chat_queue.put({
-                "type": "Manual Review",
-                "title": "Manual review (dashboard)",
-                "response": response,
-            })
+            _queue_and_persist("Manual Review", "Manual review (dashboard)", response)
             _notify_discord("Review", "Manual review (dashboard)", response)
             logger.info("Manual review complete (%d chars)", len(response))
 
