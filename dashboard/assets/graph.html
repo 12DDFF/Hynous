@@ -403,43 +403,67 @@
     }
 
     // ---- Cluster force ----
+    // Each cluster is assigned a fixed target position on a circle so
+    // clusters spread apart instead of all collapsing to center.
+    let clusterTargets = {}; // cluster_id -> {x, y}
+
+    function computeClusterTargets() {
+      clusterTargets = {};
+      // Only position clusters that actually have graphed members
+      const activeClusters = clusterData.filter(c =>
+        clusterMemberships.some(m => m.cluster_id === c.id)
+      );
+      if (activeClusters.length === 0) return;
+
+      const radius = 350;
+      const angleStep = (2 * Math.PI) / activeClusters.length;
+      activeClusters.forEach((c, i) => {
+        const angle = angleStep * i - Math.PI / 2; // start from top
+        clusterTargets[c.id] = {
+          x: Math.cos(angle) * radius,
+          y: Math.sin(angle) * radius,
+        };
+      });
+    }
+
     function applyClusterForces() {
       if (!graph) return;
       if (clustersEnabled && clusterData.length > 0) {
+        computeClusterTargets();
+
+        // Weaken gravity so clusters can spread out from center
+        graph.d3Force('gravity-x').strength(0.005);
+        graph.d3Force('gravity-y').strength(0.005);
+
         graph.d3Force('cluster', (alpha) => {
-          const centroids = {};
-          const counts = {};
-          for (const c of clusterData) {
-            centroids[c.id] = { x: 0, y: 0 };
-            counts[c.id] = 0;
-          }
-          for (const m of clusterMemberships) {
-            const node = nodeById[m.node_id];
-            if (!node || node.x === undefined) continue;
-            centroids[m.cluster_id].x += node.x;
-            centroids[m.cluster_id].y += node.y;
-            counts[m.cluster_id]++;
-          }
-          for (const cid of Object.keys(centroids)) {
-            if (counts[cid] > 0) {
-              centroids[cid].x /= counts[cid];
-              centroids[cid].y /= counts[cid];
+          const strength = 0.04;
+
+          for (const node of graphData.nodes) {
+            const clusters = clusterNodeMap[node.id];
+            if (!clusters || clusters.length === 0) continue;
+
+            // Target = average of this node's cluster targets
+            // Multi-cluster nodes drift to the midpoint (Venn intersection)
+            let tx = 0, ty = 0, count = 0;
+            for (const cid of clusters) {
+              const t = clusterTargets[cid];
+              if (t) { tx += t.x; ty += t.y; count++; }
             }
-          }
-          const strength = 0.015;
-          for (const m of clusterMemberships) {
-            const node = nodeById[m.node_id];
-            if (!node || node.x === undefined) continue;
-            const c = centroids[m.cluster_id];
-            if (!c || !counts[m.cluster_id]) continue;
-            const numClusters = (clusterNodeMap[m.node_id] || []).length || 1;
-            const s = strength * alpha / numClusters;
-            node.vx += (c.x - node.x) * s;
-            node.vy += (c.y - node.y) * s;
+            if (count === 0) continue;
+            tx /= count;
+            ty /= count;
+
+            const s = strength * alpha;
+            node.vx += (tx - node.x) * s;
+            node.vy += (ty - node.y) * s;
           }
         });
+
         graph.d3ReheatSimulation();
       } else {
+        // Restore normal gravity
+        graph.d3Force('gravity-x').strength(0.04);
+        graph.d3Force('gravity-y').strength(0.04);
         graph.d3Force('cluster', null);
         graph.d3ReheatSimulation();
       }
