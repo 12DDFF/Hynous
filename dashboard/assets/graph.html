@@ -448,7 +448,7 @@
 
         // Cluster force: position toward targets + repel overlapping clusters
         graph.d3Force('cluster', (alpha) => {
-          // --- Phase 1: Compute live cluster centroids & bounding radii ---
+          // --- Phase 1: Gather cluster members ---
           const clusterMembers = {};
           for (const m of clusterMemberships) {
             const n = nodeById[m.node_id];
@@ -456,17 +456,14 @@
             if (!clusterMembers[m.cluster_id]) clusterMembers[m.cluster_id] = [];
             clusterMembers[m.cluster_id].push(n);
           }
-          const clusterInfo = {};
+          const clusterCentroids = {};
           for (const cid of Object.keys(clusterMembers)) {
             const members = clusterMembers[cid];
-            const cx = members.reduce((s, n) => s + n.x, 0) / members.length;
-            const cy = members.reduce((s, n) => s + n.y, 0) / members.length;
-            let maxR = 0;
-            for (const n of members) {
-              const d = Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2);
-              if (d > maxR) maxR = d;
-            }
-            clusterInfo[cid] = { cx, cy, radius: maxR, members };
+            clusterCentroids[cid] = {
+              x: members.reduce((s, n) => s + n.x, 0) / members.length,
+              y: members.reduce((s, n) => s + n.y, 0) / members.length,
+              members,
+            };
           }
 
           // --- Phase 2: Pull nodes toward their cluster target ---
@@ -485,25 +482,22 @@
             node.vy += (ty - node.y) * pullStrength * alpha;
           }
 
-          // --- Phase 3: Repel clusters whose boundaries overlap ---
-          const cids = Object.keys(clusterInfo);
-          const gap = 50; // minimum px gap between cluster boundaries
+          // --- Phase 3: Repel clusters closer than fixed threshold ---
+          const cids = Object.keys(clusterCentroids);
+          const minSep = 300;
           for (let i = 0; i < cids.length; i++) {
             for (let j = i + 1; j < cids.length; j++) {
-              const a = clusterInfo[cids[i]];
-              const b = clusterInfo[cids[j]];
-              const dx = b.cx - a.cx;
-              const dy = b.cy - a.cy;
+              const a = clusterCentroids[cids[i]];
+              const b = clusterCentroids[cids[j]];
+              const dx = b.x - a.x;
+              const dy = b.y - a.y;
               const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-              const minDist = a.radius + b.radius + gap;
-
-              if (dist < minDist) {
-                const push = (minDist - dist) / dist * 0.06 * alpha;
-                const fx = dx * push;
-                const fy = dy * push;
-                for (const n of a.members) { n.vx -= fx; n.vy -= fy; }
-                for (const n of b.members) { n.vx += fx; n.vy += fy; }
-              }
+              if (dist >= minSep) continue;
+              // Capped unit-vector push — can never run away
+              const strength = Math.min(0.5, (minSep - dist) / minSep) * 0.08 * alpha;
+              const ux = dx / dist, uy = dy / dist;
+              for (const n of a.members) { n.vx -= ux * strength; n.vy -= uy * strength; }
+              for (const n of b.members) { n.vx += ux * strength; n.vy += uy * strength; }
             }
           }
         });
