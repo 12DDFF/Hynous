@@ -233,14 +233,22 @@ def _span_row(span: dict) -> rx.Component:
             rx.cond(
                 is_expanded,
                 rx.box(
-                    rx.code_block(
+                    rx.text(
                         span["detail_json"],
-                        language="json",
-                        theme="dark",
-                        width="100%",
+                        font_size="0.7rem",
+                        font_family="JetBrains Mono, monospace",
+                        color="#a3a3a3",
+                        white_space="pre-wrap",
+                        word_break="break-all",
                     ),
-                    padding="8px 0 0 24px",
+                    padding="10px 12px",
+                    margin_top="6px",
+                    margin_left="24px",
+                    background="#0f0f0f",
+                    border="1px solid #1a1a1a",
+                    border_radius="6px",
                     width="100%",
+                    overflow_x="auto",
                 ),
                 rx.fragment(),
             ),
