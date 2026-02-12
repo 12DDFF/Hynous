@@ -221,9 +221,8 @@ class Daemon:
         self._wake_timestamps: list[float] = []
         self._last_wake_time: float = 0
 
-        # Scanner pass dampening — consecutive passes increase cooldown
+        # Scanner stats
         self._scanner_pass_streak: int = 0
-        self._last_scanner_wake: float = 0
 
         # Cached counts (for snapshot, avoids re-querying Nous)
         self._active_watchpoint_count: int = 0
@@ -1420,9 +1419,6 @@ class Daemon:
 
         Filters by wake threshold, formats message, respects rate limits.
         Non-priority wake (shares cooldown with other wakes).
-
-        Consecutive pass dampening: after 3+ passes in a row, applies
-        dynamic cooldown (2min per pass, cap 15min). Resets on trade entry.
         """
         from .scanner import format_scanner_wake
 
@@ -1431,19 +1427,6 @@ class Daemon:
         wake_worthy = [a for a in anomalies if a.severity >= cfg.wake_threshold]
         if not wake_worthy:
             return
-
-        # --- Consecutive pass dampening ---
-        # After 3+ passes in a row, increase cooldown between scanner wakes.
-        # This prevents the agent from burning tokens on "passing" every 3 min.
-        if self._scanner_pass_streak >= 3:
-            dynamic_cooldown = min(self._scanner_pass_streak * 120, 900)  # 2min/pass, cap 15min
-            elapsed = time.time() - self._last_scanner_wake
-            if elapsed < dynamic_cooldown:
-                logger.debug(
-                    "Scanner dampened: %d consecutive passes, %.0fs/%ds cooldown",
-                    self._scanner_pass_streak, elapsed, dynamic_cooldown,
-                )
-                return
 
         # Cap to max anomalies per wake
         top = wake_worthy[:cfg.max_anomalies_per_wake]
@@ -1456,13 +1439,12 @@ class Daemon:
             source="daemon:scanner", skip_memory=True,
         )
         if response:
-            self._last_scanner_wake = time.time()
             self.scanner_wakes += 1
             self._scanner.wakes_triggered += 1
             top_event = top[0]
             title = top_event.headline
 
-            # Track pass streak: reset if agent traded, increment if passed
+            # Track pass streak for stats
             if self.agent.last_chat_had_trade_tool():
                 self._scanner_pass_streak = 0
             else:
@@ -1474,8 +1456,8 @@ class Daemon:
             ))
             _queue_and_persist("Scanner", title, response)
             _notify_discord("Scanner", title, response)
-            logger.info("Scanner wake: %d anomalies, agent responded (%d chars, streak=%d)",
-                        len(top), len(response), self._scanner_pass_streak)
+            logger.info("Scanner wake: %d anomalies, agent responded (%d chars)",
+                        len(top), len(response))
 
     def _wake_for_fill(
         self,
