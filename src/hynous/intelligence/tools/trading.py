@@ -430,18 +430,6 @@ def handle_execute_trade(
 
     # --- Micro trade enforcement ---
     if trade_type == "micro":
-        # Check daily micro limit
-        try:
-            from ...intelligence.daemon import get_active_daemon
-            daemon = get_active_daemon()
-            if daemon and daemon._micro_entries_today >= 2:
-                return (
-                    "Micro limit hit (2/day). Switch to macro if you have a strong thesis, "
-                    "or wait until tomorrow."
-                )
-        except Exception:
-            pass
-
         # Cap confidence at Speculative tier max
         if confidence is not None and confidence > 0.59:
             logger.info("Micro trade: clamping confidence %.2f → 0.59", confidence)

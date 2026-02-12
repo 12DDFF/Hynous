@@ -286,7 +286,7 @@ def _build_activity(daemon) -> str:
     week = getattr(daemon, '_entries_this_week', 0)
     last = getattr(daemon, 'last_trade_ago', "never")
 
-    micro_str = f" ({micro}/2 micro)" if micro > 0 else ""
+    micro_str = f" ({micro} micro)" if micro > 0 else ""
     return f"Activity: {today} entries today{micro_str}, {week} this week | Last trade: {last} ago"
 
 
