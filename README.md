@@ -36,16 +36,22 @@ hynous/
 │   └── state/           # Session management
 │
 ├── config/              # All configuration
-├── data/                # Databases & storage
+├── deploy/              # VPS deployment (systemd, Caddy)
 ├── scripts/             # Entry points
 ├── tests/               # Test suites
 ├── docs/                # Documentation
 └── revisions/           # Known issues & planned improvements
     ├── revision-exploration.md     # All 19 issues (prioritized P0-P3)
-    └── nous-wiring/                # Nous ↔ Python integration issues
-        ├── executive-summary.md    # Start here — issue categories overview
-        ├── nous-wiring-revisions.md # 10 wiring issues (NW-1 to NW-10) — ALL FIXED
-        └── more-functionality.md   # 16 Nous features (MF-0 to MF-15) — 14 DONE, 2 SKIPPED, 0 remaining
+    ├── nous-wiring/                # Nous ↔ Python integration — ALL RESOLVED
+    │   ├── executive-summary.md    # Start here — issue categories overview
+    │   ├── nous-wiring-revisions.md # 10 wiring issues (NW-1 to NW-10) — ALL FIXED
+    │   └── more-functionality.md   # 16 Nous features (MF-0 to MF-15) — 14 DONE, 2 SKIPPED
+    └── token-optimization/         # Token cost reduction — TO-1 through TO-4 DONE
+        ├── executive-summary.md    # Overview of 8 TOs (4 implemented, 4 deferred)
+        ├── TO-1-dynamic-max-tokens.md
+        ├── TO-2-schema-trimming.md
+        ├── TO-3-stale-tool-truncation.md
+        └── TO-4-window-size.md
 ```
 
 See `ARCHITECTURE.md` for detailed component documentation.
@@ -78,10 +84,10 @@ If you're an AI agent working on this project:
 
 ## Status
 
-- [ ] Phase 1: Dashboard skeleton
-- [ ] Phase 2: Chat with Hynous
-- [ ] Phase 3: Add tools incrementally
-- [ ] Phase 4: Paper trading
+- [x] Phase 1: Dashboard skeleton
+- [x] Phase 2: Chat with Hynous
+- [x] Phase 3: Add tools incrementally (23 tools, market scanner, Discord bot)
+- [x] Phase 4: Paper trading (conviction-sized, micro/swing types)
 - [ ] Phase 5: Live trading
 
 ---

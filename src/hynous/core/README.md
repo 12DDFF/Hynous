@@ -8,24 +8,30 @@
 
 ```
 core/
-├── config.py      # Configuration loading
-├── types.py       # Shared type definitions
-├── errors.py      # Custom exceptions
-└── logging.py     # Logging setup
+├── config.py          # Configuration loading (YAML + .env)
+├── types.py           # Shared type definitions
+├── errors.py          # Custom exceptions
+├── logging.py         # Logging setup
+├── clock.py           # Timestamp injection for agent messages
+├── costs.py           # LLM cost tracking (per-model, per-session)
+├── persistence.py     # Paper trading state + conversation history persistence
+├── daemon_log.py      # Daemon event logging for UI display
+└── memory_tracker.py  # Memory mutation tracking per agent cycle
 ```
 
 ---
 
 ## Configuration
 
-Config is loaded from YAML files in `config/`:
+Config is loaded from YAML files in `config/` and `.env`:
 
 ```python
 from hynous.core import load_config
 
-config = load_config()  # Loads config/default.yaml
+config = load_config()  # Loads config/default.yaml + .env
 print(config.execution.mode)  # "paper"
-print(config.agent.model)     # "claude-sonnet-4-20250514"
+print(config.agent.model)     # "openrouter/anthropic/claude-sonnet-4-5-20250929"
+print(config.agent.max_tokens) # 2048 (default, overridable per wake type)
 ```
 
 ---

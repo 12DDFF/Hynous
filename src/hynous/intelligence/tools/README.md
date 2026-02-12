@@ -1,6 +1,6 @@
 # Tools
 
-> Functions Hynous can call during reasoning. Currently 17 tool modules registered.
+> Functions Hynous can call during reasoning. 17 tool modules, 23 registered tools.
 
 ---
 
@@ -13,14 +13,15 @@
 | `funding.py` | `get_funding_history` | Historical funding rates |
 | `multi_timeframe.py` | `get_multi_timeframe` | OHLCV across multiple timeframes |
 | `liquidations.py` | `get_liquidations` | Recent liquidation data |
-| `sentiment.py` | `get_sentiment` | Market sentiment indicators |
-| `options.py` | `get_options_data` | Options flow and positioning |
-| `institutional.py` | `get_institutional_flows` | Institutional fund flows |
-| `web_search.py` | `web_search` | Web search for news/context |
-| `costs.py` | `estimate_costs` | Trading cost estimation |
+| `sentiment.py` | `get_global_sentiment` | Market sentiment indicators |
+| `options.py` | `get_options_flow` | Options flow and positioning |
+| `institutional.py` | `get_institutional_flow` | Institutional fund flows |
+| `web_search.py` | `search_web` | Web search for news/context |
+| `costs.py` | `get_my_costs` | LLM cost tracking and breakdown |
 | `memory.py` | `store_memory`, `recall_memory`, `update_memory` | Full memory CRUD (create, search/browse/time-range, update) |
 | `delete_memory.py` | `delete_memory` | Memory deletion with edge cleanup |
-| `trading.py` | `execute_trade`, `close_position`, `modify_position`, `get_positions`, `get_balance` | Trade execution and management |
+| `trading.py` | `execute_trade`, `close_position`, `modify_position`, `get_account` | Trade execution and position management |
+| `trade_stats.py` | `get_trade_stats` | Trade history, win rate, PnL stats |
 | `watchpoints.py` | `manage_watchpoints` | Price/funding alert CRUD |
 | `explore_memory.py` | `explore_memory` | Graph traversal: explore connections, link/unlink edges |
 | `conflicts.py` | `manage_conflicts` | List and resolve contradictions in knowledge base |

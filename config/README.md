@@ -19,9 +19,10 @@ Sensitive values should be in environment variables, not config files:
 
 ```bash
 # .env (create this, don't commit)
-ANTHROPIC_API_KEY=sk-ant-...
-HYPERLIQUID_API_KEY=...
-HYPERLIQUID_API_SECRET=...
+OPENROUTER_API_KEY=sk-or-...        # Single key for all LLM providers via OpenRouter
+HYPERLIQUID_PRIVATE_KEY=...          # Hyperliquid wallet private key
+DISCORD_BOT_TOKEN=...               # Discord bot token (optional)
+COINGLASS_API_KEY=...               # Coinglass derivatives data (optional)
 ```
 
 ---

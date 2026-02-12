@@ -23,19 +23,19 @@
 │                 ▼                                                        │
 │  ┌─────────────────────────┐                                            │
 │  │      HYNOUS AGENT       │ ◄── Hynous lives here                      │
-│  │  • Claude API reasoning │                                            │
+│  │  • LiteLLM reasoning   │                                            │
 │  │  • Tool calling loop    │                                            │
-│  │  • Event-driven + cron  │                                            │
+│  │  • Scanner + cron       │                                            │
 │  └───────────┬─────────────┘                                            │
 │              │                                                           │
 │      ┌───────┼───────┬───────────────┐                                  │
 │      │       │       │               │                                  │
 │      ▼       ▼       ▼               ▼                                  │
-│  ┌───────┐ ┌───────┐ ┌───────┐ ┌──────────┐                            │
-│  │ Hydra │ │ Nous  │ │Events │ │ Daemon   │                            │
-│  │ Tools │ │Client │ │       │ │          │                            │
-│  │(direct)│ │(HTTP) │ │detect │ │24/7 loop │                            │
-│  └───┬───┘ └───┬───┘ └───────┘ └──────────┘                            │
+│  ┌───────┐ ┌───────┐ ┌────────┐ ┌──────────┐                           │
+│  │ Hydra │ │ Nous  │ │Scanner │ │ Daemon   │                           │
+│  │ Tools │ │Client │ │anomaly │ │          │                           │
+│  │(direct)│ │(HTTP) │ │detect  │ │24/7 loop │                           │
+│  └───┬───┘ └───┬───┘ └────────┘ └──────────┘                           │
 └──────┼─────────┼────────────────────────────────────────────────────────┘
        │         │
        │         │ HTTP (~5ms)
@@ -80,11 +80,16 @@ The LLM agent that thinks, reasons, and acts.
 
 | Module | Responsibility |
 |--------|----------------|
-| `agent.py` | Claude API wrapper, tool calling loop |
+| `agent.py` | LiteLLM multi-provider wrapper (Claude, GPT-4, etc.), tool calling loop |
 | `prompts/` | System prompts (identity, trading knowledge) |
-| `tools/` | Tool definitions and handlers |
-| `events/` | Event detection and triggers |
+| `tools/` | Tool definitions and handlers (17 modules, 23 tools) |
 | `daemon.py` | Background loop for autonomous operation |
+| `scanner.py` | Market-wide anomaly detection across all Hyperliquid pairs |
+| `briefing.py` | Pre-built briefing injection for daemon wakes |
+| `coach.py` | Haiku sharpener for daemon wake quality |
+| `context_snapshot.py` | Live state snapshot builder (portfolio, market, memory) |
+| `memory_manager.py` | Tiered memory: working window + Nous-backed compression |
+| `gate_filter.py` | Pre-storage quality gate (rejects gibberish, filler, etc.) |
 
 ### `src/hynous/nous/` — The Memory Client
 
@@ -168,23 +173,23 @@ Response returned to dashboard
 User sees Hynous response
 ```
 
-### Event-Driven Flow
+### Daemon Wake Flow
 
 ```
-daemon.py (every minute)
+daemon.py (continuous loop)
     │
-    ▼
-events/detector.py (check conditions)
+    ├── scanner.py (anomaly detection across all pairs)
+    ├── price polling (watchpoints, profit alerts)
+    ├── periodic review (hourly market analysis)
+    ├── curiosity check (learning sessions)
+    ├── conflict polling (contradiction resolution)
     │
-    ├── funding > threshold?
-    ├── price move > threshold?
+    ▼ (if wake triggered)
+intelligence/agent.py (chat with max_tokens cap per wake type)
     │
-    ▼ (if event detected)
-intelligence/agent.py (analyze_event)
-    │
-    ├──► Search memory for similar events
-    ├──► Reason about implications
-    ├──► Decide: trade / wait / pass
+    ├──► Briefing injection (pre-built, free)
+    ├──► Nous context retrieval
+    ├──► Reason + tool calls
     │
     ▼ (if trade decision)
 tools/trading.py (execute_trade)
@@ -201,7 +206,7 @@ data/hyperliquid.py (place order)
 |----------|--------|-----------|
 | UI Framework | Reflex | Python-native, compiles to React |
 | Memory System | Nous (TypeScript) via HTTP | Too complex to reimplement, ~5ms overhead acceptable |
-| LLM | Claude (Anthropic) | Best reasoning, good tool use |
+| LLM | LiteLLM via OpenRouter | Multi-provider (Claude, GPT-4, DeepSeek, etc.), single API key |
 | Agent-Hydra | Direct import | Zero overhead, same Python process |
 | Agent-Nous | HTTP API | Nous is TypeScript, clean separation |
 | Config | YAML files | Human readable, easy to edit |
@@ -286,6 +291,16 @@ Focused on the Nous ↔ Python integration layer. Start with `executive-summary.
 - **`more-functionality.md`** — 16 Nous capabilities (MF-0 to MF-15). **14 DONE, 2 SKIPPED (MF-11, MF-14), 0 remaining.** All items resolved. Completed: MF-0 (search-before-store dedup), MF-1 through MF-10 (Hebbian learning, batch decay, contradiction queue, update tool, graph traversal, browse-by-type, time-range search, health check, embedding backfill, QCS logging), MF-12 (contradiction resolution execution), MF-13 (cluster management), MF-15 (gate filter for memory quality). Skipped: MF-11 (working memory — overlaps with FSRS decay + dedup + Hebbian), MF-14 (edge decay — Hebbian strengthening already provides signal discrimination)
 
 **If you're working on Nous integration, read the executive summary first.** It explains the overall landscape and current status.
+
+### `revisions/token-optimization/`
+
+Token cost reduction measures. Start with `executive-summary.md`:
+
+- **TO-1** — Dynamic max_tokens per wake type (512-2048) — **DONE**
+- **TO-2** — Schema trimming for store/recall_memory (~70% smaller) — **DONE**
+- **TO-3** — Tiered stale tool-result truncation (150/300/400/600/800) — **DONE**
+- **TO-4** — Window size 6→4 with Haiku compression — **DONE**
+- TO-5 through TO-8 — Deferred (streaming abort, cron tuning, prompt compression, model routing)
 
 ---
 
