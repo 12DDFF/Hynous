@@ -415,7 +415,7 @@
       );
       if (activeClusters.length === 0) return;
 
-      const radius = 350;
+      const radius = 500;
       const angleStep = (2 * Math.PI) / activeClusters.length;
       activeClusters.forEach((c, i) => {
         const angle = angleStep * i - Math.PI / 2; // start from top
@@ -431,12 +431,24 @@
       if (clustersEnabled && clusterData.length > 0) {
         computeClusterTargets();
 
-        // Weaken gravity so clusters can spread out from center
-        graph.d3Force('gravity-x').strength(0.005);
-        graph.d3Force('gravity-y').strength(0.005);
+        // Near-zero gravity — let cluster force control positioning
+        graph.d3Force('gravity-x').strength(0.002);
+        graph.d3Force('gravity-y').strength(0.002);
 
+        // Cross-cluster links get much longer rest distance so they
+        // don't fight cluster separation. Intra-cluster links stay tight.
+        graph.d3Force('link').distance(link => {
+          const sid = link.source.id || link.source;
+          const tid = link.target.id || link.target;
+          const sc = clusterNodeMap[sid] || [];
+          const tc = clusterNodeMap[tid] || [];
+          const shared = sc.some(c => tc.includes(c));
+          return shared ? 80 : 350;
+        });
+
+        // Strong positioning force toward cluster targets
         graph.d3Force('cluster', (alpha) => {
-          const strength = 0.04;
+          const strength = 0.1;
 
           for (const node of graphData.nodes) {
             const clusters = clusterNodeMap[node.id];
@@ -461,9 +473,10 @@
 
         graph.d3ReheatSimulation();
       } else {
-        // Restore normal gravity
+        // Restore normal physics
         graph.d3Force('gravity-x').strength(0.04);
         graph.d3Force('gravity-y').strength(0.04);
+        graph.d3Force('link').distance(80);
         graph.d3Force('cluster', null);
         graph.d3ReheatSimulation();
       }
