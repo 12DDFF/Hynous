@@ -221,6 +221,10 @@ class Daemon:
         self._wake_timestamps: list[float] = []
         self._last_wake_time: float = 0
 
+        # Scanner pass dampening — consecutive passes increase cooldown
+        self._scanner_pass_streak: int = 0
+        self._last_scanner_wake: float = 0
+
         # Cached counts (for snapshot, avoids re-querying Nous)
         self._active_watchpoint_count: int = 0
         self._active_thesis_count: int = 0
@@ -1416,6 +1420,9 @@ class Daemon:
 
         Filters by wake threshold, formats message, respects rate limits.
         Non-priority wake (shares cooldown with other wakes).
+
+        Consecutive pass dampening: after 3+ passes in a row, applies
+        dynamic cooldown (2min per pass, cap 15min). Resets on trade entry.
         """
         from .scanner import format_scanner_wake
 
@@ -1425,26 +1432,50 @@ class Daemon:
         if not wake_worthy:
             return
 
+        # --- Consecutive pass dampening ---
+        # After 3+ passes in a row, increase cooldown between scanner wakes.
+        # This prevents the agent from burning tokens on "passing" every 3 min.
+        if self._scanner_pass_streak >= 3:
+            dynamic_cooldown = min(self._scanner_pass_streak * 120, 900)  # 2min/pass, cap 15min
+            elapsed = time.time() - self._last_scanner_wake
+            if elapsed < dynamic_cooldown:
+                logger.debug(
+                    "Scanner dampened: %d consecutive passes, %.0fs/%ds cooldown",
+                    self._scanner_pass_streak, elapsed, dynamic_cooldown,
+                )
+                return
+
         # Cap to max anomalies per wake
         top = wake_worthy[:cfg.max_anomalies_per_wake]
 
         # Format the wake message (pass position types for risk context)
         message = format_scanner_wake(top, position_types=self._position_types)
 
-        response = self._wake_agent(message, max_coach_cycles=0, max_tokens=1024, source="daemon:scanner")
+        response = self._wake_agent(
+            message, max_coach_cycles=0, max_tokens=384,
+            source="daemon:scanner", skip_memory=True,
+        )
         if response:
+            self._last_scanner_wake = time.time()
             self.scanner_wakes += 1
             self._scanner.wakes_triggered += 1
             top_event = top[0]
             title = top_event.headline
+
+            # Track pass streak: reset if agent traded, increment if passed
+            if self.agent.last_chat_had_trade_tool():
+                self._scanner_pass_streak = 0
+            else:
+                self._scanner_pass_streak += 1
+
             log_event(DaemonEvent(
                 "scanner", title,
                 f"{len(top)} anomalies (top: {top_event.type} {top_event.symbol} sev={top_event.severity:.2f})",
             ))
             _queue_and_persist("Scanner", title, response)
             _notify_discord("Scanner", title, response)
-            logger.info("Scanner wake: %d anomalies, agent responded (%d chars)",
-                        len(top), len(response))
+            logger.info("Scanner wake: %d anomalies, agent responded (%d chars, streak=%d)",
+                        len(top), len(response), self._scanner_pass_streak)
 
     def _wake_for_fill(
         self,
@@ -2005,6 +2036,7 @@ class Daemon:
         max_coach_cycles: int = 0,
         max_tokens: int | None = None,
         source: str = "daemon:unknown",
+        skip_memory: bool = False,
     ) -> str | None:
         """Send a daemon message to the agent with pre-built briefing.
 
@@ -2122,6 +2154,7 @@ class Daemon:
                 full_message, skip_snapshot=bool(briefing_text),
                 max_tokens=max_tokens,
                 source=source,
+                skip_memory=skip_memory,
             )
             if response is None:
                 return None

@@ -540,7 +540,7 @@ class Agent:
 
     # ---- Chat methods ----
 
-    def chat(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None, source: str = "user_chat") -> str:
+    def chat(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None, source: str = "user_chat", skip_memory: bool = False) -> str:
         """Send a message and get a response, handling any tool calls.
 
         Maintains conversation history across calls.
@@ -615,13 +615,17 @@ class Agent:
             self._history.append({"role": "user", "content": stamp(wrapped)})
 
             # Retrieve relevant past context from Nous
-            # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
-            if "[DAEMON WAKE" in message:
-                symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
-                search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
+            # skip_memory: scanner wakes skip retrieval (briefing has the data, saves ~1-2s)
+            if skip_memory:
+                self._active_context = None
             else:
-                search_query = message
-            self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
+                # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
+                if "[DAEMON WAKE" in message:
+                    symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
+                    search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
+                else:
+                    search_query = message
+                self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
             self._last_active_context = self._active_context  # Preserve for coach
 
             # Enable memory queue — store_memory calls become instant during thinking.
@@ -801,7 +805,7 @@ class Agent:
         cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
         return cleaned.strip()
 
-    def chat_stream(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None, source: str = "user_chat") -> Generator[tuple[str, str], None, None]:
+    def chat_stream(self, message: str, skip_snapshot: bool = False, max_tokens: int | None = None, source: str = "user_chat", skip_memory: bool = False) -> Generator[tuple[str, str], None, None]:
         """Stream a response, yielding typed chunks as they arrive.
 
         Yields tuples of (type, data):
@@ -881,13 +885,17 @@ class Agent:
             self._history.append({"role": "user", "content": stamp(wrapped)})
 
             # Retrieve relevant past context from Nous
-            # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
-            if "[DAEMON WAKE" in message:
-                symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
-                search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
+            # skip_memory: scanner wakes skip retrieval (briefing has the data, saves ~1-2s)
+            if skip_memory:
+                self._active_context = None
             else:
-                search_query = message
-            self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
+                # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
+                if "[DAEMON WAKE" in message:
+                    symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
+                    search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
+                else:
+                    search_query = message
+                self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
             self._last_active_context = self._active_context  # Preserve for coach
 
             # Enable memory queue — store_memory calls become instant during thinking.
