@@ -313,9 +313,10 @@
     let clustersEnabled = false;
     let clusterData = [];
     let clusterMemberships = [];
-    let clusterNodeMap = {};   // node_id -> [cluster_id, ...]
-    let clusterColorMap = {};  // cluster_id -> { fill, stroke }
+    let clusterNodeMap = {};        // node_id -> [cluster_id, ...]
+    let clusterColorMap = {};       // cluster_id -> { fill, stroke }
     let nodeById = {};
+    let nodeAssignedCluster = {};   // node_id -> cluster_id (primary, for layout)
 
     // ---- Cluster color assignment ----
     function assignClusterColors(clusters) {
@@ -402,115 +403,85 @@
       ctx.closePath();
     }
 
-    // ---- Cluster force ----
-    // Each cluster is assigned a fixed target position on a circle so
-    // clusters spread apart instead of all collapsing to center.
-    let clusterTargets = {}; // cluster_id -> {x, y}
+    // ---- Cluster layout (deterministic, no physics) ----
+    const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // ~137.5° Fibonacci spiral
 
-    function computeClusterTargets() {
-      clusterTargets = {};
-      // Only position clusters that actually have graphed members
-      const activeClusters = clusterData.filter(c =>
-        clusterMemberships.some(m => m.cluster_id === c.id)
+    function enterClusterView() {
+      if (!graph || clusterData.length === 0) return;
+
+      // Assign each node to one cluster (first membership)
+      nodeAssignedCluster = {};
+      for (const m of clusterMemberships) {
+        if (!nodeAssignedCluster[m.node_id]) nodeAssignedCluster[m.node_id] = m.cluster_id;
+      }
+
+      // Group nodes by assigned cluster
+      const groups = {};     // cluster_id -> [node, ...]
+      const unclustered = [];
+      for (const node of graphData.nodes) {
+        const cid = nodeAssignedCluster[node.id];
+        if (cid) {
+          if (!groups[cid]) groups[cid] = [];
+          groups[cid].push(node);
+        } else {
+          unclustered.push(node);
+        }
+      }
+
+      // Compute cluster center positions on a circle
+      const activeIds = clusterData.map(c => c.id).filter(id => groups[id] && groups[id].length > 0);
+      const hasUnclustered = unclustered.length > 0;
+      const numSlots = activeIds.length + (hasUnclustered ? 1 : 0);
+      if (numSlots === 0) return;
+
+      // Scale outer radius so largest cluster has room
+      const maxSize = Math.max(
+        ...activeIds.map(id => groups[id].length),
+        hasUnclustered ? unclustered.length : 0
       );
-      if (activeClusters.length === 0) return;
+      const nodeSpacing = 20;
+      const largestClusterRadius = nodeSpacing * Math.sqrt(maxSize + 1);
+      const outerRadius = largestClusterRadius * 1.8 + numSlots * 20;
+      const angleStep = (2 * Math.PI) / numSlots;
 
-      const radius = 500;
-      const angleStep = (2 * Math.PI) / activeClusters.length;
-      activeClusters.forEach((c, i) => {
-        const angle = angleStep * i - Math.PI / 2; // start from top
-        clusterTargets[c.id] = {
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius,
-        };
+      // Place each cluster's nodes in a Fibonacci spiral
+      activeIds.forEach((cid, i) => {
+        const angle = angleStep * i - Math.PI / 2;
+        const cx = Math.cos(angle) * outerRadius;
+        const cy = Math.sin(angle) * outerRadius;
+        groups[cid].forEach((node, j) => {
+          const r = nodeSpacing * Math.sqrt(j + 1);
+          const theta = j * GOLDEN_ANGLE;
+          node.fx = cx + r * Math.cos(theta);
+          node.fy = cy + r * Math.sin(theta);
+        });
       });
+
+      // Unclustered nodes get their own slot
+      if (hasUnclustered) {
+        const angle = angleStep * activeIds.length - Math.PI / 2;
+        const cx = Math.cos(angle) * outerRadius;
+        const cy = Math.sin(angle) * outerRadius;
+        unclustered.forEach((node, j) => {
+          const r = nodeSpacing * Math.sqrt(j + 1);
+          const theta = j * GOLDEN_ANGLE;
+          node.fx = cx + r * Math.cos(theta);
+          node.fy = cy + r * Math.sin(theta);
+        });
+      }
+
+      graph.d3ReheatSimulation();
+      setTimeout(() => graph.zoomToFit(400, 80), 300);
     }
 
-    function applyClusterForces() {
+    function exitClusterView() {
       if (!graph) return;
-      if (clustersEnabled && clusterData.length > 0) {
-        computeClusterTargets();
-
-        // Near-zero gravity — let cluster force control positioning
-        graph.d3Force('gravity-x').strength(0.002);
-        graph.d3Force('gravity-y').strength(0.002);
-
-        // Cross-cluster links get much longer rest distance so they
-        // don't fight cluster separation. Intra-cluster links stay tight.
-        graph.d3Force('link').distance(link => {
-          const sid = link.source.id || link.source;
-          const tid = link.target.id || link.target;
-          const sc = clusterNodeMap[sid] || [];
-          const tc = clusterNodeMap[tid] || [];
-          const shared = sc.some(c => tc.includes(c));
-          return shared ? 80 : 350;
-        });
-
-        // Cluster force: position toward targets + repel overlapping clusters
-        graph.d3Force('cluster', (alpha) => {
-          // --- Phase 1: Gather cluster members ---
-          const clusterMembers = {};
-          for (const m of clusterMemberships) {
-            const n = nodeById[m.node_id];
-            if (!n || n.x === undefined) continue;
-            if (!clusterMembers[m.cluster_id]) clusterMembers[m.cluster_id] = [];
-            clusterMembers[m.cluster_id].push(n);
-          }
-          const clusterCentroids = {};
-          for (const cid of Object.keys(clusterMembers)) {
-            const members = clusterMembers[cid];
-            clusterCentroids[cid] = {
-              x: members.reduce((s, n) => s + n.x, 0) / members.length,
-              y: members.reduce((s, n) => s + n.y, 0) / members.length,
-              members,
-            };
-          }
-
-          // --- Phase 2: Pull nodes toward their cluster target ---
-          const pullStrength = 0.1;
-          for (const node of graphData.nodes) {
-            const clusters = clusterNodeMap[node.id];
-            if (!clusters || clusters.length === 0) continue;
-            let tx = 0, ty = 0, count = 0;
-            for (const cid of clusters) {
-              const t = clusterTargets[cid];
-              if (t) { tx += t.x; ty += t.y; count++; }
-            }
-            if (count === 0) continue;
-            tx /= count; ty /= count;
-            node.vx += (tx - node.x) * pullStrength * alpha;
-            node.vy += (ty - node.y) * pullStrength * alpha;
-          }
-
-          // --- Phase 3: Repel clusters closer than fixed threshold ---
-          const cids = Object.keys(clusterCentroids);
-          const minSep = 300;
-          for (let i = 0; i < cids.length; i++) {
-            for (let j = i + 1; j < cids.length; j++) {
-              const a = clusterCentroids[cids[i]];
-              const b = clusterCentroids[cids[j]];
-              const dx = b.x - a.x;
-              const dy = b.y - a.y;
-              const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-              if (dist >= minSep) continue;
-              // Capped unit-vector push — can never run away
-              const strength = Math.min(0.5, (minSep - dist) / minSep) * 0.08 * alpha;
-              const ux = dx / dist, uy = dy / dist;
-              for (const n of a.members) { n.vx -= ux * strength; n.vy -= uy * strength; }
-              for (const n of b.members) { n.vx += ux * strength; n.vy += uy * strength; }
-            }
-          }
-        });
-
-        graph.d3ReheatSimulation();
-      } else {
-        // Restore normal physics
-        graph.d3Force('gravity-x').strength(0.04);
-        graph.d3Force('gravity-y').strength(0.04);
-        graph.d3Force('link').distance(80);
-        graph.d3Force('cluster', null);
-        graph.d3ReheatSimulation();
+      nodeAssignedCluster = {};
+      for (const node of graphData.nodes) {
+        node.fx = undefined;
+        node.fy = undefined;
       }
+      graph.d3ReheatSimulation();
     }
 
     // ---- Cluster legend ----
@@ -694,7 +665,7 @@
 
       if (graph) {
         graph.graphData(graphData);
-        if (clustersEnabled) applyClusterForces();
+        if (clustersEnabled) enterClusterView();
         return;
       }
 
@@ -815,10 +786,10 @@
           const pad = 20 / globalScale;
 
           for (const cluster of clusterData) {
-            const members = clusterMemberships
-              .filter(m => m.cluster_id === cluster.id)
-              .map(m => nodeById[m.node_id])
-              .filter(n => n && n.x !== undefined);
+            // Only include nodes assigned to this cluster (no overlap)
+            const members = graphData.nodes.filter(n =>
+              nodeAssignedCluster[n.id] === cluster.id && n.x !== undefined
+            );
 
             if (members.length === 0) continue;
             const colors = clusterColorMap[cluster.id];
@@ -961,7 +932,11 @@
       clustersEnabled = !clustersEnabled;
       document.getElementById('cluster-btn').classList.toggle('active', clustersEnabled);
       buildClusterLegend();
-      applyClusterForces();
+      if (clustersEnabled) {
+        enterClusterView();
+      } else {
+        exitClusterView();
+      }
       if (graph) graph.refresh();
     });
 
