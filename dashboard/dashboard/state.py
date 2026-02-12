@@ -915,16 +915,31 @@ class AppState(rx.State):
         raw_positions = state["positions"]
         initial = getattr(provider, "_initial_balance", config.execution.paper_balance)
 
-        # Compute realized PnL per open position from fills
+        # Compute realized PnL per open position from PARTIAL fills only.
+        # Only count fills that happened AFTER the current position opened
+        # (prevents old closed trades from bleeding into new positions).
         realized_by_symbol: dict[str, float] = {}
+        opened_at_by_symbol: dict[str, str] = {}
+        for p in raw_positions:
+            opened_at_by_symbol[p["coin"]] = p.get("opened_at", "")
         try:
+            from datetime import datetime, timezone
             import time as _time
-            fills = provider.get_user_fills(start_ms=0, end_ms=int(_time.time() * 1000))
-            for f in fills:
-                direction = f.get("direction", "")
-                if "Close" in direction:
-                    sym = f.get("coin", "")
-                    realized_by_symbol[sym] = realized_by_symbol.get(sym, 0) + f.get("closed_pnl", 0)
+            for sym, opened_at in opened_at_by_symbol.items():
+                if not opened_at:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+                    start_ms = int(dt.timestamp() * 1000)
+                except Exception:
+                    continue
+                fills = provider.get_user_fills(start_ms=start_ms, end_ms=int(_time.time() * 1000))
+                for f in fills:
+                    if f.get("coin") != sym:
+                        continue
+                    direction = f.get("direction", "")
+                    if "Close" in direction:
+                        realized_by_symbol[sym] = realized_by_symbol.get(sym, 0) + f.get("closed_pnl", 0)
         except Exception:
             pass
 
