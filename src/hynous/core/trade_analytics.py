@@ -98,7 +98,8 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
         return None
 
     signals = body.get("signals", {})
-    if not signals or signals.get("action") != "close":
+    action = signals.get("action", "")
+    if not signals or action not in ("close", "partial_close"):
         return None
 
     symbol = signals.get("symbol", "")
@@ -151,6 +152,16 @@ def _find_duration(close_node: dict, nous_client, closed_at: str) -> float:
                             return _hours_between(entry_time, closed_at)
     except Exception:
         pass
+
+    # Fallback: check if opened_at is stored in the close node's signals
+    try:
+        body = json.loads(close_node.get("content_body", "{}"))
+        signals = body.get("signals", {})
+        opened_at = signals.get("opened_at", "")
+        if opened_at and closed_at:
+            return _hours_between(opened_at, closed_at)
+    except Exception:
+        pass
     return 0.0
 
 
@@ -165,8 +176,37 @@ def _hours_between(start_iso: str, end_iso: str) -> float:
         return 0.0
 
 
+def _merge_partial_trades(trades: list[TradeRecord]) -> list[TradeRecord]:
+    """Merge partial exits of the same position into a single trade."""
+    merged: dict[tuple, TradeRecord] = {}
+    for t in trades:
+        key = (t.symbol, t.side, t.entry_px)
+        if key not in merged:
+            merged[key] = TradeRecord(
+                symbol=t.symbol, side=t.side, entry_px=t.entry_px,
+                exit_px=t.exit_px, pnl_usd=t.pnl_usd, pnl_pct=t.pnl_pct,
+                close_type=t.close_type, closed_at=t.closed_at,
+                size_usd=t.size_usd, duration_hours=t.duration_hours,
+            )
+        else:
+            m = merged[key]
+            total_size = m.size_usd + t.size_usd
+            if total_size > 0:
+                m.exit_px = round((m.exit_px * m.size_usd + t.exit_px * t.size_usd) / total_size, 6)
+            m.pnl_usd = round(m.pnl_usd + t.pnl_usd, 2)
+            m.size_usd = round(total_size, 2)
+            if m.entry_px > 0 and m.size_usd > 0:
+                margin = m.size_usd / 10
+                m.pnl_pct = round((m.pnl_usd / margin) * 100, 2) if margin > 0 else 0
+            m.closed_at = max(m.closed_at, t.closed_at)
+            m.close_type = "merged"
+            m.duration_hours = max(m.duration_hours, t.duration_hours)
+    return sorted(merged.values(), key=lambda t: t.closed_at, reverse=True)
+
+
 def compute_stats(trades: list[TradeRecord]) -> TradeStats:
     """Compute aggregate stats from trade records."""
+    trades = _merge_partial_trades(trades)
     stats = TradeStats(trades=trades)
     if not trades:
         return stats

@@ -1248,6 +1248,8 @@ def handle_close_position(
             "pnl_pct": round(pnl_pct, 2),
             "lev_return_pct": round(lev_return, 2),
             "close_type": close_label,
+            "size_usd": round(closed_sz * exit_px, 2),
+            "opened_at": position.get("opened_at", ""),
         },
         link_to=entry_node_id,  # Edge: entry --part_of--> close (SSA 0.85)
         edge_type="part_of",

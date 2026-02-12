@@ -68,7 +68,7 @@ def _cluster_item(cluster) -> rx.Component:
 
 
 def _clusters_section() -> rx.Component:
-    """Knowledge clusters section."""
+    """Knowledge clusters section — collapsible."""
     return rx.vstack(
         rx.hstack(
             _section_header("Clusters", "brain", "#a5b4fc"),
@@ -78,17 +78,28 @@ def _clusters_section() -> rx.Component:
                 font_size="0.65rem",
                 color="#404040",
             ),
+            rx.icon(
+                rx.cond(AppState.clusters_sidebar_expanded, "chevron-up", "chevron-down"),
+                size=12,
+                color="#525252",
+            ),
             width="100%",
             align="center",
+            cursor="pointer",
+            on_click=AppState.toggle_clusters_sidebar,
         ),
         rx.cond(
-            AppState.cluster_displays.length() > 0,
-            rx.vstack(
-                rx.foreach(AppState.cluster_displays, _cluster_item),
-                spacing="0",
-                width="100%",
+            AppState.clusters_sidebar_expanded,
+            rx.cond(
+                AppState.cluster_displays.length() > 0,
+                rx.vstack(
+                    rx.foreach(AppState.cluster_displays, _cluster_item),
+                    spacing="0",
+                    width="100%",
+                ),
+                rx.text("No clusters", font_size="0.75rem", color="#404040", padding="0.5rem"),
             ),
-            rx.text("No clusters", font_size="0.75rem", color="#404040", padding="0.5rem"),
+            rx.fragment(),
         ),
         spacing="2",
         width="100%",

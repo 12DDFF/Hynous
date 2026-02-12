@@ -171,6 +171,7 @@ class PaperProvider:
                     "leverage": pos.leverage,
                     "liquidation_px": pos.liquidation_px,
                     "margin_used": pos.margin,
+                    "opened_at": pos.opened_at,
                 })
 
         return {

@@ -116,6 +116,9 @@ class Agent:
         # same thread.  A plain Lock would deadlock.
         self._chat_lock = threading.RLock()
 
+        # Abort event — set by abort_stream() to interrupt current stream
+        self._abort = threading.Event()
+
         # Coach tracking — read by Coach after each chat() in daemon wakes
         self._last_tool_calls: list[dict] = []      # Tools called with results in last chat()
         self._last_active_context: str | None = None # Nous context from last chat()
@@ -131,6 +134,10 @@ class Agent:
         )
         if self._history:
             logger.info(f"Restored {len(self._history)} history entries from disk")
+
+    def abort_stream(self):
+        """Signal the current stream to stop."""
+        self._abort.set()
 
     # ---- Message building with context injection ----
 
@@ -739,6 +746,14 @@ class Agent:
                         collected_tool_calls: dict[int, dict] = {}  # index → {id, name, arguments}
 
                         for chunk in stream_response:
+                            # Check abort between chunks
+                            if self._abort.is_set():
+                                self._abort.clear()
+                                partial = "".join(collected_text) or ""
+                                if partial:
+                                    self._history.append({"role": "assistant", "content": partial})
+                                return
+
                             delta = chunk.choices[0].delta
                             finish = chunk.choices[0].finish_reason
 
@@ -787,6 +802,14 @@ class Agent:
                                 "name": tc["name"],
                                 "arguments": args,
                             })
+
+                        # Check abort before executing tools
+                        if self._abort.is_set():
+                            self._abort.clear()
+                            partial = "".join(collected_text) or ""
+                            if partial:
+                                self._history.append({"role": "assistant", "content": partial})
+                            return
 
                         # Signal all tools to the UI before executing
                         for tc in parsed_calls:

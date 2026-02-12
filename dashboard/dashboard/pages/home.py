@@ -1104,9 +1104,9 @@ def profile_card() -> rx.Component:
 
             # Stats row (clickable — opens detail dialogs)
             rx.hstack(
-                _stat_with_dialog("16", "Tools", "Available Tools", _tools_detail()),
+                _stat_with_dialog("23", "Tools", "Available Tools", _tools_detail()),
                 rx.divider(orientation="vertical", height="32px", border_color="#1a1a1a"),
-                _stat_with_dialog(AppState.positions_count, "Trades", "Trades", _trades_detail()),
+                _stat_with_dialog(AppState.total_trades_str, "Trades", "Trades", _trades_detail()),
                 rx.divider(orientation="vertical", height="32px", border_color="#1a1a1a"),
                 _stat_with_dialog(AppState.message_count, "Messages", "Messages", _messages_detail()),
                 width="100%",
@@ -1159,9 +1159,11 @@ def profile_card() -> rx.Component:
                 spacing="2",
             ),
 
+            rx.spacer(),
             spacing="4",
             align="center",
             width="100%",
+            height="100%",
         ),
         background="#111111",
         border="1px solid #1a1a1a",
@@ -1170,6 +1172,7 @@ def profile_card() -> rx.Component:
         min_width="260px",
         max_width="320px",
         flex="1 1 260px",
+        align_self="stretch",
     )
 
 
@@ -1361,20 +1364,32 @@ def position_row(pos) -> rx.Component:
                 "font_family": "JetBrains Mono, monospace",
             },
         ),
-        # P&L $ (tick-animated)
-        rx.el.div(
-            rx.cond(pos.pnl_usd >= 0, "+$", "-$") + rx.cond(pos.pnl_usd >= 0, pos.pnl_usd, pos.pnl_usd * -1).to(str),
-            data_tick_target="pos-usd-" + pos.symbol,
-            data_tick_value=pos.pnl_usd.to(str),
-            data_tick_prefix="$",
-            data_tick_suffix="",
-            style={
-                "color": rx.cond(pos.pnl_usd >= 0, "#22c55e", "#ef4444"),
-                "font_size": "0.85rem",
-                "font_weight": "600",
-                "width": "13%",
-                "font_family": "JetBrains Mono, monospace",
-            },
+        # P&L $ (tick-animated) + locked-in PnL
+        rx.vstack(
+            rx.el.div(
+                rx.cond(pos.pnl_usd >= 0, "+$", "-$") + rx.cond(pos.pnl_usd >= 0, pos.pnl_usd, pos.pnl_usd * -1).to(str),
+                data_tick_target="pos-usd-" + pos.symbol,
+                data_tick_value=pos.pnl_usd.to(str),
+                data_tick_prefix="$",
+                data_tick_suffix="",
+                style={
+                    "color": rx.cond(pos.pnl_usd >= 0, "#22c55e", "#ef4444"),
+                    "font_size": "0.85rem",
+                    "font_weight": "600",
+                    "font_family": "JetBrains Mono, monospace",
+                },
+            ),
+            rx.cond(
+                pos.realized_pnl != 0,
+                rx.text(
+                    rx.cond(pos.realized_pnl >= 0, "+$", "-$") + rx.cond(pos.realized_pnl >= 0, pos.realized_pnl, pos.realized_pnl * -1).to(str) + " locked",
+                    font_size="0.6rem",
+                    color=rx.cond(pos.realized_pnl >= 0, "#4ade80", "#f87171"),
+                ),
+                rx.fragment(),
+            ),
+            spacing="0",
+            width="13%",
         ),
         width="100%",
         padding_y="0.625rem",
@@ -1540,10 +1555,21 @@ def _news_card() -> rx.Component:
                     font_size="0.6rem",
                     color="#404040",
                 ),
+                rx.icon(
+                    rx.cond(AppState.news_expanded, "chevron-up", "chevron-down"),
+                    size=14,
+                    color="#525252",
+                ),
                 width="100%",
                 align="center",
+                cursor="pointer",
+                on_click=AppState.toggle_news_expanded,
             ),
-            rx.html(AppState.news_feed_html),
+            rx.cond(
+                AppState.news_expanded,
+                rx.html(AppState.news_feed_html),
+                rx.fragment(),
+            ),
             spacing="3",
             width="100%",
         ),
@@ -1586,9 +1612,6 @@ def home_page() -> rx.Component:
                 # Watchlist
                 rx.box(_watchlist_card(), width="100%"),
 
-                # Suggestions — full-width row
-                rx.box(suggestion_cards(), width="100%"),
-
                 flex="1",
                 spacing="4",
                 width="100%",
@@ -1597,7 +1620,7 @@ def home_page() -> rx.Component:
 
             width="100%",
             spacing="4",
-            align_items="start",
+            align_items="stretch",
             flex_wrap="wrap",
         ),
         width="100%",

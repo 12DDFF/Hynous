@@ -111,6 +111,7 @@ def input_area() -> rx.Component:
                 chat_input(
                     on_submit=AppState.send_message,
                     is_loading=AppState.is_loading,
+                    on_stop=AppState.stop_generation,
                 ),
                 width="100%",
                 max_width="960px",
@@ -149,6 +150,15 @@ def _pos_chip(pos: Position) -> rx.Component:
             font_size="0.7rem",
             font_weight="500",
             color=rx.cond(pos.pnl >= 0, "#22c55e", "#ef4444"),
+        ),
+        rx.cond(
+            pos.realized_pnl != 0,
+            rx.text(
+                rx.cond(pos.realized_pnl >= 0, "+$", "-$") + rx.cond(pos.realized_pnl >= 0, pos.realized_pnl, pos.realized_pnl * -1).to(str),
+                font_size="0.6rem",
+                color=rx.cond(pos.realized_pnl >= 0, "#4ade80", "#f87171"),
+            ),
+            rx.fragment(),
         ),
         spacing="2",
         padding="0.25rem 0.625rem",

@@ -97,6 +97,9 @@ _TOOL_DISPLAY = {
     "delete_memory": "Deleting memory",
     "manage_watchpoints": "Managing watchpoints",
     "get_trade_stats": "Checking trade stats",
+    "explore_memory": "Exploring memory graph",
+    "manage_conflicts": "Managing conflicts",
+    "manage_clusters": "Managing clusters",
 }
 # --- Model preference persistence ---
 _MODEL_PREFS_FILE = Path(__file__).resolve().parents[2] / "storage" / "model_prefs.json"
@@ -190,6 +193,9 @@ _TOOL_TAG = {
     "delete_memory": "delete",
     "manage_watchpoints": "watchpoints",
     "get_trade_stats": "stats",
+    "explore_memory": "explore",
+    "manage_conflicts": "conflicts",
+    "manage_clusters": "clusters",
 }
 
 
@@ -228,6 +234,7 @@ class Position(BaseModel):
     pnl: float = 0.0  # return % on equity
     pnl_usd: float = 0.0  # unrealized PnL in USD
     leverage: int = 1
+    realized_pnl: float = 0.0  # Locked-in PnL from partial exits
 
 
 class ClosedTrade(BaseModel):
@@ -427,6 +434,29 @@ class AppState(rx.State):
 
     # === Sparkline ===
     portfolio_sparkline_svg: str = ""
+
+    # === Collapsible Cards ===
+    news_expanded: bool = True
+    clusters_sidebar_expanded: bool = True
+
+    # === Collapsible Toggles ===
+
+    def toggle_news_expanded(self):
+        self.news_expanded = not self.news_expanded
+
+    def toggle_clusters_sidebar(self):
+        self.clusters_sidebar_expanded = not self.clusters_sidebar_expanded
+
+    # === Stop Generation ===
+
+    def stop_generation(self):
+        """Interrupt agent stream."""
+        global _agent
+        if _agent:
+            _agent.abort_stream()
+        self.is_loading = False
+        self.active_tool = ""
+        self.agent_status = "idle"
 
     # === Chat Actions ===
 
@@ -837,6 +867,19 @@ class AppState(rx.State):
         raw_positions = state["positions"]
         initial = getattr(provider, "_initial_balance", config.execution.paper_balance)
 
+        # Compute realized PnL per open position from fills
+        realized_by_symbol: dict[str, float] = {}
+        try:
+            import time as _time
+            fills = provider.get_user_fills(start_ms=0, end_ms=int(_time.time() * 1000))
+            for f in fills:
+                direction = f.get("direction", "")
+                if "Close" in direction:
+                    sym = f.get("coin", "")
+                    realized_by_symbol[sym] = realized_by_symbol.get(sym, 0) + f.get("closed_pnl", 0)
+        except Exception:
+            pass
+
         positions = [
             Position(
                 symbol=p["coin"],
@@ -847,6 +890,7 @@ class AppState(rx.State):
                 pnl=round(p["return_pct"], 2),
                 pnl_usd=round(p["unrealized_pnl"], 2),
                 leverage=p["leverage"],
+                realized_pnl=round(realized_by_symbol.get(p["coin"], 0), 2),
             )
             for p in raw_positions
         ]
@@ -1027,6 +1071,16 @@ class AppState(rx.State):
     def positions_count(self) -> str:
         """Number of open positions — updated by background poller."""
         return str(len(self.positions))
+
+    @rx.var(cache=False)
+    def total_trades_str(self) -> str:
+        """Total closed trades count."""
+        try:
+            from hynous.core.trade_analytics import get_trade_stats
+            stats = get_trade_stats()
+            return str(stats.total_trades)
+        except Exception:
+            return "0"
 
     @rx.var
     def message_count(self) -> str:
@@ -1266,6 +1320,9 @@ class AppState(rx.State):
             "close_position": "#ef4444",
             "modify_position": "#a78bfa",
             "get_trade_stats": "#f97316",
+            "explore_memory": "#a3e635",
+            "manage_conflicts": "#f87171",
+            "manage_clusters": "#a5b4fc",
         }
         return colors.get(self.active_tool, "#a5b4fc")
 

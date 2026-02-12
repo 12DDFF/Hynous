@@ -100,7 +100,9 @@ def _equity_chart() -> rx.Component:
                         stroke="#1a1a1a",
                     ),
                     rx.recharts.graphing_tooltip(
-                        content_style={"backgroundColor": "#111111", "border": "1px solid #1a1a1a"},
+                        content_style={"backgroundColor": "#111111", "border": "1px solid #1a1a1a", "borderRadius": "8px", "fontSize": "0.8rem"},
+                        label_style={"color": "#525252", "fontSize": "0.7rem"},
+                        item_style={"color": "#fafafa"},
                     ),
                     rx.el.defs(
                         rx.el.linear_gradient(

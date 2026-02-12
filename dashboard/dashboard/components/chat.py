@@ -461,6 +461,14 @@ def _tag_color(name: rx.Var[str]) -> rx.Var[str]:
         ("daemon", "#818cf8"),
         ("delete", "#f87171"),
         ("watchpoints", "#fbbf24"),
+        ("account", "#f59e0b"),
+        ("trade", "#22c55e"),
+        ("close", "#ef4444"),
+        ("modify", "#a78bfa"),
+        ("stats", "#f97316"),
+        ("explore", "#a3e635"),
+        ("conflicts", "#f87171"),
+        ("clusters", "#a5b4fc"),
         "#737373",  # fallback
     )
 
@@ -482,6 +490,14 @@ def _tag_bg(name: rx.Var[str]) -> rx.Var[str]:
         ("daemon", "rgba(129,140,248,0.1)"),
         ("delete", "rgba(248,113,113,0.1)"),
         ("watchpoints", "rgba(251,191,36,0.1)"),
+        ("account", "rgba(245,158,11,0.1)"),
+        ("trade", "rgba(34,197,94,0.1)"),
+        ("close", "rgba(239,68,68,0.1)"),
+        ("modify", "rgba(167,139,250,0.1)"),
+        ("stats", "rgba(249,115,22,0.1)"),
+        ("explore", "rgba(163,230,53,0.1)"),
+        ("conflicts", "rgba(248,113,113,0.1)"),
+        ("clusters", "rgba(165,180,252,0.1)"),
         "#1a1a1e",  # fallback
     )
 
@@ -503,8 +519,9 @@ def chat_input(
     on_submit: callable,
     placeholder: str = "Message Hynous...",
     is_loading: rx.Var[bool] = False,
+    on_stop: callable = None,
 ) -> rx.Component:
-    """Chat input with send button.
+    """Chat input with send/stop button.
 
     Uses an uncontrolled input (no value/on_change binding) so typing
     is purely client-side with zero server round-trips. The message is
@@ -532,32 +549,42 @@ def chat_input(
                     "outline": "none",
                 },
             ),
-            rx.button(
-                rx.cond(
-                    is_loading,
-                    rx.spinner(size="1"),
-                    rx.icon("arrow-up", size=18),
+            rx.cond(
+                is_loading,
+                rx.button(
+                    rx.icon("square", size=16),
+                    on_click=on_stop,
+                    type="button",
+                    background="#ef4444",
+                    color="#fafafa",
+                    width="46px",
+                    height="46px",
+                    border_radius="10px",
+                    cursor="pointer",
+                    display="flex",
+                    align_items="center",
+                    justify_content="center",
+                    flex_shrink="0",
+                    border="none",
+                    _hover={"background": "#dc2626"},
+                    transition="all 0.1s ease",
                 ),
-                type="submit",
-                background="#e5e5e5",
-                color="#0a0a0a",
-                width="46px",
-                height="46px",
-                border_radius="10px",
-                cursor="pointer",
-                display="flex",
-                align_items="center",
-                justify_content="center",
-                flex_shrink="0",
-                _hover={
-                    "background": "#fafafa",
-                },
-                _disabled={
-                    "opacity": "0.5",
-                    "cursor": "not-allowed",
-                },
-                disabled=is_loading,
-                transition="all 0.1s ease",
+                rx.button(
+                    rx.icon("arrow-up", size=18),
+                    type="submit",
+                    background="#e5e5e5",
+                    color="#0a0a0a",
+                    width="46px",
+                    height="46px",
+                    border_radius="10px",
+                    cursor="pointer",
+                    display="flex",
+                    align_items="center",
+                    justify_content="center",
+                    flex_shrink="0",
+                    _hover={"background": "#fafafa"},
+                    transition="all 0.1s ease",
+                ),
             ),
             width="100%",
             spacing="2",
