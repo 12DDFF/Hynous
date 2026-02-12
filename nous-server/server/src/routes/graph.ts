@@ -44,7 +44,35 @@ graph.get('/graph', async (c) => {
     strength: row.strength,
   }));
 
-  return c.json({ nodes, edges, count: { nodes: nodes.length, edges: edges.length } });
+  // Fetch clusters + memberships for visualization
+  const clusterResult = await db.execute({
+    sql: `SELECT id, name, description, icon, pinned FROM clusters ORDER BY pinned DESC, created_at DESC`,
+    args: [],
+  });
+
+  const clusters = clusterResult.rows.map((row: any) => ({
+    id: row.id,
+    name: row.name,
+    icon: row.icon,
+    pinned: !!row.pinned,
+  }));
+
+  const membershipResult = await db.execute({
+    sql: `SELECT cluster_id, node_id, weight FROM cluster_memberships`,
+    args: [],
+  });
+
+  // Filter memberships to only nodes present in the graph
+  const nodeIdSet = new Set(nodes.map((n) => n.id));
+  const memberships = membershipResult.rows
+    .map((row: any) => ({
+      cluster_id: row.cluster_id,
+      node_id: row.node_id,
+      weight: row.weight,
+    }))
+    .filter((m) => nodeIdSet.has(m.node_id));
+
+  return c.json({ nodes, edges, clusters, memberships, count: { nodes: nodes.length, edges: edges.length } });
 });
 
 export default graph;
