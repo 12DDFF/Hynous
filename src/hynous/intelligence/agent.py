@@ -142,6 +142,10 @@ class Agent:
         """Signal the current stream to stop."""
         self._abort.set()
 
+    def last_chat_had_trade_tool(self) -> bool:
+        """Check if the last chat() call actually invoked execute_trade."""
+        return any(tc["name"] == "execute_trade" for tc in self._last_tool_calls)
+
     # ---- Message building with context injection ----
 
     def _build_messages(self) -> list[dict]:

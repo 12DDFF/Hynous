@@ -43,13 +43,14 @@ def _get_trading_provider():
     return provider, config
 
 
-def _check_trading_allowed(is_new_entry: bool = True) -> str | None:
+def _check_trading_allowed(is_new_entry: bool = True, symbol: str | None = None) -> str | None:
     """Check if trading is currently allowed by the daemon's guardrails.
 
     Returns an error message string if blocked, or None if trading is allowed.
 
     Args:
         is_new_entry: True for new trades. False for closes/modifies (always allowed).
+        symbol: Symbol being traded (for duplicate position check).
     """
     if not is_new_entry:
         return None  # Always allow closing/modifying existing positions
@@ -65,6 +66,14 @@ def _check_trading_allowed(is_new_entry: bool = True) -> str | None:
                 f"BLOCKED: Circuit breaker active — daily loss ${abs(daemon.daily_realized_pnl):,.2f} "
                 f"exceeds limit. Trading paused until UTC midnight. "
                 f"Focus on analysis and learning."
+            )
+
+        # Duplicate position check — prevent opening on same symbol
+        if symbol and symbol.upper() in daemon._prev_positions:
+            existing = daemon._prev_positions[symbol.upper()]
+            return (
+                f"BLOCKED: Already have a {existing['side'].upper()} position in {symbol.upper()}. "
+                f"Close or modify it instead of opening a duplicate."
             )
 
         max_pos = daemon.config.daemon.max_open_positions
@@ -414,8 +423,8 @@ def handle_execute_trade(
     trade_type: str = "macro",
 ) -> str:
     """Handle the execute_trade tool call."""
-    # Check circuit breaker and position limits BEFORE anything else
-    blocked = _check_trading_allowed(is_new_entry=True)
+    # Check circuit breaker, duplicate position, and position limits
+    blocked = _check_trading_allowed(is_new_entry=True, symbol=symbol)
     if blocked:
         return blocked
 
