@@ -407,16 +407,6 @@ def _trace_detail() -> rx.Component:
             spacing="3",
             width="100%",
             padding="16px",
-            overflow_y="auto",
-            flex="1",
-            sx={
-                "&::-webkit-scrollbar": {"width": "4px"},
-                "&::-webkit-scrollbar-track": {"background": "transparent"},
-                "&::-webkit-scrollbar-thumb": {
-                    "background": "#2a2a2a",
-                    "border_radius": "2px",
-                },
-            },
         ),
         # Empty state
         rx.center(
@@ -437,7 +427,15 @@ def _trace_detail() -> rx.Component:
     flex="1",
     height="100%",
     min_height="0",
-    overflow="hidden",
+    overflow_y="auto",
+    sx={
+        "&::-webkit-scrollbar": {"width": "4px"},
+        "&::-webkit-scrollbar-track": {"background": "transparent"},
+        "&::-webkit-scrollbar-thumb": {
+            "background": "#2a2a2a",
+            "border_radius": "2px",
+        },
+    },
 )
 
 
