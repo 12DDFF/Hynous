@@ -161,6 +161,7 @@ def _sidebar() -> rx.Component:
         width="280px",
         min_width="280px",
         height="100%",
+        min_height="0",
         padding="12px",
         border_right="1px solid #1a1a1a",
         overflow="hidden",
@@ -273,7 +274,8 @@ def _trace_detail() -> rx.Component:
     """Main area: selected trace detail view."""
     trace = AppState.debug_selected_trace
 
-    return rx.cond(
+    return rx.box(
+        rx.cond(
         AppState.debug_selected_trace_id != "",
         rx.vstack(
             # Header
@@ -431,7 +433,12 @@ def _trace_detail() -> rx.Component:
             width="100%",
             height="100%",
         ),
-    )
+    ),
+    flex="1",
+    height="100%",
+    min_height="0",
+    overflow="hidden",
+)
 
 
 # ---- Main Page ----
@@ -443,6 +450,8 @@ def debug_page() -> rx.Component:
         _trace_detail(),
         spacing="0",
         width="100%",
-        height="100%",
+        height="calc(100vh - 56px)",
+        min_height="0",
         background="#0a0a0a",
+        overflow="hidden",
     )
