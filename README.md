@@ -36,6 +36,7 @@ hynous/
 │   └── state/           # Session management
 │
 ├── config/              # All configuration
+├── storage/             # Runtime data (traces, payloads) — .gitignored
 ├── deploy/              # VPS deployment (systemd, Caddy)
 ├── scripts/             # Entry points
 ├── tests/               # Test suites

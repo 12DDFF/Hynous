@@ -90,6 +90,19 @@ To add a new cron task: add a timing tracker in `__init__`, initialize in `_loop
 
 ---
 
+## Debug Tracing
+
+The intelligence module is fully instrumented for the debug dashboard. Every `agent.chat()` and `chat_stream()` call produces a trace with ordered spans:
+
+- **`agent.py`** — `source` parameter on `chat()`/`chat_stream()`, context/LLM/tool spans, content-addressed payload storage for messages and responses
+- **`memory_manager.py`** — Retrieval spans (with result content bodies: title, body, score, node_type, lifecycle) and compression spans
+- **`tools/memory.py`** — Memory op spans for store (gate filter result, dedup result), recall, and queue flush. Uses thread-local trace context (`set_active_trace`/`get_active_trace`)
+- **`daemon.py`** — `source=` tag on all 9 `_wake_agent()` call sites (e.g. `"daemon:review"`, `"daemon:scanner"`, `"daemon:profit"`)
+
+All tracer calls are wrapped in `try/except` — tracing can never break the agent.
+
+---
+
 ## Dependencies
 
 - `litellm` — Multi-provider LLM API (Claude, GPT-4, DeepSeek, etc. via OpenRouter)

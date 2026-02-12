@@ -67,9 +67,16 @@ dashboard/
 - **Cluster visualization toggle**: deterministic layout that separates nodes by cluster — each cluster gets its own region with Fibonacci spiral arrangement, convex hull boundaries, and cluster legend. Cross-cluster links still drawn. Toggle off restores normal physics layout.
 
 ### Debug (`/debug`)
-- Agent trace inspector with trace list sidebar
-- Span timeline with expandable detail for each step
-- Error panel, duration tracking, output summary
+- Agent trace inspector — every `agent.chat()` / `chat_stream()` call produces a trace
+- Trace list sidebar with source badges, status dots, duration, auto-refresh (15s polling)
+- Span timeline with expandable detail for each step (multiple spans can be open simultaneously)
+- 7 span types: Context, Retrieval, LLM Call, Tool Execution, Memory Op, Compression, Queue Flush
+- **Content visibility**: expanded spans show full resolved content, not just hashes:
+  - LLM Call spans: full message array (`messages_content`) and response text (`response_content`)
+  - Context spans: raw user message + full injected context (briefing/snapshot)
+  - Retrieval spans: result bodies (title, content preview, score, node_type, lifecycle)
+- Error panel for failed traces, duration tracking per span, output summary
+- Source tagging: traces show origin (`user_chat`, `daemon:review`, `daemon:scanner`, etc.)
 
 ## Tech Stack
 

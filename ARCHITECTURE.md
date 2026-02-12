@@ -124,6 +124,8 @@ Shared utilities used everywhere.
 | `types.py` | Shared type definitions |
 | `errors.py` | Custom exceptions |
 | `logging.py` | Logging setup |
+| `request_tracer.py` | Debug trace collector — records spans per `agent.chat()` call |
+| `trace_log.py` | Trace persistence + SHA256 content-addressed payload storage |
 
 ### `dashboard/` — The Face
 
@@ -198,6 +200,33 @@ tools/trading.py (execute_trade)
     ▼
 data/hyperliquid.py (place order)
 ```
+
+### Debug Trace Flow
+
+```
+agent.chat() / chat_stream() called
+    │
+    ├── request_tracer.begin_trace(source, input_summary)
+    │
+    ├── Context span (briefing/snapshot injection, user_message, wrapped_hash)
+    ├── Retrieval span (query, results with content bodies)
+    ├── LLM Call span (model, tokens, messages_hash, response_hash)
+    ├── Tool Execution span (tool_name, input_args, output_preview)
+    ├── Memory Op span (store/recall/update, gate_filter result)
+    ├── Compression span (exchanges_evicted, window_size)
+    ├── Queue Flush span (items_count)
+    │
+    ├── request_tracer.end_trace(status, output_summary)
+    │
+    ▼
+trace_log.save_trace() → storage/traces.json
+                        → storage/payloads/*.json (content-addressed)
+    │
+    ▼
+Dashboard Debug page reads traces + resolves payload hashes
+```
+
+Large content (LLM messages, responses, injected context) is stored via SHA256 content-addressed payloads in `storage/payloads/`. The dashboard's `debug_spans_display` computed var resolves `*_hash` fields to actual content before rendering.
 
 ---
 
