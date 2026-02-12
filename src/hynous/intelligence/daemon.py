@@ -1035,6 +1035,14 @@ class Daemon:
                 f"PnL: {sign}${pnl:.4f} ({sign}{pnl_pct:.2f}%)\n"
                 f"Reason: {label} triggered automatically."
             )
+            # Get opened_at from position type registry (set on entry)
+            type_info = self._position_types.get(coin, {})
+            entry_time = type_info.get("entry_time", 0)
+            opened_at = ""
+            if entry_time > 0:
+                from datetime import datetime, timezone
+                opened_at = datetime.fromtimestamp(entry_time, tz=timezone.utc).isoformat()
+
             signals = {
                 "action": "close",
                 "side": side,
@@ -1044,6 +1052,7 @@ class Daemon:
                 "pnl_usd": round(pnl, 4),
                 "pnl_pct": round(pnl_pct, 2),
                 "close_type": classification,
+                "opened_at": opened_at,
             }
 
             # Find the matching entry node for edge linking
@@ -2037,19 +2046,9 @@ class Daemon:
                          cooldown - (now - self._last_wake_time))
             return None
 
-        # Rate limit: max wakes per hour
-        max_hourly = self.config.daemon.max_wakes_per_hour
-        if max_hourly > 0:
-            cutoff = now - 3600
-            self._wake_timestamps = [t for t in self._wake_timestamps if t > cutoff]
-            if len(self._wake_timestamps) >= max_hourly:
-                log_event(DaemonEvent(
-                    "skip", "Hourly rate limit",
-                    f"{len(self._wake_timestamps)}/{max_hourly} wakes in last hour",
-                ))
-                logger.info("Wake skipped — hourly limit (%d/%d)",
-                             len(self._wake_timestamps), max_hourly)
-                return None
+        # Prune wake timestamp log (keep last hour for stats only)
+        cutoff = now - 3600
+        self._wake_timestamps = [t for t in self._wake_timestamps if t > cutoff]
 
         acquired = self.agent._chat_lock.acquire(blocking=False)
         if not acquired:
