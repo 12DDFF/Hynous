@@ -176,7 +176,7 @@ def _span_row(span: dict) -> rx.Component:
     The span dict is pre-processed by debug_spans_display computed var,
     so it has: span_id, label, color, summary, duration_ms, is_error, detail_json.
     """
-    is_expanded = AppState.debug_selected_span_id == span["span_id"]
+    is_expanded = AppState.debug_expanded_spans.contains(span["span_id"])
 
     return rx.box(
         rx.vstack(

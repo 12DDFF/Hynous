@@ -431,7 +431,7 @@ class AppState(rx.State):
     debug_selected_trace: dict = {}
     debug_filter_source: str = ""
     debug_filter_status: str = ""
-    debug_selected_span_id: str = ""  # ID of currently expanded span (empty = none)
+    debug_expanded_spans: list[str] = []  # IDs of expanded spans (multi-open)
 
     # === Navigation ===
     current_page: str = "home"
@@ -2359,7 +2359,7 @@ class AppState(rx.State):
     def select_debug_trace(self, trace_id: str):
         """Select a trace to view in detail."""
         self.debug_selected_trace_id = trace_id
-        self.debug_selected_span_id = ""
+        self.debug_expanded_spans = []
         try:
             from hynous.core.request_tracer import get_tracer
             trace = get_tracer().get_trace(trace_id)
@@ -2373,10 +2373,10 @@ class AppState(rx.State):
 
     def toggle_debug_span(self, span_id: str):
         """Toggle expansion of a span in the trace detail view."""
-        if self.debug_selected_span_id == span_id:
-            self.debug_selected_span_id = ""
+        if span_id in self.debug_expanded_spans:
+            self.debug_expanded_spans = [s for s in self.debug_expanded_spans if s != span_id]
         else:
-            self.debug_selected_span_id = span_id
+            self.debug_expanded_spans = self.debug_expanded_spans + [span_id]
 
     def set_debug_filter_source(self, value: str):
         """Set the source filter for debug traces."""
