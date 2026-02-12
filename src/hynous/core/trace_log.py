@@ -118,14 +118,13 @@ def _clean_orphaned_payloads():
         return
 
     # Collect all payload hashes referenced by traces
+    # Any span key ending in _hash is a payload reference
     referenced = set()
     for trace in _traces:
         for span in trace.get("spans", []):
-            for key in ("system_prompt_hash", "tools_hash", "messages_hash",
-                        "response_hash", "input_hash", "output_hash"):
-                h = span.get(key)
-                if h:
-                    referenced.add(h)
+            for key, val in span.items():
+                if key.endswith("_hash") and isinstance(val, str):
+                    referenced.add(val)
 
     # Remove unreferenced payload files
     for f in payloads_dir.iterdir():

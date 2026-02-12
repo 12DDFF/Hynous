@@ -597,6 +597,7 @@ class Agent:
             # Record context span
             try:
                 if _trace_id:
+                    from ..core.trace_log import store_payload
                     _ctx_detail = {
                         "type": SPAN_CONTEXT,
                         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -604,6 +605,8 @@ class Agent:
                         "has_briefing": "[Briefing" in wrapped if not skip_snapshot else False,
                         "has_snapshot": "[Live State" in wrapped if not skip_snapshot else False,
                         "skip_snapshot": skip_snapshot,
+                        "user_message": message[:500],
+                        "wrapped_hash": store_payload(wrapped),
                     }
                     get_tracer().record_span(_trace_id, _ctx_detail)
             except Exception:
@@ -861,6 +864,7 @@ class Agent:
             # Record context span
             try:
                 if _trace_id:
+                    from ..core.trace_log import store_payload
                     get_tracer().record_span(_trace_id, {
                         "type": SPAN_CONTEXT,
                         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -868,6 +872,8 @@ class Agent:
                         "has_briefing": "[Briefing" in wrapped if not skip_snapshot else False,
                         "has_snapshot": "[Live State" in wrapped if not skip_snapshot else False,
                         "skip_snapshot": skip_snapshot,
+                        "user_message": message[:500],
+                        "wrapped_hash": store_payload(wrapped),
                     })
             except Exception:
                 pass
@@ -939,16 +945,24 @@ class Agent:
                         # End of stream — record LLM call span
                         try:
                             if _trace_id:
-                                get_tracer().record_span(_trace_id, {
+                                from ..core.trace_log import store_payload
+                                _response_text = "".join(collected_text)
+                                _llm_span = {
                                     "type": SPAN_LLM_CALL,
                                     "started_at": datetime.now(timezone.utc).isoformat(),
                                     "duration_ms": int((time.monotonic() - _llm_start) * 1000),
                                     "model": self.config.agent.model,
                                     "streamed": True,
                                     "has_tool_calls": bool(collected_tool_calls),
-                                    "text_length": sum(len(t) for t in collected_text),
+                                    "text_length": len(_response_text),
                                     "success": True,
-                                })
+                                    "messages_hash": store_payload(
+                                        json.dumps(kwargs.get("messages", []), default=str)
+                                    ),
+                                }
+                                if _response_text:
+                                    _llm_span["response_hash"] = store_payload(_response_text)
+                                get_tracer().record_span(_trace_id, _llm_span)
                         except Exception:
                             pass
 

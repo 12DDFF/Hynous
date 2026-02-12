@@ -2392,21 +2392,50 @@ class AppState(rx.State):
         """Refresh the trace list (called by manual refresh or polling)."""
         return AppState.load_debug_traces
 
+    def load_debug_payload(self, payload_hash: str) -> str:
+        """Load a content-addressed payload for display."""
+        try:
+            from hynous.core.trace_log import load_payload
+            content = load_payload(payload_hash)
+            return content or "(payload not found)"
+        except Exception:
+            return "(error loading payload)"
+
     @rx.var(cache=False)
     def debug_spans_display(self) -> list[dict]:
         """Prepare spans for display with pre-computed fields.
+
+        This computed var is CRITICAL for Reflex compatibility:
+        - rx.foreach only accepts single-argument lambdas (no index)
+        - Python dict lookups don't work on reactive rx.Var values
+        - We solve both by pre-processing spans server-side here
+
+        IMPORTANT: This method also resolves all *_hash payload references
+        to their actual content. Spans store large content (LLM messages,
+        responses, injected context) via content-addressed hashes on disk.
+        Here we load those payloads so the UI shows actual text, not hashes.
 
         Each span dict gets extra keys:
         - "span_id": unique identifier for expand/collapse
         - "label": display label ("LLM Call", "Tool", etc.)
         - "color": hex color for the badge/border
         - "summary": one-line description
-        - "detail_json": formatted JSON string for expanded view
+        - "detail_json": formatted JSON string for expanded view (with resolved content)
         - "is_error": bool for error indicator
         """
         import json as _json
         spans = self.debug_selected_trace.get("spans", [])
         result = []
+
+        # Lazy-load payload resolver (only import if we have spans)
+        _load_payload = None
+        if spans:
+            try:
+                from hynous.core.trace_log import load_payload
+                _load_payload = load_payload
+            except Exception:
+                pass
+
         for i, span in enumerate(spans):
             span_type = span.get("type", "unknown")
 
@@ -2425,13 +2454,17 @@ class AppState(rx.State):
             # Build summary based on span type
             if span_type == "llm_call":
                 tokens = span.get("input_tokens", 0) + span.get("output_tokens", 0)
-                summary = f"{span.get('model', '?')} — {tokens} tok"
+                model = span.get("model", "?")
+                if tokens:
+                    summary = f"{model} — {tokens} tok"
+                else:
+                    summary = f"{model} — streamed"
             elif span_type == "tool_execution":
                 summary = span.get("tool_name", "")
             elif span_type == "retrieval":
                 q = span.get("query", "")
                 n = span.get("results_count", 0)
-                summary = f'"{q[:50]}" -> {n} results' if q else ""
+                summary = f'"{q[:50]}" → {n} results' if q else ""
             elif span_type == "memory_op":
                 summary = f"{span.get('operation', '')}: {span.get('title', '')}"
             elif span_type == "context":
@@ -2448,11 +2481,28 @@ class AppState(rx.State):
             else:
                 summary = ""
 
-            # JSON detail for expanded view
+            # ---- Resolve payload hashes to actual content ----
+            resolved = dict(span)
+            if _load_payload:
+                for key in list(resolved.keys()):
+                    if key.endswith("_hash"):
+                        try:
+                            content = _load_payload(resolved[key])
+                            if content is not None:
+                                content_key = key.replace("_hash", "_content")
+                                try:
+                                    resolved[content_key] = _json.loads(content)
+                                except (ValueError, TypeError):
+                                    resolved[content_key] = content
+                                del resolved[key]
+                        except Exception:
+                            pass  # Keep the hash if loading fails
+
+            # JSON detail for expanded view (now with resolved content)
             try:
-                detail = _json.dumps(span, indent=2, default=str)
+                detail = _json.dumps(resolved, indent=2, default=str)
             except Exception:
-                detail = str(span)
+                detail = str(resolved)
 
             result.append({
                 "span_id": f"span-{i}",

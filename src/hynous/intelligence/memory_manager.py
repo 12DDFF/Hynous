@@ -125,8 +125,14 @@ class MemoryManager:
                         "duration_ms": _ret_ms,
                         "query": query[:200],
                         "results_count": len(results) if results else 0,
-                        "scores": [
-                            {"title": r.get("content_title", "")[:60], "score": r.get("score", 0)}
+                        "results": [
+                            {
+                                "title": r.get("content_title", "")[:80],
+                                "body": r.get("content_body", "")[:300],
+                                "score": r.get("score", 0),
+                                "node_type": r.get("node_type", ""),
+                                "lifecycle": r.get("lifecycle", ""),
+                            }
                             for r in (results or [])[:5]
                         ],
                     })
