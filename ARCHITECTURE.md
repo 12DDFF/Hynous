@@ -10,9 +10,9 @@
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    REFLEX DASHBOARD (Python)                             │
 │                         localhost:3000                                   │
-│  ┌─────────────┐  ┌─────────────┐                                       │
-│  │    Home     │  │    Chat     │  ... future pages                     │
-│  └──────┬──────┘  └──────┬──────┘                                       │
+│  ┌──────┐ ┌──────┐ ┌────────┐ ┌───────┐ ┌───────┐                       │
+│  │ Home │ │ Chat │ │ Memory │ │ Graph │ │ Debug │                       │
+│  └──┬───┘ └──┬───┘ └───┬────┘ └───┬───┘ └───┬───┘                       │
 └─────────┼────────────────┼──────────────────────────────────────────────┘
           │                │
           └───────┬────────┘
@@ -132,10 +132,11 @@ User interface built with Reflex (Python → React).
 | Module | Responsibility |
 |--------|----------------|
 | `rxconfig.py` | Reflex configuration |
-| `dashboard/dashboard.py` | App entry point, routing |
+| `dashboard/dashboard.py` | App entry point, routing, Nous API proxy |
 | `dashboard/state.py` | Reactive state management |
 | `dashboard/components/` | Reusable UI components |
-| `dashboard/pages/` | Page components (home, chat) |
+| `dashboard/pages/` | Page components (home, chat, memory, graph, debug) |
+| `assets/graph.html` | Standalone force-graph visualization with cluster layout |
 
 Run with: `cd dashboard && reflex run`
 
@@ -291,6 +292,12 @@ Focused on the Nous ↔ Python integration layer. Start with `executive-summary.
 - **`more-functionality.md`** — 16 Nous capabilities (MF-0 to MF-15). **14 DONE, 2 SKIPPED (MF-11, MF-14), 0 remaining.** All items resolved. Completed: MF-0 (search-before-store dedup), MF-1 through MF-10 (Hebbian learning, batch decay, contradiction queue, update tool, graph traversal, browse-by-type, time-range search, health check, embedding backfill, QCS logging), MF-12 (contradiction resolution execution), MF-13 (cluster management), MF-15 (gate filter for memory quality). Skipped: MF-11 (working memory — overlaps with FSRS decay + dedup + Hebbian), MF-14 (edge decay — Hebbian strengthening already provides signal discrimination)
 
 **If you're working on Nous integration, read the executive summary first.** It explains the overall landscape and current status.
+
+### `revisions/graph-changes/`
+
+Graph visualization enhancements:
+
+- **`cluster-visualization.md`** — Deterministic cluster layout in the force-graph — **DONE.** Graph API returns clusters + memberships, toggle pins nodes to Fibonacci spiral positions per cluster with convex hull boundaries. No physics-based forces.
 
 ### `revisions/token-optimization/`
 

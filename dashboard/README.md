@@ -22,8 +22,10 @@ The dashboard will be available at `http://localhost:3000`
 ```
 dashboard/
 ├── rxconfig.py              # Reflex configuration
+├── assets/
+│   └── graph.html           # Force-graph visualization (standalone HTML)
 ├── dashboard/               # Main app package
-│   ├── dashboard.py         # App entry point
+│   ├── dashboard.py         # App entry point, routing, Nous API proxy
 │   ├── state.py             # Application state
 │   ├── components/          # Reusable UI components
 │   │   ├── card.py          # Card components
@@ -31,7 +33,10 @@ dashboard/
 │   │   └── nav.py           # Navigation components
 │   └── pages/               # Page components
 │       ├── home.py          # Home page
-│       └── chat.py          # Chat page
+│       ├── chat.py          # Chat page
+│       ├── memory.py        # Memory browser + cluster sidebar
+│       ├── graph.py         # Graph visualization (iframe → graph.html)
+│       └── debug.py         # Agent trace inspector
 └── README.md
 ```
 
@@ -49,6 +54,22 @@ dashboard/
 - Message history
 - Quick suggestions
 - Real-time responses (when agent connected)
+
+### Memory (`/memory`)
+- Cluster sidebar with member counts and health
+- Memory node browser with search and type filtering
+- Cluster-scoped recall
+
+### Graph (`/graph`)
+- Force-directed graph of all memory nodes and edges (force-graph v1.47.4)
+- Node colors by subtype, size by connection count, opacity by retrievability
+- Search highlighting, node detail panel on click
+- **Cluster visualization toggle**: deterministic layout that separates nodes by cluster — each cluster gets its own region with Fibonacci spiral arrangement, convex hull boundaries, and cluster legend. Cross-cluster links still drawn. Toggle off restores normal physics layout.
+
+### Debug (`/debug`)
+- Agent trace inspector with trace list sidebar
+- Span timeline with expandable detail for each step
+- Error panel, duration tracking, output summary
 
 ## Tech Stack
 
@@ -92,12 +113,12 @@ dashboard/
 2. Export in `components/__init__.py`
 3. Import where needed
 
-## Future Integration
+## Nous API Proxy
 
-The dashboard will connect to:
+The dashboard proxies Nous API requests through the Reflex backend (`dashboard.py:250`):
 
-1. **FastAPI Gateway** - For unified API access
-2. **Nous API** - Memory operations (via HTTP proxy)
-3. **Hydra** - Market data and execution
+```
+Browser → localhost:3000/api/nous/{path} → localhost:3100/v1/{path}
+```
 
-See `docs/nous-integration-spec.md` for API details.
+This is used by the graph page (`graph.html`) to fetch nodes, edges, clusters, and memberships without CORS issues. The proxy wildcards all `/api/nous/*` paths.

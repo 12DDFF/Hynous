@@ -30,9 +30,9 @@ hynous/
 │   └── core/            # Shared utilities
 │
 ├── dashboard/           # Reflex UI (Python → React)
-│   ├── theme/           # Design system
+│   ├── assets/          # Static files (graph.html force-graph viz)
 │   ├── components/      # Reusable UI parts
-│   ├── pages/           # Dashboard pages
+│   ├── pages/           # Dashboard pages (home, chat, memory, graph, debug)
 │   └── state/           # Session management
 │
 ├── config/              # All configuration
@@ -46,6 +46,8 @@ hynous/
     │   ├── executive-summary.md    # Start here — issue categories overview
     │   ├── nous-wiring-revisions.md # 10 wiring issues (NW-1 to NW-10) — ALL FIXED
     │   └── more-functionality.md   # 16 Nous features (MF-0 to MF-15) — 14 DONE, 2 SKIPPED
+    ├── graph-changes/              # Graph visualization enhancements
+    │   └── cluster-visualization.md # Deterministic cluster layout in force-graph — DONE
     └── token-optimization/         # Token cost reduction — TO-1 through TO-4 DONE
         ├── executive-summary.md    # Overview of 8 TOs (4 implemented, 4 deferred)
         ├── TO-1-dynamic-max-tokens.md
