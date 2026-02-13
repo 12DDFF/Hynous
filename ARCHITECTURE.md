@@ -89,6 +89,7 @@ The LLM agent that thinks, reasons, and acts.
 | `coach.py` | Haiku sharpener for daemon wake quality |
 | `context_snapshot.py` | Live state snapshot builder (portfolio, market, memory) |
 | `memory_manager.py` | Tiered memory: working window + Nous-backed compression |
+| `retrieval_orchestrator.py` | Intelligent multi-pass retrieval: classify → decompose → parallel search → quality gate → merge |
 | `gate_filter.py` | Pre-storage quality gate (rejects gibberish, filler, etc.) |
 
 ### `src/hynous/nous/` — The Memory Client
@@ -167,6 +168,9 @@ intelligence/agent.py (process_message)
     ├──► tools/memory.py (if needs memory)
     │       │
     │       ▼
+    │    retrieval_orchestrator.py (classify → decompose → parallel search → quality gate → merge)
+    │       │
+    │       ▼
     │    nous/client.py → Nous API (:3100)
     │
     ▼
@@ -191,7 +195,7 @@ daemon.py (continuous loop)
 intelligence/agent.py (chat with max_tokens cap per wake type)
     │
     ├──► Briefing injection (pre-built, free)
-    ├──► Nous context retrieval
+    ├──► Nous context retrieval (via retrieval orchestrator)
     ├──► Reason + tool calls
     │
     ▼ (if trade decision)
@@ -321,6 +325,13 @@ Focused on the Nous ↔ Python integration layer. Start with `executive-summary.
 - **`more-functionality.md`** — 16 Nous capabilities (MF-0 to MF-15). **14 DONE, 2 SKIPPED (MF-11, MF-14), 0 remaining.** All items resolved. Completed: MF-0 (search-before-store dedup), MF-1 through MF-10 (Hebbian learning, batch decay, contradiction queue, update tool, graph traversal, browse-by-type, time-range search, health check, embedding backfill, QCS logging), MF-12 (contradiction resolution execution), MF-13 (cluster management), MF-15 (gate filter for memory quality). Skipped: MF-11 (working memory — overlaps with FSRS decay + dedup + Hebbian), MF-14 (edge decay — Hebbian strengthening already provides signal discrimination)
 
 **If you're working on Nous integration, read the executive summary first.** It explains the overall landscape and current status.
+
+### `revisions/memory-search/`
+
+Intelligent Retrieval Orchestrator — multi-pass memory search:
+
+- **`design-plan.md`** — Architecture design and rationale — **IMPLEMENTED**
+- **`implementation-guide.md`** — Detailed implementation guide — **IMPLEMENTED** (actual implementation diverged in some areas: added `search_full()`, D1+D4 decomposition triggers, 5-step pipeline instead of 6)
 
 ### `revisions/graph-changes/`
 

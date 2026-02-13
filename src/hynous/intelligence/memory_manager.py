@@ -107,23 +107,33 @@ class MemoryManager:
 
         try:
             from ..nous.client import get_client
+            from .retrieval_orchestrator import orchestrate_retrieval
             nous = get_client()
             _ret_start = time.monotonic()
-            results = nous.search(
-                query=query,
-                limit=self.config.memory.retrieve_limit,
-            )
+
+            if self.config.orchestrator.enabled:
+                results = orchestrate_retrieval(
+                    query=query,
+                    client=nous,
+                    config=self.config,
+                )
+            else:
+                results = nous.search(
+                    query=query,
+                    limit=self.config.memory.retrieve_limit,
+                )
             _ret_ms = int((time.monotonic() - _ret_start) * 1000)
 
             # Record retrieval span
             try:
                 if _trace_id:
                     from datetime import datetime, timezone
-                    get_tracer().record_span(_trace_id, {
+                    _span = {
                         "type": SPAN_RETRIEVAL,
                         "started_at": datetime.now(timezone.utc).isoformat(),
                         "duration_ms": _ret_ms,
                         "query": query[:200],
+                        "orchestrator_enabled": self.config.orchestrator.enabled,
                         "results_count": len(results) if results else 0,
                         "results": [
                             {
@@ -133,9 +143,10 @@ class MemoryManager:
                                 "node_type": r.get("node_type", ""),
                                 "lifecycle": r.get("lifecycle", ""),
                             }
-                            for r in (results or [])[:5]
+                            for r in (results or [])[:8]
                         ],
-                    })
+                    }
+                    get_tracer().record_span(_trace_id, _span)
             except Exception:
                 pass
 

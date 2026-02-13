@@ -35,7 +35,8 @@ The actual memory system lives in `nous-server/` (TypeScript/Hono on `:3100`). T
 | `get_conflicts()` | `GET /v1/contradiction/queue` | `manage_conflicts` tool, daemon `_check_conflicts()` |
 | `resolve_conflict()` | `POST /v1/contradiction/resolve` | `manage_conflicts` tool |
 | `detect_contradiction()` | `POST /v1/contradiction/detect` | Not called (Tier 2 runs automatically on node creation) |
-| `classify_query()` | `POST /v1/classify-query` | Not called (QCS runs server-side within search) |
+| `search_full()` | `POST /v1/search` | `retrieval_orchestrator.py` — returns full response `{data, count, metrics, qcs}` instead of just the data array |
+| `classify_query()` | `POST /v1/classify-query` | `retrieval_orchestrator.py` — Step 1 of orchestration pipeline. Detects D4 (compound) and D1 (ambiguous) queries for decomposition |
 | `create_cluster()` | `POST /v1/clusters` | `manage_clusters` tool (create action) |
 | `list_clusters()` | `GET /v1/clusters` | `manage_clusters` tool (list action), `_auto_assign_clusters()` |
 | `get_cluster()` | `GET /v1/clusters/:id` | `manage_clusters` tool |
@@ -106,6 +107,8 @@ All NW wiring issues (NW-1 through NW-10) between this client and the Nous serve
 - **`revisions/nous-wiring/nous-wiring-revisions.md`** — All 10 wiring issues (all FIXED)
 - **`revisions/nous-wiring/more-functionality.md`** — Remaining Nous features not yet wired
 
-Still unused client methods: `detect_contradiction()` (not needed — Tier 2 runs automatically), `classify_query()` (not needed — QCS runs server-side within search; QCS metadata now logged from search responses — MF-10 DONE).
+Still unused client methods: `detect_contradiction()` (not needed — Tier 2 runs automatically).
+
+`classify_query()` is now actively used by the Intelligent Retrieval Orchestrator (`retrieval_orchestrator.py`) for compound query detection. `search_full()` was added to return the full search response (data + metrics + QCS) for the orchestrator's quality gating.
 
 All 16 MF items resolved: 14 DONE, 2 SKIPPED (MF-11 working memory, MF-14 edge decay). No remaining Nous integration work.

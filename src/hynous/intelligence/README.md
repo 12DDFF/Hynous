@@ -15,6 +15,7 @@ intelligence/
 ├── briefing.py           # Pre-built briefing injection for daemon wakes
 ├── coach.py              # Haiku sharpener for daemon wake quality
 ├── context_snapshot.py   # Live state snapshot builder (portfolio, market, memory)
+├── retrieval_orchestrator.py # Intelligent multi-pass retrieval (classify, decompose, quality gate, merge)
 ├── gate_filter.py        # Pre-storage quality gate (rejects gibberish, filler, etc.)
 ├── wake_warnings.py      # Code-based warnings injected into daemon wakes
 │
@@ -55,6 +56,18 @@ See `tools/README.md` for the full pattern. In short:
 
 1. Create `tools/my_tool.py` with `TOOL_DEF` dict + handler function + `register()` function
 2. Import and call `register()` from `tools/registry.py`
+
+### Retrieval Orchestrator
+
+The `retrieval_orchestrator.py` module transforms memory retrieval from a single-shot lookup into a multi-pass research process. It runs a 5-step pipeline:
+
+1. **Classify** — QCS pre-check detects compound (D4) and ambiguous (D1) queries
+2. **Decompose** — Split compound queries into atomic sub-queries (4 strategies: conjunction, question mark, "also", entity-based)
+3. **Parallel Search** — Execute sub-queries concurrently via `ThreadPoolExecutor`
+4. **Quality Gate** — Score threshold (0.20) with reformulation retry on failure
+5. **Merge & Select** — Deduplicate, dynamic cutoff (`top_score * 0.4`), coverage guarantee per sub-query
+
+Wired into `memory_manager.py` (auto-retrieval) and `tools/memory.py` (explicit recall). Config toggle: `orchestrator.enabled` in `config/default.yaml`.
 
 ### Modifying the Prompt
 
@@ -138,4 +151,6 @@ Remaining:
 - ~~No cluster management (MF-13)~~ — FIXED: `manage_clusters` tool with 8 actions (list, create, update, delete, add, remove, members, health). Cluster-scoped search via `recall_memory(cluster=...)`. Auto-assignment via `auto_subtypes`. 9 NousClient cluster methods.
 - ~~No pre-storage quality gate (MF-15)~~ — FIXED: `gate_filter.py` module with 6 rejection rules (too_short, gibberish, spam, repeated_chars, filler, empty_semantic, social_only). Gate runs in `_store_memory_impl()` before dedup and `get_client()`. Config toggle: `gate_filter_enabled`.
 
-All 16 MF items and all 10 NW wiring issues are now resolved. No remaining Nous integration work.
+All 16 MF items and all 10 NW wiring issues are now resolved.
+
+Post-MF feature: **Intelligent Retrieval Orchestrator** — `retrieval_orchestrator.py` implements multi-pass memory search with compound query decomposition, quality gating, and dynamic result sizing. Uses `NousClient.search_full()` and `classify_query()`. See `revisions/memory-search/` for design docs.

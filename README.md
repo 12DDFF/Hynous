@@ -47,6 +47,9 @@ hynous/
     │   ├── executive-summary.md    # Start here — issue categories overview
     │   ├── nous-wiring-revisions.md # 10 wiring issues (NW-1 to NW-10) — ALL FIXED
     │   └── more-functionality.md   # 16 Nous features (MF-0 to MF-15) — 14 DONE, 2 SKIPPED
+    ├── memory-search/                # Intelligent Retrieval Orchestrator — IMPLEMENTED
+    │   ├── design-plan.md            # Architecture design and rationale
+    │   └── implementation-guide.md   # Detailed implementation guide (diverged in some areas)
     ├── graph-changes/              # Graph visualization enhancements
     │   └── cluster-visualization.md # Deterministic cluster layout in force-graph — DONE
     └── token-optimization/         # Token cost reduction — TO-1 through TO-4 DONE

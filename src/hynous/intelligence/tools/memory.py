@@ -838,15 +838,34 @@ def handle_recall_memory(
                 if time_end:
                     time_range["end"] = time_end
 
-            results = client.search(
-                query=query,
-                type=node_type,
-                subtype=subtype,
-                lifecycle=lifecycle,
-                limit=limit,
-                time_range=time_range,
-                cluster_ids=[cluster] if cluster else None,
-            )
+            # Use orchestrator for intelligent multi-pass search
+            from ...core.config import load_config
+            orch_config = load_config()
+            if orch_config.orchestrator.enabled:
+                from ..retrieval_orchestrator import orchestrate_retrieval
+                results = orchestrate_retrieval(
+                    query=query,
+                    client=client,
+                    config=orch_config,
+                    type_filter=node_type,
+                    subtype_filter=subtype,
+                    lifecycle_filter=lifecycle,
+                    time_range=time_range,
+                    cluster_ids=[cluster] if cluster else None,
+                )
+                # Cap to requested limit (orchestrator may return up to max_results)
+                if len(results) > limit:
+                    results = results[:limit]
+            else:
+                results = client.search(
+                    query=query,
+                    type=node_type,
+                    subtype=subtype,
+                    lifecycle=lifecycle,
+                    limit=limit,
+                    time_range=time_range,
+                    cluster_ids=[cluster] if cluster else None,
+                )
 
             if not results:
                 return f"No memories found for: \"{query}\""

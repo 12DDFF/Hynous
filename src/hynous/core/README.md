@@ -34,7 +34,10 @@ config = load_config()  # Loads config/default.yaml + .env
 print(config.execution.mode)  # "paper"
 print(config.agent.model)     # "openrouter/anthropic/claude-sonnet-4-5-20250929"
 print(config.agent.max_tokens) # 2048 (default, overridable per wake type)
+print(config.orchestrator.enabled)  # True (retrieval orchestrator)
 ```
+
+Key config dataclasses: `AgentConfig`, `MemoryConfig`, `OrchestratorConfig`, `DaemonConfig`, `NousConfig`, `ExecutionConfig`, `DiscordConfig`.
 
 ---
 

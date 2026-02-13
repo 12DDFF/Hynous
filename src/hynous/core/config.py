@@ -65,6 +65,19 @@ class MemoryConfig:
 
 
 @dataclass
+class OrchestratorConfig:
+    """Intelligent Retrieval Orchestrator — multi-pass memory search."""
+    enabled: bool = True                    # Master switch
+    quality_threshold: float = 0.20         # Min top-result score to accept
+    relevance_ratio: float = 0.4            # Dynamic cutoff: score >= top * ratio
+    max_results: int = 8                    # Hard cap on merged results
+    max_sub_queries: int = 4                # Max decomposition parts
+    max_retries: int = 1                    # Reformulation attempts per sub-query
+    timeout_seconds: float = 3.0            # Total orchestration timeout
+    search_limit_per_query: int = 10        # Results to fetch per sub-query (overfetch)
+
+
+@dataclass
 class DaemonConfig:
     """Background daemon settings — watchdog + curiosity + periodic review."""
     enabled: bool = False                 # Master switch
@@ -146,6 +159,7 @@ class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     discord: DiscordConfig = field(default_factory=DiscordConfig)
+    orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
 
     # Paths
     project_root: Path = field(default_factory=_find_project_root)
@@ -181,6 +195,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
     daemon_raw = raw.get("daemon", {})
     scanner_raw = raw.get("scanner", {})
     discord_raw = raw.get("discord", {})
+    orch_raw = raw.get("orchestrator", {})
 
     return Config(
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
@@ -259,6 +274,16 @@ def load_config(config_path: Optional[str] = None) -> Config:
             channel_id=discord_raw.get("channel_id", 0),
             stats_channel_id=discord_raw.get("stats_channel_id", 0),
             allowed_user_ids=discord_raw.get("allowed_user_ids", []),
+        ),
+        orchestrator=OrchestratorConfig(
+            enabled=orch_raw.get("enabled", True),
+            quality_threshold=orch_raw.get("quality_threshold", 0.20),
+            relevance_ratio=orch_raw.get("relevance_ratio", 0.4),
+            max_results=orch_raw.get("max_results", 8),
+            max_sub_queries=orch_raw.get("max_sub_queries", 4),
+            max_retries=orch_raw.get("max_retries", 1),
+            timeout_seconds=orch_raw.get("timeout_seconds", 3.0),
+            search_limit_per_query=orch_raw.get("search_limit_per_query", 10),
         ),
         project_root=root,
     )

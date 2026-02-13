@@ -54,6 +54,26 @@ print(config.execution.mode)
 
 ---
 
+## Orchestrator Config
+
+The retrieval orchestrator section in `default.yaml` controls intelligent multi-pass memory search:
+
+```yaml
+orchestrator:
+  enabled: true               # Master switch (false = single search, zero overhead)
+  quality_threshold: 0.20      # Min top-result score to accept
+  relevance_ratio: 0.4         # Dynamic cutoff: score >= top * ratio
+  max_results: 8               # Hard cap on merged results
+  max_sub_queries: 4           # Max decomposition parts
+  max_retries: 1               # Reformulation attempts per sub-query
+  timeout_seconds: 3.0         # Total orchestration timeout
+  search_limit_per_query: 10   # Overfetch per sub-query
+```
+
+See `src/hynous/core/config.py` → `OrchestratorConfig` dataclass.
+
+---
+
 ## Adding New Config
 
 1. Add to appropriate YAML file

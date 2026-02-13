@@ -18,7 +18,7 @@
 | `institutional.py` | `get_institutional_flow` | Institutional fund flows |
 | `web_search.py` | `search_web` | Web search for news/context |
 | `costs.py` | `get_my_costs` | LLM cost tracking and breakdown |
-| `memory.py` | `store_memory`, `recall_memory`, `update_memory` | Full memory CRUD (create, search/browse/time-range, update) |
+| `memory.py` | `store_memory`, `recall_memory`, `update_memory` | Full memory CRUD (create, search/browse/time-range, update). Search mode uses Intelligent Retrieval Orchestrator for compound query decomposition and quality gating. |
 | `delete_memory.py` | `delete_memory` | Memory deletion with edge cleanup |
 | `trading.py` | `execute_trade`, `close_position`, `modify_position`, `get_account` | Trade execution and position management |
 | `trade_stats.py` | `get_trade_stats` | Trade history, win rate, PnL stats |

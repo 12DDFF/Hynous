@@ -87,6 +87,17 @@ nous:
   db_path: "storage/nous.db"          # Server-side DB path
   auto_retrieve_limit: 5              # Recent memories to auto-load
 
+# Intelligent Retrieval Orchestrator (multi-pass memory search)
+orchestrator:
+  enabled: true                    # Master switch
+  quality_threshold: 0.20          # Min top-result SSA score to accept without retry
+  relevance_ratio: 0.4             # Dynamic cutoff: keep results scoring >= top * ratio
+  max_results: 8                   # Hard cap on merged results
+  max_sub_queries: 4               # Max decomposition parts for compound queries
+  max_retries: 1                   # Reformulation attempts per sub-query
+  timeout_seconds: 3.0             # Total orchestration timeout
+  search_limit_per_query: 10       # Results to fetch per sub-query (overfetch for quality gate)
+
 # Tiered memory settings (working window + Nous-backed compression)
 memory:
   window_size: 4                 # Complete exchanges to keep in working window

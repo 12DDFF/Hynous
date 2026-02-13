@@ -294,6 +294,52 @@ class NousClient:
 
         return data.get("data", [])
 
+    def search_full(
+        self,
+        query: str,
+        type: Optional[str] = None,
+        subtype: Optional[str] = None,
+        lifecycle: Optional[str] = None,
+        limit: int = 10,
+        time_range: Optional[dict] = None,
+        cluster_ids: list[str] | None = None,
+    ) -> dict:
+        """Full-text search returning results with QCS metadata and metrics.
+
+        Same as search() but returns the complete response dict instead of
+        just the data array. Used by the retrieval orchestrator for quality
+        gating and score-based selection.
+
+        Returns:
+            {
+                "data": [...],       # Node dicts with score, breakdown, primary_signal
+                "count": int,
+                "metrics": {...},
+                "qcs": {
+                    "query_type": "LOOKUP"|"AMBIGUOUS",
+                    "confidence": float,
+                    "disqualified": bool,
+                    "disqualifier_category": str|None,
+                    "used_embeddings": bool,
+                    "ssa_multiplier": int,
+                },
+            }
+        """
+        payload: dict = {"query": query, "limit": limit}
+        if type:
+            payload["type"] = type
+        if subtype:
+            payload["subtype"] = subtype
+        if lifecycle:
+            payload["lifecycle"] = lifecycle
+        if time_range:
+            payload["time_range"] = time_range
+        if cluster_ids:
+            payload["cluster_ids"] = cluster_ids
+        resp = self._session.post(self._url("/search"), json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
     # ---- Dedup Check ----
 
     def check_similar(

@@ -50,4 +50,6 @@ If you're an AI agent:
 - `../revisions/nous-wiring/executive-summary.md` — Nous integration overview — ALL RESOLVED
 - `../revisions/nous-wiring/nous-wiring-revisions.md` — Wiring issues (NW-1 to NW-10) — all FIXED
 - `../revisions/nous-wiring/more-functionality.md` — Nous features (MF-0 to MF-15) — 14 DONE, 2 SKIPPED
+- `../revisions/memory-search/design-plan.md` — Intelligent Retrieval Orchestrator design — IMPLEMENTED
+- `../revisions/memory-search/implementation-guide.md` — Orchestrator implementation guide — IMPLEMENTED
 - `../revisions/token-optimization/executive-summary.md` — Token cost optimization — TO-1 through TO-4 DONE

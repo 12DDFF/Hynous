@@ -23,7 +23,18 @@ Detailed implementation + audit notes for major items:
 | `MF13/` | Cluster management | DONE, auditor verified |
 | `MF15/` | Gate filter for memory quality | DONE, auditor verified |
 
-### 2. Token Optimization — TO-1 through TO-4 DONE
+### 2. Memory Search — IMPLEMENTED
+
+| File | Contents |
+|------|----------|
+| `memory-search/design-plan.md` | Architectural design and rationale — **IMPLEMENTED** |
+| `memory-search/implementation-guide.md` | Detailed implementation guide — **IMPLEMENTED** (diverged in some areas) |
+
+The Intelligent Retrieval Orchestrator transforms single-shot memory retrieval into a 5-step pipeline (Classify → Decompose → Parallel Search → Quality Gate → Merge & Select). Lives in `src/hynous/intelligence/retrieval_orchestrator.py`. Wired into `memory_manager.py` and `tools/memory.py`. Config toggle: `orchestrator.enabled`.
+
+Key implementation divergences from the guide: added `search_full()` to NousClient, D1+D4 decomposition triggers (not just D4), 5-step pipeline (no "Replace Weak" step), individual filter parameters (not `SearchFilters` dataclass).
+
+### 3. Token Optimization — TO-1 through TO-4 DONE
 
 | File | Contents |
 |------|----------|
@@ -35,7 +46,7 @@ Detailed implementation + audit notes for major items:
 
 Deferred for later: TO-5 (streaming cost abort), TO-6 (cron schedule tuning), TO-7 (prompt compression), TO-8 (model routing).
 
-### 3. Full Issue List
+### 4. Full Issue List
 
 | File | Contents |
 |------|----------|
@@ -47,12 +58,13 @@ Deferred for later: TO-5 (streaming cost abort), TO-6 (cron schedule tuning), TO
 
 If you're fixing a specific issue:
 
-1. Check if it's already resolved in `nous-wiring/` or `token-optimization/`
+1. Check if it's already resolved in `nous-wiring/`, `memory-search/`, or `token-optimization/`
 2. Each issue has exact file paths, line numbers, and implementation instructions
 3. Check `revision-exploration.md` for related issues that may compound with yours
 
 If you're doing a general review or planning work:
 
 1. Read `nous-wiring/executive-summary.md` for Nous integration status
-2. Read `token-optimization/executive-summary.md` for cost optimization status
-3. Check `revision-exploration.md` for the full issue landscape
+2. Read `memory-search/design-plan.md` for retrieval orchestrator design
+3. Read `token-optimization/executive-summary.md` for cost optimization status
+4. Check `revision-exploration.md` for the full issue landscape

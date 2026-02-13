@@ -56,10 +56,10 @@ The Python `NousClient` class has 13 methods wrapping Nous endpoints. Roughly ha
 - `detect_contradiction()` — exists but not called from Python (Nous runs Tier 2 automatically; manual detection available but not needed)
 - ~~`get_conflicts()` — exists but never called~~ → **FIXED: called by `manage_conflicts` tool + daemon `_check_conflicts()`**
 - ~~`resolve_conflict()` — exists but never called~~ → **FIXED: called by `manage_conflicts` tool (resolve action)**
-- `classify_query()` — exists but never called
+- ~~`classify_query()` — exists but never called~~ → **FIXED: called by Intelligent Retrieval Orchestrator (`retrieval_orchestrator.py`) for compound query detection (D4/D1)**
 - ~~`health()` — exists but never called~~ → **FIXED: daemon `_check_health()` on startup + periodic (MF-8 DONE)**
 
-Most formerly-dead methods are now active. Only `detect_contradiction()` (not needed — Tier 2 runs automatically) and `classify_query()` (QCS runs server-side within search; QCS metadata now logged from search responses — MF-10 DONE) remain unused.
+Most formerly-dead methods are now active. Only `detect_contradiction()` (not needed — Tier 2 runs automatically) remains unused. `classify_query()` is now used by the Intelligent Retrieval Orchestrator for compound query detection. `search_full()` was added for the orchestrator's quality gating.
 
 **See:** `nous-wiring-revisions.md` → NW-4 (FIXED), NW-5 (FIXED), NW-8 (FIXED); `more-functionality.md` → MF-4 (DONE), MF-8 (DONE), MF-10 (DONE)
 

@@ -40,6 +40,11 @@ pytest tests/unit/test_agent.py
 Test individual functions in isolation.
 Mock external dependencies.
 
+Key test files:
+- `test_retrieval_orchestrator.py` — 48 tests: decomposition strategies, quality gate, merge & select, reformulation, config loading
+- `test_gate_filter.py` — Gate filter rejection rules
+- `test_agent.py` — Agent prompt building and tool execution
+
 ```python
 # tests/unit/test_agent.py
 
@@ -53,6 +58,10 @@ def test_agent_formats_prompt():
 
 Test multiple components working together.
 May use real databases (test instances).
+
+Key test files:
+- `test_orchestrator_integration.py` — 10 tests: full pipeline with mock NousClient, compound query decomposition, timeout handling, filter passthrough, fallback behavior
+- `test_gate_filter_integration.py` — Gate filter in store flow
 
 ```python
 # tests/integration/test_chat_flow.py
