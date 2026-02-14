@@ -374,11 +374,13 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         "mfe_pct": 0.0,
     }
 
-    # Get MFE from close node's signals
+    # Get MFE + trade_type from close node's signals
     try:
         close_body = json.loads(close_node.get("content_body", "{}"))
         close_signals = close_body.get("signals", {})
         result["mfe_pct"] = float(close_signals.get("mfe_pct", 0))
+        if close_signals.get("trade_type"):
+            result["trade_type"] = close_signals["trade_type"]
     except Exception:
         pass
 
@@ -448,7 +450,9 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         result["take_profit"] = float(entry_signals.get("target", 0))
         result["confidence"] = float(entry_signals.get("confidence", 0))
         result["rr_ratio"] = float(entry_signals.get("rr_ratio", 0))
-        result["trade_type"] = entry_signals.get("trade_type", "macro")
+        # Only set from entry if close signals didn't already have it
+        if not result["trade_type"]:
+            result["trade_type"] = entry_signals.get("trade_type", "macro")
 
     except Exception:
         pass

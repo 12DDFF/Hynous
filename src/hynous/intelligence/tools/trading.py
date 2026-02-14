@@ -1019,8 +1019,7 @@ def _store_trade_memory(
         signals["confidence"] = confidence
     if rr_ratio:
         signals["rr_ratio"] = rr_ratio
-    if trade_type != "macro":
-        signals["trade_type"] = trade_type
+    signals["trade_type"] = trade_type
 
     node_id = _store_to_nous(
         subtype="custom:trade_entry",
@@ -1290,13 +1289,15 @@ def handle_close_position(
         f"PnL {pnl_sign}{_fmt_price(realized_pnl_net)} ({lev_return:+.1f}%)"
     )
 
-    # Get peak ROE (MFE) from daemon before position cleanup
+    # Get peak ROE (MFE) and trade_type from daemon before position cleanup
     mfe_pct = 0.0
+    close_trade_type = "macro"
     try:
         from ...intelligence.daemon import get_active_daemon
         daemon = get_active_daemon()
         if daemon:
             mfe_pct = daemon.get_peak_roe(symbol)
+            close_trade_type = daemon.get_position_type(symbol).get("type", "macro")
     except Exception:
         pass
 
@@ -1318,6 +1319,7 @@ def handle_close_position(
             "size_usd": round(closed_sz * exit_px, 2),
             "opened_at": opened_at,
             "mfe_pct": round(mfe_pct, 2),
+            "trade_type": close_trade_type,
         },
         link_to=entry_node_id,  # Edge: entry --part_of--> close (SSA 0.85)
         edge_type="part_of",
@@ -1575,12 +1577,23 @@ def handle_modify_position(
 
     mod_summary = f"MODIFIED {position['side'].upper()} {symbol} | {mod_details}"
 
+    # Get trade_type from daemon's position type registry
+    mod_trade_type = "macro"
+    try:
+        from ...intelligence.daemon import get_active_daemon
+        daemon = get_active_daemon()
+        if daemon:
+            mod_trade_type = daemon.get_position_type(symbol).get("type", "macro")
+    except Exception:
+        pass
+
     mod_signals: dict = {
         "action": "modify",
         "side": position["side"],
         "symbol": symbol,
         "mark_px": mark_px,
         "size": sz,
+        "trade_type": mod_trade_type,
     }
     if stop_loss is not None:
         mod_signals["new_stop"] = stop_loss

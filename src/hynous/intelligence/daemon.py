@@ -357,6 +357,7 @@ class Daemon:
             "type": trade_type,
             "entry_time": time.time(),
         }
+        self._persist_position_types()
 
     def get_position_type(self, coin: str) -> dict:
         """Get trade type info for a position. Infers from leverage if unregistered."""
@@ -859,7 +860,10 @@ class Daemon:
                     "leverage": p.get("leverage", 20),
                 }
 
-            # Infer position types for pre-existing positions (daemon restart)
+            # Load persisted position types first (survives restarts)
+            self._load_position_types()
+
+            # Infer position types for any remaining unregistered positions
             for coin, data in self._prev_positions.items():
                 if coin not in self._position_types:
                     lev = data.get("leverage", 20)
@@ -919,6 +923,7 @@ class Daemon:
                     # Clean up position types for closed positions (after wake_for_fill used them)
                     for event in events:
                         self._position_types.pop(event["coin"], None)
+                    self._persist_position_types()
                     state = provider.get_user_state()
                     positions = state.get("positions", [])
                     self._prev_positions = {
@@ -950,6 +955,8 @@ class Daemon:
             # Clean up position types for closed positions (after wake_for_fill used them)
             for coin in closed_coins:
                 self._position_types.pop(coin, None)
+            if closed_coins:
+                self._persist_position_types()
 
             # Update snapshot
             self._prev_positions = current
@@ -1069,8 +1076,9 @@ class Daemon:
                 from datetime import datetime, timezone
                 opened_at = datetime.fromtimestamp(entry_time, tz=timezone.utc).isoformat()
 
-            # Get peak ROE (MFE) before it's cleaned up
+            # Get peak ROE (MFE) and trade_type before they're cleaned up
             mfe_pct = self._peak_roe.get(coin, 0.0)
+            trade_type = type_info.get("type", "macro")
 
             signals = {
                 "action": "close",
@@ -1083,6 +1091,7 @@ class Daemon:
                 "close_type": classification,
                 "opened_at": opened_at,
                 "mfe_pct": round(mfe_pct, 2),
+                "trade_type": trade_type,
             }
 
             # Find the matching entry node for edge linking
@@ -1936,6 +1945,36 @@ class Daemon:
                 logger.info("Loaded %d active phantoms from disk", len(self._phantoms))
         except Exception as e:
             logger.debug("Failed to load phantoms: %s", e)
+
+    def _persist_position_types(self):
+        """Save position types to disk (survives restarts)."""
+        try:
+            import json as _json
+            path = self.config.project_root / "storage" / "position_types.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            from ..core.persistence import _atomic_write
+            _atomic_write(path, _json.dumps(self._position_types, default=str))
+        except Exception as e:
+            logger.debug("Failed to persist position types: %s", e)
+
+    def _load_position_types(self):
+        """Load position types from disk on startup. Merge with live positions."""
+        try:
+            import json as _json
+            path = self.config.project_root / "storage" / "position_types.json"
+            if path.exists():
+                saved = _json.loads(path.read_text())
+                # Only load types for coins that are still open positions
+                open_coins = set(self._prev_positions.keys())
+                loaded = 0
+                for coin, info in saved.items():
+                    if coin in open_coins and coin not in self._position_types:
+                        self._position_types[coin] = info
+                        loaded += 1
+                if loaded:
+                    logger.info("Loaded %d position types from disk", loaded)
+        except Exception as e:
+            logger.debug("Failed to load position types: %s", e)
 
     def _wake_for_review(self):
         """Periodic market review — alternates between normal and learning reviews.

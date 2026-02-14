@@ -35,6 +35,7 @@ class TradeRecord:
     size_usd: float = 0.0
     duration_hours: float = 0.0
     thesis: str = ""    # entry thesis from linked trade_entry node
+    trade_type: str = "macro"  # "micro" or "macro"
 
 
 @dataclass
@@ -118,14 +119,19 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
     pnl_pct = float(signals.get("pnl_pct", 0))
     close_type = signals.get("close_type", "full")
     size_usd = float(signals.get("size_usd", 0))
+    trade_type = signals.get("trade_type", "macro")
 
     if not symbol or not entry_px:
         return None
 
     closed_at = node.get("created_at", "")
 
-    # Enrich from linked entry node (duration + thesis)
+    # Enrich from linked entry node (duration + thesis + trade_type fallback)
     enrichment = _enrich_from_entry(node, nous_client, closed_at)
+
+    # If close node didn't have trade_type, try entry node enrichment
+    if trade_type == "macro" and enrichment.get("trade_type"):
+        trade_type = enrichment["trade_type"]
 
     return TradeRecord(
         symbol=symbol,
@@ -139,12 +145,13 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
         size_usd=size_usd,
         duration_hours=enrichment["duration_hours"],
         thesis=enrichment["thesis"],
+        trade_type=trade_type,
     )
 
 
 def _enrich_from_entry(close_node: dict, nous_client, closed_at: str) -> dict:
-    """Find the linked entry node and extract duration + thesis."""
-    result = {"duration_hours": 0.0, "thesis": ""}
+    """Find the linked entry node and extract duration + thesis + trade_type."""
+    result = {"duration_hours": 0.0, "thesis": "", "trade_type": ""}
 
     entry_node = None
     try:
@@ -187,7 +194,7 @@ def _enrich_from_entry(close_node: dict, nous_client, closed_at: str) -> dict:
             if entry_time and closed_at:
                 result["duration_hours"] = _hours_between(entry_time, closed_at)
 
-            # Thesis — extract from entry node body
+            # Thesis + trade_type — extract from entry node body
             body_raw = entry_node.get("content_body", "")
             try:
                 body = json.loads(body_raw)
@@ -200,6 +207,10 @@ def _enrich_from_entry(close_node: dict, nous_client, closed_at: str) -> dict:
                 # Fallback: use first line if no "Thesis:" prefix
                 if not result["thesis"] and text:
                     result["thesis"] = text.split("\n")[0][:200]
+                # Trade type from entry signals
+                entry_signals = body.get("signals", {})
+                if entry_signals.get("trade_type"):
+                    result["trade_type"] = entry_signals["trade_type"]
             except (json.JSONDecodeError, TypeError):
                 if body_raw:
                     result["thesis"] = body_raw.split("\n")[0][:200]
@@ -235,7 +246,7 @@ def _merge_partial_trades(trades: list[TradeRecord]) -> list[TradeRecord]:
     """Merge partial exits of the same position into a single trade."""
     merged: dict[tuple, TradeRecord] = {}
     for t in trades:
-        key = (t.symbol, t.side, t.entry_px)
+        key = (t.symbol, t.side, t.entry_px, t.trade_type)
         if key not in merged:
             merged[key] = TradeRecord(
                 symbol=t.symbol, side=t.side, entry_px=t.entry_px,
