@@ -435,12 +435,17 @@
   <script src="https://unpkg.com/force-graph@1.47.4/dist/force-graph.min.js"></script>
   <script>
     // ---- Configuration ----
-    // Try multiple addresses — browser may resolve localhost differently
-    const NOUS_URLS = [
-      'http://localhost:3100/v1/graph',
-      'http://127.0.0.1:3100/v1/graph',
-      'http://[::1]:3100/v1/graph',
-    ];
+    // Auto-detect: if page is served from a remote host, hit Nous on that host.
+    // Falls back to localhost variants for local dev.
+    const _host = location.hostname;
+    const _isRemote = _host !== 'localhost' && _host !== '127.0.0.1' && _host !== '::1';
+    const NOUS_URLS = _isRemote
+      ? [`http://${_host}:3100/v1/graph`]
+      : [
+          'http://localhost:3100/v1/graph',
+          'http://127.0.0.1:3100/v1/graph',
+          'http://[::1]:3100/v1/graph',
+        ];
 
     const COLORS = {
       'custom:watchpoint':      '#b48a1a',
