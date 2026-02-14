@@ -508,8 +508,12 @@
       for (const n of graphData.nodes) {
         nodeById.set(n.id, n);
         adjMap.set(n.id, new Set());
-        // Pre-compute connection count
         n._conns = 0;
+        // Pre-cache per-node properties (avoids Map lookups + Math per frame)
+        n._color = COLORS[n.subtype] || DEFAULT_COLOR;
+        n._opacity = Math.max(0.15, (n.retrievability ?? 1) * 0.85 + 0.15);
+        n._titleLower = (n.title || '').toLowerCase();
+        n._subtypeLower = (n.subtype || '').toLowerCase();
       }
       for (const l of graphData.links) {
         const sid = l.source.id ?? l.source;
@@ -518,11 +522,14 @@
         const tSet = adjMap.get(tid);
         if (sSet) sSet.add(tid);
         if (tSet) tSet.add(sid);
-        // Increment connection counts
         const sn = nodeById.get(sid);
         const tn = nodeById.get(tid);
         if (sn) sn._conns++;
         if (tn) tn._conns++;
+      }
+      // Pre-cache base radius now that _conns is final
+      for (const n of graphData.nodes) {
+        n._baseRadius = Math.min(6, 2.8 + Math.log2(n._conns + 1) * 1.1);
       }
     }
 
@@ -559,28 +566,14 @@
       }
     }
 
-    // ---- Helpers ----
-    function getColor(node) {
-      return COLORS[node.subtype] || DEFAULT_COLOR;
-    }
-
+    // ---- Helpers (use pre-cached values from buildLookups) ----
     function getRadius(node) {
-      const c = node._conns || 0;
-      const base = Math.min(6, 2.8 + Math.log2(c + 1) * 1.1);
-      return base * settings.nodeSize;
-    }
-
-    function getOpacity(node) {
-      const r = node.retrievability ?? 1;
-      // Map retrievability to opacity: 1.0 -> 1.0, 0.0 -> 0.15
-      return Math.max(0.15, r * 0.85 + 0.15);
+      return (node._baseRadius || 2.8) * settings.nodeSize;
     }
 
     function isHighlighted(node) {
       if (!searchTerm) return true;
-      const title = (node.title || '').toLowerCase();
-      const subtype = (node.subtype || '').toLowerCase();
-      return title.includes(searchTerm) || subtype.includes(searchTerm);
+      return node._titleLower.includes(searchTerm) || node._subtypeLower.includes(searchTerm);
     }
 
     function formatDate(iso) {
@@ -605,7 +598,7 @@
       const body = document.getElementById('detail-body');
 
       title.textContent = node.title || 'Untitled';
-      title.style.color = getColor(node);
+      title.style.color = node._color || DEFAULT_COLOR;
 
       const retr = node.retrievability != null ? (node.retrievability * 100).toFixed(0) + '%' : '?';
 
@@ -684,22 +677,23 @@
         .backgroundColor('#0a0a0a')
         .width(el.clientWidth)
         .height(el.clientHeight)
+        .warmupTicks(80)         // Pre-compute layout before first paint
+        .cooldownTime(4000)      // Stop physics sooner (default 15s)
+        .d3AlphaDecay(0.03)      // Faster simulation settling
 
-        // Node rendering
+        // Node rendering — uses pre-cached _color, _opacity, _baseRadius
         .nodeCanvasObject((node, ctx, globalScale) => {
           const r = getRadius(node);
-          const color = getColor(node);
-          const opacity = getOpacity(node);
-          const highlighted = isHighlighted(node);
+          const color = node._color;
           const isSelected = selectedNode && selectedNode.id === node.id;
           const isHovered = hoveredNode && hoveredNode.id === node.id;
           const isConnected = selectedNode && adjMap.get(selectedNode.id)?.has(node.id);
 
-          let alpha = opacity;
-          if (searchTerm && !highlighted) alpha = 0.06;
+          let alpha = node._opacity;
+          if (searchTerm && !isHighlighted(node)) alpha = 0.06;
           if (selectedNode && !isSelected && !isConnected) alpha = 0.12;
 
-          // Soft glow
+          // Soft glow (only 1-2 nodes per frame)
           if (isHovered || isSelected) {
             const glowR = r + 6 * settings.nodeSize;
             const grad = ctx.createRadialGradient(node.x, node.y, r * 0.3, node.x, node.y, glowR);
@@ -731,38 +725,82 @@
           ctx.fill();
         })
 
-        // Edge rendering
+        // Edge rendering — batched: draw ALL links in one pass on first link call
+        // Reduces 3000 individual beginPath→stroke calls to 2-3 batched paths
         .linkCanvasObject((link, ctx) => {
-          const strength = link.strength || 0.5;
-          const width = Math.max(0.2, strength * 0.6) * settings.lineThick;
-          const sourceId = link.source.id || link.source;
-          const targetId = link.target.id || link.target;
+          // Only draw on first link — batch all links at once
+          if (link !== graphData.links[0]) return;
 
-          let alpha = 0.3;
-          if (selectedNode) {
-            if (sourceId === selectedNode.id || targetId === selectedNode.id) {
-              alpha = 0.45;
-            } else {
-              alpha = 0.04;
-            }
-          }
-          if (searchTerm) {
-            const srcNode = nodeById.get(sourceId);
-            const tgtNode = nodeById.get(targetId);
-            if (srcNode && tgtNode && isHighlighted(srcNode) && isHighlighted(tgtNode)) {
-              alpha = 0.25;
-            } else if (searchTerm) {
-              alpha = 0.02;
-            }
-          }
-
-          ctx.beginPath();
-          ctx.moveTo(link.source.x, link.source.y);
-          ctx.lineTo(link.target.x, link.target.y);
+          const selId = selectedNode?.id;
+          const selNeighbors = selId ? adjMap.get(selId) : null;
+          const lineThick = settings.lineThick;
           ctx.strokeStyle = '#9090a0';
-          ctx.globalAlpha = alpha;
-          ctx.lineWidth = width;
-          ctx.stroke();
+
+          if (!selId && !searchTerm) {
+            // Fast path: no selection, no search — one batch at alpha 0.3
+            ctx.globalAlpha = 0.3;
+            ctx.lineWidth = 0.35 * lineThick;
+            ctx.beginPath();
+            for (const l of graphData.links) {
+              ctx.moveTo(l.source.x, l.source.y);
+              ctx.lineTo(l.target.x, l.target.y);
+            }
+            ctx.stroke();
+          } else if (selId) {
+            // Selection: 2 batches — connected (bright) + rest (dim)
+            ctx.lineWidth = 0.4 * lineThick;
+            // Connected links
+            ctx.globalAlpha = 0.45;
+            ctx.beginPath();
+            for (const l of graphData.links) {
+              const sid = l.source.id;
+              const tid = l.target.id;
+              if (sid === selId || tid === selId) {
+                ctx.moveTo(l.source.x, l.source.y);
+                ctx.lineTo(l.target.x, l.target.y);
+              }
+            }
+            ctx.stroke();
+            // Unconnected links
+            ctx.globalAlpha = 0.04;
+            ctx.beginPath();
+            for (const l of graphData.links) {
+              const sid = l.source.id;
+              const tid = l.target.id;
+              if (sid !== selId && tid !== selId) {
+                ctx.moveTo(l.source.x, l.source.y);
+                ctx.lineTo(l.target.x, l.target.y);
+              }
+            }
+            ctx.stroke();
+          } else {
+            // Search: 2 batches — matching (visible) + rest (dim)
+            ctx.lineWidth = 0.35 * lineThick;
+            ctx.globalAlpha = 0.25;
+            ctx.beginPath();
+            let hasMatch = false;
+            for (const l of graphData.links) {
+              const src = nodeById.get(l.source.id);
+              const tgt = nodeById.get(l.target.id);
+              if (src && tgt && isHighlighted(src) && isHighlighted(tgt)) {
+                ctx.moveTo(l.source.x, l.source.y);
+                ctx.lineTo(l.target.x, l.target.y);
+                hasMatch = true;
+              }
+            }
+            if (hasMatch) ctx.stroke();
+            ctx.globalAlpha = 0.02;
+            ctx.beginPath();
+            for (const l of graphData.links) {
+              const src = nodeById.get(l.source.id);
+              const tgt = nodeById.get(l.target.id);
+              if (!src || !tgt || !isHighlighted(src) || !isHighlighted(tgt)) {
+                ctx.moveTo(l.source.x, l.source.y);
+                ctx.lineTo(l.target.x, l.target.y);
+              }
+            }
+            ctx.stroke();
+          }
           ctx.globalAlpha = 1;
         })
 
