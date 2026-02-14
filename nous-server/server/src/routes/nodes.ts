@@ -180,6 +180,8 @@ nodes.get('/nodes', async (c) => {
   const subtype = c.req.query('subtype');
   const lifecycle = c.req.query('lifecycle');
   const limit = Math.min(Number(c.req.query('limit') ?? 50), 200);
+  const created_after = c.req.query('created_after');
+  const created_before = c.req.query('created_before');
 
   let sql = 'SELECT * FROM nodes WHERE 1=1';
   const args: (string | number)[] = [];
@@ -195,6 +197,14 @@ nodes.get('/nodes', async (c) => {
   if (lifecycle) {
     sql += ' AND state_lifecycle = ?';
     args.push(lifecycle);
+  }
+  if (created_after) {
+    sql += ' AND created_at >= ?';
+    args.push(created_after);
+  }
+  if (created_before) {
+    sql += ' AND created_at <= ?';
+    args.push(created_before);
   }
 
   sql += ' ORDER BY created_at DESC LIMIT ?';

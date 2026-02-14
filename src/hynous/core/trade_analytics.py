@@ -34,6 +34,7 @@ class TradeRecord:
     closed_at: str      # ISO timestamp
     size_usd: float = 0.0
     duration_hours: float = 0.0
+    thesis: str = ""    # entry thesis from linked trade_entry node
 
 
 @dataclass
@@ -57,7 +58,12 @@ class TradeStats:
     trades: list[TradeRecord] = field(default_factory=list)
 
 
-def fetch_trade_history(nous_client=None) -> list[TradeRecord]:
+def fetch_trade_history(
+    nous_client=None,
+    limit: int = 50,
+    created_after: str | None = None,
+    created_before: str | None = None,
+) -> list[TradeRecord]:
     """Query Nous for trade_close nodes and parse into TradeRecords."""
     if nous_client is None:
         from ..nous.client import get_client
@@ -66,7 +72,9 @@ def fetch_trade_history(nous_client=None) -> list[TradeRecord]:
     try:
         nodes = nous_client.list_nodes(
             subtype="custom:trade_close",
-            limit=50,
+            limit=limit,
+            created_after=created_after,
+            created_before=created_before,
         )
     except Exception as e:
         logger.debug("Failed to fetch trade_close nodes: %s", e)
@@ -116,8 +124,8 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
 
     closed_at = node.get("created_at", "")
 
-    # Try to find duration by matching entry node via part_of edges
-    duration_hours = _find_duration(node, nous_client, closed_at)
+    # Enrich from linked entry node (duration + thesis)
+    enrichment = _enrich_from_entry(node, nous_client, closed_at)
 
     return TradeRecord(
         symbol=symbol,
@@ -129,67 +137,65 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
         close_type=close_type,
         closed_at=closed_at,
         size_usd=size_usd,
-        duration_hours=duration_hours,
+        duration_hours=enrichment["duration_hours"],
+        thesis=enrichment["thesis"],
     )
 
 
-def _find_duration(close_node: dict, nous_client, closed_at: str) -> float:
-    """Find trade duration by looking up the linked entry node."""
-    # 1. Edge lookup: follow part_of edge from entry → close
+def _enrich_from_entry(close_node: dict, nous_client, closed_at: str) -> dict:
+    """Find the linked entry node and extract duration + thesis."""
+    result = {"duration_hours": 0.0, "thesis": ""}
+
     try:
         node_id = close_node.get("id")
-        if node_id:
-            edges = nous_client.get_edges(node_id, direction="in")
-            for edge in edges:
-                if edge.get("type") == "part_of":
-                    source_id = edge.get("source_id")
-                    if source_id:
-                        entry_node = nous_client.get_node(source_id)
-                        if entry_node:
-                            entry_time = entry_node.get("created_at", "")
-                            if entry_time and closed_at:
-                                return _hours_between(entry_time, closed_at)
+        if not node_id:
+            return result
+
+        edges = nous_client.get_edges(node_id, direction="in")
+        for edge in edges:
+            if edge.get("type") == "part_of":
+                source_id = edge.get("source_id")
+                if source_id:
+                    entry_node = nous_client.get_node(source_id)
+                    if entry_node:
+                        # Duration
+                        entry_time = entry_node.get("created_at", "")
+                        if entry_time and closed_at:
+                            result["duration_hours"] = _hours_between(entry_time, closed_at)
+
+                        # Thesis — extract from entry node body
+                        body_raw = entry_node.get("content_body", "")
+                        try:
+                            body = json.loads(body_raw)
+                            text = body.get("text", "")
+                            # _store_trade_memory formats as "Thesis: ...\nEntry: ...\n..."
+                            for line in text.split("\n"):
+                                if line.startswith("Thesis: "):
+                                    result["thesis"] = line[len("Thesis: "):]
+                                    break
+                            # Fallback: use first line if no "Thesis:" prefix
+                            if not result["thesis"] and text:
+                                result["thesis"] = text.split("\n")[0][:200]
+                        except (json.JSONDecodeError, TypeError):
+                            if body_raw:
+                                result["thesis"] = body_raw.split("\n")[0][:200]
+
+                    break  # Only need the first part_of edge
     except Exception:
         pass
 
-    # 2. Fallback: check if opened_at is stored in the close node's signals
-    body = {}
-    try:
-        body = json.loads(close_node.get("content_body", "{}"))
-        signals = body.get("signals", {})
-        opened_at = signals.get("opened_at", "")
-        if opened_at and closed_at:
-            return _hours_between(opened_at, closed_at)
-    except Exception:
-        pass
-
-    # 3. Search fallback: find entry node by symbol when no edge exists
-    try:
-        if not body:
+    # Fallback duration from signals (existing logic)
+    if result["duration_hours"] == 0.0:
+        try:
             body = json.loads(close_node.get("content_body", "{}"))
-        symbol = body.get("signals", {}).get("symbol", "")
-        if symbol and closed_at:
-            results = nous_client.search(
-                query=symbol,
-                subtype="custom:trade_entry",
-                limit=5,
-            )
-            # Find the most recent entry BEFORE this close
-            best_time = ""
-            for node in results:
-                title = node.get("content_title", "")
-                if symbol.upper() not in title.upper():
-                    continue
-                entry_time = node.get("created_at", "")
-                if entry_time and entry_time < closed_at:
-                    if entry_time > best_time:
-                        best_time = entry_time
-            if best_time:
-                return _hours_between(best_time, closed_at)
-    except Exception:
-        pass
+            signals = body.get("signals", {})
+            opened_at = signals.get("opened_at", "")
+            if opened_at and closed_at:
+                result["duration_hours"] = _hours_between(opened_at, closed_at)
+        except Exception:
+            pass
 
-    return 0.0
+    return result
 
 
 def _hours_between(start_iso: str, end_iso: str) -> float:
@@ -214,6 +220,7 @@ def _merge_partial_trades(trades: list[TradeRecord]) -> list[TradeRecord]:
                 exit_px=t.exit_px, pnl_usd=t.pnl_usd, pnl_pct=t.pnl_pct,
                 close_type=t.close_type, closed_at=t.closed_at,
                 size_usd=t.size_usd, duration_hours=t.duration_hours,
+                thesis=t.thesis,
             )
         else:
             m = merged[key]
@@ -300,18 +307,36 @@ def compute_stats(trades: list[TradeRecord]) -> TradeStats:
     return stats
 
 
-def get_trade_stats(nous_client=None) -> TradeStats:
-    """Main entry point — cached for 30s."""
+def get_trade_stats(
+    nous_client=None,
+    limit: int = 50,
+    created_after: str | None = None,
+    created_before: str | None = None,
+) -> TradeStats:
+    """Main entry point — cached for 30s (default queries only)."""
     global _cached_stats, _cache_time
 
-    now = time.time()
-    if _cached_stats is not None and (now - _cache_time) < _CACHE_TTL:
-        return _cached_stats
+    has_filters = created_after or created_before or limit != 50
 
-    trades = fetch_trade_history(nous_client)
+    # Use cache for default (unfiltered) queries only
+    if not has_filters:
+        now = time.time()
+        if _cached_stats is not None and (now - _cache_time) < _CACHE_TTL:
+            return _cached_stats
+
+    trades = fetch_trade_history(
+        nous_client,
+        limit=limit,
+        created_after=created_after,
+        created_before=created_before,
+    )
     stats = compute_stats(trades)
-    _cached_stats = stats
-    _cache_time = now
+
+    # Only cache unfiltered results
+    if not has_filters:
+        _cached_stats = stats
+        _cache_time = time.time()
+
     return stats
 
 

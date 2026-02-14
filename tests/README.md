@@ -42,6 +42,7 @@ Mock external dependencies.
 
 Key test files:
 - `test_retrieval_orchestrator.py` — 48 tests: decomposition strategies, quality gate, merge & select, reformulation, config loading
+- `test_trade_retrieval.py` — 29 tests: `_store_to_nous()` event_time, memory_type normalization, thesis enrichment, trade stats caching, tool definition, output formatting
 - `test_gate_filter.py` — Gate filter rejection rules
 - `test_agent.py` — Agent prompt building and tool execution
 
@@ -61,6 +62,7 @@ May use real databases (test instances).
 
 Key test files:
 - `test_orchestrator_integration.py` — 10 tests: full pipeline with mock NousClient, compound query decomposition, timeout handling, filter passthrough, fallback behavior
+- `test_trade_retrieval_integration.py` — 6 tests: trade browse recall, time-filtered stats, thesis extraction pipeline, empty result messages
 - `test_gate_filter_integration.py` — Gate filter in store flow
 
 ```python

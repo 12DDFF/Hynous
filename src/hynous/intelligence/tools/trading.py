@@ -849,6 +849,7 @@ def _store_to_nous(
     signals: dict | None = None,
     link_to: str | None = None,
     edge_type: str = "part_of",
+    event_time: str | None = None,
 ) -> str | None:
     """Store a trade memory node in Nous with proper structure and linking.
 
@@ -869,6 +870,11 @@ def _store_to_nous(
         body_data["signals"] = signals
     body = json.dumps(body_data)
 
+    # Auto-set event_time if not provided (trade events happen NOW)
+    if not event_time:
+        from datetime import datetime, timezone
+        event_time = datetime.now(timezone.utc).isoformat()
+
     try:
         client = get_client()
         node = client.create_node(
@@ -877,6 +883,9 @@ def _store_to_nous(
             title=title,
             body=body,
             summary=summary,
+            event_time=event_time,
+            event_confidence=1.0,
+            event_source="inferred",
         )
         node_id = node.get("id")
 

@@ -161,3 +161,9 @@ The `lifecycle_state` vs `state_lifecycle` field name mismatch (category 2) has 
 | 8th | System prompt accuracy | 5 minutes, update after features are wired |
 
 Categories 1 and 2 are quick fixes with outsized impact. Categories 3-5 are the bulk of the work. Categories 6-8 are polish.
+
+---
+
+## Trade Recall Failures — RESOLVED
+
+All Nous wiring issues above are resolved. The trade-recall revision has also been completed — three bugs that prevented the agent from reliably finding, recalling, and reasoning about its own trades are now fixed. See **`../trade-recall/retrieval-issues.md`** for the root cause analysis and resolution details.

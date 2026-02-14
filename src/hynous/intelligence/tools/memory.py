@@ -777,6 +777,12 @@ def handle_recall_memory(
     """Search or browse memories in Nous."""
     from ...nous.client import get_client
 
+    # Normalize "trade" → "trade_entry" for recall.
+    # Auto-created trades use subtype "custom:trade_entry" (via execute_trade),
+    # but agents naturally filter by "trade". Map to what actually exists.
+    if memory_type == "trade":
+        memory_type = "trade_entry"
+
     # Map memory_type to subtype filter
     subtype = None
     node_type = None

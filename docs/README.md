@@ -46,7 +46,8 @@ If you're an AI agent:
 - `DECISIONS.md` — Key technical decisions log
 
 ### Revisions & Known Issues
-- `../revisions/revision-exploration.md` — Master issue list (19 issues, P0-P3)
+- `../revisions/revision-exploration.md` — Master issue list (21 issues, P0-P3) — all resolved
+- `../revisions/trade-recall/retrieval-issues.md` — Trade retrieval failures — **ALL FIXED** (event_time, memory_type normalization, thesis extraction + time filtering)
 - `../revisions/nous-wiring/executive-summary.md` — Nous integration overview — ALL RESOLVED
 - `../revisions/nous-wiring/nous-wiring-revisions.md` — Wiring issues (NW-1 to NW-10) — all FIXED
 - `../revisions/nous-wiring/more-functionality.md` — Nous features (MF-0 to MF-15) — 14 DONE, 2 SKIPPED

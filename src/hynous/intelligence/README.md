@@ -154,3 +154,11 @@ Remaining:
 All 16 MF items and all 10 NW wiring issues are now resolved.
 
 Post-MF feature: **Intelligent Retrieval Orchestrator** — `retrieval_orchestrator.py` implements multi-pass memory search with compound query decomposition, quality gating, and dynamic result sizing. Uses `NousClient.search_full()` and `classify_query()`. See `revisions/memory-search/` for design docs.
+
+### Trade Recall — RESOLVED
+
+Three trade retrieval bugs have been fixed. See `revisions/trade-recall/retrieval-issues.md` for root cause analysis and resolution details.
+
+- ~~`_store_to_nous()` missing `event_time`~~ — FIXED: now passes `event_time`, `event_confidence=1.0`, `event_source="inferred"` to `create_node()`. All trade nodes get ISO timestamps automatically.
+- ~~`_TYPE_MAP` mismatch~~ — FIXED: `handle_recall_memory()` normalizes `"trade"` → `"trade_entry"` before lookup.
+- ~~`get_trade_stats` wrong tool for thesis retrieval~~ — FIXED: `TradeRecord` has `thesis` field, `_enrich_from_entry()` extracts thesis via `part_of` edge traversal, time/limit filtering added to tool and formatters.

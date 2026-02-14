@@ -14,6 +14,7 @@ core/
 ├── logging.py         # Logging setup
 ├── clock.py           # Timestamp injection for agent messages
 ├── costs.py           # LLM cost tracking (per-model, per-session)
+├── trade_analytics.py # Trade performance analytics (TradeRecord, TradeStats, thesis enrichment, time filtering)
 ├── persistence.py     # Paper trading state + conversation history persistence
 ├── daemon_log.py      # Daemon event logging for UI display
 ├── memory_tracker.py  # Memory mutation tracking per agent cycle

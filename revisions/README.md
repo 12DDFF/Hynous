@@ -34,7 +34,20 @@ The Intelligent Retrieval Orchestrator transforms single-shot memory retrieval i
 
 Key implementation divergences from the guide: added `search_full()` to NousClient, D1+D4 decomposition triggers (not just D4), 5-step pipeline (no "Replace Weak" step), individual filter parameters (not `SearchFilters` dataclass).
 
-### 3. Token Optimization — TO-1 through TO-4 DONE
+### 3. Trade Recall — ALL FIXED
+
+| File | Contents |
+|------|----------|
+| `trade-recall/retrieval-issues.md` | Root cause analysis of trade retrieval failures — **ALL FIXED** |
+| `trade-recall/implementation-guide.md` | Step-by-step implementation guide (9 steps across 3 problems) |
+
+Three trade retrieval issues resolved:
+
+1. **~~Missing `event_time` on trade nodes~~** — FIXED: `_store_to_nous()` now passes `event_time`, `event_confidence`, `event_source` to `create_node()`. All trade nodes get ISO timestamps automatically.
+2. **~~`memory_type` mismatch~~** — FIXED: `handle_recall_memory()` normalizes `"trade"` → `"trade_entry"` before `_TYPE_MAP` lookup.
+3. **~~`get_trade_stats` wrong tool for thesis retrieval~~** — FIXED: `TradeRecord` has `thesis` field, `_enrich_from_entry()` extracts thesis from linked entry nodes, time/limit filtering added, formatters show thesis.
+
+### 4. Token Optimization — TO-1 through TO-4 DONE
 
 | File | Contents |
 |------|----------|
@@ -46,15 +59,17 @@ Key implementation divergences from the guide: added `search_full()` to NousClie
 
 Deferred for later: TO-5 (streaming cost abort), TO-6 (cron schedule tuning), TO-7 (prompt compression), TO-8 (model routing).
 
-### 4. Full Issue List
+### 5. Full Issue List
 
 | File | Contents |
 |------|----------|
-| `revision-exploration.md` | Master list of all 19 issues across the entire codebase, prioritized P0 through P3 |
+| `revision-exploration.md` | Master list of all 21 issues across the entire codebase, prioritized P0 through P3 — **all resolved** |
 
 ---
 
 ## For Agents
+
+All revisions are complete. If you're fixing a specific issue or starting new work:
 
 If you're fixing a specific issue:
 
@@ -64,7 +79,8 @@ If you're fixing a specific issue:
 
 If you're doing a general review or planning work:
 
-1. Read `nous-wiring/executive-summary.md` for Nous integration status
-2. Read `memory-search/design-plan.md` for retrieval orchestrator design
-3. Read `token-optimization/executive-summary.md` for cost optimization status
-4. Check `revision-exploration.md` for the full issue landscape
+1. Read `trade-recall/retrieval-issues.md` for the current next priority
+2. Read `nous-wiring/executive-summary.md` for Nous integration status
+3. Read `memory-search/design-plan.md` for retrieval orchestrator design
+4. Read `token-optimization/executive-summary.md` for cost optimization status
+5. Check `revision-exploration.md` for the full issue landscape

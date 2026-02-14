@@ -830,3 +830,19 @@ def _flush():
 Multiple memories can silently fail in a single flush.
 
 **Impact:** Low-medium. In practice, Nous is usually running and storage succeeds. But there's zero feedback mechanism when it doesn't. The agent can't retry, can't tell David something went wrong, and can't adjust its behavior. For a system built on memory-driven learning, silent memory loss is a meaningful reliability gap.
+
+---
+
+### ~~20. [P1] Trade nodes missing `temporal_event_time` — time-range recall fails~~ FIXED
+
+**Status:** Resolved via trade-recall revision. `_store_to_nous()` in `trading.py` now passes `event_time=datetime.now(timezone.utc).isoformat()`, `event_confidence=1.0`, `event_source="inferred"` to `create_node()`. All three callers (entry, close, modify) get timestamps automatically without code changes.
+
+**See:** `revisions/trade-recall/retrieval-issues.md` — Problem 1
+
+---
+
+### ~~21. [P2] `memory_type="trade"` maps to wrong subtype — misses auto-created trade nodes~~ FIXED
+
+**Status:** Resolved via trade-recall revision. `handle_recall_memory()` in `memory.py` normalizes `"trade"` → `"trade_entry"` before `_TYPE_MAP` lookup. `_TYPE_MAP` itself unchanged (store path via `store_memory` unaffected). Agent filtering by `memory_type="trade"` now correctly finds `custom:trade_entry` nodes.
+
+**See:** `revisions/trade-recall/retrieval-issues.md` — Problem 2

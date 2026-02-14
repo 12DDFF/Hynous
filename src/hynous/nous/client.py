@@ -96,6 +96,8 @@ class NousClient:
         subtype: Optional[str] = None,
         lifecycle: Optional[str] = None,
         limit: int = 50,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
     ) -> list[dict]:
         """List nodes with optional filters."""
         params: dict = {"limit": limit}
@@ -105,6 +107,10 @@ class NousClient:
             params["subtype"] = subtype
         if lifecycle:
             params["lifecycle"] = lifecycle
+        if created_after:
+            params["created_after"] = created_after
+        if created_before:
+            params["created_before"] = created_before
         resp = self._session.get(self._url("/nodes"), params=params)
         resp.raise_for_status()
         return resp.json().get("data", [])

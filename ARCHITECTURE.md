@@ -315,7 +315,7 @@ The `revisions/` directory contains documented issues and planned improvements, 
 
 ### `revisions/revision-exploration.md`
 
-Master list of 19 issues across the entire codebase, prioritized P0 through P3. Covers retrieval bugs, daemon failures, missing tools, and system prompt inaccuracies.
+Master list of 21 issues across the entire codebase, prioritized P0 through P3. Covers retrieval bugs, daemon failures, missing tools, and system prompt inaccuracies.
 
 ### `revisions/nous-wiring/`
 
@@ -332,6 +332,13 @@ Intelligent Retrieval Orchestrator — multi-pass memory search:
 
 - **`design-plan.md`** — Architecture design and rationale — **IMPLEMENTED**
 - **`implementation-guide.md`** — Detailed implementation guide — **IMPLEMENTED** (actual implementation diverged in some areas: added `search_full()`, D1+D4 decomposition triggers, 5-step pipeline instead of 6)
+
+### `revisions/trade-recall/` — ALL FIXED
+
+Trade retrieval failures — three root causes identified and resolved:
+
+- **`retrieval-issues.md`** — Root cause analysis and resolution: (1) `_store_to_nous()` now passes `event_time` to `create_node()` — FIXED; (2) `handle_recall_memory()` normalizes `"trade"` → `"trade_entry"` — FIXED; (3) `get_trade_stats` now has thesis extraction, time/limit filtering — FIXED
+- **`implementation-guide.md`** — Step-by-step implementation guide (9 steps across 3 problems)
 
 ### `revisions/graph-changes/`
 
@@ -355,8 +362,9 @@ Token cost reduction measures. Start with `executive-summary.md`:
 
 When working on this codebase:
 
-1. **Check revisions first** — `revisions/` has known issues that may affect your work
-2. **Check existing patterns** — Don't reinvent, extend
-3. **Keep modules focused** — One responsibility per file
-4. **Update this doc** — If you change architecture, document it
-5. **Test your changes** — Don't break what works
+1. **Check revisions first** — `revisions/` has documented issues and their resolutions
+2. **All revisions complete** — Nous wiring, memory search, trade recall, token optimization all resolved
+3. **Check existing patterns** — Don't reinvent, extend
+4. **Keep modules focused** — One responsibility per file
+5. **Update this doc** — If you change architecture, document it
+6. **Test your changes** — Don't break what works

@@ -50,6 +50,9 @@ hynous/
     ├── memory-search/                # Intelligent Retrieval Orchestrator — IMPLEMENTED
     │   ├── design-plan.md            # Architecture design and rationale
     │   └── implementation-guide.md   # Detailed implementation guide (diverged in some areas)
+    ├── trade-recall/               # Trade retrieval issues — ALL FIXED
+    │   ├── retrieval-issues.md       # Root cause analysis + resolution (event_time, memory_type, thesis retrieval)
+    │   └── implementation-guide.md   # Step-by-step implementation guide (9 steps)
     ├── graph-changes/              # Graph visualization enhancements
     │   └── cluster-visualization.md # Deterministic cluster layout in force-graph — DONE
     └── token-optimization/         # Token cost reduction — TO-1 through TO-4 DONE
@@ -70,9 +73,10 @@ If you're an AI agent working on this project:
 
 1. **Read first:** `ARCHITECTURE.md` explains how everything connects
 2. **Check revisions:** `revisions/` has known issues and planned improvements — start with `revisions/nous-wiring/executive-summary.md` for the Nous integration status
-3. **Check brainstorms:** `../hynous-brainstorm/` has all design decisions
-4. **Follow patterns:** Each directory has a README explaining conventions
-5. **Stay modular:** One feature = one module. Don't mix concerns.
+3. **All revisions complete** — Nous wiring, memory search, trade recall, token optimization all resolved. See `revisions/README.md` for details
+4. **Check brainstorms:** `../hynous-brainstorm/` has all design decisions
+5. **Follow patterns:** Each directory has a README explaining conventions
+6. **Stay modular:** One feature = one module. Don't mix concerns.
 
 ---
 

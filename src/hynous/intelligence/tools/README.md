@@ -21,7 +21,7 @@
 | `memory.py` | `store_memory`, `recall_memory`, `update_memory` | Full memory CRUD (create, search/browse/time-range, update). Search mode uses Intelligent Retrieval Orchestrator for compound query decomposition and quality gating. |
 | `delete_memory.py` | `delete_memory` | Memory deletion with edge cleanup |
 | `trading.py` | `execute_trade`, `close_position`, `modify_position`, `get_account` | Trade execution and position management |
-| `trade_stats.py` | `get_trade_stats` | Trade history, win rate, PnL stats |
+| `trade_stats.py` | `get_trade_stats` | Trade history with theses, win rate, PnL stats, time/limit filtering |
 | `watchpoints.py` | `manage_watchpoints` | Price/funding alert CRUD |
 | `explore_memory.py` | `explore_memory` | Graph traversal: explore connections, link/unlink edges |
 | `conflicts.py` | `manage_conflicts` | List and resolve contradictions in knowledge base |
@@ -93,3 +93,15 @@ my_tool.register(registry)
 3. **Useful output** — Return what the agent needs to reason
 4. **Handle errors** — Return error messages, don't crash
 5. **Use NousClient** — All memory operations go through `src/hynous/nous/client.py`
+
+---
+
+## Known Issues
+
+All known tool issues are resolved:
+
+- ~~`trading.py` — `_store_to_nous()` missing `event_time`~~ — FIXED: now passes temporal fields to `create_node()`
+- ~~`memory.py` — `_TYPE_MAP` `"trade"` mismatch~~ — FIXED: `handle_recall_memory()` normalizes `"trade"` → `"trade_entry"`
+- ~~`trade_stats.py` — no thesis/time/limit~~ — FIXED: `TradeRecord` has `thesis` field, `_enrich_from_entry()` extracts thesis, time/limit filtering added
+
+See `revisions/trade-recall/retrieval-issues.md` for details.

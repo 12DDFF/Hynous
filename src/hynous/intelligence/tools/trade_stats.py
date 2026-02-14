@@ -14,13 +14,15 @@ logger = logging.getLogger(__name__)
 TOOL_DEF = {
     "name": "get_trade_stats",
     "description": (
-        "View your trading performance — win rate, total PnL, profit factor, "
-        "per-symbol breakdown, and recent trade history.\n\n"
-        "Use this to review how you're doing before making trading decisions.\n\n"
+        "View your trading performance and trade history.\n\n"
+        "Returns aggregate stats (win rate, PnL, profit factor, streaks) "
+        "plus recent trades with entry theses and outcomes.\n\n"
+        "Use this to review your performance or recall specific trades.\n\n"
         "Examples:\n"
-        '  {} → full performance report\n'
+        '  {} → full performance report with last 5 trades\n'
         '  {"symbol": "BTC"} → BTC-only stats\n'
-        '  {"symbol": "ETH"} → ETH-only stats'
+        '  {"limit": 3} → last 3 trades with theses\n'
+        '  {"time_start": "2026-02-01", "time_end": "2026-02-14"} → trades in date range'
     ),
     "parameters": {
         "type": "object",
@@ -29,28 +31,57 @@ TOOL_DEF = {
                 "type": "string",
                 "description": "Filter to a specific symbol (e.g. BTC, ETH, SOL). Omit for all.",
             },
+            "limit": {
+                "type": "integer",
+                "description": "Max trades to include in the recent trades section. Default 5.",
+                "minimum": 1,
+                "maximum": 50,
+            },
+            "time_start": {
+                "type": "string",
+                "description": "ISO date — only include trades closed after this date (e.g. 2026-02-01).",
+            },
+            "time_end": {
+                "type": "string",
+                "description": "ISO date — only include trades closed before this date (e.g. 2026-02-14).",
+            },
         },
     },
 }
 
 
-def handle_get_trade_stats(symbol: str | None = None) -> str:
+def handle_get_trade_stats(
+    symbol: str | None = None,
+    limit: int = 5,
+    time_start: str | None = None,
+    time_end: str | None = None,
+) -> str:
     """Handle the get_trade_stats tool call."""
     from ...core.trade_analytics import get_trade_stats
 
-    stats = get_trade_stats()
+    # Map agent-facing params to analytics params
+    # Fetch more than display limit so aggregate stats are comprehensive
+    fetch_limit = 50 if not time_start and not time_end else 200
+
+    stats = get_trade_stats(
+        limit=fetch_limit,
+        created_after=time_start,
+        created_before=time_end,
+    )
 
     if stats.total_trades == 0:
+        if time_start or time_end:
+            return "No closed trades in the specified time range."
         return "No closed trades yet. Start trading to build your track record."
 
     if symbol:
         symbol = symbol.upper()
-        return _format_symbol_report(stats, symbol)
+        return _format_symbol_report(stats, symbol, limit)
 
-    return _format_full_report(stats)
+    return _format_full_report(stats, limit)
 
 
-def _format_full_report(stats) -> str:
+def _format_full_report(stats, limit: int = 5) -> str:
     """Format a full performance report."""
     pf_str = f"{stats.profit_factor:.2f}" if stats.profit_factor != float('inf') else "∞"
     sign = "+" if stats.total_pnl >= 0 else ""
@@ -97,11 +128,11 @@ def _format_full_report(stats) -> str:
                 f"{s}${data['pnl']:.2f}"
             )
 
-    # Recent trades (last 5)
+    # Recent trades
     if stats.trades:
         lines.append("")
-        lines.append("--- Recent Trades ---")
-        for t in stats.trades[:5]:
+        lines.append(f"--- Recent Trades (last {min(limit, len(stats.trades))}) ---")
+        for t in stats.trades[:limit]:
             s = "+" if t.pnl_usd >= 0 else ""
             dur_str = ""
             if t.duration_hours > 0:
@@ -114,11 +145,13 @@ def _format_full_report(stats) -> str:
                 f"${t.entry_px:,.0f} → ${t.exit_px:,.0f} | "
                 f"{s}${t.pnl_usd:.2f} ({t.pnl_pct:+.1f}%){dur_str}"
             )
+            if t.thesis:
+                lines.append(f"    Thesis: {t.thesis}")
 
     return "\n".join(lines)
 
 
-def _format_symbol_report(stats, symbol: str) -> str:
+def _format_symbol_report(stats, symbol: str, limit: int = 5) -> str:
     """Format a symbol-filtered report."""
     sym_data = stats.by_symbol.get(symbol)
     if not sym_data:
@@ -137,13 +170,15 @@ def _format_symbol_report(stats, symbol: str) -> str:
     if sym_trades:
         lines.append("")
         lines.append("--- Recent ---")
-        for t in sym_trades[:5]:
+        for t in sym_trades[:limit]:
             ts = "+" if t.pnl_usd >= 0 else ""
             lines.append(
                 f"  {t.side.upper()} | "
                 f"${t.entry_px:,.0f} → ${t.exit_px:,.0f} | "
                 f"{ts}${t.pnl_usd:.2f} ({t.pnl_pct:+.1f}%)"
             )
+            if t.thesis:
+                lines.append(f"    Thesis: {t.thesis}")
 
     return "\n".join(lines)
 

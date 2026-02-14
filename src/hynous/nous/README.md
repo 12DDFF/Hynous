@@ -25,7 +25,7 @@ The actual memory system lives in `nous-server/` (TypeScript/Hono on `:3100`). T
 | `get_node()` | `GET /v1/nodes/:id` | `explore_memory`, `update_memory`, `conflicts` |
 | `update_node()` | `PATCH /v1/nodes/:id` | `update_memory` tool, daemon lifecycle updates |
 | `delete_node()` | `DELETE /v1/nodes/:id` | `delete_memory` tool |
-| `list_nodes()` | `GET /v1/nodes` | `recall_memory` browse mode, watchpoints |
+| `list_nodes()` | `GET /v1/nodes` | `recall_memory` browse mode, watchpoints, `trade_analytics.py` (with `created_after`/`created_before` time filters) |
 | `search()` | `POST /v1/search` | `recall_memory` tool (with time_range), `memory_manager.py` auto-retrieval. Logs QCS metadata at DEBUG level (MF-10). |
 | `get_edges()` | `GET /v1/edges` | `explore_memory` tool, watchpoint cleanup |
 | `create_edge()` | `POST /v1/edges` | `explore_memory` link, auto-linking in memory.py |
@@ -111,4 +111,14 @@ Still unused client methods: `detect_contradiction()` (not needed — Tier 2 run
 
 `classify_query()` is now actively used by the Intelligent Retrieval Orchestrator (`retrieval_orchestrator.py`) for compound query detection. `search_full()` was added to return the full search response (data + metrics + QCS) for the orchestrator's quality gating.
 
-All 16 MF items resolved: 14 DONE, 2 SKIPPED (MF-11 working memory, MF-14 edge decay). No remaining Nous integration work.
+All 16 MF items resolved: 14 DONE, 2 SKIPPED (MF-11 working memory, MF-14 edge decay).
+
+### Trade Recall — RESOLVED
+
+All trade recall issues have been fixed:
+
+- `_store_to_nous()` now passes `event_time`, `event_confidence`, `event_source` to `create_node()` — trade nodes get ISO timestamps automatically
+- `list_nodes()` now accepts `created_after`/`created_before` params for time-filtered queries (used by `trade_analytics.py`)
+- The Nous `GET /v1/nodes` endpoint was updated to support `created_after`/`created_before` query params
+
+See `revisions/trade-recall/retrieval-issues.md` for details.

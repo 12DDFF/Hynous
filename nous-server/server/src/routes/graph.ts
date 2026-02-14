@@ -8,12 +8,9 @@ const graph = new Hono();
 graph.get('/graph', async (c) => {
   const db = getDb();
 
-  // Fetch nodes for visualization.
-  // NOTE: This limit affects graph rendering performance. Currently set to 1000
-  // after increasing from 500 (which caused health/graph count mismatch at ~885 nodes).
-  // May need tuning as the DB grows — too low hides nodes, too high slows rendering.
+  // Fetch all nodes for visualization (no limit — graph renders all memories)
   const nodeResult = await db.execute({
-    sql: `SELECT * FROM nodes ORDER BY provenance_created_at DESC LIMIT 1000`,
+    sql: `SELECT * FROM nodes ORDER BY provenance_created_at DESC`,
     args: [],
   });
 
