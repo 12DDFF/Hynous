@@ -435,10 +435,11 @@
   <script src="https://unpkg.com/force-graph@1.47.4/dist/force-graph.min.js"></script>
   <script>
     // ---- Configuration ----
-    // Primary: proxy through the Reflex backend (same origin, no CORS/port issues).
-    // Fallback: direct to Nous for local dev where proxy may not be running.
+    // Proxy through the Reflex backend on port 8000 (API server).
+    // location.origin is port 3000 (frontend), backend API is always on 8000.
+    const _backendOrigin = location.origin.replace(':3000', ':8000');
     const NOUS_URLS = [
-      `${location.origin}/api/nous/graph`,
+      `${_backendOrigin}/api/nous/graph`,
       'http://localhost:3100/v1/graph',
       'http://127.0.0.1:3100/v1/graph',
     ];
