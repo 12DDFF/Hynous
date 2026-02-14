@@ -1214,6 +1214,17 @@ def handle_close_position(
     # Find the entry node to link this close back to it (builds trade lifecycle graph)
     entry_node_id = _find_trade_entry(symbol)
 
+    # Resolve opened_at: prefer entry node timestamp, fall back to position field
+    opened_at = position.get("opened_at", "")
+    if not opened_at and entry_node_id:
+        try:
+            from ...nous.client import get_client
+            entry_node = get_client().get_node(entry_node_id)
+            if entry_node:
+                opened_at = entry_node.get("created_at", "")
+        except Exception:
+            pass
+
     pnl_sign = "+" if realized_pnl_net >= 0 else ""
     action_label = "Partial close" if partial_pct < 100 else "Closed"
     action_label_upper = "PARTIAL CLOSE" if partial_pct < 100 else "CLOSED"
@@ -1246,7 +1257,7 @@ def handle_close_position(
             "lev_return_pct": round(lev_return, 2),
             "close_type": close_label,
             "size_usd": round(closed_sz * exit_px, 2),
-            "opened_at": position.get("opened_at", ""),
+            "opened_at": opened_at,
         },
         link_to=entry_node_id,  # Edge: entry --part_of--> close (SSA 0.85)
         edge_type="part_of",

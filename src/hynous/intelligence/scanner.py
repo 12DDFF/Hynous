@@ -16,7 +16,7 @@ Architecture:
 
 import logging
 import time
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -338,7 +338,6 @@ class MarketScanner:
 
         # Tier 2: Derivatives (every 300s)
         if self._deriv_polls >= _WARMUP_DERIVS:
-            anomalies.extend(self._detect_volume_surges())
             anomalies.extend(self._detect_funding_extremes())
             anomalies.extend(self._detect_funding_flips())
             anomalies.extend(self._detect_oi_surges())
@@ -359,20 +358,52 @@ class MarketScanner:
         self._cleanup_seen()
         unique = []
         for a in anomalies:
-            if not self._is_duplicate(a.fingerprint):
+            # Book flip: non-directional dedup (ask→bid and bid→ask share key)
+            dedup_key = a.fingerprint
+            if a.type == "book_flip":
+                dedup_key = f"book_flip:{a.symbol}"
+
+            if not self._is_duplicate(dedup_key):
                 # Per-type dedup TTL
                 if a.type == "position_adverse_book":
                     ttl = 600    # 10min — risk signals need repeat
+                elif a.type == "book_flip":
+                    ttl = 1800   # 30min — oscillates too fast for 15min
                 elif a.category == "news":
                     ttl = 3600   # 1h — news doesn't repeat
                 elif a.category == "micro":
                     ttl = 900    # 15min — micro is fleeting
                 else:
                     ttl = self.config.dedup_ttl_minutes * 60  # 30min — macro
-                self._mark_seen(a.fingerprint, ttl)
+                self._mark_seen(dedup_key, ttl)
                 # Apply severity boosts
                 a.severity = self._boost_severity(a.symbol, a.severity)
                 unique.append(a)
+
+        # --- Confluence scoring ---
+        by_symbol: dict[str, list[AnomalyEvent]] = defaultdict(list)
+        for a in unique:
+            if a.symbol != "MARKET":
+                by_symbol[a.symbol].append(a)
+
+        confluent_remove: set[int] = set()
+        for sym, events in by_symbol.items():
+            if len(events) < 2:
+                continue
+            events.sort(key=lambda e: e.severity, reverse=True)
+            top = events[0]
+            others = events[1:]
+            # Boost top event: +0.15 per additional signal on same symbol
+            top.severity = min(top.severity + len(others) * 0.15, 1.0)
+            # Append confluence context to detail
+            conf_types = ", ".join(e.type for e in others)
+            top.detail += f" | Confluence: +{conf_types}"
+            # Mark lower events for removal
+            for e in others:
+                confluent_remove.add(id(e))
+
+        if confluent_remove:
+            unique = [a for a in unique if id(a) not in confluent_remove]
 
         unique.sort(key=lambda a: a.severity, reverse=True)
         self.anomalies_detected += len(unique)
@@ -522,71 +553,6 @@ class MarketScanner:
                 headline=headline,
                 detail=" | ".join(detail_parts),
                 fingerprint=f"price_spike:{sym}:{window}",
-                detected_at=now,
-            ))
-
-        return results
-
-    # -----------------------------------------------------------------
-    # Tier 2: Volume Surges
-    # -----------------------------------------------------------------
-
-    def _detect_volume_surges(self) -> list[AnomalyEvent]:
-        """Detect 24h volume significantly above rolling average."""
-        results = []
-        if len(self._derivs) < 3:
-            return results
-
-        current = self._derivs.latest()
-        now = current.timestamp
-
-        # Compute average volume from buffer (excluding latest)
-        avg_vol: dict[str, float] = {}
-        count = 0
-        for i in range(1, len(self._derivs)):
-            snap = self._derivs.nth_back(i)
-            if snap:
-                for sym, vol in snap.volume.items():
-                    avg_vol[sym] = avg_vol.get(sym, 0) + vol
-                count += 1
-
-        if count == 0:
-            return results
-
-        for sym in avg_vol:
-            avg_vol[sym] /= count
-
-        for sym, vol in current.volume.items():
-            if sym not in self._liquid_symbols:
-                continue
-            avg = avg_vol.get(sym, 0)
-            if avg <= 0:
-                continue
-
-            ratio = vol / avg
-            if ratio < 2.0:
-                continue
-
-            if ratio >= 5.0:
-                severity = 0.9
-            elif ratio >= 3.0:
-                severity = 0.7
-            else:
-                severity = 0.5
-
-            headline = f"{sym} volume {ratio:.1f}x avg"
-            detail = f"24h Vol: ${vol / 1e6:.1f}M (avg: ${avg / 1e6:.1f}M)"
-            price = current.prices.get(sym, 0)
-            if price:
-                detail += f" | Price: ${price:,.2f}"
-
-            results.append(AnomalyEvent(
-                type="volume_surge",
-                symbol=sym,
-                severity=severity,
-                headline=headline,
-                detail=detail,
-                fingerprint=f"volume_surge:{sym}",
                 detected_at=now,
             ))
 
@@ -757,11 +723,31 @@ class MarketScanner:
 
             direction = "up" if pct > 0 else "down"
             sign = "+" if pct > 0 else ""
+
+            # Flow direction: cross-reference OI change with price change
+            curr_price = current.prices.get(sym, 0)
+            prev_price = prev.prices.get(sym, 0)
+            flow_label = ""
+            price_pct = 0.0
+            if curr_price and prev_price and prev_price > 0:
+                price_pct = ((curr_price - prev_price) / prev_price) * 100
+                oi_up = pct > 0
+                if oi_up and price_pct > 0.5:
+                    flow_label = "new longs entering"
+                elif oi_up and price_pct < -0.5:
+                    flow_label = "new shorts entering"
+                elif not oi_up and price_pct > 0.5:
+                    flow_label = "shorts covering"
+                elif not oi_up and price_pct < -0.5:
+                    flow_label = "longs liquidating"
+
             headline = f"{sym} OI {sign}{pct:.0f}% in 5min"
+            if flow_label:
+                headline += f" — {flow_label}"
+
             detail = f"OI: ${prev_oi / 1e6:.1f}M -> ${oi / 1e6:.1f}M"
-            price = current.prices.get(sym, 0)
-            if price:
-                detail += f" | Price: ${price:,.2f}"
+            if curr_price:
+                detail += f" | Price: ${curr_price:,.2f} ({price_pct:+.1f}%)"
             fund = current.funding.get(sym, 0)
             if fund:
                 detail += f" | Funding: {fund:.4%}"
@@ -944,41 +930,54 @@ class MarketScanner:
         return results
 
     # -----------------------------------------------------------------
-    # Tier 1.5: Orderbook Imbalance Flip (Micro)
+    # Tier 1.5: Sustained Orderbook Pressure (Micro)
     # -----------------------------------------------------------------
 
     def _detect_book_flip(self) -> list[AnomalyEvent]:
-        """Detect orderbook imbalance reversals for tracked symbols."""
+        """Detect sustained orderbook pressure for tracked symbols.
+
+        Requires imbalance consistently skewed across last 3 snapshots (3+ min),
+        filtering natural orderbook oscillation.
+        """
         results = []
-        current = self._books.latest()
-        prev = self._books.previous()
-        if not current or not prev:
+        if len(self._books) < 3:
             return results
 
-        now = current.timestamp
-        threshold = self.config.book_imbalance_flip_pct / 100.0
+        now = time.time()
         tracked = self.execution_symbols | self.position_symbols
+        snaps = [self._books.nth_back(i) for i in range(3)]
+        if any(s is None for s in snaps):
+            return results
 
         for sym in tracked:
-            curr_data = current.books.get(sym)
-            prev_data = prev.books.get(sym)
-            if not curr_data or not prev_data:
+            imbalances = []
+            for snap in snaps:
+                book_data = snap.books.get(sym)
+                if not book_data:
+                    break
+                imbalances.append(book_data["imbalance"])
+            if len(imbalances) < 3:
                 continue
 
-            curr_imb = curr_data["imbalance"]
-            prev_imb = prev_data["imbalance"]
-            swing = curr_imb - prev_imb
-            abs_swing = abs(swing)
+            avg_imb = sum(imbalances) / len(imbalances)
 
-            if abs_swing < threshold:
+            # ALL 3 must be consistently skewed (bid-heavy > 0.60, ask-heavy < 0.40)
+            all_bid_heavy = all(imb > 0.60 for imb in imbalances)
+            all_ask_heavy = all(imb < 0.40 for imb in imbalances)
+            if not all_bid_heavy and not all_ask_heavy:
                 continue
 
-            direction = "bid→ask" if swing < 0 else "ask→bid"
+            direction = "ask→bid" if all_bid_heavy else "bid→ask"
 
+            # Severity based on average deviation from balanced (0.5)
+            deviation = abs(avg_imb - 0.5)
             severity = 0.5
-            if abs_swing >= 0.25:
+            if deviation >= 0.25:
                 severity += 0.2
-            # Volume confirmation from derivs
+            if deviation >= 0.35:
+                severity += 0.1
+
+            # Volume confirmation
             deriv = self._derivs.latest()
             if deriv:
                 vol = deriv.volume.get(sym, 0)
@@ -988,11 +987,12 @@ class MarketScanner:
                     if prev_vol > 0 and vol > prev_vol * 1.1:
                         severity += 0.1
 
-            headline = f"{sym} book flip {direction} ({abs_swing:.0%} swing)"
+            curr_data = snaps[0].books.get(sym, {})
+            headline = f"{sym} sustained pressure {direction} (avg {avg_imb:.2f}, 3min)"
             detail = (
-                f"Imbalance: {prev_imb:.2f} → {curr_imb:.2f} | "
-                f"Bid depth: ${curr_data['bid_depth_usd']:,.0f} | "
-                f"Ask depth: ${curr_data['ask_depth_usd']:,.0f}"
+                f"Imbalances: {', '.join(f'{imb:.2f}' for imb in imbalances)} | "
+                f"Bid: ${curr_data.get('bid_depth_usd', 0):,.0f} | "
+                f"Ask: ${curr_data.get('ask_depth_usd', 0):,.0f}"
             )
 
             results.append(AnomalyEvent(
@@ -1192,14 +1192,7 @@ class MarketScanner:
 
             self._alerted_news_ids.add(aid)
 
-        # Cap alerted IDs — keep only IDs still in news buffer (deterministic)
-        if len(self._alerted_news_ids) > 200:
-            current_ids = {a.get("id", "") for a in self._news}
-            self._alerted_news_ids &= current_ids
-
-            # Use first relevant symbol for the event
             primary_sym = relevant_syms[0] if relevant_syms else "MARKET"
-
             results.append(AnomalyEvent(
                 type="news_alert",
                 symbol=primary_sym,
@@ -1210,6 +1203,11 @@ class MarketScanner:
                 detected_at=now,
                 category="news",
             ))
+
+        # Cap alerted IDs — keep only IDs still in news buffer (deterministic)
+        if len(self._alerted_news_ids) > 200:
+            current_ids = {a.get("id", "") for a in self._news}
+            self._alerted_news_ids &= current_ids
 
         return results
 
@@ -1305,3 +1303,73 @@ def format_scanner_wake(
         lines.append("Micro = tight stops. Macro = wider thesis. News = check your thesis. 1-3 sentences.")
 
     return "\n".join(lines)
+
+
+def infer_phantom_direction(anomaly: AnomalyEvent) -> str | None:
+    """Infer a tradeable direction from an anomaly event for phantom tracking.
+
+    Returns "long", "short", or None if direction is ambiguous.
+    Conservative — returns None for signals where direction isn't clear.
+    """
+    fp = anomaly.fingerprint
+    atype = anomaly.type
+
+    # funding_extreme:SYM:high → crowded longs paying shorts → fade them → SHORT
+    # funding_extreme:SYM:low  → crowded shorts paying longs → fade them → LONG
+    if atype == "funding_extreme":
+        if fp.endswith(":high"):
+            return "short"
+        elif fp.endswith(":low"):
+            return "long"
+        return None
+
+    # liq_cascade: "longs rekt" → capitulation → contrarian LONG
+    # liq_cascade: "shorts rekt" → squeeze → contrarian SHORT
+    if atype == "liq_cascade":
+        hl = anomaly.headline.lower()
+        if "longs" in hl:
+            return "long"
+        elif "shorts" in hl:
+            return "short"
+        return None
+
+    # book_flip: ask→bid = buying pressure building → LONG
+    # book_flip: bid→ask = selling pressure building → SHORT
+    if atype == "book_flip":
+        if "ask→bid" in fp:
+            return "long"
+        elif "bid→ask" in fp:
+            return "short"
+        return None
+
+    # momentum_burst: up → LONG, down → SHORT
+    if atype == "momentum_burst":
+        if fp.endswith(":up"):
+            return "long"
+        elif fp.endswith(":down"):
+            return "short"
+        return None
+
+    # price_spike: direction from headline sign
+    if atype == "price_spike":
+        # headline format: "SYM +3.2% in 5min" or "SYM -4.1% in 15min"
+        hl = anomaly.headline
+        pct_part = hl.split("%")[0] if "%" in hl else ""
+        if "+" in pct_part:
+            return "long"
+        elif "-" in pct_part:
+            return "short"
+        return None
+
+    # oi_surge: fingerprint has direction
+    if atype == "oi_surge":
+        if fp.endswith(":up"):
+            return "long"
+        elif fp.endswith(":down"):
+            return "short"
+        return None
+
+    # Ambiguous signals — no phantom
+    # oi_price_divergence, funding_flip, market_liq_wave,
+    # position_adverse_book, news_alert
+    return None

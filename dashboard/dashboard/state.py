@@ -253,6 +253,25 @@ class ClosedTrade(BaseModel):
     date: str = ""  # Pre-formatted date string (YYYY-MM-DD)
 
 
+class PhantomRecord(BaseModel):
+    """Resolved phantom for regret tab display."""
+    symbol: str
+    side: str           # "long" / "short"
+    result: str         # "missed_opportunity" / "good_pass"
+    pnl_pct: float      # leveraged ROE %
+    anomaly_type: str   # e.g. "price_spike", "book_flip"
+    category: str       # "micro" / "macro"
+    date: str           # pre-formatted date string
+    headline: str       # anomaly headline from title
+
+
+class PlaybookRecord(BaseModel):
+    """Playbook entry for regret tab display."""
+    title: str
+    content: str
+    date: str           # pre-formatted date string
+
+
 class DaemonActivityFormatted(BaseModel):
     """Daemon activity with pre-formatted relative time."""
     type: str = ""
@@ -2346,6 +2365,18 @@ class AppState(rx.State):
     closed_trades: List[ClosedTrade] = []
     symbol_breakdown: list[dict] = []
 
+    # Regret tab
+    journal_tab: str = "trades"
+    regret_missed_count: str = "0"
+    regret_good_pass_count: str = "0"
+    regret_miss_rate: str = "—"
+    regret_miss_rate_high: bool = False  # True if miss rate >= 50%
+    regret_phantoms: list[PhantomRecord] = []
+    regret_playbooks: list[PlaybookRecord] = []
+
+    def set_journal_tab(self, tab: str):
+        self.journal_tab = tab
+
     def set_equity_days(self, days: str):
         """Update equity chart timeframe."""
         self.equity_days = int(days)
@@ -2565,6 +2596,66 @@ class AppState(rx.State):
                 self.closed_trades = trades
                 self.symbol_breakdown = breakdown
 
+        # Regret data (phantom tracker + playbooks from Nous)
+        regret = await asyncio.to_thread(self._fetch_regret_data)
+        if regret:
+            phantoms = []
+            for node in regret["missed"] + regret["good"]:
+                try:
+                    body = json.loads(node.get("content_body", "{}"))
+                    sig = body.get("signals", {})
+                    created = node.get("created_at", "")
+                    date_str = created.split("T")[0] if "T" in created else created[:10]
+                    phantoms.append(PhantomRecord(
+                        symbol=sig.get("symbol", "?"),
+                        side=sig.get("side", "?"),
+                        result=sig.get("result", "?"),
+                        pnl_pct=round(float(sig.get("pnl_pct", 0)), 1),
+                        anomaly_type=sig.get("anomaly_type", "?"),
+                        category=sig.get("category", "?"),
+                        date=date_str,
+                        headline=node.get("content_title", ""),
+                    ))
+                except Exception:
+                    continue
+            # Sort newest first
+            phantoms.sort(key=lambda p: p.date, reverse=True)
+
+            pbs = []
+            for node in regret["playbooks"]:
+                try:
+                    created = node.get("created_at", "")
+                    date_str = created.split("T")[0] if "T" in created else created[:10]
+                    body_raw = node.get("content_body", "")
+                    # Body may be JSON or plain text
+                    try:
+                        body_data = json.loads(body_raw)
+                        content = body_data.get("text", body_raw)
+                    except (json.JSONDecodeError, TypeError):
+                        content = body_raw
+                    pbs.append(PlaybookRecord(
+                        title=node.get("content_title", "Untitled"),
+                        content=content or "",
+                        date=date_str,
+                    ))
+                except Exception:
+                    continue
+            pbs.sort(key=lambda p: p.date, reverse=True)
+
+            missed_count = sum(1 for p in phantoms if p.result == "missed_opportunity")
+            good_count = sum(1 for p in phantoms if p.result == "good_pass")
+            total = missed_count + good_count
+            rate_pct = (missed_count / total * 100) if total > 0 else 0
+            rate = f"{rate_pct:.0f}%" if total > 0 else "—"
+
+            async with self:
+                self.regret_phantoms = phantoms
+                self.regret_playbooks = pbs
+                self.regret_missed_count = str(missed_count)
+                self.regret_good_pass_count = str(good_count)
+                self.regret_miss_rate = rate
+                self.regret_miss_rate_high = rate_pct >= 50
+
     @staticmethod
     def _fetch_journal_data():
         """Fetch journal data from trade analytics (sync, runs in thread)."""
@@ -2617,6 +2708,23 @@ class AppState(rx.State):
                 trades,
                 breakdown,
             )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _fetch_regret_data() -> dict | None:
+        """Fetch phantom + playbook data from Nous (sync, runs in thread)."""
+        try:
+            from hynous.nous.client import get_client
+            client = get_client()
+            if client is None:
+                return None
+
+            missed = client.list_nodes(subtype="custom:missed_opportunity", limit=50)
+            good = client.list_nodes(subtype="custom:good_pass", limit=50)
+            playbooks = client.list_nodes(subtype="custom:playbook", limit=30)
+
+            return {"missed": missed, "good": good, "playbooks": playbooks}
         except Exception:
             return None
 

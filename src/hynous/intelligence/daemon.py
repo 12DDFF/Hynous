@@ -224,6 +224,12 @@ class Daemon:
         # Scanner stats
         self._scanner_pass_streak: int = 0
 
+        # Phantom tracker (inaction cost — tracks what would have happened on passes)
+        self._phantoms: list[dict] = []           # Active phantom positions
+        self._phantom_results: list[dict] = []    # Resolved (for historical context)
+        self._last_phantom_check: float = 0
+        self._phantom_stats = {"missed": 0, "good_pass": 0, "expired": 0}
+
         # Cached counts (for snapshot, avoids re-querying Nous)
         self._active_watchpoint_count: int = 0
         self._active_thesis_count: int = 0
@@ -260,10 +266,10 @@ class Daemon:
     # ================================================================
 
     def _get_provider(self):
-        """Get cached Hyperliquid provider."""
+        """Get cached provider (PaperProvider in paper mode, Hyperliquid otherwise)."""
         if self._hl_provider is None:
             from ..data.providers.hyperliquid import get_provider
-            self._hl_provider = get_provider()
+            self._hl_provider = get_provider(config=self.config)
         return self._hl_provider
 
     def _get_nous(self):
@@ -469,6 +475,8 @@ class Daemon:
         self._last_health_check = time.time()
         self._last_embedding_backfill = time.time()
         self._last_fill_check = time.time()
+        self._last_phantom_check = time.time()
+        self._load_phantoms()
 
         while self._running:
             try:
@@ -537,6 +545,11 @@ class Daemon:
                     self._last_conflict_check = now
                     self._check_conflicts()
 
+                # 7b. Phantom evaluation (default every 30 min)
+                if self._phantoms and now - self._last_phantom_check >= self.config.daemon.phantom_check_interval:
+                    self._last_phantom_check = now
+                    self._evaluate_phantoms()
+
                 # 8. Nous health check (default every 1 hour)
                 if now - self._last_health_check >= self.config.daemon.health_check_interval:
                     self._last_health_check = now
@@ -604,6 +617,11 @@ class Daemon:
             self.snapshot.last_price_poll = time.time()
             self._data_changed = True
             self.polls += 1
+
+            # Quick phantom evaluation on fresh prices (faster resolution)
+            if self._phantoms:
+                self._evaluate_phantoms()
+                self._last_phantom_check = time.time()
         except Exception as e:
             logger.debug("Price poll failed: %s", e)
 
@@ -1414,6 +1432,68 @@ class Daemon:
             _notify_discord("Watchpoint", title, response)
             logger.info("Watchpoint wake complete: %s (%d chars)", title, len(response))
 
+    def _build_historical_context(self, anomalies: list) -> str:
+        """Build a [Track Record] block for scanner wakes.
+
+        Uses cached trade stats + in-memory phantom results — ~0ms added latency.
+        Returns empty string if no data available.
+        """
+        lines = []
+        symbols = {a.symbol for a in anomalies if a.symbol != "MARKET"}
+        anomaly_types = {a.type for a in anomalies}
+
+        # 1. Real trade history per symbol (cached 30s)
+        try:
+            from ..core.trade_analytics import get_trade_stats
+            stats = get_trade_stats()
+            if stats.total_trades > 0:
+                for sym in symbols:
+                    sym_data = stats.by_symbol.get(sym)
+                    if sym_data and sym_data["trades"] > 0:
+                        sign = "+" if sym_data["pnl"] >= 0 else ""
+                        lines.append(
+                            f"Your {sym} history: {sym_data['trades']} trades, "
+                            f"{sym_data['win_rate']:.0f}% win, {sign}${sym_data['pnl']:.2f}"
+                        )
+        except Exception:
+            pass
+
+        # 2. Phantom results per symbol
+        if self._phantom_results:
+            for sym in symbols:
+                sym_phantoms = [p for p in self._phantom_results if p.get("symbol") == sym]
+                if sym_phantoms:
+                    missed = sum(1 for p in sym_phantoms if p.get("result") == "missed")
+                    good = sum(1 for p in sym_phantoms if p.get("result") == "good_pass")
+                    lines.append(f"Phantom tracker ({sym}): {missed} missed, {good} good pass")
+
+        # 3. Phantom results per anomaly type
+        if self._phantom_results:
+            for atype in anomaly_types:
+                type_phantoms = [p for p in self._phantom_results if p.get("anomaly_type") == atype]
+                if len(type_phantoms) >= 2:
+                    profitable = sum(1 for p in type_phantoms if p.get("result") == "missed")
+                    lines.append(
+                        f"Past {atype} signals: {profitable}/{len(type_phantoms)} would have profited"
+                    )
+
+        # 4. Pass streak
+        if self._scanner_pass_streak >= 3:
+            lines.append(f"Current scanner pass streak: {self._scanner_pass_streak} consecutive passes")
+
+        # 5. Overall phantom miss rate
+        total_resolved = self._phantom_stats["missed"] + self._phantom_stats["good_pass"]
+        if total_resolved >= 3:
+            miss_rate = self._phantom_stats["missed"] / total_resolved * 100
+            lines.append(
+                f"Overall miss rate: {miss_rate:.0f}% "
+                f"({self._phantom_stats['missed']}/{total_resolved} tracked)"
+            )
+
+        if not lines:
+            return ""
+        return "[Track Record]\n" + "\n".join(lines)
+
     def _wake_for_scanner(self, anomalies: list):
         """Wake the agent when the market scanner detects anomalies.
 
@@ -1434,6 +1514,11 @@ class Daemon:
         # Format the wake message (pass position types for risk context)
         message = format_scanner_wake(top, position_types=self._position_types)
 
+        # Inject historical context above the scanner message
+        track_record = self._build_historical_context(top)
+        if track_record:
+            message = track_record + "\n\n" + message
+
         response = self._wake_agent(
             message, max_coach_cycles=0, max_tokens=384,
             source="daemon:scanner",
@@ -1444,11 +1529,13 @@ class Daemon:
             top_event = top[0]
             title = top_event.headline
 
-            # Track pass streak for stats
+            # Track pass streak + phantom creation
             if self.agent.last_chat_had_trade_tool():
                 self._scanner_pass_streak = 0
             else:
                 self._scanner_pass_streak += 1
+                # Phantom tracking: record what would have happened on this pass
+                self._maybe_create_phantom(top_event)
 
             log_event(DaemonEvent(
                 "scanner", title,
@@ -1503,15 +1590,39 @@ class Daemon:
         elif classification == "take_profit":
             header = f"[DAEMON WAKE — Take Profit: {coin} {side.upper()} ({type_label})]"
             if is_scalp:
-                footer = "Scalp TP hit — clean trade. What made this setup work? Store the pattern for next time."
+                footer = (
+                    "Scalp TP hit — clean trade. REQUIRED: store a playbook (memory_type='playbook') with: "
+                    "setup conditions, entry timing, risk params that worked, what's repeatable. "
+                    f"Title: 'Playbook: {coin} <pattern_name>'"
+                )
             else:
-                footer = "Swing TP hit. Recall your thesis — what confirmed it? Store a lesson (what worked, what's repeatable?), archive the thesis, clean up watchpoints, and look for follow-up setups."
+                footer = (
+                    "Swing TP hit. REQUIRED: store a playbook (memory_type='playbook') with: "
+                    "thesis and what confirmed it, entry signal, hold logic through drawdowns, "
+                    "risk params that worked, what's repeatable. "
+                    f"Title: 'Playbook: {coin} <pattern_name>'. "
+                    "Then archive thesis, clean watchpoints, look for follow-up."
+                )
         else:
             header = f"[DAEMON WAKE — Position Closed: {coin} {side.upper()} ({type_label})]"
-            if is_scalp:
-                footer = "Scalp closed. Was the exit timing right? Store the lesson."
+            if realized_pnl >= 0:
+                # Profitable close — extract the playbook
+                if is_scalp:
+                    footer = (
+                        "Scalp closed in profit. Store a playbook (memory_type='playbook'): "
+                        f"setup, timing, what worked. Title: 'Playbook: {coin} <pattern>'."
+                    )
+                else:
+                    footer = (
+                        "Swing closed in profit. Store a playbook (memory_type='playbook'): "
+                        "thesis, entry signal, risk params, what worked. "
+                        f"Title: 'Playbook: {coin} <pattern>'. Archive thesis, clean watchpoints."
+                    )
             else:
-                footer = "Swing position closed. Store why if intentional, clean up watchpoints, scan the market."
+                if is_scalp:
+                    footer = "Scalp closed at a loss. Was the exit timing right? Store the lesson — specific to THIS setup, not a global rule."
+                else:
+                    footer = "Swing closed at a loss. Store why — what specifically went wrong with THIS setup? Clean up watchpoints, scan the market."
 
         lines = [header, "", pnl_line, "", footer]
 
@@ -1540,6 +1651,275 @@ class Daemon:
             _notify_discord("Fill", fill_title, response)
             logger.info("Fill wake complete: %s %s %s %s (PnL: %s%.2f)",
                          classification, trade_type, coin, side, pnl_sign, abs(realized_pnl))
+
+    # ================================================================
+    # Phantom Tracker — Inaction Cost
+    # ================================================================
+
+    def _maybe_create_phantom(self, top_event):
+        """Create a phantom position when the agent passes on a scanner wake.
+
+        Only tracks high-severity anomalies with inferable direction on liquid symbols.
+        """
+        from .scanner import infer_phantom_direction
+
+        # Gate: severity >= 0.6, real symbol, liquid
+        if top_event.severity < 0.6:
+            return
+        if top_event.symbol == "MARKET":
+            return
+        liquid = getattr(self._scanner, '_liquid_symbols', set()) if self._scanner else set()
+        if liquid and top_event.symbol not in liquid:
+            return
+
+        direction = infer_phantom_direction(top_event)
+        if not direction:
+            return
+
+        entry_price = self.snapshot.prices.get(top_event.symbol, 0)
+        if entry_price <= 0:
+            return
+
+        is_micro = top_event.category == "micro"
+        if is_micro:
+            sl_pct, tp_pct, leverage, max_age = 0.004, 0.008, 20, 7200
+        else:
+            sl_pct, tp_pct, leverage, max_age = 0.02, 0.03, 10, 14400
+
+        if direction == "long":
+            stop_loss = entry_price * (1 - sl_pct)
+            take_profit = entry_price * (1 + tp_pct)
+        else:
+            stop_loss = entry_price * (1 + sl_pct)
+            take_profit = entry_price * (1 - tp_pct)
+
+        phantom = {
+            "symbol": top_event.symbol,
+            "side": direction,
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "leverage": leverage,
+            "category": "micro" if is_micro else "macro",
+            "created_at": time.time(),
+            "expires_at": time.time() + max_age,
+            "anomaly_type": top_event.type,
+            "anomaly_headline": top_event.headline,
+            "severity": top_event.severity,
+        }
+        self._phantoms.append(phantom)
+
+        # Cap at 20 active phantoms
+        if len(self._phantoms) > 20:
+            self._phantoms = self._phantoms[-20:]
+
+        self._persist_phantoms()
+        logger.info("Phantom created: %s %s %s @ %.2f (SL %.2f / TP %.2f)",
+                     direction, top_event.symbol, top_event.type,
+                     entry_price, stop_loss, take_profit)
+
+    def _evaluate_phantoms(self):
+        """Evaluate all active phantoms against current prices. Zero LLM cost.
+
+        Resolves as: TP hit (missed opportunity), SL hit (good pass), or expired (wash).
+        """
+        now = time.time()
+        still_active = []
+
+        for p in self._phantoms:
+            sym = p["symbol"]
+            price = self.snapshot.prices.get(sym, 0)
+            if not price:
+                still_active.append(p)
+                continue
+
+            result = None
+
+            if p["side"] == "long":
+                if price >= p["take_profit"]:
+                    result = "missed_opportunity"
+                elif price <= p["stop_loss"]:
+                    result = "good_pass"
+            else:
+                if price <= p["take_profit"]:
+                    result = "missed_opportunity"
+                elif price >= p["stop_loss"]:
+                    result = "good_pass"
+
+            # Check expiry
+            if result is None and now >= p["expires_at"]:
+                result = "expired"
+
+            if result is None:
+                still_active.append(p)
+                continue
+
+            # Compute phantom PnL (leveraged ROE %)
+            if p["side"] == "long":
+                pnl_pct = ((price - p["entry_price"]) / p["entry_price"]) * p["leverage"] * 100
+            else:
+                pnl_pct = ((p["entry_price"] - price) / p["entry_price"]) * p["leverage"] * 100
+
+            resolved = {
+                **p,
+                "result": result,
+                "exit_price": price,
+                "pnl_pct": round(pnl_pct, 1),
+                "resolved_at": now,
+            }
+            self._phantom_results.append(resolved)
+
+            # Update stats
+            if result == "missed_opportunity":
+                self._phantom_stats["missed"] += 1
+            elif result == "good_pass":
+                self._phantom_stats["good_pass"] += 1
+            else:
+                self._phantom_stats["expired"] += 1
+
+            # Store in Nous (missed + good_pass only)
+            if result != "expired":
+                self._store_phantom_result(resolved)
+
+            # Fire wake for missed opportunities
+            if result == "missed_opportunity":
+                self._wake_for_phantom(resolved)
+
+            logger.info("Phantom resolved: %s %s %s → %s (%.1f%%)",
+                         p["side"], sym, p["anomaly_type"], result, pnl_pct)
+
+        changed = len(self._phantoms) != len(still_active)
+        self._phantoms = still_active
+        if changed:
+            self._persist_phantoms()
+
+    def _store_phantom_result(self, resolved: dict):
+        """Store a resolved phantom in Nous for future memory retrieval."""
+        result = resolved["result"]
+        sym = resolved["symbol"]
+        side = resolved["side"]
+        entry = resolved["entry_price"]
+        exit_px = resolved["exit_price"]
+        pnl = resolved["pnl_pct"]
+        anomaly = resolved["anomaly_type"]
+        headline = resolved["anomaly_headline"]
+
+        if result == "missed_opportunity":
+            subtype = "custom:missed_opportunity"
+            title = f"Missed: {side} {sym} ({anomaly}) would have hit TP"
+            content = (
+                f"Passed on {side} {sym} when scanner detected: {headline}. "
+                f"Entry would have been ${entry:,.2f}, TP hit at ${exit_px:,.2f}. "
+                f"Phantom PnL: {pnl:+.1f}% at {resolved['leverage']}x leverage."
+            )
+        elif result == "good_pass":
+            subtype = "custom:good_pass"
+            title = f"Good pass: {side} {sym} ({anomaly}) hit SL"
+            content = (
+                f"Correctly passed on {side} {sym} when scanner detected: {headline}. "
+                f"Entry would have been ${entry:,.2f}, SL hit at ${exit_px:,.2f}. "
+                f"Phantom loss: {pnl:+.1f}% at {resolved['leverage']}x leverage."
+            )
+        else:
+            return
+
+        try:
+            from .tools.trading import _store_to_nous
+            _store_to_nous(
+                subtype=subtype,
+                title=title,
+                content=content,
+                summary=title,
+                signals={
+                    "phantom": True,
+                    "side": side,
+                    "symbol": sym,
+                    "entry": entry,
+                    "exit": exit_px,
+                    "pnl_pct": pnl,
+                    "anomaly_type": anomaly,
+                    "category": resolved["category"],
+                    "result": result,
+                },
+            )
+        except Exception as e:
+            logger.debug("Failed to store phantom result: %s", e)
+
+    def _wake_for_phantom(self, resolved: dict):
+        """Wake the agent when a phantom position would have hit TP."""
+        sym = resolved["symbol"]
+        side = resolved["side"].upper()
+        entry = resolved["entry_price"]
+        tp = resolved["take_profit"]
+        pnl = resolved["pnl_pct"]
+        headline = resolved["anomaly_headline"]
+        category = resolved["category"]
+        hold_mins = int((resolved["resolved_at"] - resolved["created_at"]) / 60)
+
+        # Phantom stats summary
+        total = self._phantom_stats["missed"] + self._phantom_stats["good_pass"]
+        stats_line = ""
+        if total > 0:
+            miss_rate = self._phantom_stats["missed"] / total * 100
+            stats_line = (
+                f"\nPhantom tracker: {self._phantom_stats['missed']} missed, "
+                f"{self._phantom_stats['good_pass']} good passes "
+                f"({miss_rate:.0f}% miss rate)"
+            )
+
+        lines = [
+            f"[DAEMON WAKE — Missed Opportunity: {sym}]",
+            "",
+            f"You passed on {side} {sym} {hold_mins}m ago.",
+            f"Scanner signal was: {headline}",
+            f"Phantom entry: ${entry:,.2f} → TP hit at ${tp:,.2f}",
+            f"Would have made: {pnl:+.1f}% ({category} params, {resolved['leverage']}x)",
+        ]
+        if stats_line:
+            lines.append(stats_line)
+        lines.extend([
+            "",
+            "What held you back? Was your caution justified, or did you freeze?",
+        ])
+
+        message = "\n".join(lines)
+        response = self._wake_agent(
+            message, max_coach_cycles=0, max_tokens=512,
+            source="daemon:phantom",
+        )
+        if response:
+            title = f"Missed: {side.lower()} {sym} +{pnl:.0f}%"
+            log_event(DaemonEvent(
+                "phantom", title,
+                f"Entry ${entry:,.0f} → TP ${tp:,.0f} | {pnl:+.1f}% | {category}",
+            ))
+            _queue_and_persist("Phantom", title, response, event_type="phantom")
+            _notify_discord("Phantom", title, response)
+
+    def _persist_phantoms(self):
+        """Save active phantoms to disk (survives restarts)."""
+        try:
+            import json as _json
+            path = self.config.project_root / "storage" / "phantoms.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            from ..core.persistence import _atomic_write
+            _atomic_write(path, _json.dumps(self._phantoms, default=str))
+        except Exception as e:
+            logger.debug("Failed to persist phantoms: %s", e)
+
+    def _load_phantoms(self):
+        """Load active phantoms from disk on startup."""
+        try:
+            import json as _json
+            path = self.config.project_root / "storage" / "phantoms.json"
+            if path.exists():
+                self._phantoms = _json.loads(path.read_text())
+                # Remove expired phantoms
+                now = time.time()
+                self._phantoms = [p for p in self._phantoms if p.get("expires_at", 0) > now]
+                logger.info("Loaded %d active phantoms from disk", len(self._phantoms))
+        except Exception as e:
+            logger.debug("Failed to load phantoms: %s", e)
 
     def _wake_for_review(self):
         """Periodic market review — alternates between normal and learning reviews.

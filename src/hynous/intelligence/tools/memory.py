@@ -268,6 +268,10 @@ _TYPE_MAP = {
     "trade_entry": ("concept", "custom:trade_entry"),
     "trade_modify": ("concept", "custom:trade_modify"),
     "trade_close": ("concept", "custom:trade_close"),
+    # Regret system subtypes
+    "playbook": ("concept", "custom:playbook"),                      # Winning patterns extracted from profitable trades
+    "missed_opportunity": ("concept", "custom:missed_opportunity"),   # Phantom tracker: would have won
+    "good_pass": ("concept", "custom:good_pass"),                    # Phantom tracker: would have lost
 }
 
 
@@ -305,7 +309,7 @@ STORE_TOOL_DEF = {
             },
             "memory_type": {
                 "type": "string",
-                "enum": ["watchpoint", "curiosity", "lesson", "thesis", "episode", "trade", "signal"],
+                "enum": ["watchpoint", "curiosity", "lesson", "thesis", "episode", "trade", "signal", "playbook"],
                 "description": "Type of memory to store.",
             },
             "title": {

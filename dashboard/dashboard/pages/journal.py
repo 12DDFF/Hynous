@@ -1,9 +1,13 @@
-"""Journal page — Trade history, equity curve, and performance stats."""
+"""Journal page — Trade history, equity curve, performance stats, and regret tracker."""
 
 import reflex as rx
-from ..state import AppState, ClosedTrade
+from ..state import AppState, ClosedTrade, PhantomRecord, PlaybookRecord
 from ..components import card, stat_card
 
+
+# ================================================================
+# Trades Tab (existing)
+# ================================================================
 
 def _stats_row() -> rx.Component:
     """Top row — 7 stat cards in a grid."""
@@ -338,11 +342,289 @@ def _symbol_breakdown() -> rx.Component:
     )
 
 
-def journal_page() -> rx.Component:
-    """Journal page — performance stats, equity curve, trade history."""
+def _trades_content() -> rx.Component:
+    """Existing trades tab content — stats, equity, tables."""
+    return rx.vstack(
+        _stats_row(),
+        _equity_chart(),
+        rx.hstack(
+            rx.box(_trade_table(), flex="2"),
+            rx.box(_symbol_breakdown(), flex="1"),
+            width="100%",
+            spacing="4",
+            align="start",
+        ),
+        spacing="5",
+        width="100%",
+    )
+
+
+# ================================================================
+# Regret Tab (new)
+# ================================================================
+
+def _regret_stats_row() -> rx.Component:
+    """3 stat cards: Missed, Good Passes, Miss Rate."""
+    return rx.grid(
+        stat_card(
+            "Missed",
+            AppState.regret_missed_count,
+            "would have won",
+            value_color="#f87171",
+        ),
+        stat_card(
+            "Good Passes",
+            AppState.regret_good_pass_count,
+            "correctly avoided",
+            value_color="#4ade80",
+        ),
+        stat_card(
+            "Miss Rate",
+            AppState.regret_miss_rate,
+            "missed / total",
+            value_color=rx.cond(
+                AppState.regret_miss_rate.contains("—"),
+                "#fafafa",
+                rx.cond(
+                    AppState.regret_miss_rate_high,
+                    "#f87171",
+                    "#4ade80",
+                ),
+            ),
+        ),
+        columns="3",
+        spacing="4",
+        width="100%",
+    )
+
+
+def _phantom_row(phantom: PhantomRecord) -> rx.Component:
+    """Single row in phantom history table."""
+    result_color = rx.cond(
+        phantom.result == "missed_opportunity",
+        "#f87171",
+        "#4ade80",
+    )
+    result_label = rx.cond(
+        phantom.result == "missed_opportunity",
+        "MISSED",
+        "GOOD PASS",
+    )
+    pnl_color = rx.cond(phantom.pnl_pct > 0, "#4ade80", "#f87171")
+    side_color = rx.cond(phantom.side == "long", "#4ade80", "#f87171")
+
+    return rx.hstack(
+        rx.text(
+            phantom.date,
+            font_size="0.8rem",
+            color="#737373",
+            min_width="80px",
+        ),
+        rx.text(
+            phantom.symbol,
+            font_size="0.85rem",
+            font_weight="500",
+            color="#fafafa",
+            min_width="50px",
+        ),
+        rx.text(
+            phantom.side.upper(),
+            font_size="0.75rem",
+            font_weight="500",
+            color=side_color,
+            min_width="50px",
+        ),
+        rx.text(
+            result_label,
+            font_size="0.75rem",
+            font_weight="600",
+            color=result_color,
+            min_width="85px",
+        ),
+        rx.text(
+            phantom.pnl_pct.to(str) + "%",
+            font_size="0.8rem",
+            font_weight="500",
+            color=pnl_color,
+            min_width="60px",
+            font_family="JetBrains Mono",
+        ),
+        rx.text(
+            phantom.anomaly_type,
+            font_size="0.8rem",
+            color="#a3a3a3",
+            min_width="90px",
+        ),
+        rx.text(
+            phantom.category,
+            font_size="0.75rem",
+            color="#525252",
+            min_width="50px",
+        ),
+        width="100%",
+        padding_y="0.5rem",
+        border_bottom="1px solid #1a1a1a",
+        align="center",
+    )
+
+
+def _phantom_table() -> rx.Component:
+    """Phantom history table."""
+    return card(
+        rx.vstack(
+            rx.text(
+                "Phantom History",
+                font_size="0.8rem",
+                font_weight="600",
+                color="#525252",
+                text_transform="uppercase",
+                letter_spacing="0.05em",
+            ),
+            # Header
+            rx.hstack(
+                rx.text("Date", font_size="0.7rem", color="#525252", min_width="80px"),
+                rx.text("Symbol", font_size="0.7rem", color="#525252", min_width="50px"),
+                rx.text("Side", font_size="0.7rem", color="#525252", min_width="50px"),
+                rx.text("Result", font_size="0.7rem", color="#525252", min_width="85px"),
+                rx.text("PnL %", font_size="0.7rem", color="#525252", min_width="60px"),
+                rx.text("Signal", font_size="0.7rem", color="#525252", min_width="90px"),
+                rx.text("Type", font_size="0.7rem", color="#525252", min_width="50px"),
+                width="100%",
+                padding_y="0.5rem",
+                border_bottom="1px solid #262626",
+            ),
+            rx.cond(
+                AppState.regret_phantoms.length() > 0,
+                rx.box(
+                    rx.foreach(AppState.regret_phantoms, _phantom_row),
+                    max_height="350px",
+                    overflow_y="auto",
+                    width="100%",
+                ),
+                rx.center(
+                    rx.text(
+                        "No phantom data yet — phantoms are created when the agent passes on scanner alerts",
+                        font_size="0.85rem",
+                        color="#525252",
+                    ),
+                    padding="2rem",
+                ),
+            ),
+            spacing="2",
+            width="100%",
+        ),
+        width="100%",
+    )
+
+
+def _playbook_entry(pb: PlaybookRecord) -> rx.Component:
+    """Single playbook card entry."""
     return rx.box(
         rx.vstack(
-            # Header
+            rx.hstack(
+                rx.text(
+                    pb.title,
+                    font_size="0.85rem",
+                    font_weight="500",
+                    color="#fafafa",
+                ),
+                rx.spacer(),
+                rx.text(
+                    pb.date,
+                    font_size="0.75rem",
+                    color="#525252",
+                ),
+                width="100%",
+                align="center",
+            ),
+            rx.text(
+                pb.content,
+                font_size="0.8rem",
+                color="#a3a3a3",
+                line_height="1.5",
+                no_of_lines=4,
+            ),
+            spacing="2",
+            width="100%",
+        ),
+        padding="0.75rem",
+        border_bottom="1px solid #1a1a1a",
+        width="100%",
+    )
+
+
+def _playbook_list() -> rx.Component:
+    """Playbook library card."""
+    return card(
+        rx.vstack(
+            rx.text(
+                "Playbook Library",
+                font_size="0.8rem",
+                font_weight="600",
+                color="#525252",
+                text_transform="uppercase",
+                letter_spacing="0.05em",
+            ),
+            rx.cond(
+                AppState.regret_playbooks.length() > 0,
+                rx.box(
+                    rx.foreach(AppState.regret_playbooks, _playbook_entry),
+                    max_height="400px",
+                    overflow_y="auto",
+                    width="100%",
+                ),
+                rx.center(
+                    rx.text(
+                        "No playbooks yet — playbooks are stored after profitable trade closes",
+                        font_size="0.85rem",
+                        color="#525252",
+                    ),
+                    padding="2rem",
+                ),
+            ),
+            spacing="2",
+            width="100%",
+        ),
+        width="100%",
+    )
+
+
+def _regret_content() -> rx.Component:
+    """Regret tab — phantom stats, history table, playbook library."""
+    return rx.vstack(
+        _regret_stats_row(),
+        _phantom_table(),
+        _playbook_list(),
+        spacing="5",
+        width="100%",
+    )
+
+
+# ================================================================
+# Page
+# ================================================================
+
+def _tab_button(label: str, tab_value: str) -> rx.Component:
+    """Tab button with active/inactive styling."""
+    return rx.button(
+        label,
+        on_click=AppState.set_journal_tab(tab_value),
+        variant=rx.cond(AppState.journal_tab == tab_value, "solid", "ghost"),
+        size="1",
+        cursor="pointer",
+        color=rx.cond(
+            AppState.journal_tab == tab_value,
+            "#fafafa",
+            "#525252",
+        ),
+    )
+
+
+def journal_page() -> rx.Component:
+    """Journal page — performance stats, equity curve, trade history, regret tracker."""
+    return rx.box(
+        rx.vstack(
+            # Header with tab switcher
             rx.hstack(
                 rx.text(
                     "Trade Journal",
@@ -351,6 +633,11 @@ def journal_page() -> rx.Component:
                     color="#fafafa",
                 ),
                 rx.spacer(),
+                rx.hstack(
+                    _tab_button("Trades", "trades"),
+                    _tab_button("Regret", "regret"),
+                    spacing="2",
+                ),
                 rx.button(
                     "Refresh",
                     on_click=AppState.load_journal,
@@ -363,19 +650,11 @@ def journal_page() -> rx.Component:
                 align="center",
             ),
 
-            # Stats row
-            _stats_row(),
-
-            # Equity curve
-            _equity_chart(),
-
-            # Trade history + Symbol breakdown side by side on wider screens
-            rx.hstack(
-                rx.box(_trade_table(), flex="2"),
-                rx.box(_symbol_breakdown(), flex="1"),
-                width="100%",
-                spacing="4",
-                align="start",
+            # Tab content
+            rx.cond(
+                AppState.journal_tab == "trades",
+                _trades_content(),
+                _regret_content(),
             ),
 
             spacing="5",

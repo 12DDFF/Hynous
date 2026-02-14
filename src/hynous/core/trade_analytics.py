@@ -135,25 +135,25 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
 
 def _find_duration(close_node: dict, nous_client, closed_at: str) -> float:
     """Find trade duration by looking up the linked entry node."""
+    # 1. Edge lookup: follow part_of edge from entry → close
     try:
         node_id = close_node.get("id")
-        if not node_id:
-            return 0.0
-
-        edges = nous_client.get_edges(node_id, direction="in")
-        for edge in edges:
-            if edge.get("type") == "part_of":
-                source_id = edge.get("source_id")
-                if source_id:
-                    entry_node = nous_client.get_node(source_id)
-                    if entry_node:
-                        entry_time = entry_node.get("created_at", "")
-                        if entry_time and closed_at:
-                            return _hours_between(entry_time, closed_at)
+        if node_id:
+            edges = nous_client.get_edges(node_id, direction="in")
+            for edge in edges:
+                if edge.get("type") == "part_of":
+                    source_id = edge.get("source_id")
+                    if source_id:
+                        entry_node = nous_client.get_node(source_id)
+                        if entry_node:
+                            entry_time = entry_node.get("created_at", "")
+                            if entry_time and closed_at:
+                                return _hours_between(entry_time, closed_at)
     except Exception:
         pass
 
-    # Fallback: check if opened_at is stored in the close node's signals
+    # 2. Fallback: check if opened_at is stored in the close node's signals
+    body = {}
     try:
         body = json.loads(close_node.get("content_body", "{}"))
         signals = body.get("signals", {})
@@ -162,6 +162,33 @@ def _find_duration(close_node: dict, nous_client, closed_at: str) -> float:
             return _hours_between(opened_at, closed_at)
     except Exception:
         pass
+
+    # 3. Search fallback: find entry node by symbol when no edge exists
+    try:
+        if not body:
+            body = json.loads(close_node.get("content_body", "{}"))
+        symbol = body.get("signals", {}).get("symbol", "")
+        if symbol and closed_at:
+            results = nous_client.search(
+                query=symbol,
+                subtype="custom:trade_entry",
+                limit=5,
+            )
+            # Find the most recent entry BEFORE this close
+            best_time = ""
+            for node in results:
+                title = node.get("content_title", "")
+                if symbol.upper() not in title.upper():
+                    continue
+                entry_time = node.get("created_at", "")
+                if entry_time and entry_time < closed_at:
+                    if entry_time > best_time:
+                        best_time = entry_time
+            if best_time:
+                return _hours_between(best_time, closed_at)
+    except Exception:
+        pass
+
     return 0.0
 
 

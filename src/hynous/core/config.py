@@ -100,6 +100,9 @@ class DaemonConfig:
     # Wake rate limiting
     max_wakes_per_hour: int = 6           # Rate limit on agent wakes
     wake_cooldown_seconds: int = 120      # Min seconds between non-priority wakes
+    # Phantom tracker (inaction cost)
+    phantom_check_interval: int = 1800          # Seconds between phantom evaluations (30 min)
+    phantom_max_age_seconds: int = 14400        # Max phantom lifetime (4h, macro default)
 
 
 @dataclass
@@ -123,7 +126,7 @@ class ScannerConfig:
     min_oi_usd: float = 1_000_000              # Skip low-liquidity pairs
     # Micro trading (L2 + 5m candle detectors)
     book_poll_enabled: bool = True             # Fetch L2 orderbooks + 5m candles
-    book_imbalance_flip_pct: float = 15.0      # Imbalance swing % to trigger book_flip
+    book_imbalance_flip_pct: float = 25.0      # Imbalance swing % to trigger book_flip
     momentum_5m_pct: float = 1.5               # 5m candle body % to trigger momentum_burst
     momentum_volume_mult: float = 2.0          # Volume multiplier vs rolling avg
     position_adverse_threshold: float = 0.40   # Imbalance threshold for adverse book signal
@@ -246,6 +249,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
             max_open_positions=daemon_raw.get("max_open_positions", 3),
             max_wakes_per_hour=daemon_raw.get("max_wakes_per_hour", 6),
             wake_cooldown_seconds=daemon_raw.get("wake_cooldown_seconds", 120),
+            phantom_check_interval=daemon_raw.get("phantom_check_interval", 1800),
+            phantom_max_age_seconds=daemon_raw.get("phantom_max_age_seconds", 14400),
         ),
         scanner=ScannerConfig(
             enabled=scanner_raw.get("enabled", True),

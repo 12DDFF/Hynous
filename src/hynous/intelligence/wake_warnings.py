@@ -15,6 +15,10 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+_memory_state_cache: dict | None = None
+_memory_state_cache_time: float = 0.0
+_MEMORY_STATE_CACHE_TTL: float = 300.0  # 5 minutes
+
 
 # ====================================================================
 # Public API
@@ -89,10 +93,17 @@ def _query_memory_state(nous_client) -> dict:
     ALL queries filter lifecycle="ACTIVE" — fixes the stale data leak
     where the old coach returned dormant nodes.
 
+    Cached with 5-min TTL to avoid 5 HTTP calls per wake cycle.
+
     Returns:
         {"watchpoints": [...], "theses": [...], "trade_entries": [...],
          "curiosity": [...], "lessons": [...], "thesis_symbols": set()}
     """
+    global _memory_state_cache, _memory_state_cache_time
+    now = time.time()
+    if _memory_state_cache is not None and (now - _memory_state_cache_time) < _MEMORY_STATE_CACHE_TTL:
+        return _memory_state_cache
+
     state = {
         "watchpoints": [],
         "theses": [],
@@ -151,6 +162,8 @@ def _query_memory_state(nous_client) -> dict:
     except Exception:
         pass
 
+    _memory_state_cache = state
+    _memory_state_cache_time = time.time()
     return state
 
 

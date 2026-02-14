@@ -622,7 +622,7 @@ class Agent:
                 # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
                 if "[DAEMON WAKE" in message:
                     symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
-                    search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
+                    search_query = " ".join(symbols) + " thesis playbook trade pattern" if symbols else message
                 else:
                     search_query = message
                 self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
@@ -892,7 +892,7 @@ class Agent:
                 # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
                 if "[DAEMON WAKE" in message:
                     symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
-                    search_query = " ".join(symbols) + " thesis trade observation" if symbols else message
+                    search_query = " ".join(symbols) + " thesis playbook trade pattern" if symbols else message
                 else:
                     search_query = message
                 self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
