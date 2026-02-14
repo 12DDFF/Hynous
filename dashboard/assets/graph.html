@@ -496,6 +496,36 @@
     let searchTerm = '';
     let graphData = { nodes: [], links: [] };
 
+    // ---- Precomputed lookup tables (rebuilt on data load) ----
+    // adjMap: nodeId → Set of connected nodeIds — O(1) neighbor check
+    let adjMap = new Map();
+    // nodeById: nodeId → node object — O(1) node lookup
+    let nodeById = new Map();
+
+    function buildLookups() {
+      adjMap = new Map();
+      nodeById = new Map();
+      for (const n of graphData.nodes) {
+        nodeById.set(n.id, n);
+        adjMap.set(n.id, new Set());
+        // Pre-compute connection count
+        n._conns = 0;
+      }
+      for (const l of graphData.links) {
+        const sid = l.source.id ?? l.source;
+        const tid = l.target.id ?? l.target;
+        const sSet = adjMap.get(sid);
+        const tSet = adjMap.get(tid);
+        if (sSet) sSet.add(tid);
+        if (tSet) tSet.add(sid);
+        // Increment connection counts
+        const sn = nodeById.get(sid);
+        const tn = nodeById.get(tid);
+        if (sn) sn._conns++;
+        if (tn) tn._conns++;
+      }
+    }
+
     // ---- Settings persistence (localStorage) ----
     const STORAGE_KEY = 'hynous-graph-settings';
 
@@ -535,13 +565,7 @@
     }
 
     function getRadius(node) {
-      // Size varies by connection count — scaled by settings multiplier
-      if (node._conns === undefined) {
-        node._conns = graphData.links.filter(l =>
-          (l.source.id || l.source) === node.id || (l.target.id || l.target) === node.id
-        ).length;
-      }
-      const c = node._conns;
+      const c = node._conns || 0;
       const base = Math.min(6, 2.8 + Math.log2(c + 1) * 1.1);
       return base * settings.nodeSize;
     }
@@ -593,11 +617,9 @@
       html += `<div class="detail-row"><span class="label">Created</span><span class="value">${formatDate(node.created_at)}</span></div>`;
       html += `<div class="detail-row"><span class="label">ID</span><span class="value" style="font-family:monospace;font-size:0.7rem">${node.id}</span></div>`;
 
-      // Count connections
-      const connections = graphData.links.filter(l =>
-        (l.source.id || l.source) === node.id || (l.target.id || l.target) === node.id
-      );
-      html += `<div class="detail-row"><span class="label">Connections</span><span class="value">${connections.length}</span></div>`;
+      // Count connections (pre-computed)
+      const connCount = node._conns || 0;
+      html += `<div class="detail-row"><span class="label">Connections</span><span class="value">${connCount}</span></div>`;
 
       if (node.summary) {
         html += `<div class="detail-summary">${node.summary}</div>`;
@@ -642,6 +664,9 @@
 
       graphData = { nodes: data.nodes, links: validEdges };
 
+      // Build O(1) lookup tables — eliminates per-frame O(N*M) scans
+      buildLookups();
+
       // Stats
       document.getElementById('stats').innerHTML =
         `<span>${data.nodes.length}</span> memories &middot; <span>${validEdges.length}</span> connections`;
@@ -668,10 +693,7 @@
           const highlighted = isHighlighted(node);
           const isSelected = selectedNode && selectedNode.id === node.id;
           const isHovered = hoveredNode && hoveredNode.id === node.id;
-          const isConnected = selectedNode && graphData.links.some(l =>
-            ((l.source.id || l.source) === selectedNode.id && (l.target.id || l.target) === node.id) ||
-            ((l.target.id || l.target) === selectedNode.id && (l.source.id || l.source) === node.id)
-          );
+          const isConnected = selectedNode && adjMap.get(selectedNode.id)?.has(node.id);
 
           let alpha = opacity;
           if (searchTerm && !highlighted) alpha = 0.06;
@@ -725,8 +747,8 @@
             }
           }
           if (searchTerm) {
-            const srcNode = graphData.nodes.find(n => n.id === sourceId);
-            const tgtNode = graphData.nodes.find(n => n.id === targetId);
+            const srcNode = nodeById.get(sourceId);
+            const tgtNode = nodeById.get(targetId);
             if (srcNode && tgtNode && isHighlighted(srcNode) && isHighlighted(tgtNode)) {
               alpha = 0.25;
             } else if (searchTerm) {
