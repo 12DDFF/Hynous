@@ -934,19 +934,21 @@ def _find_trade_entry(symbol: str) -> str | None:
 
     Used by close and modify handlers to link back to the original entry,
     building the trade lifecycle graph: entry → modify → close.
+
+    Uses list_nodes (not search) because trade nodes often lack embeddings,
+    making semantic search return empty results.
     """
     from ...nous.client import get_client
 
     try:
         client = get_client()
-        results = client.search(
-            query=symbol,
+        # list_nodes returns newest first — find the most recent entry for this symbol
+        nodes = client.list_nodes(
             subtype="custom:trade_entry",
-            limit=5,
+            limit=10,
         )
-        # Return the most relevant match for this symbol
         symbol_upper = symbol.upper()
-        for node in results:
+        for node in nodes:
             title = node.get("content_title", "")
             if symbol_upper in title.upper():
                 return node.get("id")

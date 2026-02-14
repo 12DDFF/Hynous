@@ -398,32 +398,24 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
                     if entry_node:
                         break
 
-        # Fallback: search by symbol if no edge found
+        # Fallback: list by subtype if no edge found (search fails without embeddings)
         if not entry_node:
             try:
                 close_body_fb = json.loads(close_node.get("content_body", "{}"))
                 symbol = close_body_fb.get("signals", {}).get("symbol", "")
                 closed_at = close_node.get("created_at", "")
                 if symbol:
-                    results = nous_client.search(
-                        query=symbol,
+                    candidates = nous_client.list_nodes(
                         subtype="custom:trade_entry",
-                        limit=5,
+                        created_before=closed_at if closed_at else None,
+                        limit=10,
                     )
-                    # Find the most recent entry BEFORE this close
-                    best_node = None
-                    best_time = ""
-                    for candidate in results:
+                    # list_nodes returns newest first — first symbol match is best
+                    for candidate in candidates:
                         title = candidate.get("content_title", "")
-                        if symbol.upper() not in title.upper():
-                            continue
-                        entry_time = candidate.get("created_at", "")
-                        if entry_time and (not closed_at or entry_time < closed_at):
-                            if entry_time > best_time:
-                                best_time = entry_time
-                                best_node = candidate
-                    if best_node:
-                        entry_node = best_node
+                        if symbol.upper() in title.upper():
+                            entry_node = candidate
+                            break
             except Exception:
                 pass
 
