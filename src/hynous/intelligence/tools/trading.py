@@ -1250,8 +1250,21 @@ def handle_close_position(
     # Find the entry node to link this close back to it (builds trade lifecycle graph)
     entry_node_id = _find_trade_entry(symbol)
 
-    # Resolve opened_at: prefer entry node timestamp, fall back to position field
+    # Resolve opened_at: position field → daemon registry → entry node timestamp
     opened_at = position.get("opened_at", "")
+    if not opened_at:
+        # Hyperliquid live doesn't provide opened_at — get from daemon's position type registry
+        try:
+            from ...intelligence.daemon import get_active_daemon
+            daemon = get_active_daemon()
+            if daemon:
+                type_info = daemon.get_position_type(symbol)
+                entry_time = type_info.get("entry_time", 0)
+                if entry_time > 0:
+                    from datetime import datetime as _dt, timezone as _tz
+                    opened_at = _dt.fromtimestamp(entry_time, tz=_tz.utc).isoformat()
+        except Exception:
+            pass
     if not opened_at and entry_node_id:
         try:
             from ...nous.client import get_client

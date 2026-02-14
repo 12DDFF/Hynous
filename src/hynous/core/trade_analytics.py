@@ -146,11 +146,13 @@ def _enrich_from_entry(close_node: dict, nous_client, closed_at: str) -> dict:
     """Find the linked entry node and extract duration + thesis."""
     result = {"duration_hours": 0.0, "thesis": ""}
 
+    entry_node = None
     try:
         node_id = close_node.get("id")
         if not node_id:
             return result
 
+        # Try 1: follow part_of edge
         edges = nous_client.get_edges(node_id, direction="in")
         for edge in edges:
             if edge.get("type") == "part_of":
@@ -158,33 +160,53 @@ def _enrich_from_entry(close_node: dict, nous_client, closed_at: str) -> dict:
                 if source_id:
                     entry_node = nous_client.get_node(source_id)
                     if entry_node:
-                        # Duration
-                        entry_time = entry_node.get("created_at", "")
-                        if entry_time and closed_at:
-                            result["duration_hours"] = _hours_between(entry_time, closed_at)
+                        break
 
-                        # Thesis — extract from entry node body
-                        body_raw = entry_node.get("content_body", "")
-                        try:
-                            body = json.loads(body_raw)
-                            text = body.get("text", "")
-                            # _store_trade_memory formats as "Thesis: ...\nEntry: ...\n..."
-                            for line in text.split("\n"):
-                                if line.startswith("Thesis: "):
-                                    result["thesis"] = line[len("Thesis: "):]
-                                    break
-                            # Fallback: use first line if no "Thesis:" prefix
-                            if not result["thesis"] and text:
-                                result["thesis"] = text.split("\n")[0][:200]
-                        except (json.JSONDecodeError, TypeError):
-                            if body_raw:
-                                result["thesis"] = body_raw.split("\n")[0][:200]
+        # Try 2: list_nodes fallback (edges may not exist — search was broken before)
+        if not entry_node:
+            try:
+                body_fb = json.loads(close_node.get("content_body", "{}"))
+                symbol = body_fb.get("signals", {}).get("symbol", "")
+                if symbol:
+                    candidates = nous_client.list_nodes(
+                        subtype="custom:trade_entry",
+                        created_before=closed_at if closed_at else None,
+                        limit=10,
+                    )
+                    for candidate in candidates:
+                        title = candidate.get("content_title", "")
+                        if symbol.upper() in title.upper():
+                            entry_node = candidate
+                            break
+            except Exception:
+                pass
 
-                    break  # Only need the first part_of edge
+        if entry_node:
+            # Duration from entry node created_at → close node created_at
+            entry_time = entry_node.get("created_at", "")
+            if entry_time and closed_at:
+                result["duration_hours"] = _hours_between(entry_time, closed_at)
+
+            # Thesis — extract from entry node body
+            body_raw = entry_node.get("content_body", "")
+            try:
+                body = json.loads(body_raw)
+                text = body.get("text", "")
+                # _store_trade_memory formats as "Thesis: ...\nEntry: ...\n..."
+                for line in text.split("\n"):
+                    if line.startswith("Thesis: "):
+                        result["thesis"] = line[len("Thesis: "):]
+                        break
+                # Fallback: use first line if no "Thesis:" prefix
+                if not result["thesis"] and text:
+                    result["thesis"] = text.split("\n")[0][:200]
+            except (json.JSONDecodeError, TypeError):
+                if body_raw:
+                    result["thesis"] = body_raw.split("\n")[0][:200]
     except Exception:
         pass
 
-    # Fallback duration from signals (existing logic)
+    # Fallback duration from signals.opened_at
     if result["duration_hours"] == 0.0:
         try:
             body = json.loads(close_node.get("content_body", "{}"))
