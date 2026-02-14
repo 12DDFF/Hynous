@@ -1263,6 +1263,16 @@ def handle_close_position(
         f"PnL {pnl_sign}{_fmt_price(realized_pnl_net)} ({lev_return:+.1f}%)"
     )
 
+    # Get peak ROE (MFE) from daemon before position cleanup
+    mfe_pct = 0.0
+    try:
+        from ...intelligence.daemon import get_active_daemon
+        daemon = get_active_daemon()
+        if daemon:
+            mfe_pct = daemon.get_peak_roe(symbol)
+    except Exception:
+        pass
+
     close_node_id = _store_to_nous(
         subtype="custom:trade_close",
         title=f"{action_label_upper} {position['side'].upper()} {symbol} @ {_fmt_price(exit_px)}",
@@ -1280,6 +1290,7 @@ def handle_close_position(
             "close_type": close_label,
             "size_usd": round(closed_sz * exit_px, 2),
             "opened_at": opened_at,
+            "mfe_pct": round(mfe_pct, 2),
         },
         link_to=entry_node_id,  # Edge: entry --part_of--> close (SSA 0.85)
         edge_type="part_of",

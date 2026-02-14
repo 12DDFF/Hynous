@@ -251,6 +251,15 @@ class ClosedTrade(BaseModel):
     duration_hours: float = 0.0
     duration_str: str = ""  # Pre-formatted: "4.2h" or "1.3d"
     date: str = ""  # Pre-formatted date string (YYYY-MM-DD)
+    trade_id: str = ""  # close node ID (for expand tracking)
+    thesis: str = ""  # from linked trade_entry
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
+    confidence: float = 0.0  # 0-1
+    rr_ratio: float = 0.0
+    trade_type: str = ""  # "micro" or "macro"
+    mfe_pct: float = 0.0  # max favorable excursion ROE %
+    detail_html: str = ""  # pre-rendered HTML for expanded view
 
 
 class PhantomRecord(BaseModel):
@@ -263,6 +272,10 @@ class PhantomRecord(BaseModel):
     category: str       # "micro" / "macro"
     date: str           # pre-formatted date string
     headline: str       # anomaly headline from title
+    phantom_id: str = ""  # node ID (for expand tracking)
+    entry_px: float = 0.0
+    exit_px: float = 0.0
+    detail_html: str = ""  # pre-rendered HTML for expanded view
 
 
 class PlaybookRecord(BaseModel):
@@ -270,6 +283,156 @@ class PlaybookRecord(BaseModel):
     title: str
     content: str
     date: str           # pre-formatted date string
+
+
+def _build_trade_detail_html(d: dict) -> str:
+    """Build pre-rendered HTML for an expanded trade detail panel."""
+    parts = []
+    thesis = d.get("thesis", "")
+    if thesis:
+        esc = thesis.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        parts.append(
+            f'<div style="color:#a3a3a3;font-size:0.82rem;line-height:1.5;'
+            f'margin-bottom:8px;padding:8px 10px;background:#111;border-radius:4px;'
+            f'border-left:2px solid #525252">{esc}</div>'
+        )
+
+    metrics = []
+    tt = d.get("trade_type", "")
+    if tt:
+        color = "#a855f7" if tt == "micro" else "#3b82f6"
+        metrics.append(("Type", f'<span style="color:{color};font-weight:500">{tt.upper()}</span>'))
+    conf = d.get("confidence", 0)
+    if conf > 0:
+        metrics.append(("Conviction", f"{conf*100:.0f}%"))
+    sl = d.get("stop_loss", 0)
+    if sl > 0:
+        metrics.append(("Stop Loss", f"${sl:,.2f}" if sl >= 1 else f"${sl:.4f}"))
+    tp = d.get("take_profit", 0)
+    if tp > 0:
+        metrics.append(("Take Profit", f"${tp:,.2f}" if tp >= 1 else f"${tp:.4f}"))
+    rr = d.get("rr_ratio", 0)
+    if rr > 0:
+        metrics.append(("R:R", f"{rr:.1f}:1"))
+    mfe = d.get("mfe_pct", 0)
+    if mfe > 0:
+        metrics.append(("Peak Profit", f"+{mfe:.1f}% ROE"))
+
+    if metrics:
+        cells = "".join(
+            f'<div style="padding:4px 0"><span style="color:#525252;font-size:0.7rem;'
+            f'text-transform:uppercase;letter-spacing:0.05em;display:block">{label}</span>'
+            f'<span style="color:#e5e5e5;font-size:0.82rem">{val}</span></div>'
+            for label, val in metrics
+        )
+        parts.append(
+            f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 16px">{cells}</div>'
+        )
+
+    if not parts:
+        return '<div style="color:#525252;font-size:0.82rem">No details available</div>'
+    return "".join(parts)
+
+
+def _build_phantom_detail_html(sig: dict, headline: str = "") -> str:
+    """Build pre-rendered HTML for an expanded phantom detail panel."""
+    parts = []
+    ep = sig.get("entry_price", 0) or sig.get("entry_px", 0)
+    xp = sig.get("exit_price", 0) or sig.get("exit_px", 0)
+    if ep > 0:
+        parts.append(f'<span style="color:#525252">Entry:</span> ${ep:,.2f}')
+    if xp > 0:
+        parts.append(f'<span style="color:#525252">Exit:</span> ${xp:,.2f}')
+    cat = sig.get("category", "")
+    if cat:
+        color = "#a855f7" if cat == "micro" else "#3b82f6"
+        parts.append(f'<span style="color:{color};font-weight:500">{cat.upper()}</span>')
+    at = sig.get("anomaly_type", "")
+    if at and headline:
+        esc = headline.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        parts.append(f'<span style="color:#525252">Signal:</span> {esc}')
+    desc = sig.get("description", "")
+    if desc:
+        esc = desc.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        parts.append(f'<div style="color:#a3a3a3;font-size:0.8rem;margin-top:4px">{esc}</div>')
+
+    if not parts:
+        return '<div style="color:#525252;font-size:0.82rem">No details available</div>'
+    return '<div style="font-size:0.82rem;color:#e5e5e5;line-height:1.7">' + "<br>".join(parts) + "</div>"
+
+
+def _enrich_trade(close_node: dict, nous_client) -> dict:
+    """Follow edges from a trade_close node to its entry node, extract enrichment data."""
+    result = {
+        "trade_id": close_node.get("id", ""),
+        "thesis": "",
+        "stop_loss": 0.0,
+        "take_profit": 0.0,
+        "confidence": 0.0,
+        "rr_ratio": 0.0,
+        "trade_type": "",
+        "mfe_pct": 0.0,
+    }
+
+    # Get MFE from close node's signals
+    try:
+        close_body = json.loads(close_node.get("content_body", "{}"))
+        close_signals = close_body.get("signals", {})
+        result["mfe_pct"] = float(close_signals.get("mfe_pct", 0))
+    except Exception:
+        pass
+
+    # Follow part_of edge (in) to find the linked trade_entry node
+    node_id = close_node.get("id")
+    if not node_id or not nous_client:
+        return result
+
+    try:
+        edges = nous_client.get_edges(node_id, direction="in")
+        entry_node = None
+        for edge in edges:
+            if edge.get("type") == "part_of":
+                source_id = edge.get("source_id")
+                if source_id:
+                    entry_node = nous_client.get_node(source_id)
+                    if entry_node:
+                        break
+
+        if not entry_node:
+            return result
+
+        # Parse entry node
+        entry_body_raw = entry_node.get("content_body", "")
+        try:
+            entry_body = json.loads(entry_body_raw)
+        except (json.JSONDecodeError, TypeError):
+            return result
+
+        # Thesis text
+        result["thesis"] = entry_body.get("text", "")
+        # Extract thesis from text field — it starts with "Thesis: "
+        if result["thesis"].startswith("Thesis: "):
+            # Get just the thesis part (before "Entry:")
+            lines = result["thesis"].split("\n")
+            thesis_parts = []
+            for line in lines:
+                if line.startswith("Entry:") or line.startswith("Stop Loss:") or line.startswith("Confidence:"):
+                    break
+                thesis_parts.append(line.replace("Thesis: ", "", 1) if line.startswith("Thesis: ") else line)
+            result["thesis"] = "\n".join(thesis_parts).strip()
+
+        # Signals
+        entry_signals = entry_body.get("signals", {})
+        result["stop_loss"] = float(entry_signals.get("stop", 0))
+        result["take_profit"] = float(entry_signals.get("target", 0))
+        result["confidence"] = float(entry_signals.get("confidence", 0))
+        result["rr_ratio"] = float(entry_signals.get("rr_ratio", 0))
+        result["trade_type"] = entry_signals.get("trade_type", "macro")
+
+    except Exception:
+        pass
+
+    return result
 
 
 class DaemonActivityFormatted(BaseModel):
@@ -2373,9 +2536,25 @@ class AppState(rx.State):
     regret_miss_rate_high: bool = False  # True if miss rate >= 50%
     regret_phantoms: list[PhantomRecord] = []
     regret_playbooks: list[PlaybookRecord] = []
+    journal_expanded_trades: list[str] = []
+    journal_expanded_phantoms: list[str] = []
 
     def set_journal_tab(self, tab: str):
         self.journal_tab = tab
+
+    def toggle_trade_detail(self, trade_id: str):
+        """Toggle expand/collapse for a trade row."""
+        if trade_id in self.journal_expanded_trades:
+            self.journal_expanded_trades = [t for t in self.journal_expanded_trades if t != trade_id]
+        else:
+            self.journal_expanded_trades = self.journal_expanded_trades + [trade_id]
+
+    def toggle_phantom_detail(self, phantom_id: str):
+        """Toggle expand/collapse for a phantom row."""
+        if phantom_id in self.journal_expanded_phantoms:
+            self.journal_expanded_phantoms = [p for p in self.journal_expanded_phantoms if p != phantom_id]
+        else:
+            self.journal_expanded_phantoms = self.journal_expanded_phantoms + [phantom_id]
 
     def set_equity_days(self, days: str):
         """Update equity chart timeframe."""
@@ -2606,6 +2785,11 @@ class AppState(rx.State):
                     sig = body.get("signals", {})
                     created = node.get("created_at", "")
                     date_str = created.split("T")[0] if "T" in created else created[:10]
+                    headline = node.get("content_title", "")
+                    node_id = node.get("id", "")
+                    ep = float(sig.get("entry_price", 0) or sig.get("entry_px", 0) or 0)
+                    xp = float(sig.get("exit_price", 0) or sig.get("exit_px", 0) or 0)
+                    detail_html = _build_phantom_detail_html(sig, headline)
                     phantoms.append(PhantomRecord(
                         symbol=sig.get("symbol", "?"),
                         side=sig.get("side", "?"),
@@ -2614,7 +2798,11 @@ class AppState(rx.State):
                         anomaly_type=sig.get("anomaly_type", "?"),
                         category=sig.get("category", "?"),
                         date=date_str,
-                        headline=node.get("content_title", ""),
+                        headline=headline,
+                        phantom_id=node_id or f"p_{date_str}_{sig.get('symbol', '')}",
+                        entry_px=ep,
+                        exit_px=xp,
+                        detail_html=detail_html,
                     ))
                 except Exception:
                     continue
@@ -2658,19 +2846,59 @@ class AppState(rx.State):
 
     @staticmethod
     def _fetch_journal_data():
-        """Fetch journal data from trade analytics (sync, runs in thread)."""
+        """Fetch journal data from trade analytics + Nous enrichment (sync, runs in thread)."""
         try:
             from hynous.core.trade_analytics import get_trade_stats
             stats = get_trade_stats()
+
+            # Fetch raw close nodes from Nous for enrichment
+            close_nodes_by_key: dict[tuple, dict] = {}
+            nous_client = None
+            try:
+                from hynous.nous.client import get_client
+                nous_client = get_client()
+                if nous_client:
+                    raw_nodes = nous_client.list_nodes(subtype="custom:trade_close", limit=50)
+                    for node in raw_nodes:
+                        try:
+                            body = json.loads(node.get("content_body", "{}"))
+                            sig = body.get("signals", {})
+                            sym = sig.get("symbol", "")
+                            created = node.get("created_at", "")
+                            if sym and created:
+                                # Key: (symbol, date prefix) for matching to TradeRecords
+                                close_nodes_by_key[(sym, created[:16])] = node
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
             trades = []
             for t in stats.trades[:30]:
                 dur_h = round(t.duration_hours, 1)
                 if dur_h >= 24:
                     dur_str = f"{dur_h / 24:.1f}d"
+                elif dur_h >= 1:
+                    dur_str = f"{dur_h:.1f}h"
                 elif dur_h > 0:
-                    dur_str = f"{dur_h}h"
+                    dur_str = f"{max(1, int(dur_h * 60))}m"
                 else:
                     dur_str = "—"
+
+                # Match to raw Nous node for enrichment
+                enrichment = {}
+                close_node = close_nodes_by_key.get((t.symbol, t.closed_at[:16]))
+                if not close_node:
+                    # Try broader match by symbol + date
+                    for key, node in close_nodes_by_key.items():
+                        if key[0] == t.symbol and key[1][:10] == t.closed_at[:10]:
+                            close_node = node
+                            break
+                if close_node and nous_client:
+                    enrichment = _enrich_trade(close_node, nous_client)
+
+                detail_html = _build_trade_detail_html(enrichment) if enrichment else ""
+
                 trades.append(ClosedTrade(
                     symbol=t.symbol,
                     side=t.side,
@@ -2683,6 +2911,15 @@ class AppState(rx.State):
                     duration_hours=dur_h,
                     duration_str=dur_str,
                     date=t.closed_at.split("T")[0] if "T" in t.closed_at else t.closed_at[:10],
+                    trade_id=enrichment.get("trade_id", f"{t.symbol}_{t.closed_at[:16]}"),
+                    thesis=enrichment.get("thesis", ""),
+                    stop_loss=enrichment.get("stop_loss", 0.0),
+                    take_profit=enrichment.get("take_profit", 0.0),
+                    confidence=enrichment.get("confidence", 0.0),
+                    rr_ratio=enrichment.get("rr_ratio", 0.0),
+                    trade_type=enrichment.get("trade_type", ""),
+                    mfe_pct=enrichment.get("mfe_pct", 0.0),
+                    detail_html=detail_html,
                 ))
             breakdown = [
                 {

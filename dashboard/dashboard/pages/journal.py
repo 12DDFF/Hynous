@@ -137,80 +137,125 @@ def _equity_chart() -> rx.Component:
 
 
 def _trade_row(trade: ClosedTrade) -> rx.Component:
-    """Single trade row in the history table."""
+    """Single trade row — clickable to expand details."""
     pnl_color = rx.cond(trade.pnl_usd > 0, "#4ade80", "#f87171")
     side_color = rx.cond(trade.side == "long", "#4ade80", "#f87171")
+    is_expanded = AppState.journal_expanded_trades.contains(trade.trade_id)
+    # Trade type dot color
+    type_color = rx.cond(
+        trade.trade_type == "micro",
+        "#a855f7",
+        rx.cond(trade.trade_type == "macro", "#3b82f6", "transparent"),
+    )
 
-    return rx.hstack(
-        # Date
-        rx.text(
-            trade.date,
-            font_size="0.8rem",
-            color="#737373",
-            min_width="80px",
+    return rx.box(
+        # Summary row (always visible)
+        rx.hstack(
+            # Chevron
+            rx.icon(
+                rx.cond(is_expanded, "chevron-down", "chevron-right"),
+                size=12,
+                color="#525252",
+                flex_shrink="0",
+            ),
+            # Type dot
+            rx.box(
+                width="6px",
+                height="6px",
+                border_radius="50%",
+                background=type_color,
+                flex_shrink="0",
+            ),
+            # Date
+            rx.text(
+                trade.date,
+                font_size="0.8rem",
+                color="#737373",
+                min_width="80px",
+            ),
+            # Symbol
+            rx.text(
+                trade.symbol,
+                font_size="0.85rem",
+                font_weight="500",
+                color="#fafafa",
+                min_width="50px",
+            ),
+            # Side
+            rx.text(
+                trade.side.upper(),
+                font_size="0.75rem",
+                font_weight="500",
+                color=side_color,
+                min_width="55px",
+            ),
+            # Entry
+            rx.text(
+                "$" + trade.entry_px.to(str),
+                font_size="0.8rem",
+                color="#a3a3a3",
+                min_width="80px",
+                font_family="JetBrains Mono",
+            ),
+            # Exit
+            rx.text(
+                "$" + trade.exit_px.to(str),
+                font_size="0.8rem",
+                color="#a3a3a3",
+                min_width="80px",
+                font_family="JetBrains Mono",
+            ),
+            # PnL %
+            rx.text(
+                trade.pnl_pct.to(str) + "%",
+                font_size="0.8rem",
+                font_weight="500",
+                color=pnl_color,
+                min_width="60px",
+                font_family="JetBrains Mono",
+            ),
+            # PnL $
+            rx.text(
+                "$" + trade.pnl_usd.to(str),
+                font_size="0.8rem",
+                font_weight="500",
+                color=pnl_color,
+                min_width="70px",
+                font_family="JetBrains Mono",
+            ),
+            # Duration
+            rx.text(
+                trade.duration_str,
+                font_size="0.8rem",
+                color="#737373",
+                min_width="50px",
+                font_family="JetBrains Mono",
+            ),
+            width="100%",
+            align="center",
+            spacing="2",
         ),
-        # Symbol
-        rx.text(
-            trade.symbol,
-            font_size="0.85rem",
-            font_weight="500",
-            color="#fafafa",
-            min_width="50px",
+        # Detail panel (only when expanded)
+        rx.cond(
+            is_expanded & (trade.detail_html != ""),
+            rx.box(
+                rx.html(trade.detail_html),
+                padding="0.75rem 1rem",
+                margin_left="20px",
+                background="#0a0a0a",
+                border="1px solid #1a1a1a",
+                border_radius="6px",
+                margin_top="4px",
+            ),
+            rx.fragment(),
         ),
-        # Side
-        rx.text(
-            trade.side.upper(),
-            font_size="0.75rem",
-            font_weight="500",
-            color=side_color,
-            min_width="55px",
-        ),
-        # Entry
-        rx.text(
-            "$" + trade.entry_px.to(str),
-            font_size="0.8rem",
-            color="#a3a3a3",
-            min_width="80px",
-            font_family="JetBrains Mono",
-        ),
-        # Exit
-        rx.text(
-            "$" + trade.exit_px.to(str),
-            font_size="0.8rem",
-            color="#a3a3a3",
-            min_width="80px",
-            font_family="JetBrains Mono",
-        ),
-        # PnL %
-        rx.text(
-            trade.pnl_pct.to(str) + "%",
-            font_size="0.8rem",
-            font_weight="500",
-            color=pnl_color,
-            min_width="60px",
-            font_family="JetBrains Mono",
-        ),
-        # PnL $
-        rx.text(
-            "$" + trade.pnl_usd.to(str),
-            font_size="0.8rem",
-            font_weight="500",
-            color=pnl_color,
-            min_width="70px",
-            font_family="JetBrains Mono",
-        ),
-        # Duration
-        rx.text(
-            trade.duration_str,
-            font_size="0.8rem",
-            color="#737373",
-            min_width="50px",
-            font_family="JetBrains Mono",
-        ),
-        width="100%",
+        on_click=AppState.toggle_trade_detail(trade.trade_id),
+        cursor="pointer",
         padding_y="0.5rem",
         border_bottom="1px solid #1a1a1a",
-        align="center",
+        width="100%",
+        _hover={"background": "#0d0d0d"},
+        transition="background 0.1s ease",
     )
 
 
@@ -228,6 +273,8 @@ def _trade_table() -> rx.Component:
             ),
             # Header
             rx.hstack(
+                rx.box(width="12px", flex_shrink="0"),  # chevron spacer
+                rx.box(width="6px", flex_shrink="0"),  # type dot spacer
                 rx.text("Date", font_size="0.7rem", color="#525252", min_width="80px"),
                 rx.text("Symbol", font_size="0.7rem", color="#525252", min_width="50px"),
                 rx.text("Side", font_size="0.7rem", color="#525252", min_width="55px"),
@@ -239,6 +286,7 @@ def _trade_table() -> rx.Component:
                 width="100%",
                 padding_y="0.5rem",
                 border_bottom="1px solid #262626",
+                spacing="2",
             ),
             # Rows
             rx.cond(
@@ -399,7 +447,7 @@ def _regret_stats_row() -> rx.Component:
 
 
 def _phantom_row(phantom: PhantomRecord) -> rx.Component:
-    """Single row in phantom history table."""
+    """Single row in phantom history table — clickable to expand details."""
     result_color = rx.cond(
         phantom.result == "missed_opportunity",
         "#f87171",
@@ -412,59 +460,89 @@ def _phantom_row(phantom: PhantomRecord) -> rx.Component:
     )
     pnl_color = rx.cond(phantom.pnl_pct > 0, "#4ade80", "#f87171")
     side_color = rx.cond(phantom.side == "long", "#4ade80", "#f87171")
+    is_expanded = AppState.journal_expanded_phantoms.contains(phantom.phantom_id)
 
-    return rx.hstack(
-        rx.text(
-            phantom.date,
-            font_size="0.8rem",
-            color="#737373",
-            min_width="80px",
+    return rx.box(
+        # Summary row
+        rx.hstack(
+            rx.icon(
+                rx.cond(is_expanded, "chevron-down", "chevron-right"),
+                size=12,
+                color="#525252",
+                flex_shrink="0",
+            ),
+            rx.text(
+                phantom.date,
+                font_size="0.8rem",
+                color="#737373",
+                min_width="80px",
+            ),
+            rx.text(
+                phantom.symbol,
+                font_size="0.85rem",
+                font_weight="500",
+                color="#fafafa",
+                min_width="50px",
+            ),
+            rx.text(
+                phantom.side.upper(),
+                font_size="0.75rem",
+                font_weight="500",
+                color=side_color,
+                min_width="50px",
+            ),
+            rx.text(
+                result_label,
+                font_size="0.75rem",
+                font_weight="600",
+                color=result_color,
+                min_width="85px",
+            ),
+            rx.text(
+                phantom.pnl_pct.to(str) + "%",
+                font_size="0.8rem",
+                font_weight="500",
+                color=pnl_color,
+                min_width="60px",
+                font_family="JetBrains Mono",
+            ),
+            rx.text(
+                phantom.anomaly_type,
+                font_size="0.8rem",
+                color="#a3a3a3",
+                min_width="90px",
+            ),
+            rx.text(
+                phantom.category,
+                font_size="0.75rem",
+                color="#525252",
+                min_width="50px",
+            ),
+            width="100%",
+            align="center",
+            spacing="2",
         ),
-        rx.text(
-            phantom.symbol,
-            font_size="0.85rem",
-            font_weight="500",
-            color="#fafafa",
-            min_width="50px",
+        # Detail panel
+        rx.cond(
+            is_expanded & (phantom.detail_html != ""),
+            rx.box(
+                rx.html(phantom.detail_html),
+                padding="0.75rem 1rem",
+                margin_left="20px",
+                background="#0a0a0a",
+                border="1px solid #1a1a1a",
+                border_radius="6px",
+                margin_top="4px",
+            ),
+            rx.fragment(),
         ),
-        rx.text(
-            phantom.side.upper(),
-            font_size="0.75rem",
-            font_weight="500",
-            color=side_color,
-            min_width="50px",
-        ),
-        rx.text(
-            result_label,
-            font_size="0.75rem",
-            font_weight="600",
-            color=result_color,
-            min_width="85px",
-        ),
-        rx.text(
-            phantom.pnl_pct.to(str) + "%",
-            font_size="0.8rem",
-            font_weight="500",
-            color=pnl_color,
-            min_width="60px",
-            font_family="JetBrains Mono",
-        ),
-        rx.text(
-            phantom.anomaly_type,
-            font_size="0.8rem",
-            color="#a3a3a3",
-            min_width="90px",
-        ),
-        rx.text(
-            phantom.category,
-            font_size="0.75rem",
-            color="#525252",
-            min_width="50px",
-        ),
-        width="100%",
+        on_click=AppState.toggle_phantom_detail(phantom.phantom_id),
+        cursor="pointer",
         padding_y="0.5rem",
         border_bottom="1px solid #1a1a1a",
-        align="center",
+        width="100%",
+        _hover={"background": "#0d0d0d"},
+        transition="background 0.1s ease",
     )
 
 
@@ -482,6 +560,7 @@ def _phantom_table() -> rx.Component:
             ),
             # Header
             rx.hstack(
+                rx.box(width="12px", flex_shrink="0"),  # chevron spacer
                 rx.text("Date", font_size="0.7rem", color="#525252", min_width="80px"),
                 rx.text("Symbol", font_size="0.7rem", color="#525252", min_width="50px"),
                 rx.text("Side", font_size="0.7rem", color="#525252", min_width="50px"),
@@ -492,6 +571,7 @@ def _phantom_table() -> rx.Component:
                 width="100%",
                 padding_y="0.5rem",
                 border_bottom="1px solid #262626",
+                spacing="2",
             ),
             rx.cond(
                 AppState.regret_phantoms.length() > 0,

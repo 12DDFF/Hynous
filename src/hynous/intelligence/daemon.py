@@ -200,6 +200,7 @@ class Daemon:
         # Profit level tracking: {coin: {tier: last_alert_timestamp}}
         self._profit_alerts: dict[str, dict[str, float]] = {}
         self._profit_sides: dict[str, str] = {}  # coin → side (detect flips)
+        self._peak_roe: dict[str, float] = {}  # coin → max ROE % seen during hold
 
         # Position type registry: {coin: {"type": "micro"|"macro", "entry_time": float}}
         # Populated by trading tool via register_position_type(), inferred on restart
@@ -366,6 +367,10 @@ class Daemon:
         leverage = prev.get("leverage", 20)
         inferred = "micro" if leverage >= 15 else "macro"
         return {"type": inferred, "entry_time": 0}
+
+    def get_peak_roe(self, coin: str) -> float:
+        """Get max favorable excursion (peak ROE %) tracked during hold."""
+        return self._peak_roe.get(coin.upper(), 0.0)
 
     @property
     def last_trade_ago(self) -> str:
@@ -1064,6 +1069,9 @@ class Daemon:
                 from datetime import datetime, timezone
                 opened_at = datetime.fromtimestamp(entry_time, tz=timezone.utc).isoformat()
 
+            # Get peak ROE (MFE) before it's cleaned up
+            mfe_pct = self._peak_roe.get(coin, 0.0)
+
             signals = {
                 "action": "close",
                 "side": side,
@@ -1074,6 +1082,7 @@ class Daemon:
                 "pnl_pct": round(pnl_pct, 2),
                 "close_type": classification,
                 "opened_at": opened_at,
+                "mfe_pct": round(mfe_pct, 2),
             }
 
             # Find the matching entry node for edge linking
@@ -1184,6 +1193,10 @@ class Daemon:
                 roe_pct = p["return_pct"]  # Already leveraged return on margin
                 leverage = p.get("leverage", 20)
 
+                # Track peak ROE for MFE (max favorable excursion)
+                if roe_pct > self._peak_roe.get(coin, 0):
+                    self._peak_roe[coin] = roe_pct
+
                 # Reset alerts if position side flipped (close long → open short)
                 prev_side = self._profit_sides.get(coin)
                 if prev_side and prev_side != side:
@@ -1221,12 +1234,15 @@ class Daemon:
                     if now - type_info["entry_time"] > 3600:
                         self._maybe_alert(coin, "micro_overstay", roe_pct, side, entry_px, mark_px, now, alerts, "micro")
 
-            # Clean up alerts + sides for closed positions
+            # Clean up alerts + sides + peak ROE for closed positions
             open_coins = {p["coin"] for p in positions}
             for coin in list(self._profit_alerts.keys()):
                 if coin not in open_coins:
                     del self._profit_alerts[coin]
                     self._profit_sides.pop(coin, None)
+            for coin in list(self._peak_roe):
+                if coin not in open_coins:
+                    del self._peak_roe[coin]
 
         except Exception as e:
             logger.debug("Profit level check failed: %s", e)
