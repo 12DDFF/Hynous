@@ -2504,7 +2504,7 @@ class Daemon:
                 parts.append(f"[Briefing]\n{briefing_text}\n[End Briefing]")
             if code_questions or haiku_questions:
                 all_q = code_questions + haiku_questions
-                parts.append("[Questions]\n" + "\n".join(f"- {q}" for q in all_q))
+                parts.append("[Consider — do NOT list these in your response, just let them inform your thinking]\n" + "\n".join(f"- {q}" for q in all_q))
             if warnings_text:
                 parts.append(warnings_text)
             parts.append(message)  # Original wake message
