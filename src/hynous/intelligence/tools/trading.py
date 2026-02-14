@@ -680,7 +680,7 @@ def handle_execute_trade(
                     "as trigger orders on the current position size."
                 )
                 # Still place triggers — they'll apply to any existing position of same side
-                _place_triggers(provider, symbol, is_buy, sz_placed, stop_loss, take_profit, lines)
+                _place_triggers(provider, symbol, is_buy, sz_placed, stop_loss, take_profit, lines, entry_px=limit_price)
 
             if leverage is not None:
                 lines.append(f"Leverage: {leverage}x")
@@ -748,7 +748,7 @@ def handle_execute_trade(
         lines.append(f"Leverage: {leverage}x")
 
     # --- Place SL/TP if requested ---
-    _place_triggers(provider, symbol, is_buy, fill_sz, stop_loss, take_profit, lines)
+    _place_triggers(provider, symbol, is_buy, fill_sz, stop_loss, take_profit, lines, entry_px=fill_px)
 
     # --- Risk/reward if both SL and TP given ---
     if stop_loss is not None and take_profit is not None:
@@ -808,8 +808,13 @@ def _place_triggers(
     provider, symbol: str, is_buy: bool, sz: float,
     stop_loss: float | None, take_profit: float | None,
     lines: list[str],
+    entry_px: float = 0,
 ) -> None:
-    """Place stop loss and/or take profit trigger orders. Appends status to lines."""
+    """Place stop loss and/or take profit trigger orders. Appends status to lines.
+
+    Uses entry_px for distance display instead of fetching a fresh price,
+    avoiding redundant HTTP calls during trade execution.
+    """
     if stop_loss is not None:
         try:
             provider.place_trigger_order(
@@ -819,8 +824,11 @@ def _place_triggers(
                 trigger_px=stop_loss,
                 tpsl="sl",
             )
-            sl_dist = abs((stop_loss - provider.get_price(symbol)) / provider.get_price(symbol) * 100)
-            lines.append(f"Stop Loss: {_fmt_price(stop_loss)} ({sl_dist:.1f}% away) [set]")
+            if entry_px > 0:
+                sl_dist = abs((stop_loss - entry_px) / entry_px * 100)
+                lines.append(f"Stop Loss: {_fmt_price(stop_loss)} ({sl_dist:.1f}% from entry) [set]")
+            else:
+                lines.append(f"Stop Loss: {_fmt_price(stop_loss)} [set]")
         except Exception as e:
             logger.error("Failed to place stop loss: %s", e)
             lines.append(f"Stop Loss: {_fmt_price(stop_loss)} [FAILED: {e}]")
@@ -834,8 +842,11 @@ def _place_triggers(
                 trigger_px=take_profit,
                 tpsl="tp",
             )
-            tp_dist = abs((take_profit - provider.get_price(symbol)) / provider.get_price(symbol) * 100)
-            lines.append(f"Take Profit: {_fmt_price(take_profit)} ({tp_dist:.1f}% away) [set]")
+            if entry_px > 0:
+                tp_dist = abs((take_profit - entry_px) / entry_px * 100)
+                lines.append(f"Take Profit: {_fmt_price(take_profit)} ({tp_dist:.1f}% from entry) [set]")
+            else:
+                lines.append(f"Take Profit: {_fmt_price(take_profit)} [set]")
         except Exception as e:
             logger.error("Failed to place take profit: %s", e)
             lines.append(f"Take Profit: {_fmt_price(take_profit)} [FAILED: {e}]")
@@ -1011,31 +1022,33 @@ def _store_trade_memory(
 
     lines.append(f"Trade stored in memory (id: {node_id})")
 
-    # Auto-link to active thesis about this symbol
-    try:
-        from ...nous.client import get_client
-        from ...core.memory_tracker import get_tracker
-        client = get_client()
-        tracker = get_tracker()
-        thesis_nodes = client.search(
-            query=symbol,
-            subtype="custom:thesis",
-            lifecycle="ACTIVE",
-            limit=3,
-        )
-        for thesis in thesis_nodes:
-            thesis_id = thesis.get("id")
-            if thesis_id and thesis_id != node_id:
-                client.create_edge(
-                    source_id=node_id,
-                    target_id=thesis_id,
-                    type="supports",
-                    strength=0.8,
-                )
-                tracker.record_edge(node_id, thesis_id, "supports", "auto thesis link")
-                lines.append(f"Linked to thesis: {thesis.get('content_title', 'unknown')}")
-    except Exception as e:
-        logger.debug("Auto-link thesis failed: %s", e)
+    # Auto-link to active thesis about this symbol (background — doesn't block trade response)
+    def _link_theses():
+        try:
+            from ...nous.client import get_client
+            from ...core.memory_tracker import get_tracker
+            client = get_client()
+            tracker = get_tracker()
+            thesis_nodes = client.search(
+                query=symbol,
+                subtype="custom:thesis",
+                lifecycle="ACTIVE",
+                limit=3,
+            )
+            for thesis in thesis_nodes:
+                thesis_id = thesis.get("id")
+                if thesis_id and thesis_id != node_id:
+                    client.create_edge(
+                        source_id=node_id,
+                        target_id=thesis_id,
+                        type="supports",
+                        strength=0.8,
+                    )
+                    tracker.record_edge(node_id, thesis_id, "supports", "auto thesis link")
+        except Exception as e:
+            logger.debug("Auto-link thesis failed: %s", e)
+
+    threading.Thread(target=_link_theses, daemon=True).start()
 
     return node_id
 
