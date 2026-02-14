@@ -209,6 +209,12 @@ class Message(BaseModel):
     show_avatar: bool = True  # False when grouped with previous same-sender message
 
 
+class ScannerMessage(BaseModel):
+    """Compact scanner wake message for the scanner panel."""
+    content: str
+    timestamp: str
+
+
 class Activity(BaseModel):
     """Activity log entry."""
     type: str  # "chat", "trade", "alert", "system"
@@ -538,6 +544,13 @@ def _get_agent():
                     _agent.config.memory.compression_model = sub
                 logger.info("Applied saved model prefs: %s / %s", main, sub)
 
+            # Apply saved trading settings (propagates to config + prompt)
+            try:
+                from hynous.core.trading_settings import get_trading_settings
+                _apply_trading_settings(get_trading_settings())
+            except Exception:
+                pass
+
             if _agent.config.daemon.enabled and _daemon is None:
                 from hynous.intelligence.daemon import Daemon
                 _daemon = Daemon(_agent, _agent.config)
@@ -556,6 +569,25 @@ def _get_agent():
             _agent_error = str(e)
             logger.error(f"Failed to initialize agent: {e}")
             return None
+
+
+def _apply_trading_settings(ts) -> None:
+    """Propagate TradingSettings to agent, daemon config, and prompt."""
+    if _agent is None:
+        return
+    try:
+        # Rebuild system prompt (picks up new values via _build_ground_rules)
+        _agent.rebuild_system_prompt()
+        # Propagate to config objects used by daemon
+        _agent.config.daemon.max_daily_loss_usd = ts.max_daily_loss_usd
+        _agent.config.daemon.max_open_positions = ts.max_open_positions
+        _agent.config.scanner.wake_threshold = ts.scanner_wake_threshold
+        _agent.config.scanner.book_poll_enabled = ts.scanner_micro_enabled
+        _agent.config.scanner.max_anomalies_per_wake = ts.scanner_max_wakes_per_cycle
+        _agent.config.scanner.news_poll_enabled = ts.scanner_news_enabled
+        _agent.config.hyperliquid.max_position_usd = ts.max_position_usd
+    except Exception:
+        pass
 
 
 def _reset_agent():
@@ -655,6 +687,49 @@ class AppState(rx.State):
     news_expanded: bool = True
     clusters_sidebar_expanded: bool = True
 
+    # === Scanner Panel (Chat Page) ===
+    scanner_messages: List[ScannerMessage] = []
+    scanner_panel_expanded: bool = False
+
+    # === Trading Settings ===
+    settings_dirty: bool = False
+    # Macro
+    settings_macro_sl_min: float = 1.0
+    settings_macro_sl_max: float = 5.0
+    settings_macro_tp_min: float = 2.0
+    settings_macro_tp_max: float = 15.0
+    settings_macro_lev_min: int = 5
+    settings_macro_lev_max: int = 20
+    # Micro
+    settings_micro_sl_min: float = 0.2
+    settings_micro_sl_warn: float = 0.3
+    settings_micro_sl_max: float = 0.5
+    settings_micro_tp_max: float = 1.0
+    settings_micro_leverage: int = 20
+    settings_micro_max_per_day: int = 2
+    # Risk
+    settings_rr_floor_reject: float = 1.0
+    settings_rr_floor_warn: float = 1.5
+    settings_risk_cap_reject: float = 10.0
+    settings_risk_cap_warn: float = 5.0
+    settings_roe_reject: float = 25.0
+    settings_roe_warn: float = 15.0
+    settings_roe_target: float = 15.0
+    # Sizing
+    settings_tier_high: int = 30
+    settings_tier_medium: int = 20
+    settings_tier_speculative: int = 10
+    settings_tier_pass: float = 0.4
+    # Limits
+    settings_max_position: float = 10000
+    settings_max_positions: int = 3
+    settings_max_daily_loss: float = 100
+    # Scanner
+    settings_scanner_threshold: float = 0.5
+    settings_scanner_micro: bool = True
+    settings_scanner_max_wakes: int = 5
+    settings_scanner_news: bool = True
+
     # === Collapsible Toggles ===
 
     def toggle_news_expanded(self):
@@ -662,6 +737,9 @@ class AppState(rx.State):
 
     def toggle_clusters_sidebar(self):
         self.clusters_sidebar_expanded = not self.clusters_sidebar_expanded
+
+    def toggle_scanner_panel(self):
+        self.scanner_panel_expanded = not self.scanner_panel_expanded
 
     # === Stop Generation ===
 
@@ -997,15 +1075,40 @@ class AppState(rx.State):
                 if new_daemon_msgs:
                     async with self:
                         self.is_waking = False  # Clear manual wake indicator
+                        scanner_batch = []
+                        chat_batch = []
                         for item in new_daemon_msgs:
+                            is_scanner = (
+                                item.get('event_type') == 'scanner'
+                                or item.get('type') == 'Scanner'
+                            )
+                            if is_scanner:
+                                scanner_batch.append(item)
+                            else:
+                                chat_batch.append(item)
+
+                        # Scanner wakes → scanner panel (first line only for compact display)
+                        for item in scanner_batch:
+                            raw = item['response']
+                            first_line = raw.split("\n")[0][:200] if raw else ""
+                            self.scanner_messages = (self.scanner_messages + [
+                                ScannerMessage(
+                                    content=first_line,
+                                    timestamp=item.get('timestamp', self._format_time()),
+                                )
+                            ])[-50:]  # Cap at 50
+
+                        # Non-scanner wakes → main chat
+                        for item in chat_batch:
                             self._append_msg(Message(
                                 sender="hynous",
                                 content=_highlight(item['response']),
                                 timestamp=item.get('timestamp', self._format_time()),
                                 tools_used=["daemon"],
                             ))
+
                         # Unread indicators
-                        if self.current_page != "chat":
+                        if chat_batch and self.current_page != "chat":
                             self.chat_unread = True
                         for item in new_daemon_msgs:
                             if item.get('event_type') == 'fill':
@@ -1013,7 +1116,8 @@ class AppState(rx.State):
                                     self.journal_unread = True
                                 break
                         # Persist inside state lock so self.messages is current
-                        self._save_chat(_get_agent())
+                        if chat_batch:
+                            self._save_chat(_get_agent())
             except Exception:
                 pass
 
@@ -2595,6 +2699,155 @@ class AppState(rx.State):
         """Navigate to the debug page."""
         self.current_page = "debug"
         return AppState.load_debug_traces
+
+    def go_to_settings(self):
+        """Navigate to settings page and load current values."""
+        self.current_page = "settings"
+        self._load_settings_state()
+
+    def _load_settings_state(self):
+        """Load current TradingSettings into state fields."""
+        from hynous.core.trading_settings import get_trading_settings
+        ts = get_trading_settings()
+        self.settings_macro_sl_min = ts.macro_sl_min_pct
+        self.settings_macro_sl_max = ts.macro_sl_max_pct
+        self.settings_macro_tp_min = ts.macro_tp_min_pct
+        self.settings_macro_tp_max = ts.macro_tp_max_pct
+        self.settings_macro_lev_min = ts.macro_leverage_min
+        self.settings_macro_lev_max = ts.macro_leverage_max
+        self.settings_micro_sl_min = ts.micro_sl_min_pct
+        self.settings_micro_sl_warn = ts.micro_sl_warn_pct
+        self.settings_micro_sl_max = ts.micro_sl_max_pct
+        self.settings_micro_tp_max = ts.micro_tp_max_pct
+        self.settings_micro_leverage = ts.micro_leverage
+        self.settings_micro_max_per_day = ts.micro_max_per_day
+        self.settings_rr_floor_reject = ts.rr_floor_reject
+        self.settings_rr_floor_warn = ts.rr_floor_warn
+        self.settings_risk_cap_reject = ts.portfolio_risk_cap_reject
+        self.settings_risk_cap_warn = ts.portfolio_risk_cap_warn
+        self.settings_roe_reject = ts.roe_at_stop_reject
+        self.settings_roe_warn = ts.roe_at_stop_warn
+        self.settings_roe_target = ts.roe_target
+        self.settings_tier_high = ts.tier_high_margin_pct
+        self.settings_tier_medium = ts.tier_medium_margin_pct
+        self.settings_tier_speculative = ts.tier_speculative_margin_pct
+        self.settings_tier_pass = ts.tier_pass_threshold
+        self.settings_max_position = ts.max_position_usd
+        self.settings_max_positions = ts.max_open_positions
+        self.settings_max_daily_loss = ts.max_daily_loss_usd
+        self.settings_scanner_threshold = ts.scanner_wake_threshold
+        self.settings_scanner_micro = ts.scanner_micro_enabled
+        self.settings_scanner_max_wakes = ts.scanner_max_wakes_per_cycle
+        self.settings_scanner_news = ts.scanner_news_enabled
+        self.settings_dirty = False
+
+    def save_settings(self):
+        """Build TradingSettings from state, save, and apply."""
+        from hynous.core.trading_settings import TradingSettings, save_trading_settings
+        ts = TradingSettings(
+            macro_sl_min_pct=self.settings_macro_sl_min,
+            macro_sl_max_pct=self.settings_macro_sl_max,
+            macro_tp_min_pct=self.settings_macro_tp_min,
+            macro_tp_max_pct=self.settings_macro_tp_max,
+            macro_leverage_min=self.settings_macro_lev_min,
+            macro_leverage_max=self.settings_macro_lev_max,
+            micro_sl_min_pct=self.settings_micro_sl_min,
+            micro_sl_warn_pct=self.settings_micro_sl_warn,
+            micro_sl_max_pct=self.settings_micro_sl_max,
+            micro_tp_max_pct=self.settings_micro_tp_max,
+            micro_leverage=self.settings_micro_leverage,
+            micro_max_per_day=self.settings_micro_max_per_day,
+            rr_floor_reject=self.settings_rr_floor_reject,
+            rr_floor_warn=self.settings_rr_floor_warn,
+            portfolio_risk_cap_reject=self.settings_risk_cap_reject,
+            portfolio_risk_cap_warn=self.settings_risk_cap_warn,
+            roe_at_stop_reject=self.settings_roe_reject,
+            roe_at_stop_warn=self.settings_roe_warn,
+            roe_target=self.settings_roe_target,
+            tier_high_margin_pct=self.settings_tier_high,
+            tier_medium_margin_pct=self.settings_tier_medium,
+            tier_speculative_margin_pct=self.settings_tier_speculative,
+            tier_pass_threshold=self.settings_tier_pass,
+            max_position_usd=self.settings_max_position,
+            max_open_positions=self.settings_max_positions,
+            max_daily_loss_usd=self.settings_max_daily_loss,
+            scanner_wake_threshold=self.settings_scanner_threshold,
+            scanner_micro_enabled=self.settings_scanner_micro,
+            scanner_max_wakes_per_cycle=self.settings_scanner_max_wakes,
+            scanner_news_enabled=self.settings_scanner_news,
+        )
+        save_trading_settings(ts)
+        _apply_trading_settings(ts)
+        self.settings_dirty = False
+
+    def reset_settings(self):
+        """Reset all settings to defaults."""
+        from hynous.core.trading_settings import reset_trading_settings
+        ts = reset_trading_settings()
+        _apply_trading_settings(ts)
+        self._load_settings_state()
+
+    # --- Per-field setters (mark dirty) ---
+    def set_settings_macro_sl_min(self, v: str):
+        self.settings_macro_sl_min = float(v); self.settings_dirty = True
+    def set_settings_macro_sl_max(self, v: str):
+        self.settings_macro_sl_max = float(v); self.settings_dirty = True
+    def set_settings_macro_tp_min(self, v: str):
+        self.settings_macro_tp_min = float(v); self.settings_dirty = True
+    def set_settings_macro_tp_max(self, v: str):
+        self.settings_macro_tp_max = float(v); self.settings_dirty = True
+    def set_settings_macro_lev_min(self, v: str):
+        self.settings_macro_lev_min = int(float(v)); self.settings_dirty = True
+    def set_settings_macro_lev_max(self, v: str):
+        self.settings_macro_lev_max = int(float(v)); self.settings_dirty = True
+    def set_settings_micro_sl_min(self, v: str):
+        self.settings_micro_sl_min = float(v); self.settings_dirty = True
+    def set_settings_micro_sl_warn(self, v: str):
+        self.settings_micro_sl_warn = float(v); self.settings_dirty = True
+    def set_settings_micro_sl_max(self, v: str):
+        self.settings_micro_sl_max = float(v); self.settings_dirty = True
+    def set_settings_micro_tp_max(self, v: str):
+        self.settings_micro_tp_max = float(v); self.settings_dirty = True
+    def set_settings_micro_leverage(self, v: str):
+        self.settings_micro_leverage = int(float(v)); self.settings_dirty = True
+    def set_settings_micro_max_per_day(self, v: str):
+        self.settings_micro_max_per_day = int(float(v)); self.settings_dirty = True
+    def set_settings_rr_floor_reject(self, v: str):
+        self.settings_rr_floor_reject = float(v); self.settings_dirty = True
+    def set_settings_rr_floor_warn(self, v: str):
+        self.settings_rr_floor_warn = float(v); self.settings_dirty = True
+    def set_settings_risk_cap_reject(self, v: str):
+        self.settings_risk_cap_reject = float(v); self.settings_dirty = True
+    def set_settings_risk_cap_warn(self, v: str):
+        self.settings_risk_cap_warn = float(v); self.settings_dirty = True
+    def set_settings_roe_reject(self, v: str):
+        self.settings_roe_reject = float(v); self.settings_dirty = True
+    def set_settings_roe_warn(self, v: str):
+        self.settings_roe_warn = float(v); self.settings_dirty = True
+    def set_settings_roe_target(self, v: str):
+        self.settings_roe_target = float(v); self.settings_dirty = True
+    def set_settings_tier_high(self, v: str):
+        self.settings_tier_high = int(float(v)); self.settings_dirty = True
+    def set_settings_tier_medium(self, v: str):
+        self.settings_tier_medium = int(float(v)); self.settings_dirty = True
+    def set_settings_tier_speculative(self, v: str):
+        self.settings_tier_speculative = int(float(v)); self.settings_dirty = True
+    def set_settings_tier_pass(self, v: str):
+        self.settings_tier_pass = float(v); self.settings_dirty = True
+    def set_settings_max_position(self, v: str):
+        self.settings_max_position = float(v); self.settings_dirty = True
+    def set_settings_max_positions(self, v: str):
+        self.settings_max_positions = int(float(v)); self.settings_dirty = True
+    def set_settings_max_daily_loss(self, v: str):
+        self.settings_max_daily_loss = float(v); self.settings_dirty = True
+    def set_settings_scanner_threshold(self, v: str):
+        self.settings_scanner_threshold = float(v); self.settings_dirty = True
+    def set_settings_scanner_micro(self, v: bool):
+        self.settings_scanner_micro = v; self.settings_dirty = True
+    def set_settings_scanner_max_wakes(self, v: str):
+        self.settings_scanner_max_wakes = int(float(v)); self.settings_dirty = True
+    def set_settings_scanner_news(self, v: bool):
+        self.settings_scanner_news = v; self.settings_dirty = True
 
     def load_debug_traces(self):
         """Load recent traces for the debug sidebar."""

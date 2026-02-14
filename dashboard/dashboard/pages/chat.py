@@ -1,7 +1,7 @@
 """Chat page component."""
 
 import reflex as rx
-from ..state import AppState, Position
+from ..state import AppState, Position, ScannerMessage
 from ..components import chat_bubble, chat_input, typing_indicator, streaming_bubble, tool_indicator, ticker_badge
 
 
@@ -189,6 +189,110 @@ def positions_bar() -> rx.Component:
     )
 
 
+def _scanner_item(msg: ScannerMessage) -> rx.Component:
+    """Single compact scanner wake item."""
+    return rx.hstack(
+        rx.box(
+            width="6px",
+            height="6px",
+            border_radius="50%",
+            background="#818cf8",
+            flex_shrink="0",
+            margin_top="2px",
+        ),
+        rx.text(
+            msg.timestamp,
+            font_size="0.65rem",
+            color="#404040",
+            font_family="JetBrains Mono, monospace",
+            flex_shrink="0",
+            min_width="55px",
+        ),
+        rx.text(
+            msg.content,
+            font_size="0.78rem",
+            color="#737373",
+            overflow="hidden",
+            text_overflow="ellipsis",
+            white_space="nowrap",
+            flex="1",
+            min_width="0",
+        ),
+        spacing="2",
+        width="100%",
+        align="start",
+        padding_y="2px",
+    )
+
+
+def scanner_panel() -> rx.Component:
+    """Collapsible scanner activity panel above chat messages."""
+    return rx.cond(
+        AppState.scanner_messages.length() > 0,
+        rx.box(
+            # Header — always visible
+            rx.hstack(
+                rx.hstack(
+                    rx.text("\U0001F4E1", font_size="0.75rem", opacity="0.6"),
+                    rx.text(
+                        "Scanner Activity",
+                        font_size="0.75rem",
+                        font_weight="500",
+                        color="#525252",
+                    ),
+                    rx.badge(
+                        AppState.scanner_messages.length().to(str),
+                        color_scheme="iris",
+                        variant="soft",
+                        size="1",
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+                rx.icon(
+                    tag=rx.cond(AppState.scanner_panel_expanded, "chevron-up", "chevron-down"),
+                    size=14,
+                    color="#525252",
+                ),
+                width="100%",
+                justify="between",
+                align="center",
+                cursor="pointer",
+                on_click=AppState.toggle_scanner_panel,
+                padding="0.5rem 1rem",
+                _hover={"background": "#111"},
+            ),
+            # Body — when expanded
+            rx.cond(
+                AppState.scanner_panel_expanded,
+                rx.box(
+                    rx.vstack(
+                        rx.foreach(
+                            AppState.scanner_messages,
+                            _scanner_item,
+                        ),
+                        spacing="0",
+                        width="100%",
+                    ),
+                    max_height="200px",
+                    overflow_y="auto",
+                    padding_x="1rem",
+                    padding_bottom="0.5rem",
+                    style={
+                        "scrollbar_width": "none",
+                        "&::-webkit-scrollbar": {"display": "none"},
+                    },
+                ),
+                rx.fragment(),
+            ),
+            width="100%",
+            border_bottom="1px solid #141414",
+            flex_shrink="0",
+        ),
+        rx.fragment(),
+    )
+
+
 def chat_page() -> rx.Component:
     """Full-height immersive chat layout."""
     return rx.fragment(
@@ -196,6 +300,9 @@ def chat_page() -> rx.Component:
             rx.vstack(
                 # Positions bar — slim strip at top
                 positions_bar(),
+
+                # Scanner panel — collapsible, between positions and chat
+                scanner_panel(),
 
                 # Messages or welcome
                 rx.cond(

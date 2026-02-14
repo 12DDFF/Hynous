@@ -1296,11 +1296,11 @@ def format_scanner_wake(
         # position_symbols is set on the scanner instance
         lines.append("Signal or noise? If it matters for your positions or thesis, act on it. 1-2 sentences.")
     elif has_micro and not has_macro:
-        lines.append("If entering, Speculative size, tight SL/TP (0.3-0.5% SL, 0.5-1% TP). 1-3 sentences.")
+        lines.append("If entering, Speculative size, tight SL/TP (0.3-0.5% SL, 0.5-1% TP). If passing, include `[SL X% TP Y%]`. 1-3 sentences.")
     elif has_macro and not has_micro:
-        lines.append("Quick assessment: signal or noise? If it matters for your positions or thesis, act on it. Keep your response to 1-3 sentences.")
+        lines.append("Quick assessment: signal or noise? If it matters for your positions or thesis, act on it. If passing, include `[SL X% TP Y%]`. 1-3 sentences.")
     else:
-        lines.append("Micro = tight stops. Macro = wider thesis. News = check your thesis. 1-3 sentences.")
+        lines.append("Micro = tight stops. Macro = wider thesis. News = check your thesis. If passing, include `[SL X% TP Y%]`. 1-3 sentences.")
 
     return "\n".join(lines)
 

@@ -440,6 +440,10 @@ def handle_execute_trade(
     if blocked:
         return blocked
 
+    # Load runtime-adjustable settings
+    from ...core.trading_settings import get_trading_settings
+    ts = get_trading_settings()
+
     # --- Micro trade enforcement ---
     if trade_type == "micro":
         # Cap confidence at Speculative tier max
@@ -456,20 +460,20 @@ def handle_execute_trade(
     is_buy = side == "long"
 
     # --- Validate leverage (mandatory, min depends on trade type) ---
-    min_lev = 20 if trade_type == "micro" else 5
+    min_lev = ts.micro_leverage if trade_type == "micro" else ts.macro_leverage_min
     if leverage is None or leverage < min_lev:
         if trade_type == "micro":
-            return "Error: micro trades require 20x leverage."
-        return "Error: leverage is required and must be at least 5x."
-    if trade_type == "micro" and leverage < 20:
-        leverage = 20
+            return f"Error: micro trades require {ts.micro_leverage}x leverage."
+        return f"Error: leverage is required and must be at least {ts.macro_leverage_min}x."
+    if trade_type == "micro" and leverage < ts.micro_leverage:
+        leverage = ts.micro_leverage
 
     # --- Validate sizing ---
     if size_usd is None and size is None:
         return "Error: Provide either size_usd (USD amount) or size (base asset amount)."
 
     # --- Safety cap ---
-    max_size = config.hyperliquid.max_position_usd
+    max_size = min(config.hyperliquid.max_position_usd, ts.max_position_usd)
     if size_usd and size_usd > max_size:
         return (
             f"Error: ${size_usd:,.0f} exceeds safety cap of ${max_size:,.0f}. "
@@ -499,7 +503,7 @@ def handle_execute_trade(
     recommended_margin = None
     oversized = False
     if confidence is not None:
-        if confidence < 0.4:
+        if confidence < ts.tier_pass_threshold:
             return (
                 f"Conviction too low ({confidence:.0%}). "
                 f"Set a watchpoint and revisit when thesis strengthens."
@@ -512,13 +516,13 @@ def handle_execute_trade(
             portfolio = 1000
 
         if confidence >= 0.8:
-            recommended_margin = portfolio * 0.30
+            recommended_margin = portfolio * (ts.tier_high_margin_pct / 100)
             tier = "High"
         elif confidence >= 0.6:
-            recommended_margin = portfolio * 0.20
+            recommended_margin = portfolio * (ts.tier_medium_margin_pct / 100)
             tier = "Medium"
         else:
-            recommended_margin = portfolio * 0.10
+            recommended_margin = portfolio * (ts.tier_speculative_margin_pct / 100)
             tier = "Speculative"
 
         # Compare actual margin vs recommended
@@ -561,24 +565,28 @@ def handle_execute_trade(
     # --- Micro trade SL/TP distance validation ---
     _warnings: list[str] = []
     if trade_type == "micro" and ref_price and ref_price > 0:
+        micro_sl_min = ts.micro_sl_min_pct / 100
+        micro_sl_warn = ts.micro_sl_warn_pct / 100
+        micro_sl_max = ts.micro_sl_max_pct / 100
+        micro_tp_max = ts.micro_tp_max_pct / 100
         if stop_loss is not None:
             sl_dist = abs(stop_loss - ref_price) / ref_price
-            if sl_dist < 0.002:
+            if sl_dist < micro_sl_min:
                 return (
                     f"Error: SL distance {sl_dist*100:.2f}% is way too tight for a micro trade "
-                    f"(minimum 0.3%). At 20x that's {sl_dist*100*20:.1f}% ROE — pure noise. "
-                    f"Recalculate: entry {_fmt_price(ref_price)}, 0.3% = {_fmt_price(ref_price * (1 - 0.003) if is_buy else ref_price * (1 + 0.003))}."
+                    f"(minimum {ts.micro_sl_warn_pct}%). At {ts.micro_leverage}x that's {sl_dist*100*ts.micro_leverage:.1f}% ROE — pure noise. "
+                    f"Recalculate: entry {_fmt_price(ref_price)}, {ts.micro_sl_warn_pct}% = {_fmt_price(ref_price * (1 - micro_sl_warn) if is_buy else ref_price * (1 + micro_sl_warn))}."
                 )
-            if sl_dist < 0.003:
+            if sl_dist < micro_sl_warn:
                 _warnings.append(
-                    f"Warning: SL distance {sl_dist*100:.2f}% is tighter than 0.3% recommended for micro — high risk of noise stop"
+                    f"Warning: SL distance {sl_dist*100:.2f}% is tighter than {ts.micro_sl_warn_pct}% recommended for micro — high risk of noise stop"
                 )
-            elif sl_dist > 0.005:
-                _warnings.append(f"Note: SL distance {sl_dist*100:.1f}% is wider than 0.5% recommended for micro trades")
+            elif sl_dist > micro_sl_max:
+                _warnings.append(f"Note: SL distance {sl_dist*100:.1f}% is wider than {ts.micro_sl_max_pct}% recommended for micro trades")
         if take_profit is not None:
             tp_dist = abs(take_profit - ref_price) / ref_price
-            if tp_dist > 0.01:
-                _warnings.append(f"Note: TP distance {tp_dist*100:.1f}% is wider than 1% recommended for micro trades")
+            if tp_dist > micro_tp_max:
+                _warnings.append(f"Note: TP distance {tp_dist*100:.1f}% is wider than {ts.micro_tp_max_pct}% recommended for micro trades")
 
     # --- SL/TP distances (used by R:R, leverage coherence, portfolio risk) ---
     sl_distance_pct = 0.0
@@ -599,32 +607,32 @@ def handle_execute_trade(
             reward_dist = ref_price - take_profit
         pre_rr = reward_dist / risk_dist if risk_dist > 0 else 0
 
-        if pre_rr < 1.0:
+        if pre_rr < ts.rr_floor_reject:
             return (
                 f"REJECTED: R:R is {pre_rr:.2f}:1 — risking more than the potential gain.\n"
                 f"  Risk: {sl_distance_pct*100:.2f}% to SL ({_fmt_price(stop_loss)})\n"
                 f"  Reward: {tp_distance_pct*100:.2f}% to TP ({_fmt_price(take_profit)})\n"
-                f"Fix: Widen TP or tighten SL. Minimum 1.5:1."
+                f"Fix: Widen TP or tighten SL. Minimum {ts.rr_floor_warn}:1."
             )
-        if pre_rr < 1.5:
+        if pre_rr < ts.rr_floor_warn:
             _warnings.append(
-                f"Warning: R:R is {pre_rr:.2f}:1 — thin edge. Standard minimum is 1.5:1."
+                f"Warning: R:R is {pre_rr:.2f}:1 — thin edge. Standard minimum is {ts.rr_floor_warn}:1."
             )
 
     # --- Leverage-SL Coherence (macro only) ---
     if trade_type != "micro" and sl_distance_pct > 0 and leverage is not None:
         roe_at_stop = leverage * sl_distance_pct * 100
-        suggested_lev = max(5, min(20, round(15 / (sl_distance_pct * 100))))
+        suggested_lev = max(ts.macro_leverage_min, min(ts.macro_leverage_max, round(ts.roe_target / (sl_distance_pct * 100))))
 
-        if roe_at_stop > 25:
+        if roe_at_stop > ts.roe_at_stop_reject:
             return (
                 f"REJECTED: {leverage}x with {sl_distance_pct*100:.1f}% SL = "
                 f"{roe_at_stop:.0f}% ROE at stop — near liquidation.\n"
                 f"  Math: {leverage}x × {sl_distance_pct*100:.1f}% = {roe_at_stop:.0f}% of margin lost at SL\n"
                 f"  Suggested: {suggested_lev}x → {suggested_lev * sl_distance_pct * 100:.0f}% ROE at stop\n"
-                f"Fix: Use {suggested_lev}x, or tighten SL to {_fmt_pct(15 / leverage)}."
+                f"Fix: Use {suggested_lev}x, or tighten SL to {_fmt_pct(ts.roe_target / leverage)}."
             )
-        if roe_at_stop > 15:
+        if roe_at_stop > ts.roe_at_stop_warn:
             _warnings.append(
                 f"Warning: {leverage}x × {sl_distance_pct*100:.1f}% SL = {roe_at_stop:.0f}% ROE at stop. "
                 f"Consider {suggested_lev}x ({suggested_lev * sl_distance_pct * 100:.0f}% ROE)."
@@ -635,18 +643,18 @@ def handle_execute_trade(
         loss_at_stop = actual_margin * (leverage * sl_distance_pct)
         portfolio_risk_pct = (loss_at_stop / portfolio) * 100
 
-        if portfolio_risk_pct > 10:
+        if portfolio_risk_pct > ts.portfolio_risk_cap_reject:
             return (
                 f"REJECTED: This trade risks {portfolio_risk_pct:.1f}% of portfolio at stop.\n"
                 f"  Margin: ${actual_margin:,.0f} × {leverage}x × {sl_distance_pct*100:.1f}% SL "
                 f"= ${loss_at_stop:,.0f} loss\n"
                 f"  Portfolio: ${portfolio:,.0f} → {portfolio_risk_pct:.1f}% at risk\n"
-                f"Max: 10%. Reduce size or leverage."
+                f"Max: {ts.portfolio_risk_cap_reject:.0f}%. Reduce size or leverage."
             )
-        if portfolio_risk_pct > 5:
+        if portfolio_risk_pct > ts.portfolio_risk_cap_warn:
             _warnings.append(
                 f"Warning: {portfolio_risk_pct:.1f}% of portfolio at risk at stop "
-                f"(${loss_at_stop:,.0f} / ${portfolio:,.0f}). Target: under 3%."
+                f"(${loss_at_stop:,.0f} / ${portfolio:,.0f}). Target: under {ts.portfolio_risk_cap_warn:.0f}%."
             )
 
     # --- Set leverage if specified ---

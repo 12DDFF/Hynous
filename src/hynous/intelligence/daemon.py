@@ -1560,13 +1560,13 @@ class Daemon:
             else:
                 self._scanner_pass_streak += 1
                 # Phantom tracking: record what would have happened on this pass
-                self._maybe_create_phantom(top_event)
+                self._maybe_create_phantom(top_event, agent_response=response)
 
             log_event(DaemonEvent(
                 "scanner", title,
                 f"{len(top)} anomalies (top: {top_event.type} {top_event.symbol} sev={top_event.severity:.2f})",
             ))
-            _queue_and_persist("Scanner", title, response)
+            _queue_and_persist("Scanner", title, response, event_type="scanner")
             _notify_discord("Scanner", title, response)
             logger.info("Scanner wake: %d anomalies, agent responded (%d chars)",
                         len(top), len(response))
@@ -1681,7 +1681,32 @@ class Daemon:
     # Phantom Tracker — Inaction Cost
     # ================================================================
 
-    def _maybe_create_phantom(self, top_event):
+    _PHANTOM_PARAMS_RE = re.compile(
+        r'Conviction:\s*([\d.]+).*?\[SL\s*([\d.]+)%\s*TP\s*([\d.]+)%\]',
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _parse_phantom_params(response: str) -> dict | None:
+        """Parse agent-informed SL/TP from scanner response suffix.
+
+        Looks for: Conviction: 0.35 — too weak. [SL 1.5% TP 3%]
+        Returns dict with conviction, sl_pct, tp_pct (as decimals) or None.
+        """
+        m = Daemon._PHANTOM_PARAMS_RE.search(response)
+        if not m:
+            return None
+        try:
+            conviction = float(m.group(1))
+            sl_pct = float(m.group(2))
+            tp_pct = float(m.group(3))
+            if not (0.1 <= sl_pct <= 10.0 and 0.2 <= tp_pct <= 20.0 and 0 <= conviction <= 1):
+                return None
+            return {"conviction": conviction, "sl_pct": sl_pct / 100, "tp_pct": tp_pct / 100}
+        except (ValueError, TypeError):
+            return None
+
+    def _maybe_create_phantom(self, top_event, agent_response: str = ""):
         """Create a phantom position when the agent passes on a scanner wake.
 
         Only tracks high-severity anomalies with inferable direction on liquid symbols.
@@ -1706,10 +1731,20 @@ class Daemon:
             return
 
         is_micro = top_event.category == "micro"
-        if is_micro:
-            sl_pct, tp_pct, leverage, max_age = 0.004, 0.008, 20, 7200
+        parsed = self._parse_phantom_params(agent_response) if agent_response else None
+
+        if parsed:
+            sl_pct = parsed["sl_pct"]
+            tp_pct = parsed["tp_pct"]
+            leverage = max(5, min(50, round(15 / (sl_pct * 100))))
+            max_age = 7200 if is_micro else 14400
+            logger.info("Phantom using agent params: SL %.1f%% TP %.1f%% → %dx",
+                        sl_pct * 100, tp_pct * 100, leverage)
         else:
-            sl_pct, tp_pct, leverage, max_age = 0.02, 0.03, 10, 14400
+            if is_micro:
+                sl_pct, tp_pct, leverage, max_age = 0.004, 0.008, 20, 7200
+            else:
+                sl_pct, tp_pct, leverage, max_age = 0.02, 0.03, 10, 14400
 
         if direction == "long":
             stop_loss = entry_price * (1 - sl_pct)
@@ -1731,6 +1766,8 @@ class Daemon:
             "anomaly_type": top_event.type,
             "anomaly_headline": top_event.headline,
             "severity": top_event.severity,
+            "agent_conviction": parsed["conviction"] if parsed else None,
+            "agent_informed": parsed is not None,
         }
         self._phantoms.append(phantom)
 
@@ -1865,6 +1902,8 @@ class Daemon:
                     "anomaly_type": anomaly,
                     "category": resolved["category"],
                     "result": result,
+                    "agent_conviction": resolved.get("agent_conviction"),
+                    "agent_informed": resolved.get("agent_informed", False),
                 },
             )
         except Exception as e:
@@ -1898,7 +1937,7 @@ class Daemon:
             f"You passed on {side} {sym} {hold_mins}m ago.",
             f"Scanner signal was: {headline}",
             f"Phantom entry: ${entry:,.2f} → TP hit at ${tp:,.2f}",
-            f"Would have made: {pnl:+.1f}% ({category} params, {resolved['leverage']}x)",
+            f"Would have made: {pnl:+.1f}% ({'your levels' if resolved.get('agent_informed') else 'default params'}, {resolved['leverage']}x)",
         ]
         if stats_line:
             lines.append(stats_line)
