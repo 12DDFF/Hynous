@@ -604,19 +604,49 @@ def _regret_content() -> rx.Component:
 # Page
 # ================================================================
 
-def _tab_button(label: str, tab_value: str) -> rx.Component:
-    """Tab button with active/inactive styling."""
-    return rx.button(
-        label,
-        on_click=AppState.set_journal_tab(tab_value),
-        variant=rx.cond(AppState.journal_tab == tab_value, "solid", "ghost"),
-        size="1",
-        cursor="pointer",
-        color=rx.cond(
-            AppState.journal_tab == tab_value,
-            "#fafafa",
-            "#525252",
+def _tab_pill(label: str, tab_value: str) -> rx.Component:
+    """Single pill in the segmented tab bar."""
+    return rx.box(
+        rx.text(
+            label,
+            font_size="0.8rem",
+            font_weight="500",
+            color=rx.cond(
+                AppState.journal_tab == tab_value,
+                "#fafafa",
+                "#525252",
+            ),
+            transition="color 0.15s ease",
         ),
+        on_click=AppState.set_journal_tab(tab_value),
+        background=rx.cond(
+            AppState.journal_tab == tab_value,
+            "#262626",
+            "transparent",
+        ),
+        padding_x="14px",
+        padding_y="6px",
+        border_radius="8px",
+        cursor="pointer",
+        transition="background 0.15s ease",
+        _hover={"background": rx.cond(
+            AppState.journal_tab == tab_value,
+            "#262626",
+            "#1a1a1a",
+        )},
+    )
+
+
+def _tab_bar() -> rx.Component:
+    """Segmented tab bar — Trades / Regret."""
+    return rx.hstack(
+        _tab_pill("Trades", "trades"),
+        _tab_pill("Regret", "regret"),
+        spacing="1",
+        background="#111111",
+        border="1px solid #1a1a1a",
+        border_radius="10px",
+        padding="3px",
     )
 
 
@@ -624,27 +654,33 @@ def journal_page() -> rx.Component:
     """Journal page — performance stats, equity curve, trade history, regret tracker."""
     return rx.box(
         rx.vstack(
-            # Header with tab switcher
+            # Header row: title left, tabs center, refresh right
             rx.hstack(
                 rx.text(
                     "Trade Journal",
                     font_size="1.25rem",
                     font_weight="600",
                     color="#fafafa",
+                    flex_shrink="0",
                 ),
                 rx.spacer(),
-                rx.hstack(
-                    _tab_button("Trades", "trades"),
-                    _tab_button("Regret", "regret"),
-                    spacing="2",
-                ),
-                rx.button(
-                    "Refresh",
+                _tab_bar(),
+                rx.spacer(),
+                rx.box(
+                    rx.icon(
+                        "refresh-cw",
+                        size=14,
+                        color="#525252",
+                        cursor="pointer",
+                        _hover={"color": "#a3a3a3"},
+                    ),
                     on_click=AppState.load_journal,
-                    size="1",
-                    variant="ghost",
-                    color="#525252",
+                    padding="6px",
+                    border_radius="6px",
                     cursor="pointer",
+                    flex_shrink="0",
+                    _hover={"background": "#1a1a1a"},
+                    transition="background 0.15s ease",
                 ),
                 width="100%",
                 align="center",
