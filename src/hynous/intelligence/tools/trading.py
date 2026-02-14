@@ -323,15 +323,21 @@ TRADE_TOOL_DEF = {
         '  High conviction:\n'
         '    {"symbol": "BTC", "side": "long", "size_usd": 300, "leverage": 20, "stop_loss": 66000, '
         '"take_profit": 72000, "confidence": 0.85, '
-        '"reasoning": "Funding reset, shorts crowding, support held with strong bid wall. R:R ~3:1."}\n'
+        '"reasoning": "Funding just reset after 3 days negative — shorts who were getting paid to hold are now paying to stay in. '
+        "That means they'll start covering, which creates buy pressure. The $4.8M bid wall at 66K confirms institutions agree "
+        'this is the floor. Targeting the 72K gap that shorts need to cover through."}\n'
         '  Medium conviction:\n'
         '    {"symbol": "ETH", "side": "short", "size_usd": 200, "leverage": 20, "stop_loss": 3900, '
         '"take_profit": 3400, "confidence": 0.65, '
-        '"reasoning": "Bearish divergence on 4h, OI rising but price flat..."}\n'
+        '"reasoning": "Price has been flat for 2 days while OI keeps climbing — someone is building a big position that hasn\'t '
+        "moved price yet. On 4h ETH is making lower highs while OI rises, so it's likely shorts accumulating. "
+        'When they push, 3400 is the obvious target where longs get liquidated."}\n'
         '  Speculative:\n'
         '    {"symbol": "SOL", "side": "long", "size_usd": 100, "order_type": "limit", '
         '"limit_price": 140, "stop_loss": 130, "take_profit": 165, "confidence": 0.5, '
-        '"reasoning": "Key support zone, interesting divergence but uncertain..."}'
+        '"reasoning": "SOL sitting on 140 support that\'s held 3 times — each bounce weaker but sellers can\'t break it, '
+        "which looks like seller exhaustion. If it holds again, 165 is clear air above. "
+        'Small bet because I don\'t have a catalyst yet, just structure."}'
     ),
     "parameters": {
         "type": "object",
@@ -393,7 +399,13 @@ TRADE_TOOL_DEF = {
             },
             "reasoning": {
                 "type": "string",
-                "description": "Full trade thesis — why entering, what signals support it. Always stored in memory.",
+                "description": "Full trade thesis in NARRATIVE form — explain the logic chain: "
+                               "what's happening → why it matters → what I expect next. "
+                               "Use 'because/so/which means' connectors, not stat lists. "
+                               "BAD: 'Funding +0.013%, OI rising, book 77% bids, F&G 8'. "
+                               "GOOD: 'Shorts are paying extreme funding to hold, which means they're under pressure to cover. "
+                               "The heavy bid wall confirms buyers are waiting — when shorts capitulate, price squeezes up.' "
+                               "Stored in memory.",
             },
             "trade_type": {
                 "type": "string",
