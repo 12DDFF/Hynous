@@ -75,6 +75,148 @@
       color: #a5b4fc;
     }
 
+    .btn svg {
+      display: block;
+    }
+
+    /* Settings panel */
+    .settings-panel {
+      position: fixed;
+      top: 56px;
+      left: 16px;
+      background: #111111;
+      border: 1px solid #1e1e1e;
+      border-radius: 10px;
+      padding: 0;
+      z-index: 10;
+      width: 240px;
+      display: none;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+
+    .settings-panel.open {
+      display: block;
+    }
+
+    .settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px 8px;
+      border-bottom: 1px solid #1a1a1a;
+    }
+
+    .settings-header span {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #525252;
+    }
+
+    .settings-reset {
+      font-size: 0.65rem;
+      color: #525252;
+      cursor: pointer;
+      background: none;
+      border: none;
+      font-family: Inter, system-ui, sans-serif;
+      transition: color 0.15s;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .settings-reset:hover {
+      color: #a5b4fc;
+      background: #1a1a2e;
+    }
+
+    .settings-body {
+      padding: 6px 0;
+    }
+
+    .setting-row {
+      padding: 6px 14px;
+    }
+
+    .setting-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .setting-label {
+      font-size: 0.75rem;
+      color: #8a8a8a;
+      font-weight: 400;
+    }
+
+    .setting-value {
+      font-size: 0.7rem;
+      color: #525252;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      min-width: 32px;
+      text-align: right;
+    }
+
+    /* Range slider — custom styled */
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 3px;
+      background: #262626;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #a5b4fc;
+      border: none;
+      cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.15s;
+      box-shadow: 0 0 0 0 rgba(165,180,252,0);
+    }
+
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+      box-shadow: 0 0 0 4px rgba(165,180,252,0.15);
+    }
+
+    input[type="range"]:active::-webkit-slider-thumb {
+      transform: scale(1.05);
+      box-shadow: 0 0 0 6px rgba(165,180,252,0.1);
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #a5b4fc;
+      border: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-moz-range-track {
+      height: 3px;
+      background: #262626;
+      border-radius: 2px;
+    }
+
+    .setting-divider {
+      height: 1px;
+      background: #1a1a1a;
+      margin: 4px 14px;
+    }
+
     /* Stats */
     .stats {
       position: fixed;
@@ -208,7 +350,70 @@
     <input type="text" id="search" placeholder="Search memories..." autocomplete="off" />
     <button class="btn" id="refresh-btn">Refresh</button>
     <button class="btn" id="reset-btn">Reset View</button>
-    <button class="btn" id="cluster-btn" title="Toggle cluster visualization">Clusters</button>
+    <button class="btn" id="settings-btn" title="Graph Settings">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line>
+        <line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line>
+        <line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line>
+        <line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line>
+        <line x1="17" y1="16" x2="23" y2="16"></line>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Settings Panel -->
+  <div class="settings-panel" id="settings-panel">
+    <div class="settings-header">
+      <span>Display</span>
+      <button class="settings-reset" id="settings-reset">Reset</button>
+    </div>
+    <div class="settings-body">
+      <div class="setting-row">
+        <div class="setting-label-row">
+          <span class="setting-label">Node Size</span>
+          <span class="setting-value" id="val-node-size">1.0</span>
+        </div>
+        <input type="range" id="setting-node-size" min="0.3" max="3" step="0.1" value="1.0" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-label-row">
+          <span class="setting-label">Line Thickness</span>
+          <span class="setting-value" id="val-line-thick">1.0</span>
+        </div>
+        <input type="range" id="setting-line-thick" min="0.2" max="4" step="0.1" value="1.0" />
+      </div>
+
+      <div class="setting-divider"></div>
+
+      <div class="setting-row">
+        <div class="setting-label-row">
+          <span class="setting-label">Center Force</span>
+          <span class="setting-value" id="val-center">0.04</span>
+        </div>
+        <input type="range" id="setting-center" min="0" max="0.2" step="0.005" value="0.04" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-label-row">
+          <span class="setting-label">Repel Force</span>
+          <span class="setting-value" id="val-repel">60</span>
+        </div>
+        <input type="range" id="setting-repel" min="0" max="300" step="5" value="60" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-label-row">
+          <span class="setting-label">Link Force</span>
+          <span class="setting-value" id="val-link-str">0.30</span>
+        </div>
+        <input type="range" id="setting-link-str" min="0" max="1" step="0.05" value="0.30" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-label-row">
+          <span class="setting-label">Link Distance</span>
+          <span class="setting-value" id="val-link-dist">80</span>
+        </div>
+        <input type="range" id="setting-link-dist" min="10" max="400" step="5" value="80" />
+      </div>
+    </div>
   </div>
 
   <div class="stats" id="stats"></div>
@@ -230,21 +435,12 @@
   <script src="https://unpkg.com/force-graph@1.47.4/dist/force-graph.min.js"></script>
   <script>
     // ---- Configuration ----
-    // Graph data is fetched through the Reflex backend proxy (/api/nous/*).
-    // Backend URL is discovered from Reflex's env.json so it works in any
-    // environment (local dev, VPS, etc.) without hardcoded ports.
-    let NOUS_URLS = [];
-    async function _initUrls() {
-      try {
-        const env = await fetch('/env.json').then(r => r.json());
-        // env.PING = "http://host:8000/ping" — extract base URL
-        const base = env.PING.replace('/ping', '');
-        NOUS_URLS = [`${base}/api/nous/graph`];
-      } catch {
-        // Fallback: same host, port 8000
-        NOUS_URLS = [`${window.location.protocol}//${window.location.hostname}:8000/api/nous/graph`];
-      }
-    }
+    // Try multiple addresses — browser may resolve localhost differently
+    const NOUS_URLS = [
+      'http://localhost:3100/v1/graph',
+      'http://127.0.0.1:3100/v1/graph',
+      'http://[::1]:3100/v1/graph',
+    ];
 
     const COLORS = {
       'custom:watchpoint':      '#b48a1a',
@@ -280,27 +476,18 @@
 
     const DEFAULT_COLOR = '#5a6380';
 
-    // ---- Cluster palette (semi-transparent for Venn overlap) ----
-    const CLUSTER_PALETTE = [
-      { fill: 'rgba(247, 147, 26, 0.06)',  stroke: 'rgba(247, 147, 26, 0.25)' },
-      { fill: 'rgba(98, 126, 234, 0.06)',  stroke: 'rgba(98, 126, 234, 0.25)' },
-      { fill: 'rgba(153, 69, 255, 0.06)',  stroke: 'rgba(153, 69, 255, 0.25)' },
-      { fill: 'rgba(96, 165, 250, 0.06)',  stroke: 'rgba(96, 165, 250, 0.25)' },
-      { fill: 'rgba(163, 230, 53, 0.06)',  stroke: 'rgba(163, 230, 53, 0.25)' },
-      { fill: 'rgba(245, 158, 11, 0.06)',  stroke: 'rgba(245, 158, 11, 0.25)' },
-      { fill: 'rgba(236, 72, 153, 0.06)',  stroke: 'rgba(236, 72, 153, 0.25)' },
-      { fill: 'rgba(34, 211, 238, 0.06)',  stroke: 'rgba(34, 211, 238, 0.25)' },
-      { fill: 'rgba(248, 113, 113, 0.06)', stroke: 'rgba(248, 113, 113, 0.25)' },
-      { fill: 'rgba(74, 222, 128, 0.06)',  stroke: 'rgba(74, 222, 128, 0.25)' },
-      { fill: 'rgba(251, 191, 36, 0.06)',  stroke: 'rgba(251, 191, 36, 0.25)' },
-      { fill: 'rgba(167, 139, 250, 0.06)', stroke: 'rgba(167, 139, 250, 0.25)' },
-    ];
-
-    // Fixed color slots for known cluster names (matches dashboard accent_map)
-    const CLUSTER_NAME_COLOR_INDEX = {
-      'BTC': 0, 'ETH': 1, 'SOL': 2, 'Thesis': 3, 'Theses': 3,
-      'Lessons': 4, 'Trade History': 5,
+    // ---- Settings defaults ----
+    const DEFAULTS = {
+      nodeSize:     1.0,
+      lineThick:    1.0,
+      centerForce:  0.04,
+      repelForce:   60,
+      linkStrength: 0.30,
+      linkDistance:  80,
     };
+
+    // Live settings — mutated by sliders
+    const settings = { ...DEFAULTS };
 
     // ---- State ----
     let graph = null;
@@ -309,234 +496,36 @@
     let searchTerm = '';
     let graphData = { nodes: [], links: [] };
 
-    // Cluster state
-    let clustersEnabled = false;
-    let clusterData = [];
-    let clusterMemberships = [];
-    let clusterNodeMap = {};        // node_id -> [cluster_id, ...]
-    let clusterColorMap = {};       // cluster_id -> { fill, stroke }
-    let nodeById = {};
-    let nodeAssignedCluster = {};   // node_id -> cluster_id (primary, for layout)
+    // ---- Settings persistence (localStorage) ----
+    const STORAGE_KEY = 'hynous-graph-settings';
 
-    // ---- Cluster color assignment ----
-    function assignClusterColors(clusters) {
-      const used = new Set();
-      clusterColorMap = {};
-      for (const c of clusters) {
-        if (c.name in CLUSTER_NAME_COLOR_INDEX) {
-          const idx = CLUSTER_NAME_COLOR_INDEX[c.name];
-          clusterColorMap[c.id] = CLUSTER_PALETTE[idx];
-          used.add(idx);
-        }
-      }
-      let nextIdx = 0;
-      for (const c of clusters) {
-        if (clusterColorMap[c.id]) continue;
-        while (used.has(nextIdx)) nextIdx++;
-        clusterColorMap[c.id] = CLUSTER_PALETTE[nextIdx % CLUSTER_PALETTE.length];
-        used.add(nextIdx);
-        nextIdx++;
-      }
+    function saveSettings() {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch {}
     }
 
-    // ---- Convex hull geometry ----
-    function _cross(o, a, b) {
-      return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-    }
-
-    function convexHull(points) {
-      if (points.length <= 1) return points.slice();
-      if (points.length === 2) return points.slice();
-      const sorted = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
-      const lower = [];
-      for (const p of sorted) {
-        while (lower.length >= 2 && _cross(lower[lower.length-2], lower[lower.length-1], p) <= 0)
-          lower.pop();
-        lower.push(p);
-      }
-      const upper = [];
-      for (let i = sorted.length - 1; i >= 0; i--) {
-        const p = sorted[i];
-        while (upper.length >= 2 && _cross(upper[upper.length-2], upper[upper.length-1], p) <= 0)
-          upper.pop();
-        upper.push(p);
-      }
-      lower.pop();
-      upper.pop();
-      return lower.concat(upper);
-    }
-
-    function expandHull(hull, pad) {
-      if (hull.length < 3) return hull;
-      const cx = hull.reduce((s, p) => s + p.x, 0) / hull.length;
-      const cy = hull.reduce((s, p) => s + p.y, 0) / hull.length;
-      return hull.map(p => {
-        const dx = p.x - cx, dy = p.y - cy;
-        const d = Math.sqrt(dx*dx + dy*dy) || 1;
-        return { x: p.x + (dx/d) * pad, y: p.y + (dy/d) * pad };
-      });
-    }
-
-    function drawSmoothHull(ctx, hull) {
-      if (hull.length < 3) return;
-      ctx.beginPath();
-      const n = hull.length;
-      const mx0 = (hull[0].x + hull[n-1].x) / 2;
-      const my0 = (hull[0].y + hull[n-1].y) / 2;
-      ctx.moveTo(mx0, my0);
-      for (let i = 0; i < n; i++) {
-        const next = (i + 1) % n;
-        const mx = (hull[i].x + hull[next].x) / 2;
-        const my = (hull[i].y + hull[next].y) / 2;
-        ctx.quadraticCurveTo(hull[i].x, hull[i].y, mx, my);
-      }
-      ctx.closePath();
-    }
-
-    function drawCapsule(ctx, p1, p2, pad) {
-      const dx = p2.x - p1.x, dy = p2.y - p1.y;
-      const len = Math.sqrt(dx*dx + dy*dy) || 1;
-      const angle = Math.atan2(dy, dx);
-      ctx.beginPath();
-      ctx.arc(p1.x, p1.y, pad, angle + Math.PI/2, angle - Math.PI/2, false);
-      ctx.arc(p2.x, p2.y, pad, angle - Math.PI/2, angle + Math.PI/2, false);
-      ctx.closePath();
-    }
-
-    // ---- Cluster layout (deterministic, no physics) ----
-    const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // ~137.5° Fibonacci spiral
-
-    function enterClusterView() {
-      if (!graph || clusterData.length === 0) return;
-
-      // Assign each node to one cluster (first membership)
-      nodeAssignedCluster = {};
-      for (const m of clusterMemberships) {
-        if (!nodeAssignedCluster[m.node_id]) nodeAssignedCluster[m.node_id] = m.cluster_id;
-      }
-
-      // Group nodes by assigned cluster
-      const groups = {};     // cluster_id -> [node, ...]
-      const unclustered = [];
-      for (const node of graphData.nodes) {
-        const cid = nodeAssignedCluster[node.id];
-        if (cid) {
-          if (!groups[cid]) groups[cid] = [];
-          groups[cid].push(node);
-        } else {
-          unclustered.push(node);
-        }
-      }
-
-      // Compute cluster center positions on a circle
-      const activeIds = clusterData.map(c => c.id).filter(id => groups[id] && groups[id].length > 0);
-      const hasUnclustered = unclustered.length > 0;
-      const numSlots = activeIds.length + (hasUnclustered ? 1 : 0);
-      if (numSlots === 0) return;
-
-      // Scale outer radius so largest cluster has room
-      const maxSize = Math.max(
-        ...activeIds.map(id => groups[id].length),
-        hasUnclustered ? unclustered.length : 0
-      );
-      const nodeSpacing = 20;
-      const largestClusterRadius = nodeSpacing * Math.sqrt(maxSize + 1);
-      const outerRadius = largestClusterRadius * 1.8 + numSlots * 20;
-      const angleStep = (2 * Math.PI) / numSlots;
-
-      // Place each cluster's nodes in a Fibonacci spiral
-      activeIds.forEach((cid, i) => {
-        const angle = angleStep * i - Math.PI / 2;
-        const cx = Math.cos(angle) * outerRadius;
-        const cy = Math.sin(angle) * outerRadius;
-        groups[cid].forEach((node, j) => {
-          const r = nodeSpacing * Math.sqrt(j + 1);
-          const theta = j * GOLDEN_ANGLE;
-          node.fx = cx + r * Math.cos(theta);
-          node.fy = cy + r * Math.sin(theta);
-        });
-      });
-
-      // Unclustered nodes get their own slot
-      if (hasUnclustered) {
-        const angle = angleStep * activeIds.length - Math.PI / 2;
-        const cx = Math.cos(angle) * outerRadius;
-        const cy = Math.sin(angle) * outerRadius;
-        unclustered.forEach((node, j) => {
-          const r = nodeSpacing * Math.sqrt(j + 1);
-          const theta = j * GOLDEN_ANGLE;
-          node.fx = cx + r * Math.cos(theta);
-          node.fy = cy + r * Math.sin(theta);
-        });
-      }
-
-      graph.d3ReheatSimulation();
-      setTimeout(() => graph.zoomToFit(400, 80), 300);
-    }
-
-    function exitClusterView() {
-      if (!graph) return;
-      nodeAssignedCluster = {};
-      for (const node of graphData.nodes) {
-        node.fx = undefined;
-        node.fy = undefined;
-      }
-      graph.d3ReheatSimulation();
-    }
-
-    // ---- Cluster legend ----
-    function buildClusterLegend() {
-      const legendEl = document.getElementById('legend');
-      legendEl.querySelectorAll('.cluster-legend-item, .cluster-divider').forEach(e => e.remove());
-      if (!clustersEnabled || clusterData.length === 0) return;
-
-      const divider = document.createElement('div');
-      divider.className = 'cluster-divider';
-      divider.style.cssText = 'border-top:1px solid #262626; margin:8px 0; padding-top:8px;';
-      legendEl.appendChild(divider);
-
-      const title = document.createElement('div');
-      title.className = 'legend-title cluster-legend-item';
-      title.textContent = 'Clusters';
-      title.style.marginBottom = '6px';
-      legendEl.appendChild(title);
-
-      for (const cluster of clusterData) {
-        const colors = clusterColorMap[cluster.id];
-        if (!colors) continue;
-        const memberCount = clusterMemberships.filter(m => m.cluster_id === cluster.id).length;
-        if (memberCount === 0) continue;
-        const item = document.createElement('div');
-        item.className = 'legend-item cluster-legend-item';
-        const dotColor = colors.stroke.replace(/[\d.]+\)$/, '0.7)');
-        item.innerHTML = `<div class="legend-dot" style="background:${dotColor};border:1px solid ${colors.stroke}"></div>${cluster.name} (${memberCount})`;
-        legendEl.appendChild(item);
-      }
+    function loadSettings() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        if (saved) Object.assign(settings, saved);
+      } catch {}
     }
 
     // ---- Legend ----
     function buildLegend(nodes) {
       const legendEl = document.getElementById('legend');
-      // Clear existing type items (keep title and cluster items)
-      const items = legendEl.querySelectorAll('.legend-item:not(.cluster-legend-item)');
+      // Clear existing items (keep title)
+      const items = legendEl.querySelectorAll('.legend-item');
       items.forEach(i => i.remove());
 
       // Find which subtypes exist in the data
       const subtypes = new Set(nodes.map(n => n.subtype).filter(Boolean));
-
-      // Insert type items before the cluster divider (if present)
-      const clusterDivider = legendEl.querySelector('.cluster-divider');
 
       for (const [subtype, label] of Object.entries(LABELS)) {
         if (!subtypes.has(subtype)) continue;
         const item = document.createElement('div');
         item.className = 'legend-item';
         item.innerHTML = `<div class="legend-dot" style="background:${COLORS[subtype] || DEFAULT_COLOR}"></div>${label}`;
-        if (clusterDivider) {
-          legendEl.insertBefore(item, clusterDivider);
-        } else {
-          legendEl.appendChild(item);
-        }
+        legendEl.appendChild(item);
       }
     }
 
@@ -546,20 +535,20 @@
     }
 
     function getRadius(node) {
-      // Size varies by connection count — subtle but visible
+      // Size varies by connection count — scaled by settings multiplier
       if (node._conns === undefined) {
         node._conns = graphData.links.filter(l =>
           (l.source.id || l.source) === node.id || (l.target.id || l.target) === node.id
         ).length;
       }
       const c = node._conns;
-      // 0 conns: 2.8px, 1-2: ~3.5px, 5: ~4.5px, 10+: ~5.5px, cap 6px
-      return Math.min(6, 2.8 + Math.log2(c + 1) * 1.1);
+      const base = Math.min(6, 2.8 + Math.log2(c + 1) * 1.1);
+      return base * settings.nodeSize;
     }
 
     function getOpacity(node) {
       const r = node.retrievability ?? 1;
-      // Map retrievability to opacity: 1.0 → 1.0, 0.0 → 0.15
+      // Map retrievability to opacity: 1.0 -> 1.0, 0.0 -> 0.15
       return Math.max(0.15, r * 0.85 + 0.15);
     }
 
@@ -610,14 +599,6 @@
       );
       html += `<div class="detail-row"><span class="label">Connections</span><span class="value">${connections.length}</span></div>`;
 
-      // Cluster memberships
-      if (clusterNodeMap[node.id] && clusterNodeMap[node.id].length > 0) {
-        const clusterNames = clusterNodeMap[node.id]
-          .map(cid => (clusterData.find(c => c.id === cid) || {}).name || cid)
-          .join(', ');
-        html += `<div class="detail-row"><span class="label">Clusters</span><span class="value">${clusterNames}</span></div>`;
-      }
-
       if (node.summary) {
         html += `<div class="detail-summary">${node.summary}</div>`;
       }
@@ -629,6 +610,24 @@
     function hideDetail() {
       selectedNode = null;
       document.getElementById('detail').style.display = 'none';
+    }
+
+    // ---- Apply settings to graph forces ----
+    function applyForces() {
+      if (!graph) return;
+
+      graph.d3Force('charge').strength(-settings.repelForce);
+      graph.d3Force('link').distance(settings.linkDistance);
+
+      // Link strength — d3 default is adaptive (1/min(degree)), override with fixed value
+      if (settings.linkStrength > 0) {
+        graph.d3Force('link').strength(settings.linkStrength);
+      }
+
+      graph.d3Force('gravity-x').strength(settings.centerForce);
+      graph.d3Force('gravity-y').strength(settings.centerForce);
+
+      graph.d3ReheatSimulation();
     }
 
     // ---- Graph rendering ----
@@ -643,29 +642,15 @@
 
       graphData = { nodes: data.nodes, links: validEdges };
 
-      // Process cluster data
-      clusterData = data.clusters || [];
-      clusterMemberships = (data.memberships || []).filter(m => nodeIds.has(m.node_id));
-      clusterNodeMap = {};
-      for (const m of clusterMemberships) {
-        if (!clusterNodeMap[m.node_id]) clusterNodeMap[m.node_id] = [];
-        clusterNodeMap[m.node_id].push(m.cluster_id);
-      }
-      assignClusterColors(clusterData);
-      nodeById = {};
-      data.nodes.forEach(n => { nodeById[n.id] = n; });
-
       // Stats
       document.getElementById('stats').innerHTML =
         `<span>${data.nodes.length}</span> memories &middot; <span>${validEdges.length}</span> connections`;
 
       // Legend
       buildLegend(data.nodes);
-      if (clustersEnabled) buildClusterLegend();
 
       if (graph) {
         graph.graphData(graphData);
-        if (clustersEnabled) enterClusterView();
         return;
       }
 
@@ -692,9 +677,9 @@
           if (searchTerm && !highlighted) alpha = 0.06;
           if (selectedNode && !isSelected && !isConnected) alpha = 0.12;
 
-          // Soft glow — color-rich, tight to node, premium feel
+          // Soft glow
           if (isHovered || isSelected) {
-            const glowR = r + 6;
+            const glowR = r + 6 * settings.nodeSize;
             const grad = ctx.createRadialGradient(node.x, node.y, r * 0.3, node.x, node.y, glowR);
             grad.addColorStop(0, color + 'cc');
             grad.addColorStop(0.35, color + '66');
@@ -724,10 +709,10 @@
           ctx.fill();
         })
 
-        // Edge rendering — subtle, thin lines
+        // Edge rendering
         .linkCanvasObject((link, ctx) => {
           const strength = link.strength || 0.5;
-          const width = Math.max(0.2, strength * 0.6);
+          const width = Math.max(0.2, strength * 0.6) * settings.lineThick;
           const sourceId = link.source.id || link.source;
           const targetId = link.target.id || link.target;
 
@@ -780,61 +765,18 @@
           hideDetail();
         })
 
-        // Cluster hull rendering — drawn behind nodes and edges
-        .onRenderFramePre((ctx, globalScale) => {
-          if (!clustersEnabled || clusterData.length === 0) return;
-          const pad = 20 / globalScale;
-
-          for (const cluster of clusterData) {
-            // Only include nodes assigned to this cluster (no overlap)
-            const members = graphData.nodes.filter(n =>
-              nodeAssignedCluster[n.id] === cluster.id && n.x !== undefined
-            );
-
-            if (members.length === 0) continue;
-            const colors = clusterColorMap[cluster.id];
-            if (!colors) continue;
-
-            if (members.length === 1) {
-              ctx.beginPath();
-              ctx.arc(members[0].x, members[0].y, pad, 0, 2 * Math.PI);
-            } else if (members.length === 2) {
-              drawCapsule(ctx, members[0], members[1], pad);
-            } else {
-              const points = members.map(n => ({ x: n.x, y: n.y }));
-              const hull = convexHull(points);
-              const expanded = expandHull(hull, pad);
-              drawSmoothHull(ctx, expanded);
-            }
-
-            ctx.fillStyle = colors.fill;
-            ctx.fill();
-            ctx.strokeStyle = colors.stroke;
-            ctx.lineWidth = 1 / globalScale;
-            ctx.stroke();
-
-            // Cluster label at centroid
-            const cx = members.reduce((s, n) => s + n.x, 0) / members.length;
-            const cy = members.reduce((s, n) => s + n.y, 0) / members.length;
-            const fontSize = Math.max(3, 10 / globalScale);
-            ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
-            ctx.fillStyle = colors.stroke.replace(/[\d.]+\)$/, '0.5)');
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(cluster.name, cx, cy);
-          }
-        })
-
-        // Physics — configure AFTER creation (d3Force returns the force, not the graph)
+        // Physics
         ;
 
-      // Gentle charge — enough to spread nodes but not launch orphans
-      graph.d3Force('charge').strength(-60);
-      graph.d3Force('link').distance(80);
+      // Set up forces with saved/default settings
+      graph.d3Force('charge').strength(-settings.repelForce);
+      graph.d3Force('link').distance(settings.linkDistance);
+      if (settings.linkStrength > 0) {
+        graph.d3Force('link').strength(settings.linkStrength);
+      }
 
-      // Gravity toward center — prevents orphans from drifting into the void
-      graph.d3Force('gravity-x', d3.forceX(0).strength(0.04));
-      graph.d3Force('gravity-y', d3.forceY(0).strength(0.04));
+      graph.d3Force('gravity-x', d3.forceX(0).strength(settings.centerForce));
+      graph.d3Force('gravity-y', d3.forceY(0).strength(settings.centerForce));
 
       // Handle window resize
       window.addEventListener('resize', () => {
@@ -895,10 +837,63 @@
       // Only show error if graph never rendered
       if (!graphRendered) {
         loadingEl.className = 'loading error';
-        loadingEl.textContent = 'Could not connect to Nous server. Make sure it is running.';
+        loadingEl.textContent = 'Could not connect to Nous server (port 3100). Make sure it is running.';
       } else {
         loadingEl.style.display = 'none';
       }
+    }
+
+    // ---- Settings panel logic ----
+    const sliderMap = [
+      { id: 'setting-node-size',  valId: 'val-node-size',  key: 'nodeSize',     fmt: v => v.toFixed(1),  visual: true },
+      { id: 'setting-line-thick', valId: 'val-line-thick', key: 'lineThick',    fmt: v => v.toFixed(1),  visual: true },
+      { id: 'setting-center',    valId: 'val-center',     key: 'centerForce',  fmt: v => v.toFixed(2),  visual: false },
+      { id: 'setting-repel',     valId: 'val-repel',      key: 'repelForce',   fmt: v => String(Math.round(v)), visual: false },
+      { id: 'setting-link-str',  valId: 'val-link-str',   key: 'linkStrength', fmt: v => v.toFixed(2),  visual: false },
+      { id: 'setting-link-dist', valId: 'val-link-dist',  key: 'linkDistance', fmt: v => String(Math.round(v)), visual: false },
+    ];
+
+    function initSettings() {
+      loadSettings();
+
+      for (const s of sliderMap) {
+        const slider = document.getElementById(s.id);
+        const valEl = document.getElementById(s.valId);
+
+        // Set slider to current (saved or default) value
+        slider.value = settings[s.key];
+        valEl.textContent = s.fmt(settings[s.key]);
+
+        slider.addEventListener('input', () => {
+          const v = parseFloat(slider.value);
+          settings[s.key] = v;
+          valEl.textContent = s.fmt(v);
+          saveSettings();
+
+          if (s.visual) {
+            // Node size / line thickness — just refresh canvas, no physics change
+            if (graph) graph.refresh();
+          } else {
+            // Physics force — reheat simulation
+            applyForces();
+          }
+        });
+      }
+    }
+
+    function resetSettings() {
+      Object.assign(settings, DEFAULTS);
+      saveSettings();
+
+      for (const s of sliderMap) {
+        const slider = document.getElementById(s.id);
+        const valEl = document.getElementById(s.valId);
+        slider.value = settings[s.key];
+        valEl.textContent = s.fmt(settings[s.key]);
+      }
+
+      applyForces();
+      if (graph) graph.refresh();
     }
 
     // ---- Event handlers ----
@@ -928,20 +923,21 @@
       if (graph) graph.refresh();
     });
 
-    document.getElementById('cluster-btn').addEventListener('click', () => {
-      clustersEnabled = !clustersEnabled;
-      document.getElementById('cluster-btn').classList.toggle('active', clustersEnabled);
-      buildClusterLegend();
-      if (clustersEnabled) {
-        enterClusterView();
-      } else {
-        exitClusterView();
-      }
-      if (graph) graph.refresh();
+    // Settings toggle
+    document.getElementById('settings-btn').addEventListener('click', () => {
+      const panel = document.getElementById('settings-panel');
+      const btn = document.getElementById('settings-btn');
+      const isOpen = panel.classList.contains('open');
+      panel.classList.toggle('open');
+      btn.classList.toggle('active');
     });
 
+    // Settings reset
+    document.getElementById('settings-reset').addEventListener('click', resetSettings);
+
     // ---- Init ----
-    _initUrls().then(() => loadGraph());
+    initSettings();
+    loadGraph();
   </script>
 </body>
 </html>
