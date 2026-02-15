@@ -706,7 +706,6 @@ class AppState(rx.State):
     settings_micro_sl_max: float = 0.5
     settings_micro_tp_max: float = 1.0
     settings_micro_leverage: int = 20
-    settings_micro_max_per_day: int = 2
     # Risk
     settings_rr_floor_reject: float = 1.0
     settings_rr_floor_warn: float = 1.5
@@ -2709,7 +2708,6 @@ class AppState(rx.State):
         self.settings_micro_sl_max = ts.micro_sl_max_pct
         self.settings_micro_tp_max = ts.micro_tp_max_pct
         self.settings_micro_leverage = ts.micro_leverage
-        self.settings_micro_max_per_day = ts.micro_max_per_day
         self.settings_rr_floor_reject = ts.rr_floor_reject
         self.settings_rr_floor_warn = ts.rr_floor_warn
         self.settings_risk_cap_reject = ts.portfolio_risk_cap_reject
@@ -2745,7 +2743,6 @@ class AppState(rx.State):
             micro_sl_max_pct=self.settings_micro_sl_max,
             micro_tp_max_pct=self.settings_micro_tp_max,
             micro_leverage=self.settings_micro_leverage,
-            micro_max_per_day=self.settings_micro_max_per_day,
             rr_floor_reject=self.settings_rr_floor_reject,
             rr_floor_warn=self.settings_rr_floor_warn,
             portfolio_risk_cap_reject=self.settings_risk_cap_reject,
@@ -2799,8 +2796,6 @@ class AppState(rx.State):
         self.settings_micro_tp_max = float(v); self.settings_dirty = True
     def set_settings_micro_leverage(self, v: str):
         self.settings_micro_leverage = int(float(v)); self.settings_dirty = True
-    def set_settings_micro_max_per_day(self, v: str):
-        self.settings_micro_max_per_day = int(float(v)); self.settings_dirty = True
     def set_settings_rr_floor_reject(self, v: str):
         self.settings_rr_floor_reject = float(v); self.settings_dirty = True
     def set_settings_rr_floor_warn(self, v: str):

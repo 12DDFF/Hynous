@@ -41,7 +41,6 @@ class TradingSettings:
     micro_sl_max_pct: float = 0.5
     micro_tp_max_pct: float = 1.0
     micro_leverage: int = 20
-    micro_max_per_day: int = 2
 
     # --- Risk management ---
     rr_floor_reject: float = 1.0

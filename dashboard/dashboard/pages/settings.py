@@ -185,8 +185,6 @@ def _micro_card() -> rx.Component:
                AppState.settings_micro_tp_max, AppState.set_settings_micro_tp_max, "%"),
         _field("Leverage", "Fixed leverage used for all micro trades",
                AppState.settings_micro_leverage, AppState.set_settings_micro_leverage, "x"),
-        _field("Max Per Day", "Daily entry limit for micro trades",
-               AppState.settings_micro_max_per_day, AppState.set_settings_micro_max_per_day),
     )
 
 
