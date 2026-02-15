@@ -209,10 +209,11 @@ class Message(BaseModel):
     show_avatar: bool = True  # False when grouped with previous same-sender message
 
 
-class ScannerMessage(BaseModel):
-    """Compact scanner wake message for the scanner panel."""
-    content: str
-    timestamp: str
+class WakeItem(BaseModel):
+    """Unified wake item for the activity sidebar."""
+    category: str = ""  # scanner, fill, review, watchpoint, wake, learning, error
+    content: str = ""
+    timestamp: str = ""
 
 
 class Activity(BaseModel):
@@ -687,9 +688,8 @@ class AppState(rx.State):
     news_expanded: bool = True
     clusters_sidebar_expanded: bool = True
 
-    # === Scanner Panel (Chat Page) ===
-    scanner_messages: List[ScannerMessage] = []
-    scanner_panel_expanded: bool = False
+    # === Activity Sidebar (Chat Page) ===
+    wake_feed: List[WakeItem] = []
 
     # === Trading Settings ===
     settings_dirty: bool = False
@@ -738,8 +738,6 @@ class AppState(rx.State):
     def toggle_clusters_sidebar(self):
         self.clusters_sidebar_expanded = not self.clusters_sidebar_expanded
 
-    def toggle_scanner_panel(self):
-        self.scanner_panel_expanded = not self.scanner_panel_expanded
 
     # === Stop Generation ===
 
@@ -1075,49 +1073,40 @@ class AppState(rx.State):
                 if new_daemon_msgs:
                     async with self:
                         self.is_waking = False  # Clear manual wake indicator
-                        scanner_batch = []
-                        chat_batch = []
+                        # Route ALL daemon wakes to sidebar activity feed
                         for item in new_daemon_msgs:
-                            is_scanner = (
-                                item.get('event_type') == 'scanner'
-                                or item.get('type') == 'Scanner'
-                            )
-                            if is_scanner:
-                                scanner_batch.append(item)
-                            else:
-                                chat_batch.append(item)
-
-                        # Scanner wakes → scanner panel (first line only for compact display)
-                        for item in scanner_batch:
-                            raw = item['response']
+                            raw = item.get('response', '')
                             first_line = raw.split("\n")[0][:200] if raw else ""
-                            self.scanner_messages = (self.scanner_messages + [
-                                ScannerMessage(
+                            # Classify wake type
+                            evt = item.get('event_type', '')
+                            src = item.get('type', '')
+                            if evt == 'scanner' or src == 'Scanner':
+                                cat = 'scanner'
+                            elif evt == 'fill' or src == 'Fill':
+                                cat = 'fill'
+                            elif src in ('Review', 'Periodic'):
+                                cat = 'review'
+                            elif src == 'Watchpoint':
+                                cat = 'watchpoint'
+                            elif src == 'Learning':
+                                cat = 'learning'
+                            elif evt == 'error':
+                                cat = 'error'
+                            else:
+                                cat = 'wake'
+                            self.wake_feed = ([
+                                WakeItem(
+                                    category=cat,
                                     content=first_line,
                                     timestamp=item.get('timestamp', self._format_time()),
                                 )
-                            ])[-50:]  # Cap at 50
-
-                        # Non-scanner wakes → main chat
-                        for item in chat_batch:
-                            self._append_msg(Message(
-                                sender="hynous",
-                                content=_highlight(item['response']),
-                                timestamp=item.get('timestamp', self._format_time()),
-                                tools_used=["daemon"],
-                            ))
-
-                        # Unread indicators
-                        if chat_batch and self.current_page != "chat":
-                            self.chat_unread = True
+                            ] + self.wake_feed)[:100]
+                        # Journal unread for fills
                         for item in new_daemon_msgs:
                             if item.get('event_type') == 'fill':
                                 if self.current_page != "journal":
                                     self.journal_unread = True
                                 break
-                        # Persist inside state lock so self.messages is current
-                        if chat_batch:
-                            self._save_chat(_get_agent())
             except Exception:
                 pass
 

@@ -1,12 +1,16 @@
-"""Chat page component."""
+"""Chat page — messages + activity sidebar."""
 
 import reflex as rx
-from ..state import AppState, Position, ScannerMessage
+from ..state import AppState, Position, WakeItem
 from ..components import chat_bubble, chat_input, typing_indicator, streaming_bubble, tool_indicator, ticker_badge
 
 
-def welcome_state() -> rx.Component:
-    """Welcome message when no chat history - centered in the chat area."""
+# ---------------------------------------------------------------------------
+# Chat area (left)
+# ---------------------------------------------------------------------------
+
+def _welcome() -> rx.Component:
+    """Welcome message when no chat history."""
     return rx.box(
         rx.vstack(
             rx.box(
@@ -20,12 +24,7 @@ def welcome_state() -> rx.Component:
                 justify_content="center",
                 box_shadow="0 4px 24px rgba(99, 102, 241, 0.2)",
             ),
-            rx.heading(
-                "Hey, I'm Hynous",
-                size="7",
-                color="#fafafa",
-                font_weight="600",
-            ),
+            rx.heading("Hey, I'm Hynous", size="7", color="#fafafa", font_weight="600"),
             rx.text(
                 "Your crypto trading partner. Ask me anything about markets, "
                 "discuss trade ideas, or just chat about what's happening.",
@@ -46,26 +45,21 @@ def welcome_state() -> rx.Component:
     )
 
 
-def messages_area() -> rx.Component:
+def _messages() -> rx.Component:
     """Scrollable messages container with auto-scroll."""
     return rx.box(
         rx.box(
             rx.vstack(
-                rx.foreach(
-                    AppState.messages,
-                    chat_bubble,
-                ),
-                # Loading state: streaming text, tool indicator, or typing dots
+                rx.foreach(AppState.messages, chat_bubble),
+                # Loading state
                 rx.cond(
                     AppState.is_loading,
                     rx.vstack(
-                        # Streaming text (if any)
                         rx.cond(
                             AppState.streaming_text != "",
                             streaming_bubble(AppState.streaming_display, AppState.streaming_show_avatar),
                             rx.fragment(),
                         ),
-                        # Tool indicator or typing dots
                         rx.cond(
                             AppState.active_tool != "",
                             tool_indicator(AppState.active_tool_display, AppState.active_tool_color),
@@ -80,7 +74,6 @@ def messages_area() -> rx.Component:
                     ),
                     rx.box(),
                 ),
-                # Scroll anchor
                 rx.box(id="chat-bottom"),
                 width="100%",
                 spacing="0",
@@ -103,7 +96,7 @@ def messages_area() -> rx.Component:
     )
 
 
-def input_area() -> rx.Component:
+def _input() -> rx.Component:
     """Fixed input area at bottom."""
     return rx.box(
         rx.vstack(
@@ -135,195 +128,349 @@ def input_area() -> rx.Component:
     )
 
 
-def _pos_chip(pos: Position) -> rx.Component:
-    """Compact position chip for the top bar."""
+# ---------------------------------------------------------------------------
+# Sidebar primitives
+# ---------------------------------------------------------------------------
+
+def _label(text: str) -> rx.Component:
+    """Section header in sidebar."""
+    return rx.text(
+        text,
+        font_size="0.6rem",
+        font_weight="600",
+        color="#404040",
+        text_transform="uppercase",
+        letter_spacing="0.06em",
+    )
+
+
+def _sep() -> rx.Component:
+    """Horizontal separator."""
+    return rx.box(width="100%", height="1px", background="#1a1a1a")
+
+
+def _stat_line(label: str, value) -> rx.Component:
+    """Key-value stat row."""
     return rx.hstack(
-        ticker_badge(pos.symbol, font_size="0.75rem", font_weight="600"),
+        rx.text(label, font_size="0.68rem", color="#525252"),
+        rx.spacer(),
+        rx.text(
+            value,
+            font_size="0.7rem",
+            color="#a3a3a3",
+            font_family="JetBrains Mono, monospace",
+        ),
+        width="100%",
+        align="center",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sidebar sections
+# ---------------------------------------------------------------------------
+
+def _status_section() -> rx.Component:
+    """Agent + Daemon status in one compact row."""
+    return rx.hstack(
+        # Agent
+        rx.hstack(
+            rx.box(
+                width="6px",
+                height="6px",
+                border_radius="50%",
+                background=AppState.agent_status_color,
+                flex_shrink="0",
+            ),
+            rx.text("Agent", font_size="0.65rem", color="#525252"),
+            rx.text(AppState.agent_status_display, font_size="0.68rem", color="#a3a3a3"),
+            spacing="1",
+            align="center",
+        ),
+        rx.spacer(),
+        # Daemon
+        rx.hstack(
+            rx.box(
+                width="6px",
+                height="6px",
+                border_radius="50%",
+                background=AppState.daemon_status_color,
+                flex_shrink="0",
+            ),
+            rx.text(AppState.daemon_status_text, font_size="0.68rem", color="#a3a3a3"),
+            spacing="1",
+            align="center",
+        ),
+        width="100%",
+        align="center",
+    )
+
+
+def _position_row(pos: Position) -> rx.Component:
+    """Single position in sidebar."""
+    return rx.hstack(
+        ticker_badge(pos.symbol, font_size="0.7rem", font_weight="600"),
         rx.text(
             pos.side.upper(),
-            font_size="0.65rem",
-            font_weight="500",
+            font_size="0.58rem",
+            font_weight="600",
             color=rx.cond(pos.side == "long", "#22c55e", "#ef4444"),
         ),
+        rx.spacer(),
         rx.text(
             pos.pnl.to(str) + "%",
             font_size="0.7rem",
             font_weight="500",
             color=rx.cond(pos.pnl >= 0, "#22c55e", "#ef4444"),
+            font_family="JetBrains Mono, monospace",
         ),
         rx.cond(
             pos.realized_pnl != 0,
             rx.text(
-                rx.cond(pos.realized_pnl >= 0, "+$", "-$") + rx.cond(pos.realized_pnl >= 0, pos.realized_pnl, pos.realized_pnl * -1).to(str),
-                font_size="0.6rem",
+                rx.cond(pos.realized_pnl >= 0, "+$", "-$")
+                + rx.cond(pos.realized_pnl >= 0, pos.realized_pnl, pos.realized_pnl * -1).to(str),
+                font_size="0.55rem",
                 color=rx.cond(pos.realized_pnl >= 0, "#4ade80", "#f87171"),
             ),
             rx.fragment(),
         ),
+        width="100%",
+        align="center",
         spacing="2",
-        padding="0.25rem 0.625rem",
-        background="#141414",
-        border="1px solid #1e1e1e",
-        border_radius="6px",
+        padding_y="1px",
     )
 
 
-def positions_bar() -> rx.Component:
-    """Slim positions strip at top of chat — only shows when positions exist."""
+def _positions_section() -> rx.Component:
+    """Positions — only rendered when positions exist."""
     return rx.cond(
         AppState.positions.length() > 0,
-        rx.hstack(
-            rx.text("POSITIONS", font_size="0.6rem", color="#525252", font_weight="600", letter_spacing="0.05em"),
-            rx.hstack(
-                rx.foreach(AppState.positions, _pos_chip),
-                spacing="2",
+        rx.vstack(
+            _label("Positions"),
+            rx.vstack(
+                rx.foreach(AppState.positions, _position_row),
+                spacing="1",
+                width="100%",
             ),
-            spacing="3",
-            padding="0.5rem 1rem",
+            spacing="2",
             width="100%",
-            border_bottom="1px solid #141414",
-            align_items="center",
-            flex_shrink="0",
         ),
         rx.fragment(),
     )
 
 
-def _scanner_item(msg: ScannerMessage) -> rx.Component:
-    """Single compact scanner wake item."""
+def _scanner_section() -> rx.Component:
+    """Scanner status indicator."""
+    return rx.vstack(
+        _label("Scanner"),
+        rx.hstack(
+            rx.box(
+                width="6px",
+                height="6px",
+                border_radius="50%",
+                background=AppState.scanner_status_color,
+                flex_shrink="0",
+            ),
+            rx.text(
+                AppState.scanner_status_text,
+                font_size="0.72rem",
+                color="#a3a3a3",
+            ),
+            spacing="2",
+            align="center",
+        ),
+        rx.cond(
+            AppState.scanner_subtitle != "",
+            rx.text(
+                AppState.scanner_subtitle,
+                font_size="0.65rem",
+                color="#525252",
+            ),
+            rx.fragment(),
+        ),
+        spacing="1",
+        width="100%",
+    )
+
+
+def _wake_row(item: WakeItem) -> rx.Component:
+    """Single wake event in the activity feed."""
+    dot_color = rx.cond(
+        item.category == "scanner", "#2dd4bf",
+        rx.cond(
+            item.category == "fill", "#22c55e",
+            rx.cond(
+                item.category == "review", "#818cf8",
+                rx.cond(
+                    item.category == "error", "#ef4444",
+                    rx.cond(
+                        item.category == "watchpoint", "#fbbf24",
+                        "#60a5fa",
+                    )
+                )
+            )
+        )
+    )
     return rx.hstack(
         rx.box(
-            width="6px",
-            height="6px",
+            width="5px",
+            height="5px",
             border_radius="50%",
-            background="#818cf8",
+            background=dot_color,
             flex_shrink="0",
-            margin_top="2px",
+            margin_top="5px",
         ),
-        rx.text(
-            msg.timestamp,
-            font_size="0.65rem",
-            color="#404040",
-            font_family="JetBrains Mono, monospace",
-            flex_shrink="0",
-            min_width="55px",
-        ),
-        rx.text(
-            msg.content,
-            font_size="0.78rem",
-            color="#737373",
-            overflow="hidden",
-            text_overflow="ellipsis",
-            white_space="nowrap",
+        rx.vstack(
+            rx.text(
+                item.timestamp,
+                font_size="0.58rem",
+                color="#333",
+                font_family="JetBrains Mono, monospace",
+            ),
+            rx.text(
+                item.content,
+                font_size="0.72rem",
+                color="#737373",
+                overflow="hidden",
+                text_overflow="ellipsis",
+                white_space="nowrap",
+                max_width="100%",
+            ),
+            spacing="0",
             flex="1",
             min_width="0",
         ),
         spacing="2",
         width="100%",
         align="start",
-        padding_y="2px",
+        padding_y="3px",
     )
 
 
-def scanner_panel() -> rx.Component:
-    """Collapsible scanner activity panel above chat messages."""
-    return rx.cond(
-        AppState.scanner_messages.length() > 0,
-        rx.box(
-            # Header — always visible
-            rx.hstack(
-                rx.hstack(
-                    rx.text("\U0001F4E1", font_size="0.75rem", opacity="0.6"),
-                    rx.text(
-                        "Scanner Activity",
-                        font_size="0.75rem",
-                        font_weight="500",
-                        color="#525252",
-                    ),
-                    rx.badge(
-                        AppState.scanner_messages.length().to(str),
-                        color_scheme="iris",
-                        variant="soft",
-                        size="1",
-                    ),
-                    spacing="2",
-                    align="center",
-                ),
-                rx.icon(
-                    tag=rx.cond(AppState.scanner_panel_expanded, "chevron-up", "chevron-down"),
-                    size=14,
-                    color="#525252",
-                ),
-                width="100%",
-                justify="between",
-                align="center",
-                cursor="pointer",
-                on_click=AppState.toggle_scanner_panel,
-                padding="0.5rem 1rem",
-                _hover={"background": "#111"},
-            ),
-            # Body — when expanded
+def _activity_section() -> rx.Component:
+    """Scrollable activity feed — newest events first."""
+    return rx.box(
+        rx.vstack(
+            _label("Activity"),
             rx.cond(
-                AppState.scanner_panel_expanded,
-                rx.box(
-                    rx.vstack(
-                        rx.foreach(
-                            AppState.scanner_messages,
-                            _scanner_item,
-                        ),
-                        spacing="0",
-                        width="100%",
-                    ),
-                    max_height="200px",
-                    overflow_y="auto",
-                    padding_x="1rem",
-                    padding_bottom="0.5rem",
-                    style={
-                        "scrollbar_width": "none",
-                        "&::-webkit-scrollbar": {"display": "none"},
-                    },
+                AppState.wake_feed.length() > 0,
+                rx.vstack(
+                    rx.foreach(AppState.wake_feed, _wake_row),
+                    spacing="0",
+                    width="100%",
                 ),
+                rx.text(
+                    "No activity yet",
+                    font_size="0.7rem",
+                    color="#333",
+                    font_style="italic",
+                    padding_y="0.5rem",
+                ),
+            ),
+            spacing="2",
+            width="100%",
+        ),
+        flex="1",
+        min_height="0",
+        width="100%",
+        overflow_y="auto",
+        style={
+            "scrollbar_width": "none",
+            "&::-webkit-scrollbar": {"display": "none"},
+        },
+    )
+
+
+def _stats_section() -> rx.Component:
+    """Compact stats footer."""
+    return rx.vstack(
+        _label("Stats"),
+        _stat_line("Daily PnL", AppState.daemon_daily_pnl),
+        _stat_line("Wakes", AppState.daemon_wake_count),
+        _stat_line("Next Review", AppState.daemon_next_review),
+        _stat_line("Wake Rate", AppState.daemon_wake_rate),
+        _stat_line("Last Wake", AppState.daemon_last_wake_ago),
+        spacing="1",
+        width="100%",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+
+def _sidebar() -> rx.Component:
+    """Right activity sidebar — status, positions, scanner, feed, stats."""
+    return rx.box(
+        # Top — fixed sections
+        rx.vstack(
+            _status_section(),
+            _sep(),
+            _positions_section(),
+            rx.cond(
+                AppState.positions.length() > 0,
+                _sep(),
                 rx.fragment(),
             ),
+            _scanner_section(),
+            _sep(),
+            spacing="3",
             width="100%",
-            border_bottom="1px solid #141414",
             flex_shrink="0",
         ),
-        rx.fragment(),
+        # Middle — scrollable activity feed
+        _activity_section(),
+        # Bottom — pinned stats
+        rx.vstack(
+            _sep(),
+            _stats_section(),
+            spacing="3",
+            width="100%",
+            flex_shrink="0",
+        ),
+        width="280px",
+        min_width="280px",
+        height="100%",
+        padding="0.75rem",
+        border_left="1px solid #141414",
+        background="#0c0c0c",
+        display="flex",
+        flex_direction="column",
+        gap="0.5rem",
     )
 
 
+# ---------------------------------------------------------------------------
+# Page
+# ---------------------------------------------------------------------------
+
 def chat_page() -> rx.Component:
-    """Full-height immersive chat layout."""
-    return rx.fragment(
+    """Full-height chat layout with activity sidebar."""
+    return rx.hstack(
+        # Main chat area
         rx.box(
             rx.vstack(
-                # Positions bar — slim strip at top
-                positions_bar(),
-
-                # Scanner panel — collapsible, between positions and chat
-                scanner_panel(),
-
-                # Messages or welcome
                 rx.cond(
                     AppState.messages.length() > 0,
-                    messages_area(),
-                    welcome_state(),
+                    _messages(),
+                    _welcome(),
                 ),
-
-                # Input area
-                input_area(),
-
+                _input(),
                 width="100%",
                 height="100%",
                 spacing="0",
                 align="center",
             ),
-            width="100%",
+            flex="1",
             height="100%",
             background="#0a0a0a",
             display="flex",
             flex_direction="column",
             overflow="hidden",
         ),
+        # Activity sidebar
+        _sidebar(),
+        spacing="0",
+        width="100%",
+        height="100%",
+        overflow="hidden",
     )
