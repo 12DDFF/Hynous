@@ -346,10 +346,12 @@ class Daemon:
         self._entries_today += 1
         self._entries_this_week += 1
         self._last_entry_time = time.time()
+        self._persist_daily_pnl()
 
     def record_micro_entry(self):
         """Record a micro trade entry (called by trading tool when trade_type='micro')."""
         self._micro_entries_today += 1
+        self._persist_daily_pnl()
 
     def register_position_type(self, coin: str, trade_type: str = "macro"):
         """Register trade type for a position. Called by trading tool on entry."""
@@ -483,6 +485,7 @@ class Daemon:
         self._last_fill_check = time.time()
         self._last_phantom_check = time.time()
         self._load_phantoms()
+        self._load_daily_pnl()
 
         while self._running:
             try:
@@ -1385,6 +1388,7 @@ class Daemon:
             if datetime.now(timezone.utc).weekday() == 0:
                 self._entries_this_week = 0
             self._daily_reset_date = today
+            self._persist_daily_pnl()
 
     def _update_daily_pnl(self, realized_pnl: float):
         """Update daily PnL and check circuit breaker threshold."""
@@ -1402,6 +1406,7 @@ class Daemon:
             ))
             logger.warning("CIRCUIT BREAKER: Daily loss $%.2f exceeds limit $%.0f",
                             abs(self._daily_realized_pnl), max_loss)
+        self._persist_daily_pnl()
 
     # ================================================================
     # Wake Messages
@@ -2014,6 +2019,47 @@ class Daemon:
                     logger.info("Loaded %d position types from disk", loaded)
         except Exception as e:
             logger.debug("Failed to load position types: %s", e)
+
+    def _persist_daily_pnl(self):
+        """Save daily PnL + counters to disk (survives restarts)."""
+        try:
+            import json as _json
+            path = self.config.project_root / "storage" / "daily_pnl.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            from ..core.persistence import _atomic_write
+            data = {
+                "date": self._daily_reset_date,
+                "daily_realized_pnl": self._daily_realized_pnl,
+                "entries_today": self._entries_today,
+                "micro_entries_today": self._micro_entries_today,
+                "trading_paused": self._trading_paused,
+            }
+            _atomic_write(path, _json.dumps(data))
+        except Exception as e:
+            logger.debug("Failed to persist daily PnL: %s", e)
+
+    def _load_daily_pnl(self):
+        """Load daily PnL from disk on startup. Only restore if same UTC day."""
+        try:
+            import json as _json
+            path = self.config.project_root / "storage" / "daily_pnl.json"
+            if not path.exists():
+                return
+            saved = _json.loads(path.read_text())
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if saved.get("date") == today:
+                self._daily_realized_pnl = saved.get("daily_realized_pnl", 0.0)
+                self._entries_today = saved.get("entries_today", 0)
+                self._micro_entries_today = saved.get("micro_entries_today", 0)
+                self._trading_paused = saved.get("trading_paused", False)
+                self._daily_reset_date = today
+                logger.info("Restored daily PnL from disk: $%.2f (%d entries, %d micro)",
+                           self._daily_realized_pnl, self._entries_today, self._micro_entries_today)
+            else:
+                logger.info("Daily PnL file is from %s (today=%s), starting fresh",
+                           saved.get("date"), today)
+        except Exception as e:
+            logger.debug("Failed to load daily PnL: %s", e)
 
     def _wake_for_review(self):
         """Periodic market review — alternates between normal and learning reviews.

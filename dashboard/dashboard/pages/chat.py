@@ -292,30 +292,35 @@ def _scanner_section() -> rx.Component:
     )
 
 
-def _wake_row(item: WakeItem) -> rx.Component:
-    """Single wake event in the activity feed."""
-    dot_color = rx.cond(
-        item.category == "scanner", "#2dd4bf",
+def _dot_color(category):
+    """Dot color by wake category."""
+    return rx.cond(
+        category == "scanner", "#2dd4bf",
         rx.cond(
-            item.category == "fill", "#22c55e",
+            category == "fill", "#22c55e",
             rx.cond(
-                item.category == "review", "#818cf8",
+                category == "review", "#818cf8",
                 rx.cond(
-                    item.category == "error", "#ef4444",
+                    category == "error", "#ef4444",
                     rx.cond(
-                        item.category == "watchpoint", "#fbbf24",
+                        category == "watchpoint", "#fbbf24",
                         "#60a5fa",
                     )
                 )
             )
         )
     )
+
+
+def _wake_row(item: WakeItem) -> rx.Component:
+    """Single wake event — click to view full details."""
+    color = _dot_color(item.category)
     return rx.hstack(
         rx.box(
             width="5px",
             height="5px",
             border_radius="50%",
-            background=dot_color,
+            background=color,
             flex_shrink="0",
             margin_top="5px",
         ),
@@ -343,6 +348,10 @@ def _wake_row(item: WakeItem) -> rx.Component:
         width="100%",
         align="start",
         padding_y="3px",
+        cursor="pointer",
+        border_radius="4px",
+        _hover={"background": "#141414"},
+        on_click=AppState.view_wake_detail(item.full_content, item.category, item.timestamp),
     )
 
 
@@ -387,7 +396,6 @@ def _stats_section() -> rx.Component:
         _stat_line("Daily PnL", AppState.daemon_daily_pnl),
         _stat_line("Wakes", AppState.daemon_wake_count),
         _stat_line("Next Review", AppState.daemon_next_review),
-        _stat_line("Wake Rate", AppState.daemon_wake_rate),
         _stat_line("Last Wake", AppState.daemon_last_wake_ago),
         spacing="1",
         width="100%",
@@ -440,37 +448,123 @@ def _sidebar() -> rx.Component:
 
 
 # ---------------------------------------------------------------------------
+# Wake detail dialog
+# ---------------------------------------------------------------------------
+
+def _wake_detail_dialog() -> rx.Component:
+    """Dialog showing full wake response content."""
+    color = _dot_color(AppState.wake_detail_category)
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                # Header
+                rx.hstack(
+                    rx.box(
+                        width="8px",
+                        height="8px",
+                        border_radius="50%",
+                        background=color,
+                        flex_shrink="0",
+                    ),
+                    rx.text(
+                        AppState.wake_detail_category.upper(),
+                        font_size="0.7rem",
+                        font_weight="600",
+                        color=color,
+                        letter_spacing="0.04em",
+                    ),
+                    rx.text(
+                        AppState.wake_detail_time,
+                        font_size="0.7rem",
+                        color="#525252",
+                        font_family="JetBrains Mono, monospace",
+                    ),
+                    rx.spacer(),
+                    rx.dialog.close(
+                        rx.icon(
+                            "x",
+                            size=16,
+                            color="#525252",
+                            cursor="pointer",
+                            _hover={"color": "#fafafa"},
+                        ),
+                    ),
+                    spacing="2",
+                    align="center",
+                    width="100%",
+                ),
+                # Body
+                rx.box(
+                    rx.text(
+                        AppState.wake_detail_content,
+                        font_size="0.82rem",
+                        color="#d4d4d4",
+                        line_height="1.6",
+                        white_space="pre-wrap",
+                        word_break="break-word",
+                    ),
+                    max_height="60vh",
+                    overflow_y="auto",
+                    width="100%",
+                    padding="0.5rem 0",
+                    style={
+                        "scrollbar_width": "thin",
+                        "scrollbar_color": "#262626 transparent",
+                    },
+                ),
+                spacing="3",
+                width="100%",
+            ),
+            max_width="560px",
+            background="#111111",
+            border="1px solid #1a1a1a",
+            border_radius="12px",
+            padding="1.25rem",
+        ),
+        open=AppState.wake_detail_open,
+        on_open_change=lambda _: AppState.close_wake_detail(),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
 
 def chat_page() -> rx.Component:
     """Full-height chat layout with activity sidebar."""
-    return rx.hstack(
-        # Main chat area
-        rx.box(
-            rx.vstack(
-                rx.cond(
-                    AppState.messages.length() > 0,
-                    _messages(),
-                    _welcome(),
+    return rx.box(
+        rx.hstack(
+            # Main chat area
+            rx.box(
+                rx.vstack(
+                    rx.cond(
+                        AppState.messages.length() > 0,
+                        _messages(),
+                        _welcome(),
+                    ),
+                    _input(),
+                    width="100%",
+                    height="100%",
+                    spacing="0",
+                    align="center",
                 ),
-                _input(),
-                width="100%",
+                flex="1",
                 height="100%",
-                spacing="0",
-                align="center",
+                background="#0a0a0a",
+                display="flex",
+                flex_direction="column",
+                overflow="hidden",
             ),
-            flex="1",
+            # Activity sidebar
+            _sidebar(),
+            spacing="0",
+            width="100%",
             height="100%",
-            background="#0a0a0a",
-            display="flex",
-            flex_direction="column",
             overflow="hidden",
         ),
-        # Activity sidebar
-        _sidebar(),
-        spacing="0",
+        # Wake detail dialog (rendered outside flex to avoid layout issues)
+        _wake_detail_dialog(),
         width="100%",
         height="100%",
-        overflow="hidden",
+        position="relative",
     )

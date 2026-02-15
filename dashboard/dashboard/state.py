@@ -212,7 +212,8 @@ class Message(BaseModel):
 class WakeItem(BaseModel):
     """Unified wake item for the activity sidebar."""
     category: str = ""  # scanner, fill, review, watchpoint, wake, learning, error
-    content: str = ""
+    content: str = ""  # first line (truncated for sidebar display)
+    full_content: str = ""  # complete response text
     timestamp: str = ""
 
 
@@ -690,6 +691,10 @@ class AppState(rx.State):
 
     # === Activity Sidebar (Chat Page) ===
     wake_feed: List[WakeItem] = []
+    wake_detail_content: str = ""
+    wake_detail_category: str = ""
+    wake_detail_time: str = ""
+    wake_detail_open: bool = False
 
     # === Trading Settings ===
     settings_dirty: bool = False
@@ -737,6 +742,15 @@ class AppState(rx.State):
     def toggle_clusters_sidebar(self):
         self.clusters_sidebar_expanded = not self.clusters_sidebar_expanded
 
+    def view_wake_detail(self, content: str, category: str, timestamp: str):
+        """Open wake detail dialog with full content."""
+        self.wake_detail_content = content
+        self.wake_detail_category = category
+        self.wake_detail_time = timestamp
+        self.wake_detail_open = True
+
+    def close_wake_detail(self):
+        self.wake_detail_open = False
 
     # === Stop Generation ===
 
@@ -1097,6 +1111,7 @@ class AppState(rx.State):
                                 WakeItem(
                                     category=cat,
                                     content=first_line,
+                                    full_content=raw,
                                     timestamp=item.get('timestamp', self._format_time()),
                                 )
                             ] + self.wake_feed)[:100]

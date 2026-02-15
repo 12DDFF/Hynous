@@ -715,7 +715,7 @@ def _daemon_detail() -> rx.Component:
                 rx.text(AppState.entries_today, font_size="0.8rem", font_weight="500", color="#e5e5e5"),
                 rx.text("total", font_size="0.7rem", color="#525252"),
                 rx.text("\u00b7", color="#333"),
-                rx.text(AppState.micro_entries_today + "/2", font_size="0.8rem", font_weight="500", color="#22d3ee"),
+                rx.text(AppState.micro_entries_today, font_size="0.8rem", font_weight="500", color="#22d3ee"),
                 rx.text("micro", font_size="0.7rem", color="#525252"),
                 spacing="1",
                 align="center",
@@ -759,7 +759,6 @@ def _daemon_detail() -> rx.Component:
             color="#525252",
             letter_spacing="0.05em",
         ),
-        _schedule_row("Wakes this hour", AppState.daemon_wake_rate),
         rx.hstack(
             rx.text("Cooldown", font_size="0.8rem", color="#737373"),
             rx.spacer(),
