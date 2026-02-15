@@ -59,7 +59,13 @@ Three trade retrieval issues resolved:
 
 Deferred for later: TO-5 (streaming cost abort), TO-6 (cron schedule tuning), TO-7 (prompt compression), TO-8 (model routing).
 
-### 5. Full Issue List
+### 5. Trade Debug Interface — ANALYSIS COMPLETE
+
+| File | Contents |
+|------|----------|
+| `trade-debug-interface/analysis.md` | Trade execution telemetry and sub-span instrumentation proposal. Proposes adding visibility into execute_trade, close_position, modify_position internal steps (validation, order fills, SL/TP placement, memory storage). |
+
+### 6. Full Issue List
 
 | File | Contents |
 |------|----------|
@@ -79,7 +85,7 @@ If you're fixing a specific issue:
 
 If you're doing a general review or planning work:
 
-1. Read `trade-recall/retrieval-issues.md` for the current next priority
+1. Read `trade-debug-interface/analysis.md` for the current next proposal (trade execution telemetry)
 2. Read `nous-wiring/executive-summary.md` for Nous integration status
 3. Read `memory-search/design-plan.md` for retrieval orchestrator design
 4. Read `token-optimization/executive-summary.md` for cost optimization status

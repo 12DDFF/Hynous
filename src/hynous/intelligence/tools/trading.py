@@ -25,9 +25,52 @@ Standard tool module pattern:
 import json
 import logging
 import threading
+import time
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _record_trade_span(
+    trade_tool: str,
+    step: str,
+    success: bool,
+    detail: str,
+    duration_ms: int = 0,
+    **extra,
+) -> None:
+    """Record a trade step span to the active debug trace.
+
+    Silent no-op if no trace is active or if recording fails.
+    Must NEVER raise — trading is more important than tracing.
+
+    Args:
+        trade_tool: Which trade tool is running ("execute_trade", "close_position", "modify_position").
+        step: Step name (e.g. "circuit_breaker", "order_fill", "stop_loss").
+        success: Whether this step succeeded.
+        detail: Human-readable one-liner (also useful for AI agents parsing the trace).
+        duration_ms: Wall clock time for this step (0 if instant/negligible).
+        **extra: Additional step-specific fields merged into the span dict.
+    """
+    try:
+        from ...core.request_tracer import get_tracer, get_active_trace, SPAN_TRADE_STEP
+        trace_id = get_active_trace()
+        if not trace_id:
+            return
+        span = {
+            "type": SPAN_TRADE_STEP,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "duration_ms": duration_ms,
+            "trade_tool": trade_tool,
+            "step": step,
+            "success": success,
+            "detail": detail,
+        }
+        span.update(extra)
+        get_tracer().record_span(trace_id, span)
+    except Exception:
+        pass
 
 
 # =============================================================================
@@ -438,7 +481,9 @@ def handle_execute_trade(
     # Check circuit breaker, duplicate position, and position limits
     blocked = _check_trading_allowed(is_new_entry=True, symbol=symbol)
     if blocked:
+        _record_trade_span("execute_trade", "circuit_breaker", False, f"Blocked: {blocked[:150]}", symbol=symbol)
         return blocked
+    _record_trade_span("execute_trade", "circuit_breaker", True, f"Trading allowed for {symbol}", symbol=symbol)
 
     # Load runtime-adjustable settings
     from ...core.trading_settings import get_trading_settings
@@ -657,15 +702,35 @@ def handle_execute_trade(
                 f"(${loss_at_stop:,.0f} / ${portfolio:,.0f}). Target: under {ts.portfolio_risk_cap_warn:.0f}%."
             )
 
+    # --- Validation summary span ---
+    _record_trade_span(
+        "execute_trade", "validation", True,
+        f"{side.upper()} {symbol} | {leverage}x | R:R {pre_rr:.1f}:1 | "
+        f"Confidence {confidence:.0%} ({tier}) | Portfolio risk {portfolio_risk_pct:.1f}%"
+        if confidence is not None and 'pre_rr' in dir() and 'portfolio_risk_pct' in dir()
+        else f"{side.upper()} {symbol} | {leverage}x | Confidence {confidence:.0%}" if confidence is not None
+        else f"{side.upper()} {symbol} | {leverage}x",
+        symbol=symbol, side=side, leverage=leverage,
+        confidence=confidence, tier=tier,
+        rr_ratio=pre_rr if 'pre_rr' in dir() else None,
+        portfolio_risk_pct=portfolio_risk_pct if 'portfolio_risk_pct' in dir() else None,
+        oversized=oversized,
+        warnings=_warnings if _warnings else None,
+    )
+
     # --- Set leverage if specified ---
     if leverage is not None:
+        _lev_start = time.monotonic()
         try:
             provider.update_leverage(symbol, leverage)
         except Exception as e:
+            _record_trade_span("execute_trade", "leverage_set", False, f"Failed to set {leverage}x on {symbol}: {e}", duration_ms=int((time.monotonic() - _lev_start) * 1000), symbol=symbol, leverage=leverage, error=str(e))
             return f"Error setting leverage to {leverage}x: {e}"
+        _record_trade_span("execute_trade", "leverage_set", True, f"Set {leverage}x on {symbol}", duration_ms=int((time.monotonic() - _lev_start) * 1000), symbol=symbol, leverage=leverage)
 
     # --- Execute order ---
     if order_type == "limit":
+        _order_start = time.monotonic()
         try:
             result = provider.limit_open(
                 symbol=symbol,
@@ -675,11 +740,20 @@ def handle_execute_trade(
                 sz=size,
             )
         except Exception as e:
+            _record_trade_span("execute_trade", "order_fill", False, f"Limit order failed: {e}", duration_ms=int((time.monotonic() - _order_start) * 1000), symbol=symbol, side=side, order_type="limit", error=str(e))
             return f"Error placing limit order: {e}"
 
         fill_px = limit_price
         fill_sz = result.get("filled_sz", 0)
         is_resting = result["status"] == "resting"
+        _record_trade_span(
+            "execute_trade", "order_fill", True,
+            f"LIMIT {'resting' if is_resting else 'filled'} {side.upper()} {symbol} @ {_fmt_price(limit_price)}",
+            duration_ms=int((time.monotonic() - _order_start) * 1000),
+            symbol=symbol, side=side, order_type="limit",
+            limit_price=limit_price, status=result.get("status"),
+            oid=result.get("oid"), filled_sz=result.get("filled_sz", 0),
+        )
 
         if is_resting:
             # Limit order resting — not filled yet
@@ -727,6 +801,7 @@ def handle_execute_trade(
     else:
         # Market order
         slip = slippage or config.hyperliquid.default_slippage
+        _order_start = time.monotonic()
         try:
             if size is not None:
                 # Base-asset sizing: convert to USD for market_open
@@ -735,16 +810,30 @@ def handle_execute_trade(
             else:
                 result = provider.market_open(symbol, is_buy, size_usd, slip)
         except Exception as e:
+            _record_trade_span("execute_trade", "order_fill", False, f"Market order failed: {e}", duration_ms=int((time.monotonic() - _order_start) * 1000), symbol=symbol, side=side, order_type="market", error=str(e))
             return f"Error executing market order: {e}"
 
     if not isinstance(result, dict):
+        _record_trade_span("execute_trade", "order_fill", False, "Unexpected order response", duration_ms=int((time.monotonic() - _order_start) * 1000), symbol=symbol, side=side, order_type="market")
         return f"Unexpected order response. Try again."
 
     fill_px = result.get("avg_px", price)
     fill_sz = result.get("filled_sz", 0)
 
     if result.get("status") != "filled" or fill_sz == 0:
+        _record_trade_span("execute_trade", "order_fill", False, f"Not filled: {result.get('status', 'unknown')}", duration_ms=int((time.monotonic() - _order_start) * 1000), symbol=symbol, side=side, order_type="market", status=result.get("status"))
         return f"Order not filled. Status: {result.get('status', 'unknown')}. Try again or adjust size."
+
+    # Calculate slippage vs reference price
+    _slippage_pct = abs(fill_px - price) / price * 100 if price > 0 else 0
+    _record_trade_span(
+        "execute_trade", "order_fill", True,
+        f"MARKET {side.upper()} {fill_sz:.6g} {symbol} @ {_fmt_price(fill_px)} (slippage: {_slippage_pct:.3f}%)",
+        duration_ms=int((time.monotonic() - _order_start) * 1000),
+        symbol=symbol, side=side, order_type="market",
+        fill_px=fill_px, fill_sz=fill_sz, requested_price=price,
+        slippage_pct=round(_slippage_pct, 4), status="filled",
+    )
 
     # Invalidate snapshot + briefing cache so next chat() gets fresh position data
     try:
@@ -754,6 +843,7 @@ def handle_execute_trade(
         invalidate_briefing_cache()
     except Exception:
         pass
+    _record_trade_span("execute_trade", "cache_invalidation", True, "Snapshot + briefing cache cleared")
 
     # --- Build result ---
     effective_usd = size_usd if size_usd else fill_sz * fill_px
@@ -799,6 +889,7 @@ def handle_execute_trade(
             daemon.register_position_type(symbol, trade_type)
             if trade_type == "micro":
                 daemon.record_micro_entry()
+            _record_trade_span("execute_trade", "daemon_record", True, f"Entry #{daemon.entries_today} recorded, type={trade_type}", trade_type=trade_type)
     except Exception:
         pass
 
@@ -813,11 +904,19 @@ def handle_execute_trade(
             reward = fill_px - take_profit
         rr_val = round(reward / risk, 2) if risk > 0 else 0
 
-    _store_trade_memory(
+    _mem_start = time.monotonic()
+    _mem_node_id = _store_trade_memory(
         side, symbol, _fmt_price(fill_px), fill_px,
         stop_loss, take_profit, confidence,
         effective_usd, fill_sz, rr_val, reasoning, lines,
         trade_type=trade_type,
+    )
+    _record_trade_span(
+        "execute_trade", "memory_store",
+        _mem_node_id is not None,
+        f"Node {_mem_node_id} created" if _mem_node_id else "Memory store failed",
+        duration_ms=int((time.monotonic() - _mem_start) * 1000),
+        node_id=_mem_node_id, subtype="custom:trade_entry",
     )
 
     lines.extend(_warnings)
@@ -1140,9 +1239,11 @@ def handle_close_position(
     symbol = symbol.upper()
 
     # --- Get current position ---
+    _pos_start = time.monotonic()
     try:
         state = provider.get_user_state()
     except Exception as e:
+        _record_trade_span("close_position", "position_lookup", False, f"Failed to fetch state: {e}", duration_ms=int((time.monotonic() - _pos_start) * 1000), symbol=symbol, error=str(e))
         return f"Error fetching account state: {e}"
 
     position = None
@@ -1152,7 +1253,16 @@ def handle_close_position(
             break
 
     if not position:
+        _record_trade_span("close_position", "position_lookup", False, f"No open position for {symbol}", duration_ms=int((time.monotonic() - _pos_start) * 1000), symbol=symbol)
         return f"No open position for {symbol}."
+
+    _record_trade_span(
+        "close_position", "position_lookup", True,
+        f"Found {position['side'].upper()} {symbol} | Entry: {_fmt_price(position.get('entry_px', 0))} | Size: {position['size']:.6g}",
+        duration_ms=int((time.monotonic() - _pos_start) * 1000),
+        symbol=symbol, side=position["side"],
+        entry_px=position.get("entry_px", 0), size=position["size"],
+    )
 
     # --- Validate limit close ---
     if order_type == "limit" and limit_price is None:
@@ -1199,15 +1309,24 @@ def handle_close_position(
     else:
         # Market close
         slip = config.hyperliquid.default_slippage
+        _close_start = time.monotonic()
         try:
             result = provider.market_close(symbol, size=close_size, slippage=slip)
         except Exception as e:
+            _record_trade_span("close_position", "order_fill", False, f"Close failed: {e}", duration_ms=int((time.monotonic() - _close_start) * 1000), symbol=symbol, error=str(e))
             return f"Error closing position: {e}"
 
         if not isinstance(result, dict):
+            _record_trade_span("close_position", "order_fill", False, "Unexpected response", duration_ms=int((time.monotonic() - _close_start) * 1000), symbol=symbol)
             return "Unexpected close response. Try again."
         exit_px = result.get("avg_px", 0)
         closed_sz = result.get("filled_sz", close_size or full_size)
+        _record_trade_span(
+            "close_position", "order_fill", True,
+            f"Closed {closed_sz:.6g} {symbol} @ {_fmt_price(exit_px)}",
+            duration_ms=int((time.monotonic() - _close_start) * 1000),
+            symbol=symbol, exit_px=exit_px, closed_sz=closed_sz,
+        )
 
     # Invalidate snapshot + briefing cache so next chat() gets fresh position data
     try:
@@ -1217,6 +1336,7 @@ def handle_close_position(
         invalidate_briefing_cache()
     except Exception:
         pass
+    _record_trade_span("close_position", "cache_invalidation", True, "Snapshot + briefing cache cleared")
 
     # --- Calculate realized PnL ---
     entry_px = position.get("entry_px", 0)
@@ -1238,9 +1358,20 @@ def handle_close_position(
     else:
         lev_return = pnl_pct
 
+    _record_trade_span(
+        "close_position", "pnl_calculation", True,
+        f"PnL: {'+'if realized_pnl_net >= 0 else ''}{_fmt_price(realized_pnl_net)} "
+        f"({lev_return:+.1f}% on margin, {_fmt_pct(pnl_pct)} price)",
+        entry_px=entry_px, exit_px=exit_px,
+        pnl_gross=round(realized_pnl, 2), fee_estimate=round(fee_estimate, 2),
+        pnl_net=round(realized_pnl_net, 2), pnl_pct=round(pnl_pct, 2),
+        lev_return_pct=round(lev_return, 2),
+    )
+
     # --- Cancel associated orders on full close ---
     cancelled = 0
     if partial_pct >= 100:
+        _cancel_start = time.monotonic()
         try:
             # Cancel trigger orders (SL/TP) — cancel_all_orders only handles limits
             triggers = provider.get_trigger_orders(symbol)
@@ -1250,12 +1381,22 @@ def handle_close_position(
                     cancelled += 1
             # Cancel resting limit orders
             cancelled += provider.cancel_all_orders(symbol)
+            _record_trade_span("close_position", "order_cancellation", True, f"Cancelled {cancelled} order(s)", duration_ms=int((time.monotonic() - _cancel_start) * 1000), symbol=symbol, count=cancelled)
         except Exception as e:
             logger.error("Failed to cancel orders for %s: %s", symbol, e)
+            _record_trade_span("close_position", "order_cancellation", False, f"Cancel failed: {e}", duration_ms=int((time.monotonic() - _cancel_start) * 1000), symbol=symbol, error=str(e))
 
     # --- Store outcome in memory (always — every close is documented) ---
     # Find the entry node to link this close back to it (builds trade lifecycle graph)
+    _entry_start = time.monotonic()
     entry_node_id = _find_trade_entry(symbol)
+    _record_trade_span(
+        "close_position", "entry_lookup",
+        entry_node_id is not None,
+        f"Found entry node {entry_node_id}" if entry_node_id else f"No entry node found for {symbol}",
+        duration_ms=int((time.monotonic() - _entry_start) * 1000),
+        symbol=symbol, entry_node_id=entry_node_id,
+    )
 
     # Resolve opened_at: position field → daemon registry → entry node timestamp
     opened_at = position.get("opened_at", "")
@@ -1309,6 +1450,7 @@ def handle_close_position(
     except Exception:
         pass
 
+    _mem_start = time.monotonic()
     close_node_id = _store_to_nous(
         subtype="custom:trade_close",
         title=f"{action_label_upper} {position['side'].upper()} {symbol} @ {_fmt_price(exit_px)}",
@@ -1336,6 +1478,17 @@ def handle_close_position(
     # Hebbian: strengthen the trade lifecycle edge (MF-1)
     if close_node_id and entry_node_id:
         _strengthen_trade_edge(entry_node_id, close_node_id)
+
+    _record_trade_span(
+        "close_position", "memory_store",
+        close_node_id is not None,
+        f"Node {close_node_id} created, linked to entry {entry_node_id}" if close_node_id and entry_node_id
+        else f"Node {close_node_id} created (no entry link)" if close_node_id
+        else "Memory store failed",
+        duration_ms=int((time.monotonic() - _mem_start) * 1000),
+        node_id=close_node_id, entry_node_id=entry_node_id,
+        subtype="custom:trade_close", edge_strengthened=bool(close_node_id and entry_node_id),
+    )
 
     lines_append_id = None
     if close_node_id:
@@ -1435,9 +1588,11 @@ def handle_modify_position(
         return "Nothing to modify. Provide stop_loss, take_profit, leverage, or cancel_orders."
 
     # --- Get current position ---
+    _pos_start = time.monotonic()
     try:
         state = provider.get_user_state()
     except Exception as e:
+        _record_trade_span("modify_position", "position_lookup", False, f"Failed to fetch state: {e}", duration_ms=int((time.monotonic() - _pos_start) * 1000), symbol=symbol, error=str(e))
         return f"Error fetching account state: {e}"
 
     position = None
@@ -1447,7 +1602,15 @@ def handle_modify_position(
             break
 
     if not position:
+        _record_trade_span("modify_position", "position_lookup", False, f"No open position for {symbol}", duration_ms=int((time.monotonic() - _pos_start) * 1000), symbol=symbol)
         return f"No open position for {symbol}."
+
+    _record_trade_span(
+        "modify_position", "position_lookup", True,
+        f"Found {position['side'].upper()} {symbol} | Mark: {_fmt_price(position.get('mark_px', 0))} | Size: {position.get('size', 0):.6g}",
+        duration_ms=int((time.monotonic() - _pos_start) * 1000),
+        symbol=symbol, side=position.get("side"), mark_px=position.get("mark_px", 0), size=position.get("size", 0),
+    )
 
     is_long = position.get("side") == "long"
     mark_px = position.get("mark_px", 0)
@@ -1562,6 +1725,16 @@ def handle_modify_position(
         except Exception as e:
             changes.append(f"Leverage update FAILED: {e}")
 
+    # Record order management span summarizing all changes
+    _record_trade_span(
+        "modify_position", "order_management",
+        bool(changes),
+        "; ".join(changes) if changes else "No changes applied",
+        symbol=symbol,
+        new_stop=stop_loss, new_target=take_profit, new_leverage=leverage,
+        cancel_all=cancel_orders,
+    )
+
     # Invalidate snapshot + briefing cache so next chat() gets fresh data
     try:
         from ..context_snapshot import invalidate_snapshot
@@ -1570,10 +1743,19 @@ def handle_modify_position(
         invalidate_briefing_cache()
     except Exception:
         pass
+    _record_trade_span("modify_position", "cache_invalidation", True, "Snapshot + briefing cache cleared")
 
     # --- Store modification in memory (always — every adjustment is documented) ---
     # Find the entry node to link this modification back to it
+    _entry_start = time.monotonic()
     entry_node_id = _find_trade_entry(symbol)
+    _record_trade_span(
+        "modify_position", "entry_lookup",
+        entry_node_id is not None,
+        f"Found entry node {entry_node_id}" if entry_node_id else f"No entry node found for {symbol}",
+        duration_ms=int((time.monotonic() - _entry_start) * 1000),
+        symbol=symbol, entry_node_id=entry_node_id,
+    )
 
     mod_details = "; ".join(changes) if changes else "no changes applied"
     mod_content = (
@@ -1610,6 +1792,7 @@ def handle_modify_position(
     if leverage is not None:
         mod_signals["new_leverage"] = leverage
 
+    _mem_start = time.monotonic()
     mem_id = _store_to_nous(
         subtype="custom:trade_modify",
         title=f"MODIFIED {position['side'].upper()} {symbol}",
@@ -1618,6 +1801,17 @@ def handle_modify_position(
         signals=mod_signals,
         link_to=entry_node_id,  # Edge: entry --part_of--> modify (SSA 0.85)
         edge_type="part_of",
+    )
+
+    _record_trade_span(
+        "modify_position", "memory_store",
+        mem_id is not None,
+        f"Node {mem_id} created, linked to entry {entry_node_id}" if mem_id and entry_node_id
+        else f"Node {mem_id} created (no entry link)" if mem_id
+        else "Memory store failed",
+        duration_ms=int((time.monotonic() - _mem_start) * 1000),
+        node_id=mem_id, entry_node_id=entry_node_id,
+        subtype="custom:trade_modify",
     )
 
     # --- Build result ---

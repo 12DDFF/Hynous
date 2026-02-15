@@ -2950,6 +2950,7 @@ class AppState(rx.State):
                 "memory_op": ("Memory", "#a78bfa"),
                 "compression": ("Compress", "#fb923c"),
                 "queue_flush": ("Queue", "#94a3b8"),
+                "trade_step": ("Trade", "#f472b6"),
             }
             label, color = label_map.get(span_type, (span_type, "#525252"))
 
@@ -2980,6 +2981,12 @@ class AppState(rx.State):
                 summary = f"{span.get('exchanges_evicted', 0)} exchanges evicted"
             elif span_type == "queue_flush":
                 summary = f"{span.get('items_count', 0)} items"
+            elif span_type == "trade_step":
+                _step = span.get("step", "")
+                _tool = span.get("trade_tool", "")
+                _detail = span.get("detail", "")
+                _ok = span.get("success", True)
+                summary = f"{'[FAIL] ' if not _ok else ''}{_step}: {_detail}" if _detail else _step
             else:
                 summary = ""
 

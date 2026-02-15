@@ -42,7 +42,7 @@ hynous/
 ├── tests/               # Test suites
 ├── docs/                # Documentation
 └── revisions/           # Known issues & planned improvements
-    ├── revision-exploration.md     # All 19 issues (prioritized P0-P3)
+    ├── revision-exploration.md     # All 21 issues (prioritized P0-P3, all resolved)
     ├── nous-wiring/                # Nous ↔ Python integration — ALL RESOLVED
     │   ├── executive-summary.md    # Start here — issue categories overview
     │   ├── nous-wiring-revisions.md # 10 wiring issues (NW-1 to NW-10) — ALL FIXED
@@ -53,6 +53,9 @@ hynous/
     ├── trade-recall/               # Trade retrieval issues — ALL FIXED
     │   ├── retrieval-issues.md       # Root cause analysis + resolution (event_time, memory_type, thesis retrieval)
     │   └── implementation-guide.md   # Step-by-step implementation guide (9 steps)
+    ├── trade-debug-interface/      # Trade execution telemetry — IMPLEMENTED
+    │   ├── analysis.md              # Sub-span instrumentation proposal for trade debugging
+    │   └── implementation-guide.md  # Step-by-step implementation guide (6 chunks)
     ├── graph-changes/              # Graph visualization enhancements
     │   └── cluster-visualization.md # Deterministic cluster layout in force-graph — DONE
     └── token-optimization/         # Token cost reduction — TO-1 through TO-4 DONE

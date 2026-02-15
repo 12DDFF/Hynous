@@ -53,4 +53,5 @@ If you're an AI agent:
 - `../revisions/nous-wiring/more-functionality.md` — Nous features (MF-0 to MF-15) — 14 DONE, 2 SKIPPED
 - `../revisions/memory-search/design-plan.md` — Intelligent Retrieval Orchestrator design — IMPLEMENTED
 - `../revisions/memory-search/implementation-guide.md` — Orchestrator implementation guide — IMPLEMENTED
+- `../revisions/trade-debug-interface/analysis.md` — Trade execution telemetry — ANALYSIS COMPLETE
 - `../revisions/token-optimization/executive-summary.md` — Token cost optimization — TO-1 through TO-4 DONE

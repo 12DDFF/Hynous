@@ -41,6 +41,7 @@ SPAN_TOOL_EXEC = "tool_execution"
 SPAN_MEMORY_OP = "memory_op"
 SPAN_COMPRESSION = "compression"
 SPAN_QUEUE_FLUSH = "queue_flush"
+SPAN_TRADE_STEP = "trade_step"
 
 
 class RequestTracer:
