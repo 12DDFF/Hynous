@@ -276,6 +276,7 @@ def _header_bar() -> rx.Component:
             ),
             spacing="3",
             align="center",
+            min_width="0",
         ),
         rx.hstack(
             rx.button(
@@ -285,6 +286,7 @@ def _header_bar() -> rx.Component:
                 color="#737373",
                 size="2",
                 cursor="pointer",
+                white_space="nowrap",
                 _hover={"color": "#ef4444"},
             ),
             rx.button(
@@ -298,13 +300,18 @@ def _header_bar() -> rx.Component:
                 border_radius="8px",
                 padding_x="1.5rem",
                 font_weight="500",
+                white_space="nowrap",
                 _hover={"opacity": "0.9"},
             ),
-            spacing="2",
+            spacing="3",
+            flex_shrink="0",
+            align="center",
         ),
         width="100%",
         justify="between",
         align="center",
+        flex_wrap="wrap",
+        gap="0.75rem",
         margin_bottom="1.5rem",
     )
 
