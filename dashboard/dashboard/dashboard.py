@@ -46,6 +46,9 @@ def _dashboard_content() -> rx.Component:
             .pnl-pulse-red { animation: pnl-pulse-red 0.8s ease-out; }
             .scanner-radar-active { animation: radar-sweep 2s ease-in-out infinite; }
             .unread-dot { animation: unread-pulse 2s ease-in-out infinite; }
+            /* Hide Reflex watermark — blocks bottom-pinned UI */
+            div:has(> a[href*="reflex.dev"]) { display: none !important; }
+            a[href*="reflex.dev"] { display: none !important; }
         """),
 
         # Live clock + animated number counter
