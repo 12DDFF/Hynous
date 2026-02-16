@@ -1563,7 +1563,7 @@ class Daemon:
             message = track_record + "\n\n" + message
 
         response = self._wake_agent(
-            message, max_coach_cycles=0, max_tokens=384,
+            message, max_coach_cycles=0, max_tokens=512,
             source="daemon:scanner",
         )
         if response:
@@ -2090,7 +2090,7 @@ class Daemon:
                 "",
                 "Briefing has market data. Address [Warnings] and [Questions] first.",
                 "Then pick one thing to learn — a concept, pattern, or contradiction — research it, store the lesson.",
-                "Keep your response to 1-3 sentences plus any tool actions.",
+                "Share what genuinely interests you right now. Be curious, not mechanical.",
             ]
             review_type = "Periodic review + learning"
         else:
@@ -2099,7 +2099,7 @@ class Daemon:
                 "",
                 "Briefing has market data. Address [Warnings] and [Questions] first.",
                 "Check all symbols, check your watchpoints (set new ones if you have none).",
-                "Keep your response to 1-3 sentences.",
+                "Share your honest take — what's the most interesting thing happening right now? Don't just repeat the last review.",
             ]
             review_type = "Periodic market review"
 
