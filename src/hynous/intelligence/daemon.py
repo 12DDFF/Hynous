@@ -2003,7 +2003,7 @@ class Daemon:
             # Phantom stats + recent results (persist across restarts)
             stats_data = {
                 "stats": self._phantom_stats,
-                "results": self._phantom_results[-100:],  # Keep last 100 resolved
+                "results": self._phantom_results,
             }
             _atomic_write(storage / "phantom_stats.json", _json.dumps(stats_data, default=str))
         except Exception as e:

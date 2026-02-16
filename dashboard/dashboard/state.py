@@ -267,6 +267,7 @@ class ClosedTrade(BaseModel):
     rr_ratio: float = 0.0
     trade_type: str = ""  # "micro" or "macro"
     mfe_pct: float = 0.0  # max favorable excursion ROE %
+    fee_loss: bool = False  # directionally correct but fees ate profit
     detail_html: str = ""  # pre-rendered HTML for expanded view
 
 
@@ -380,13 +381,15 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         "rr_ratio": 0.0,
         "trade_type": "",
         "mfe_pct": 0.0,
+        "fee_loss": False,
     }
 
-    # Get MFE + trade_type from close node's signals
+    # Get MFE + trade_type + fee_loss from close node's signals
     try:
         close_body = json.loads(close_node.get("content_body", "{}"))
         close_signals = close_body.get("signals", {})
         result["mfe_pct"] = float(close_signals.get("mfe_pct", 0))
+        result["fee_loss"] = bool(close_signals.get("fee_loss", False))
         if close_signals.get("trade_type"):
             result["trade_type"] = close_signals["trade_type"]
     except Exception:
@@ -709,6 +712,7 @@ class AppState(rx.State):
     settings_micro_sl_min: float = 0.2
     settings_micro_sl_warn: float = 0.3
     settings_micro_sl_max: float = 0.5
+    settings_micro_tp_min: float = 0.15
     settings_micro_tp_max: float = 1.0
     settings_micro_leverage: int = 20
     # Risk
@@ -2652,6 +2656,7 @@ class AppState(rx.State):
     journal_total_pnl: str = "—"
     journal_profit_factor: str = "—"
     journal_total_trades: str = "0"
+    journal_fee_losses: str = "0"
     journal_current_streak: str = "—"
     journal_max_win_streak: str = "0"
     journal_max_loss_streak: str = "0"
@@ -2670,6 +2675,8 @@ class AppState(rx.State):
     regret_playbooks: list[PlaybookRecord] = []
     journal_expanded_trades: list[str] = []
     journal_expanded_phantoms: list[str] = []
+    journal_show_all_trades: bool = False
+    journal_show_all_phantoms: bool = False
 
     def set_journal_tab(self, tab: str):
         self.journal_tab = tab
@@ -2687,6 +2694,12 @@ class AppState(rx.State):
             self.journal_expanded_phantoms = [p for p in self.journal_expanded_phantoms if p != phantom_id]
         else:
             self.journal_expanded_phantoms = self.journal_expanded_phantoms + [phantom_id]
+
+    def toggle_show_all_trades(self):
+        self.journal_show_all_trades = not self.journal_show_all_trades
+
+    def toggle_show_all_phantoms(self):
+        self.journal_show_all_phantoms = not self.journal_show_all_phantoms
 
     def set_equity_days(self, days: str):
         """Update equity chart timeframe."""
@@ -2721,6 +2734,7 @@ class AppState(rx.State):
         self.settings_micro_sl_min = ts.micro_sl_min_pct
         self.settings_micro_sl_warn = ts.micro_sl_warn_pct
         self.settings_micro_sl_max = ts.micro_sl_max_pct
+        self.settings_micro_tp_min = ts.micro_tp_min_pct
         self.settings_micro_tp_max = ts.micro_tp_max_pct
         self.settings_micro_leverage = ts.micro_leverage
         self.settings_rr_floor_reject = ts.rr_floor_reject
@@ -2756,6 +2770,7 @@ class AppState(rx.State):
             micro_sl_min_pct=self.settings_micro_sl_min,
             micro_sl_warn_pct=self.settings_micro_sl_warn,
             micro_sl_max_pct=self.settings_micro_sl_max,
+            micro_tp_min_pct=self.settings_micro_tp_min,
             micro_tp_max_pct=self.settings_micro_tp_max,
             micro_leverage=self.settings_micro_leverage,
             rr_floor_reject=self.settings_rr_floor_reject,
@@ -2807,6 +2822,8 @@ class AppState(rx.State):
         self.settings_micro_sl_warn = float(v); self.settings_dirty = True
     def set_settings_micro_sl_max(self, v: str):
         self.settings_micro_sl_max = float(v); self.settings_dirty = True
+    def set_settings_micro_tp_min(self, v: str):
+        self.settings_micro_tp_min = float(v); self.settings_dirty = True
     def set_settings_micro_tp_max(self, v: str):
         self.settings_micro_tp_max = float(v); self.settings_dirty = True
     def set_settings_micro_leverage(self, v: str):
@@ -3038,6 +3055,7 @@ class AppState(rx.State):
                 pf = stats['profit_factor']
                 self.journal_profit_factor = f"{pf:.2f}" if pf != float('inf') else "∞" if stats['total_trades'] > 0 else "—"
                 self.journal_total_trades = str(stats['total_trades'])
+                self.journal_fee_losses = str(stats.get('fee_losses', 0))
                 # Streaks
                 streak = stats['current_streak']
                 if streak > 0:
@@ -3142,7 +3160,7 @@ class AppState(rx.State):
                 from hynous.nous.client import get_client
                 nous_client = get_client()
                 if nous_client:
-                    raw_nodes = nous_client.list_nodes(subtype="custom:trade_close", limit=50)
+                    raw_nodes = nous_client.list_nodes(subtype="custom:trade_close", limit=500)
                     for node in raw_nodes:
                         try:
                             body = json.loads(node.get("content_body", "{}"))
@@ -3158,7 +3176,7 @@ class AppState(rx.State):
                 pass
 
             trades = []
-            for t in stats.trades[:30]:
+            for t in stats.trades:
                 dur_h = round(t.duration_hours, 1)
                 if dur_h >= 24:
                     dur_str = f"{dur_h / 24:.1f}d"
@@ -3203,6 +3221,7 @@ class AppState(rx.State):
                     rr_ratio=enrichment.get("rr_ratio", 0.0),
                     trade_type=enrichment.get("trade_type", ""),
                     mfe_pct=enrichment.get("mfe_pct", 0.0),
+                    fee_loss=enrichment.get("fee_loss", False) or t.fee_loss,
                     detail_html=detail_html,
                 ))
             breakdown = [
@@ -3225,6 +3244,7 @@ class AppState(rx.State):
                     "max_win_streak": stats.max_win_streak,
                     "max_loss_streak": stats.max_loss_streak,
                     "avg_duration_hours": stats.avg_duration_hours,
+                    "fee_losses": stats.fee_losses,
                 },
                 trades,
                 breakdown,
@@ -3241,8 +3261,8 @@ class AppState(rx.State):
             if client is None:
                 return None
 
-            missed = client.list_nodes(subtype="custom:missed_opportunity", limit=200)
-            good = client.list_nodes(subtype="custom:good_pass", limit=200)
+            missed = client.list_nodes(subtype="custom:missed_opportunity", limit=500)
+            good = client.list_nodes(subtype="custom:good_pass", limit=500)
             playbooks = client.list_nodes(subtype="custom:playbook", limit=30)
 
             return {"missed": missed, "good": good, "playbooks": playbooks}

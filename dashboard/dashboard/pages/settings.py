@@ -181,6 +181,8 @@ def _micro_card() -> rx.Component:
         _field("Stop Loss Max", "Above this SL the trade is rejected",
                AppState.settings_micro_sl_max, AppState.set_settings_micro_sl_max, "%"),
         _divider(),
+        _field("Take Profit Min", "Minimum TP to clear round-trip fees",
+               AppState.settings_micro_tp_min, AppState.set_settings_micro_tp_min, "%"),
         _field("Take Profit Max", "Maximum TP for micro trades",
                AppState.settings_micro_tp_max, AppState.set_settings_micro_tp_max, "%"),
         _field("Leverage", "Fixed leverage used for all micro trades",

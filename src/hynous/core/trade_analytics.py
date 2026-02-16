@@ -36,6 +36,7 @@ class TradeRecord:
     duration_hours: float = 0.0
     thesis: str = ""    # entry thesis from linked trade_entry node
     trade_type: str = "macro"  # "micro" or "macro"
+    fee_loss: bool = False  # directionally correct but fees ate profit
 
 
 @dataclass
@@ -44,6 +45,7 @@ class TradeStats:
     total_trades: int = 0
     wins: int = 0
     losses: int = 0
+    fee_losses: int = 0  # directionally correct but net negative from fees
     win_rate: float = 0.0
     total_pnl: float = 0.0
     avg_win: float = 0.0
@@ -61,7 +63,7 @@ class TradeStats:
 
 def fetch_trade_history(
     nous_client=None,
-    limit: int = 50,
+    limit: int = 500,
     created_after: str | None = None,
     created_before: str | None = None,
 ) -> list[TradeRecord]:
@@ -133,6 +135,13 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
     if trade_type == "macro" and enrichment.get("trade_type"):
         trade_type = enrichment["trade_type"]
 
+    # Fee loss: either from stored flag or inferred (gross > 0 but net < 0)
+    fee_loss = bool(signals.get("fee_loss", False))
+    if not fee_loss:
+        pnl_gross = float(signals.get("pnl_gross", 0))
+        if pnl_gross > 0 and pnl_usd < 0:
+            fee_loss = True
+
     return TradeRecord(
         symbol=symbol,
         side=side,
@@ -146,6 +155,7 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
         duration_hours=enrichment["duration_hours"],
         thesis=enrichment["thesis"],
         trade_type=trade_type,
+        fee_loss=fee_loss,
     )
 
 
@@ -284,6 +294,7 @@ def compute_stats(trades: list[TradeRecord]) -> TradeStats:
     losses = [t for t in trades if t.pnl_usd <= 0]
     stats.wins = len(wins)
     stats.losses = len(losses)
+    stats.fee_losses = sum(1 for t in trades if t.fee_loss)
     stats.win_rate = (stats.wins / stats.total_trades * 100) if stats.total_trades > 0 else 0
 
     stats.total_pnl = sum(t.pnl_usd for t in trades)
@@ -342,14 +353,14 @@ def compute_stats(trades: list[TradeRecord]) -> TradeStats:
 
 def get_trade_stats(
     nous_client=None,
-    limit: int = 50,
+    limit: int = 500,
     created_after: str | None = None,
     created_before: str | None = None,
 ) -> TradeStats:
     """Main entry point — cached for 30s (default queries only)."""
     global _cached_stats, _cache_time
 
-    has_filters = created_after or created_before or limit != 50
+    has_filters = created_after or created_before or limit != 500
 
     # Use cache for default (unfiltered) queries only
     if not has_filters:
@@ -386,9 +397,13 @@ def format_stats_compact(stats: TradeStats) -> str:
     elif stats.current_streak < -1:
         streak = f", {abs(stats.current_streak)}L streak"
 
+    fee_note = ""
+    if stats.fee_losses > 0:
+        fee_note = f", {stats.fee_losses} fee losses (direction correct, fees ate profit)"
+
     return (
         f"Performance: {stats.total_trades} trades, "
         f"{stats.win_rate:.0f}% win, "
         f"{sign}${stats.total_pnl:.2f}, "
-        f"PF {pf_str}{streak}"
+        f"PF {pf_str}{streak}{fee_note}"
     )

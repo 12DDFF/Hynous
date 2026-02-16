@@ -30,6 +30,12 @@ def _stats_row() -> rx.Component:
         stat_card("Profit Factor", AppState.journal_profit_factor, "gross profit / loss"),
         stat_card("Total Trades", AppState.journal_total_trades, "closed positions"),
         stat_card(
+            "Fee Losses",
+            AppState.journal_fee_losses,
+            "direction correct, fees ate profit",
+            value_color="#fbbf24",
+        ),
+        stat_card(
             "Current Streak",
             AppState.journal_current_streak,
             "consecutive",
@@ -138,7 +144,12 @@ def _equity_chart() -> rx.Component:
 
 def _trade_row(trade: ClosedTrade) -> rx.Component:
     """Single trade row — clickable to expand details."""
-    pnl_color = rx.cond(trade.pnl_usd > 0, "#4ade80", "#f87171")
+    # Fee losses get amber — directionally correct but fees ate profit
+    pnl_color = rx.cond(
+        trade.fee_loss,
+        "#fbbf24",  # amber for fee losses
+        rx.cond(trade.pnl_usd > 0, "#4ade80", "#f87171"),
+    )
     side_color = rx.cond(trade.side == "long", "#4ade80", "#f87171")
     is_expanded = AppState.journal_expanded_trades.contains(trade.trade_id)
     # Trade type dot color
@@ -215,13 +226,50 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                 font_family="JetBrains Mono",
             ),
             # PnL $
-            rx.text(
-                "$" + trade.pnl_usd.to(str),
-                font_size="0.8rem",
-                font_weight="500",
-                color=pnl_color,
+            rx.hstack(
+                rx.text(
+                    "$" + trade.pnl_usd.to(str),
+                    font_size="0.8rem",
+                    font_weight="500",
+                    color=pnl_color,
+                    font_family="JetBrains Mono",
+                ),
+                rx.cond(
+                    trade.fee_loss,
+                    rx.text(
+                        "FEE",
+                        font_size="0.55rem",
+                        font_weight="600",
+                        color="#fbbf24",
+                        padding_x="3px",
+                        padding_y="1px",
+                        border="1px solid #fbbf24",
+                        border_radius="3px",
+                        line_height="1",
+                    ),
+                    rx.fragment(),
+                ),
                 min_width="70px",
-                font_family="JetBrains Mono",
+                spacing="1",
+                align="center",
+            ),
+            # Peak ROE
+            rx.cond(
+                trade.mfe_pct > 0,
+                rx.text(
+                    "+" + trade.mfe_pct.to(str) + "%",
+                    font_size="0.8rem",
+                    font_weight="500",
+                    color="#4ade80",
+                    min_width="60px",
+                    font_family="JetBrains Mono",
+                ),
+                rx.text(
+                    "—",
+                    font_size="0.8rem",
+                    color="#525252",
+                    min_width="60px",
+                ),
             ),
             # Duration
             rx.text(
@@ -282,6 +330,7 @@ def _trade_table() -> rx.Component:
                 rx.text("Exit", font_size="0.7rem", color="#525252", min_width="80px"),
                 rx.text("PnL %", font_size="0.7rem", color="#525252", min_width="60px"),
                 rx.text("PnL $", font_size="0.7rem", color="#525252", min_width="70px"),
+                rx.text("Peak", font_size="0.7rem", color="#525252", min_width="60px"),
                 rx.text("Duration", font_size="0.7rem", color="#525252", min_width="50px"),
                 width="100%",
                 padding_y="0.5rem",
@@ -291,10 +340,27 @@ def _trade_table() -> rx.Component:
             # Rows
             rx.cond(
                 AppState.closed_trades.length() > 0,
-                rx.box(
-                    rx.foreach(AppState.closed_trades, _trade_row),
-                    max_height="300px",
-                    overflow_y="auto",
+                rx.vstack(
+                    rx.box(
+                        rx.foreach(AppState.closed_trades, _trade_row),
+                        max_height=rx.cond(AppState.journal_show_all_trades, "none", "300px"),
+                        overflow_y="auto",
+                        width="100%",
+                    ),
+                    rx.box(
+                        rx.text(
+                            rx.cond(AppState.journal_show_all_trades, "Collapse", "Show all"),
+                            font_size="0.72rem",
+                            color="#525252",
+                            _hover={"color": "#a3a3a3"},
+                        ),
+                        on_click=AppState.toggle_show_all_trades,
+                        cursor="pointer",
+                        padding_top="6px",
+                        text_align="center",
+                        width="100%",
+                    ),
+                    spacing="0",
                     width="100%",
                 ),
                 rx.center(
@@ -575,10 +641,27 @@ def _phantom_table() -> rx.Component:
             ),
             rx.cond(
                 AppState.regret_phantoms.length() > 0,
-                rx.box(
-                    rx.foreach(AppState.regret_phantoms, _phantom_row),
-                    max_height="350px",
-                    overflow_y="auto",
+                rx.vstack(
+                    rx.box(
+                        rx.foreach(AppState.regret_phantoms, _phantom_row),
+                        max_height=rx.cond(AppState.journal_show_all_phantoms, "none", "350px"),
+                        overflow_y="auto",
+                        width="100%",
+                    ),
+                    rx.box(
+                        rx.text(
+                            rx.cond(AppState.journal_show_all_phantoms, "Collapse", "Show all"),
+                            font_size="0.72rem",
+                            color="#525252",
+                            _hover={"color": "#a3a3a3"},
+                        ),
+                        on_click=AppState.toggle_show_all_phantoms,
+                        cursor="pointer",
+                        padding_top="6px",
+                        text_align="center",
+                        width="100%",
+                    ),
+                    spacing="0",
                     width="100%",
                 ),
                 rx.center(

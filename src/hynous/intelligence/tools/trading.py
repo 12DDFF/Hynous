@@ -631,6 +631,16 @@ def handle_execute_trade(
                 _warnings.append(f"Note: SL distance {sl_dist*100:.1f}% is wider than {ts.micro_sl_max_pct}% recommended for micro trades")
         if take_profit is not None:
             tp_dist = abs(take_profit - ref_price) / ref_price
+            micro_tp_min = ts.micro_tp_min_pct / 100
+            if tp_dist < micro_tp_min:
+                suggested_tp = ref_price * (1 + ts.micro_tp_min_pct / 100) if is_buy else ref_price * (1 - ts.micro_tp_min_pct / 100)
+                fee_roe = round(0.07 * leverage, 1)  # round-trip taker fee as ROE%
+                return (
+                    f"Error: TP distance {tp_dist*100:.2f}% won't cover round-trip fees "
+                    f"(~{fee_roe}% ROE at {leverage}x). Minimum {ts.micro_tp_min_pct}% "
+                    f"({ts.micro_tp_min_pct * leverage:.0f}% ROE). "
+                    f"Try TP at {_fmt_price(suggested_tp)}."
+                )
             if tp_dist > micro_tp_max:
                 _warnings.append(f"Note: TP distance {tp_dist*100:.1f}% is wider than {ts.micro_tp_max_pct}% recommended for micro trades")
 
@@ -1471,6 +1481,9 @@ def handle_close_position(
             "opened_at": opened_at,
             "mfe_pct": round(mfe_pct, 2),
             "trade_type": close_trade_type,
+            "fee_loss": is_fee_loss,
+            "pnl_gross": round(realized_pnl, 2),
+            "fee_estimate": round(fee_estimate, 2),
         },
         link_to=entry_node_id,  # Edge: entry --part_of--> close (SSA 0.85)
         edge_type="part_of",
@@ -1499,12 +1512,21 @@ def handle_close_position(
         lines_append_id = msg
 
     # --- Build result ---
+    # Detect fee-loss: directionally correct but fees ate the profit
+    is_fee_loss = realized_pnl > 0 and realized_pnl_net < 0
     lines = [
         f"{action_label_upper}: {symbol} {position['side'].upper()} ({close_label})",
         f"Entry: {_fmt_price(entry_px)} → Exit: {_fmt_price(exit_px)}",
         f"Realized PnL: {pnl_sign}{_fmt_price(realized_pnl_net)} ({lev_return:+.1f}% on margin, {_fmt_pct(pnl_pct)} price move)",
         f"Size closed: {closed_sz:.6g} {symbol}",
     ]
+    if is_fee_loss:
+        lines.append(
+            f"⚠ FEE LOSS: Trade was directionally correct (gross +{_fmt_price(realized_pnl)}) "
+            f"but fees ({_fmt_price(fee_estimate)}) ate the profit. "
+            f"This does NOT count as a bad trade — the direction was right, the exit was too early. "
+            f"Let TP work or need wider targets to clear fees."
+        )
     if cancelled > 0:
         lines.append(f"Cancelled {cancelled} associated order(s)")
     lines.append(f"Reason: {reasoning}")
