@@ -259,3 +259,82 @@ class TestAnalyzeIsolatedNodes:
         result_with = handle_analyze_memory(min_staleness=0.3, include_isolated=True)
         assert "Isolated" in result_with
         assert "stale 1" in result_with or "stale 2" in result_with
+
+
+class TestLargeBatchPruneConcurrent:
+    """Concurrent batch prune with many nodes — full E2E flow."""
+
+    @patch("hynous.intelligence.tools.pruning.get_active_trace", return_value=None)
+    @patch("hynous.nous.client.get_client")
+    def test_analyze_then_bulk_archive_50_nodes(self, mock_get_client, _mock_trace):
+        """Analyze graph with 50 stale + 10 fresh -> archive all 50 stale concurrently."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        # Build graph: 50 stale ACTIVE nodes in 10 groups + 10 fresh nodes
+        nodes = []
+        edges = []
+        stale_ids = []
+        for g in range(10):
+            for i in range(5):
+                nid = f"stale_{g}_{i}"
+                nodes.append(_make_node(
+                    nid, f"Old trade {g}-{i}", "custom:trade_entry", "ACTIVE",
+                    retrievability=0.05, access_count=1, created_days_ago=120,
+                ))
+                stale_ids.append(nid)
+                if i > 0:
+                    edges.append(_make_edge(f"e_{g}_{i}", f"stale_{g}_{i-1}", nid))
+
+        for i in range(10):
+            nid = f"fresh_{i}"
+            nodes.append(_make_node(
+                nid, f"Active thesis {i}", "custom:thesis", "ACTIVE",
+                retrievability=0.95, access_count=20, created_days_ago=2,
+            ))
+
+        mock_client.get_graph.return_value = {"nodes": nodes, "edges": edges}
+
+        # Phase 1: Analyze
+        analysis = handle_analyze_memory(min_staleness=0.3)
+        assert "Group" in analysis
+
+        # Phase 2: Bulk archive all 50 stale nodes
+        def mock_get_node(nid):
+            if nid.startswith("stale_"):
+                return _make_full_node(nid, f"Old trade {nid}", "custom:trade_entry", "ACTIVE", 1)
+            return None
+
+        mock_client.get_node.side_effect = mock_get_node
+        mock_client.update_node.return_value = {}
+
+        start = time.monotonic()
+        result = handle_batch_prune(node_ids=stale_ids, action="archive")
+        elapsed = time.monotonic() - start
+
+        assert "50/50" in result
+        assert mock_client.update_node.call_count == 50
+        # Concurrent execution should be fast even with 50 nodes
+        assert elapsed < 5.0, f"Batch archive of 50 nodes took {elapsed:.2f}s"
+
+    @patch("hynous.intelligence.tools.pruning.get_active_trace", return_value=None)
+    @patch("hynous.nous.client.get_client")
+    def test_bulk_delete_with_edge_cleanup(self, mock_get_client, _mock_trace):
+        """Delete 30 nodes concurrently, each with edges — all cleaned up."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        ids = [f"n{i}" for i in range(30)]
+        mock_client.get_node.side_effect = lambda nid: _make_full_node(
+            nid, f"Node {nid}", "custom:thesis", "WEAK", 2,
+        )
+        mock_client.get_edges.side_effect = lambda nid, **kw: [
+            {"id": f"{nid}_e1"}, {"id": f"{nid}_e2"},
+        ]
+        mock_client.delete_edge.return_value = True
+        mock_client.delete_node.return_value = True
+
+        result = handle_batch_prune(node_ids=ids, action="delete")
+        assert "30/30" in result
+        assert mock_client.delete_node.call_count == 30
+        assert mock_client.delete_edge.call_count == 60  # 30 * 2 edges each

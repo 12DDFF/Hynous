@@ -16,6 +16,7 @@ Standard tool module pattern:
 import logging
 import time
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -371,11 +372,77 @@ def _generate_group_label(nodes: list[dict], subtypes: list[str]) -> str:
 # 4. BATCH PRUNE HANDLER
 # =============================================================================
 
+def _prune_one_node(client, nid: str, action: str) -> dict:
+    """Prune a single node. Returns a result dict with 'status' key.
+
+    Thread-safe — each call uses its own HTTP requests.
+    Returns one of:
+      {"status": "succeeded", "id": ..., "title": ..., "action": ..., ...}
+      {"status": "skipped",   "id": ..., "title": ..., "reason": ...}
+      {"status": "failed",    "id": ..., "reason": ...}
+    """
+    try:
+        node = client.get_node(nid)
+        if not node:
+            return {"status": "failed", "id": nid, "reason": "not found"}
+
+        title = node.get("content_title", "Untitled")
+        lifecycle = node.get("state_lifecycle", "ACTIVE")
+        access_count = node.get("neural_access_count", 0)
+        try:
+            access_count = int(access_count)
+        except (TypeError, ValueError):
+            access_count = 0
+
+        subtype = node.get("subtype", "")
+
+        # Safety: skip high-value active nodes
+        if action == "delete" and lifecycle == "ACTIVE" and access_count > 10:
+            return {
+                "status": "skipped", "id": nid, "title": title,
+                "reason": f"ACTIVE with {access_count} accesses — use delete_memory for individual removal",
+            }
+
+        if action == "archive":
+            if lifecycle == "DORMANT":
+                return {"status": "skipped", "id": nid, "title": title, "reason": "already DORMANT"}
+            client.update_node(nid, state_lifecycle="DORMANT")
+            get_tracker().record_archive(nid, title, subtype)
+            logger.info("Pruned (archive): \"%s\" (%s)", title, nid)
+            return {"status": "succeeded", "id": nid, "title": title, "action": "archived"}
+
+        elif action == "delete":
+            # Delete all connected edges first
+            edges = client.get_edges(nid, direction="both")
+            edges_deleted = 0
+            for edge in edges:
+                eid = edge.get("id")
+                if eid:
+                    client.delete_edge(eid)
+                    edges_deleted += 1
+
+            # Delete the node
+            client.delete_node(nid)
+            get_tracker().record_delete(nid, title, subtype, edges_deleted)
+            logger.info("Pruned (delete): \"%s\" (%s) + %d edges", title, nid, edges_deleted)
+            return {
+                "status": "succeeded", "id": nid, "title": title,
+                "action": "deleted", "edges_removed": edges_deleted,
+            }
+
+    except Exception as e:
+        return {"status": "failed", "id": nid, "reason": str(e)}
+
+
+# Max concurrent HTTP requests to Nous during batch prune.
+_PRUNE_WORKERS = 10
+
+
 def handle_batch_prune(
     node_ids: list[str],
     action: str,
 ) -> str:
-    """Archive or delete a batch of memory nodes."""
+    """Archive or delete a batch of memory nodes (concurrent)."""
     from ...nous.client import get_client
 
     if not node_ids:
@@ -393,64 +460,21 @@ def handle_batch_prune(
         skipped = []
         failed = []
 
-        for nid in node_ids:
-            try:
-                # Fetch node to verify it exists and check safety
-                node = client.get_node(nid)
-                if not node:
-                    failed.append({"id": nid, "reason": "not found"})
-                    continue
-
-                title = node.get("content_title", "Untitled")
-                lifecycle = node.get("state_lifecycle", "ACTIVE")
-                access_count = node.get("neural_access_count", 0)
-                try:
-                    access_count = int(access_count)
-                except (TypeError, ValueError):
-                    access_count = 0
-
-                # Safety: skip high-value active nodes
-                if action == "delete" and lifecycle == "ACTIVE" and access_count > 10:
-                    skipped.append({
-                        "id": nid,
-                        "title": title,
-                        "reason": f"ACTIVE with {access_count} accesses — use delete_memory for individual removal",
-                    })
-                    continue
-
-                subtype = node.get("subtype", "")
-
-                if action == "archive":
-                    if lifecycle == "DORMANT":
-                        skipped.append({"id": nid, "title": title, "reason": "already DORMANT"})
-                        continue
-                    client.update_node(nid, state_lifecycle="DORMANT")
-                    succeeded.append({"id": nid, "title": title, "action": "archived"})
-                    get_tracker().record_archive(nid, title, subtype)
-                    logger.info("Pruned (archive): \"%s\" (%s)", title, nid)
-
-                elif action == "delete":
-                    # Delete all connected edges first
-                    edges = client.get_edges(nid, direction="both")
-                    edges_deleted = 0
-                    for edge in edges:
-                        eid = edge.get("id")
-                        if eid:
-                            client.delete_edge(eid)
-                            edges_deleted += 1
-
-                    # Delete the node
-                    client.delete_node(nid)
-                    succeeded.append({
-                        "id": nid, "title": title,
-                        "action": "deleted",
-                        "edges_removed": edges_deleted,
-                    })
-                    get_tracker().record_delete(nid, title, subtype, edges_deleted)
-                    logger.info("Pruned (delete): \"%s\" (%s) + %d edges", title, nid, edges_deleted)
-
-            except Exception as e:
-                failed.append({"id": nid, "reason": str(e)})
+        workers = min(_PRUNE_WORKERS, len(node_ids))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_prune_one_node, client, nid, action): nid
+                for nid in node_ids
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                status = result.pop("status")
+                if status == "succeeded":
+                    succeeded.append(result)
+                elif status == "skipped":
+                    skipped.append(result)
+                else:
+                    failed.append(result)
 
         # Format result
         _elapsed = int((time.monotonic() - _start) * 1000)

@@ -17,6 +17,7 @@ from hynous.intelligence.tools.pruning import (
     _generate_group_label,
     _format_analysis,
     _format_prune_result,
+    _prune_one_node,
     handle_analyze_memory,
     handle_batch_prune,
 )
@@ -516,3 +517,149 @@ class TestHandleBatchPrune:
         result = handle_batch_prune(node_ids=["n1"], action="destroy")
         assert "Error" in result
         assert "destroy" in result
+
+
+# =============================================================================
+# Concurrency Tests
+# =============================================================================
+
+class TestPruneOneNode:
+    """Unit tests for _prune_one_node helper (the per-node worker)."""
+
+    def test_archive_returns_succeeded(self):
+        """Successful archive returns status=succeeded."""
+        mock_client = MagicMock()
+        mock_client.get_node.return_value = _make_full_node("n1", "Node", lifecycle="ACTIVE")
+        mock_client.update_node.return_value = {}
+
+        result = _prune_one_node(mock_client, "n1", "archive")
+        assert result["status"] == "succeeded"
+        assert result["action"] == "archived"
+        mock_client.update_node.assert_called_once_with("n1", state_lifecycle="DORMANT")
+
+    def test_delete_returns_succeeded_with_edge_count(self):
+        """Successful delete returns status=succeeded with edges_removed."""
+        mock_client = MagicMock()
+        mock_client.get_node.return_value = _make_full_node("n1", "Node", lifecycle="WEAK")
+        mock_client.get_edges.return_value = [{"id": "e1"}, {"id": "e2"}]
+        mock_client.delete_edge.return_value = True
+        mock_client.delete_node.return_value = True
+
+        result = _prune_one_node(mock_client, "n1", "delete")
+        assert result["status"] == "succeeded"
+        assert result["edges_removed"] == 2
+
+    def test_not_found_returns_failed(self):
+        """Missing node returns status=failed."""
+        mock_client = MagicMock()
+        mock_client.get_node.return_value = None
+
+        result = _prune_one_node(mock_client, "n1", "archive")
+        assert result["status"] == "failed"
+        assert "not found" in result["reason"]
+
+    def test_exception_returns_failed(self):
+        """Exception during processing returns status=failed."""
+        mock_client = MagicMock()
+        mock_client.get_node.side_effect = RuntimeError("connection reset")
+
+        result = _prune_one_node(mock_client, "n1", "archive")
+        assert result["status"] == "failed"
+        assert "connection reset" in result["reason"]
+
+    def test_safety_guard_returns_skipped(self):
+        """High-value active node returns status=skipped on delete."""
+        mock_client = MagicMock()
+        mock_client.get_node.return_value = _make_full_node("n1", "Important", lifecycle="ACTIVE", access_count=20)
+
+        result = _prune_one_node(mock_client, "n1", "delete")
+        assert result["status"] == "skipped"
+        assert "ACTIVE" in result["reason"]
+
+
+class TestBatchPruneConcurrency:
+    """Tests that batch_prune handles many nodes concurrently."""
+
+    @patch("hynous.intelligence.tools.pruning.get_active_trace", return_value=None)
+    @patch("hynous.nous.client.get_client")
+    def test_large_batch_archive(self, mock_get_client, _mock_trace):
+        """Archive 50 nodes concurrently — all succeed."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        ids = [f"n{i}" for i in range(50)]
+        mock_client.get_node.side_effect = lambda nid: _make_full_node(nid, f"Node {nid}", lifecycle="ACTIVE")
+        mock_client.update_node.return_value = {}
+
+        result = handle_batch_prune(node_ids=ids, action="archive")
+        assert "50/50" in result
+        assert mock_client.update_node.call_count == 50
+
+    @patch("hynous.intelligence.tools.pruning.get_active_trace", return_value=None)
+    @patch("hynous.nous.client.get_client")
+    def test_large_batch_mixed_results(self, mock_get_client, _mock_trace):
+        """30 nodes: 10 succeed, 10 skipped (DORMANT), 10 fail (not found)."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        ids = [f"n{i}" for i in range(30)]
+
+        def mock_get_node(nid):
+            idx = int(nid[1:])
+            if idx < 10:
+                return _make_full_node(nid, f"Active {nid}", lifecycle="ACTIVE")
+            elif idx < 20:
+                return _make_full_node(nid, f"Dormant {nid}", lifecycle="DORMANT")
+            else:
+                return None  # not found
+
+        mock_client.get_node.side_effect = mock_get_node
+        mock_client.update_node.return_value = {}
+
+        result = handle_batch_prune(node_ids=ids, action="archive")
+        assert "10/30" in result
+        assert "Skipped (10)" in result
+        assert "Failed (10)" in result
+
+    @patch("hynous.intelligence.tools.pruning.get_active_trace", return_value=None)
+    @patch("hynous.nous.client.get_client")
+    def test_large_batch_delete_with_edges(self, mock_get_client, _mock_trace):
+        """Delete 20 nodes, each with 3 edges — all edges cleaned up."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        ids = [f"n{i}" for i in range(20)]
+        mock_client.get_node.side_effect = lambda nid: _make_full_node(nid, f"Node {nid}", lifecycle="WEAK")
+        mock_client.get_edges.side_effect = lambda nid, **kw: [
+            {"id": f"{nid}_e1"}, {"id": f"{nid}_e2"}, {"id": f"{nid}_e3"},
+        ]
+        mock_client.delete_edge.return_value = True
+        mock_client.delete_node.return_value = True
+
+        result = handle_batch_prune(node_ids=ids, action="delete")
+        assert "20/20" in result
+        # 20 nodes * 3 edges each = 60 edge deletions
+        assert mock_client.delete_edge.call_count == 60
+        assert mock_client.delete_node.call_count == 20
+
+    @patch("hynous.intelligence.tools.pruning.get_active_trace", return_value=None)
+    @patch("hynous.nous.client.get_client")
+    def test_concurrent_exceptions_dont_crash(self, mock_get_client, _mock_trace):
+        """Some nodes throw exceptions — others still succeed."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        ids = [f"n{i}" for i in range(10)]
+
+        def mock_get_node(nid):
+            idx = int(nid[1:])
+            if idx % 2 == 0:
+                return _make_full_node(nid, f"Good {nid}", lifecycle="ACTIVE")
+            raise RuntimeError(f"timeout on {nid}")
+
+        mock_client.get_node.side_effect = mock_get_node
+        mock_client.update_node.return_value = {}
+
+        result = handle_batch_prune(node_ids=ids, action="archive")
+        assert "5/10" in result  # 5 evens succeed
+        assert "Failed (5)" in result  # 5 odds fail
