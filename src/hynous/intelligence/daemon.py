@@ -89,22 +89,35 @@ _TRADE_NARRATION_RE = re.compile(
 )
 
 
-def _check_narrated_trade(response: str, agent) -> None:
-    """Warn if agent narrated a trade entry without calling execute_trade.
+def _check_narrated_trade(response: str, agent) -> str | None:
+    """Detect and fix narrated trades — agent said entry words without calling execute_trade.
 
-    This catches the case where the model writes "Entering SOL long" in text
-    but never makes the actual tool call — the text gets posted to Discord
-    but no position is opened.
+    If detected, sends a follow-up message telling the agent to actually execute the trade.
+    Returns the follow-up response if a correction was made, None otherwise.
     """
     if not response or not _TRADE_NARRATION_RE.search(response):
-        return
+        return None
     if agent.last_chat_had_trade_tool():
-        return  # Tool was called — text is just confirmation, all good
+        return None  # Tool was called — text is just confirmation, all good
+
     logger.warning(
-        "NARRATED TRADE DETECTED — agent said trade-entry words but never called "
-        "execute_trade. Response: %s",
+        "NARRATED TRADE DETECTED — sending correction. Response: %s",
         response[:300],
     )
+
+    # Send follow-up forcing tool execution
+    correction = (
+        "[SYSTEM] You just said you entered a trade in TEXT, but you never called "
+        "execute_trade. Text is NOT execution — no position was opened. "
+        "If you still want this trade, call execute_trade NOW with the exact parameters "
+        "you described. If you changed your mind, say so clearly."
+    )
+    try:
+        followup = agent.chat(correction, skip_snapshot=True, max_tokens=768, source="daemon:narration_fix")
+        return followup
+    except Exception as e:
+        logger.error("Narration fix failed: %s", e)
+        return None
 
 
 def get_active_daemon() -> "Daemon | None":
@@ -1563,7 +1576,7 @@ class Daemon:
             message = track_record + "\n\n" + message
 
         response = self._wake_agent(
-            message, max_coach_cycles=0, max_tokens=512,
+            message, max_coach_cycles=0, max_tokens=768,
             source="daemon:scanner",
         )
         if response:
@@ -2675,7 +2688,10 @@ class Daemon:
                 return None
 
             # === 5b. Narrated-trade check (while lock is held) ===
-            _check_narrated_trade(response, self.agent)
+            # If agent narrated a trade without calling the tool, force a follow-up
+            followup = _check_narrated_trade(response, self.agent)
+            if followup:
+                response = response + "\n\n" + followup
 
             # === 6. Update fingerprint for staleness detection ===
             try:
