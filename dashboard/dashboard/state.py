@@ -723,7 +723,7 @@ class AppState(rx.State):
     settings_tier_high: int = 30
     settings_tier_medium: int = 20
     settings_tier_speculative: int = 10
-    settings_tier_pass: float = 0.4
+    settings_tier_pass: float = 0.3
     # Limits
     settings_max_position: float = 10000
     settings_max_positions: int = 3

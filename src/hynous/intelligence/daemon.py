@@ -1465,60 +1465,73 @@ class Daemon:
     def _build_historical_context(self, anomalies: list) -> str:
         """Build a [Track Record] block for scanner wakes.
 
-        Uses cached trade stats + in-memory phantom results — ~0ms added latency.
-        Returns empty string if no data available.
+        Action-oriented framing: when phantoms outperform real trades,
+        pushes the agent to ACT rather than reinforcing fear of past losses.
         """
         lines = []
         symbols = {a.symbol for a in anomalies if a.symbol != "MARKET"}
         anomaly_types = {a.type for a in anomalies}
 
-        # 1. Real trade history per symbol (cached 30s)
+        # Phantom stats
+        total_resolved = self._phantom_stats["missed"] + self._phantom_stats["good_pass"]
+        phantom_winrate = (self._phantom_stats["missed"] / total_resolved * 100) if total_resolved >= 3 else 0
+
+        # Real trade stats
+        real_winrate = 0
+        real_total = 0
         try:
             from ..core.trade_analytics import get_trade_stats
             stats = get_trade_stats()
-            if stats.total_trades > 0:
-                for sym in symbols:
-                    sym_data = stats.by_symbol.get(sym)
-                    if sym_data and sym_data["trades"] > 0:
-                        sign = "+" if sym_data["pnl"] >= 0 else ""
-                        lines.append(
-                            f"Your {sym} history: {sym_data['trades']} trades, "
-                            f"{sym_data['win_rate']:.0f}% win, {sign}${sym_data['pnl']:.2f}"
-                        )
+            real_winrate = stats.win_rate
+            real_total = stats.total_trades
         except Exception:
             pass
 
-        # 2. Phantom results per symbol
-        if self._phantom_results:
-            for sym in symbols:
-                sym_phantoms = [p for p in self._phantom_results if p.get("symbol") == sym]
-                if sym_phantoms:
-                    missed = sum(1 for p in sym_phantoms if p.get("result") == "missed")
-                    good = sum(1 for p in sym_phantoms if p.get("result") == "good_pass")
-                    lines.append(f"Phantom tracker ({sym}): {missed} missed, {good} good pass")
+        # Detect paralysis: phantom winrate significantly beats real, or long pass streak
+        is_paralyzed = (
+            (phantom_winrate > 40 and total_resolved >= 5) or
+            self._scanner_pass_streak >= 5
+        )
 
-        # 3. Phantom results per anomaly type
-        if self._phantom_results:
-            for atype in anomaly_types:
-                type_phantoms = [p for p in self._phantom_results if p.get("anomaly_type") == atype]
-                if len(type_phantoms) >= 2:
-                    profitable = sum(1 for p in type_phantoms if p.get("result") == "missed")
-                    lines.append(
-                        f"Past {atype} signals: {profitable}/{len(type_phantoms)} would have profited"
-                    )
+        if is_paralyzed:
+            # Action-oriented framing — break the fear loop
+            if phantom_winrate > 0 and total_resolved >= 5:
+                lines.append(
+                    f"[PARALYSIS CHECK] Your phantom tracker shows {phantom_winrate:.0f}% winrate on "
+                    f"{total_resolved} setups you PASSED on. That's real money left on the table."
+                )
+            if self._scanner_pass_streak >= 5:
+                lines.append(
+                    f"You've passed {self._scanner_pass_streak} scanner wakes in a row. "
+                    f"Caution has become paralysis. Take the next setup with 1.5:1+ R:R at Speculative size."
+                )
+            if real_total > 0 and phantom_winrate > real_winrate:
+                lines.append(
+                    f"Your filters are COSTING you — phantoms ({phantom_winrate:.0f}% win) outperform "
+                    f"your actual trades ({real_winrate:.0f}% win). The lesson: you pass on too many, not too few."
+                )
+        else:
+            # Normal track record — brief, not fear-inducing
+            if total_resolved >= 3:
+                lines.append(
+                    f"Phantom tracker: {self._phantom_stats['missed']} missed winners, "
+                    f"{self._phantom_stats['good_pass']} good passes ({phantom_winrate:.0f}% miss rate)"
+                )
 
-        # 4. Pass streak
-        if self._scanner_pass_streak >= 3:
-            lines.append(f"Current scanner pass streak: {self._scanner_pass_streak} consecutive passes")
+            # Per-symbol phantom data (brief)
+            if self._phantom_results:
+                for sym in symbols:
+                    sym_phantoms = [p for p in self._phantom_results if p.get("symbol") == sym]
+                    if sym_phantoms:
+                        missed = sum(1 for p in sym_phantoms if p.get("result") == "missed")
+                        good = sum(1 for p in sym_phantoms if p.get("result") == "good_pass")
+                        if missed > good:
+                            lines.append(f"{sym} phantoms: {missed} missed vs {good} good pass — you're over-filtering {sym}")
+                        elif sym_phantoms:
+                            lines.append(f"{sym} phantoms: {missed} missed, {good} good pass")
 
-        # 5. Overall phantom miss rate
-        total_resolved = self._phantom_stats["missed"] + self._phantom_stats["good_pass"]
-        if total_resolved >= 3:
-            miss_rate = self._phantom_stats["missed"] / total_resolved * 100
-            lines.append(
-                f"Overall miss rate: {miss_rate:.0f}% "
-                f"({self._phantom_stats['missed']}/{total_resolved} tracked)"
-            )
+            if self._scanner_pass_streak >= 3:
+                lines.append(f"Pass streak: {self._scanner_pass_streak} consecutive — consider loosening filters")
 
         if not lines:
             return ""
