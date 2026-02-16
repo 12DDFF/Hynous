@@ -525,6 +525,25 @@ def handle_execute_trade(
     except Exception as e:
         return f"Error getting price: {e}"
 
+    # --- Price drift check: compare live price vs briefing price ---
+    # Agent reasons on briefing prices, but we execute at live price.
+    # Warn if significant drift so agent knows its SL/TP may need adjustment.
+    try:
+        from ...intelligence.daemon import get_active_daemon
+        _d = get_active_daemon()
+        if _d and _d.snapshot and _d.snapshot.prices.get(symbol):
+            _briefing_px = _d.snapshot.prices[symbol]
+            _drift_pct = abs(price - _briefing_px) / _briefing_px * 100
+            if _drift_pct > 0.3:
+                _direction = "up" if price > _briefing_px else "down"
+                _warnings.append(
+                    f"Note: {symbol} moved {_direction} {_drift_pct:.2f}% since briefing "
+                    f"({_fmt_price(_briefing_px)} -> {_fmt_price(price)}). "
+                    f"Verify SL/TP still make sense at current price."
+                )
+    except Exception:
+        pass
+
     # --- Conviction-based sizing ---
     # When confidence is provided, the system calculates the correct size.
     # Agent CAN override with size_usd/size, but auto-sizing from conviction is preferred.

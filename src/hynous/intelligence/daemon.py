@@ -2657,6 +2657,23 @@ class Daemon:
             return None
 
         try:
+            # === 0. Ensure fresh prices before any wake ===
+            # Briefing uses snapshot.prices — stale prices = stale reasoning.
+            # Force a price refresh if last poll was >15s ago (cheap HTTP call).
+            price_age = time.time() - self.snapshot.last_price_poll
+            if price_age > 15:
+                try:
+                    provider = self._get_provider()
+                    fresh_prices = provider.get_all_prices()
+                    for sym in self.config.execution.symbols:
+                        if sym in fresh_prices:
+                            self.snapshot.prices[sym] = fresh_prices[sym]
+                    self.snapshot.last_price_poll = time.time()
+                    logger.debug("Wake price refresh: %d symbols updated (was %.0fs stale)",
+                                 len(fresh_prices), price_age)
+                except Exception as e:
+                    logger.debug("Wake price refresh failed (using cached): %s", e)
+
             # === 1. Build warnings (free, existing) ===
             warnings_text = ""
             memory_state = {}
@@ -2668,7 +2685,7 @@ class Daemon:
             except Exception as e:
                 logger.debug("Wake warnings failed: %s", e)
 
-            # === 2. Build briefing (free, pre-fetched data) ===
+            # === 2. Build briefing (free, pre-fetched data + fresh prices) ===
             briefing_text = ""
             code_questions = []
             if self._data_cache.symbols:

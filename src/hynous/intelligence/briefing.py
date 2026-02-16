@@ -299,6 +299,11 @@ def build_briefing(
     """
     sections = []
 
+    # --- Data freshness header ---
+    freshness = _build_freshness_line(snapshot, data_cache)
+    if freshness:
+        sections.append(freshness)
+
     # --- Portfolio + Positions (reuses context_snapshot logic) ---
     portfolio_section = _build_portfolio_section(provider, daemon, config, user_state=user_state)
     if portfolio_section:
@@ -431,6 +436,34 @@ def _build_portfolio_section(provider, daemon, config, user_state: dict | None =
         lines.append(pos_str)
 
     return "\n".join(lines)
+
+
+def _build_freshness_line(snapshot, data_cache: DataCache) -> str:
+    """Data age header so the agent knows how fresh each source is."""
+    now = time.time()
+    parts = []
+
+    # Price age
+    if snapshot and snapshot.last_price_poll > 0:
+        age = int(now - snapshot.last_price_poll)
+        if age < 5:
+            parts.append("Prices: live")
+        elif age < 60:
+            parts.append(f"Prices: {age}s ago")
+        else:
+            parts.append(f"Prices: {age // 60}m{age % 60}s ago")
+
+    # Deep data age (L2 book, funding trends, 7d candles)
+    if data_cache._last_fetch > 0:
+        age = int(now - data_cache._last_fetch)
+        if age < 60:
+            parts.append(f"Deep data: {age}s ago")
+        else:
+            parts.append(f"Deep data: {age // 60}m ago")
+
+    if not parts:
+        return ""
+    return "Data freshness: " + " | ".join(parts)
 
 
 def _build_market_line(snapshot, config) -> str:
@@ -849,7 +882,20 @@ def get_briefing_injection() -> str | None:
     if daemon is None or not daemon._data_cache.symbols:
         return None
 
+    # Quick price refresh if stale (>15s) — ensures user always sees fresh prices
     now = time.time()
+    if daemon.snapshot and (now - daemon.snapshot.last_price_poll) > 15:
+        try:
+            from ..data.providers.hyperliquid import get_provider
+            fresh = get_provider().get_all_prices()
+            for sym in daemon.config.execution.symbols:
+                if sym in fresh:
+                    daemon.snapshot.prices[sym] = fresh[sym]
+            daemon.snapshot.last_price_poll = time.time()
+        except Exception:
+            pass
+        now = time.time()  # re-capture after refresh
+
     datacache_time = daemon._data_cache._last_fetch
 
     need_full = (
@@ -1002,8 +1048,14 @@ def _build_delta(daemon, now: float) -> str | None:
     else:
         age_str = f"{int(age_sec / 60)}m"
 
+    # Price age from daemon snapshot
+    price_age = ""
+    if daemon.snapshot and daemon.snapshot.last_price_poll > 0:
+        pa = int(now - daemon.snapshot.last_price_poll)
+        price_age = f", prices {pa}s old" if pa >= 5 else ", prices live"
+
     body = "\n".join(changes)
-    return f"[Update — {age_str} since briefing]\n{body}\n[End Update]"
+    return f"[Update — {age_str} since briefing{price_age}]\n{body}\n[End Update]"
 
 
 def invalidate_briefing_cache():
