@@ -350,10 +350,12 @@ TRADE_TOOL_DEF = {
         "Order types:\n"
         "- market (default): Immediate fill at current price\n"
         "- limit: Resting order at your price, fills when reached\n\n"
-        "Position sizing (provide one):\n"
-        "- size_usd: NOTIONAL size in USD. Margin from account = size_usd / leverage.\n"
-        "  E.g. size_usd=500 at 20x → $25 margin from account, $500 notional exposure.\n"
-        "- size: Size in base asset (e.g. 0.03 BTC)\n\n"
+        "Position sizing:\n"
+        "- PREFERRED: Omit size_usd and size — the system auto-sizes from conviction tier:\n"
+        "  High (0.8+) → 30% margin, Medium (0.6+) → 20%, Speculative → 10%.\n"
+        "  This ensures correct position sizing relative to portfolio.\n"
+        "- size_usd: Override with explicit NOTIONAL size in USD (margin = size_usd / leverage).\n"
+        "- size: Override with base asset amount (e.g. 0.03 BTC)\n\n"
         "Risk management (ALL required):\n"
         "- leverage: REQUIRED, minimum 5x (micro requires 20x)\n"
         "- stop_loss: Where my thesis is wrong — auto-placed as trigger order\n"
@@ -362,21 +364,21 @@ TRADE_TOOL_DEF = {
         "- confidence: REQUIRED conviction score (0.0-1.0) — determines size tier\n\n"
         "Optional:\n"
         "- slippage: Max slippage for market orders (default from config)\n\n"
-        "Examples:\n"
+        "Examples (auto-sized — no size_usd needed):\n"
         '  High conviction:\n'
-        '    {"symbol": "BTC", "side": "long", "size_usd": 300, "leverage": 20, "stop_loss": 66000, '
+        '    {"symbol": "BTC", "side": "long", "leverage": 20, "stop_loss": 66000, '
         '"take_profit": 72000, "confidence": 0.85, '
         '"reasoning": "Funding just reset after 3 days negative — shorts who were getting paid to hold are now paying to stay in. '
         "That means they'll start covering, which creates buy pressure. The $4.8M bid wall at 66K confirms institutions agree "
         'this is the floor. Targeting the 72K gap that shorts need to cover through."}\n'
         '  Medium conviction:\n'
-        '    {"symbol": "ETH", "side": "short", "size_usd": 200, "leverage": 20, "stop_loss": 3900, '
+        '    {"symbol": "ETH", "side": "short", "leverage": 10, "stop_loss": 3900, '
         '"take_profit": 3400, "confidence": 0.65, '
         '"reasoning": "Price has been flat for 2 days while OI keeps climbing — someone is building a big position that hasn\'t '
         "moved price yet. On 4h ETH is making lower highs while OI rises, so it's likely shorts accumulating. "
         'When they push, 3400 is the obvious target where longs get liquidated."}\n'
         '  Speculative:\n'
-        '    {"symbol": "SOL", "side": "long", "size_usd": 100, "order_type": "limit", '
+        '    {"symbol": "SOL", "side": "long", "leverage": 20, "order_type": "limit", '
         '"limit_price": 140, "stop_loss": 130, "take_profit": 165, "confidence": 0.5, '
         '"reasoning": "SOL sitting on 140 support that\'s held 3 times — each bounce weaker but sellers can\'t break it, '
         "which looks like seller exhaustion. If it holds again, 165 is clear air above. "
@@ -396,13 +398,14 @@ TRADE_TOOL_DEF = {
             },
             "size_usd": {
                 "type": "number",
-                "description": "Notional position size in USD. Margin deducted from account = size_usd / leverage. "
+                "description": "Optional: notional size in USD. OMIT to auto-size from conviction tier "
+                               "(recommended — ensures correct sizing relative to portfolio). "
                                "E.g. size_usd=500 at 20x = $25 margin from account.",
                 "minimum": 10,
             },
             "size": {
                 "type": "number",
-                "description": "Position size in base asset (e.g. 0.03 BTC). Use instead of size_usd.",
+                "description": "Optional: size in base asset (e.g. 0.03 BTC). OMIT to auto-size from conviction.",
                 "exclusiveMinimum": 0,
             },
             "order_type": {
@@ -488,6 +491,7 @@ def handle_execute_trade(
     # Load runtime-adjustable settings
     from ...core.trading_settings import get_trading_settings
     ts = get_trading_settings()
+    _warnings: list[str] = []
 
     # --- Micro trade enforcement ---
     if trade_type == "micro":
@@ -513,19 +517,7 @@ def handle_execute_trade(
     if trade_type == "micro" and leverage < ts.micro_leverage:
         leverage = ts.micro_leverage
 
-    # --- Validate sizing ---
-    if size_usd is None and size is None:
-        return "Error: Provide either size_usd (USD amount) or size (base asset amount)."
-
-    # --- Safety cap ---
-    max_size = min(config.hyperliquid.max_position_usd, ts.max_position_usd)
-    if size_usd and size_usd > max_size:
-        return (
-            f"Error: ${size_usd:,.0f} exceeds safety cap of ${max_size:,.0f}. "
-            f"Reduce size or adjust max_position_usd in config."
-        )
-
-    # --- Get current price ---
+    # --- Get current price (needed for sizing) ---
     try:
         price = provider.get_price(symbol)
         if not price:
@@ -533,20 +525,13 @@ def handle_execute_trade(
     except Exception as e:
         return f"Error getting price: {e}"
 
-    # Check USD-equivalent when sizing by base asset
-    if size is not None and size_usd is None:
-        equiv_usd = size * price
-        if equiv_usd > max_size:
-            return (
-                f"Error: {size} {symbol} = ~${equiv_usd:,.0f} exceeds safety cap ${max_size:,.0f}."
-            )
-
-    # --- Conviction-based size validation ---
-    # Sizing is in MARGIN (money from account), not notional.
-    # 15% base = 15% of portfolio at risk. Leverage amplifies exposure.
+    # --- Conviction-based sizing ---
+    # When confidence is provided, the system calculates the correct size.
+    # Agent CAN override with size_usd/size, but auto-sizing from conviction is preferred.
     tier = None
     recommended_margin = None
     oversized = False
+    portfolio = 1000
     if confidence is not None:
         if confidence < ts.tier_pass_threshold:
             return (
@@ -570,10 +555,48 @@ def handle_execute_trade(
             recommended_margin = portfolio * (ts.tier_speculative_margin_pct / 100)
             tier = "Speculative"
 
+        # Auto-size from conviction when no explicit size given
+        if size_usd is None and size is None:
+            size_usd = recommended_margin * leverage
+            logger.info("Auto-sized from %s conviction: $%.2f margin × %dx = $%.2f notional",
+                        tier, recommended_margin, leverage, size_usd)
+
+    # --- Validate sizing ---
+    if size_usd is None and size is None:
+        return "Error: Provide either size_usd (USD amount), size (base asset amount), or confidence for auto-sizing."
+
+    # --- Safety cap ---
+    max_size = min(config.hyperliquid.max_position_usd, ts.max_position_usd)
+    if size_usd and size_usd > max_size:
+        return (
+            f"Error: ${size_usd:,.0f} exceeds safety cap of ${max_size:,.0f}. "
+            f"Reduce size or adjust max_position_usd in config."
+        )
+
+    # Check USD-equivalent when sizing by base asset
+    if size is not None and size_usd is None:
+        equiv_usd = size * price
+        if equiv_usd > max_size:
+            return (
+                f"Error: {size} {symbol} = ~${equiv_usd:,.0f} exceeds safety cap ${max_size:,.0f}."
+            )
+
+    if confidence is not None and recommended_margin:
         # Compare actual margin vs recommended
         effective_notional = size_usd if size_usd else (size * price if size else 0)
         actual_margin = effective_notional / leverage if leverage else effective_notional
         oversized = actual_margin > recommended_margin * 1.5 if actual_margin else False
+
+        # Warn if undersized (agent manually picked a tiny size)
+        if actual_margin and actual_margin < recommended_margin * 0.25:
+            _warnings.append(
+                f"Warning: Margin ${actual_margin:,.2f} is far below {tier} recommendation "
+                f"of ${recommended_margin:,.2f} ({ts.tier_speculative_margin_pct}% of ${portfolio:,.0f}). "
+                f"Expected profit may not cover fees. Consider omitting size_usd to auto-size from conviction."
+            )
+    else:
+        effective_notional = size_usd if size_usd else (size * price if size else 0)
+        actual_margin = effective_notional / leverage if leverage else effective_notional
 
     # --- Validate limit order ---
     if order_type == "limit":
@@ -608,7 +631,6 @@ def handle_execute_trade(
             )
 
     # --- Micro trade SL/TP distance validation ---
-    _warnings: list[str] = []
     if trade_type == "micro" and ref_price and ref_price > 0:
         micro_sl_min = ts.micro_sl_min_pct / 100
         micro_sl_warn = ts.micro_sl_warn_pct / 100
