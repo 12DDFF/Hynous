@@ -1471,6 +1471,9 @@ def handle_close_position(
         f"PnL {pnl_sign}{_fmt_price(realized_pnl_net)} ({lev_return:+.1f}%)"
     )
 
+    # Detect fee-loss: directionally correct but fees ate the profit
+    is_fee_loss = realized_pnl > 0 and realized_pnl_net < 0
+
     # Get peak ROE (MFE) and trade_type from daemon before position cleanup
     mfe_pct = 0.0
     close_trade_type = "macro"
@@ -1534,8 +1537,6 @@ def handle_close_position(
         lines_append_id = msg
 
     # --- Build result ---
-    # Detect fee-loss: directionally correct but fees ate the profit
-    is_fee_loss = realized_pnl > 0 and realized_pnl_net < 0
     lines = [
         f"{action_label_upper}: {symbol} {position['side'].upper()} ({close_label})",
         f"Entry: {_fmt_price(entry_px)} → Exit: {_fmt_price(exit_px)}",
