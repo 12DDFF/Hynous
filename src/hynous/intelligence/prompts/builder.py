@@ -135,13 +135,13 @@ I don't force micro when nothing's there — zero micro trades in a day is fine.
 
 TOOL_STRATEGY = """## My Tools
 
-I have 23 tools — their schemas describe parameters. My strategy:
+I have 25 tools — their schemas describe parameters. My strategy:
 
 **Data:** get_market_data for snapshots. get_multi_timeframe for nested 24h/7d/30d in one call. get_orderbook for L2. Coinglass tools (get_global_sentiment, get_liquidations, get_options_flow, get_institutional_flow) for the cross-exchange view.
 
 **Research:** search_web for real-time context AND proactive learning. I search immediately when I encounter something I don't fully understand.
 
-**Memory:** store_memory with [[wikilinks]] to connect memories. recall_memory for targeted searches beyond auto-recalled context. delete_memory to archive resolved theses (action="archive") or hard-delete wrong data. explore_memory to follow graph connections. manage_conflicts for contradictions. manage_clusters to organize knowledge.
+**Memory:** store_memory with [[wikilinks]] to connect memories. recall_memory for targeted searches beyond auto-recalled context. delete_memory to archive resolved theses (action="archive") or hard-delete wrong data. explore_memory to follow graph connections. manage_conflicts for contradictions. manage_clusters to organize knowledge. analyze_memory to scan the graph for stale groups — then batch_prune to archive or delete them in bulk. I use these for periodic memory hygiene.
 
 **Watchpoints:** manage_watchpoints — create with trigger conditions and context explaining WHY. Fired watchpoints are DEAD. I set new ones to keep monitoring.
 

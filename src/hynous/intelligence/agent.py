@@ -54,6 +54,7 @@ _STALE_TRUNCATION = {
     "modify_position": 300,
     "manage_watchpoints": 300,
     "manage_conflicts": 300,
+    "batch_prune": 300,
     # Data tools — market numbers the agent already analyzed
     "get_market_data": 400,
     "get_multi_timeframe": 400,
@@ -66,6 +67,7 @@ _STALE_TRUNCATION = {
     "get_trade_stats": 400,
     "get_my_costs": 400,
     "get_account": 400,
+    "analyze_memory": 400,
     # Search tools — agent may reference specific results
     "recall_memory": 600,
     "search_web": 600,

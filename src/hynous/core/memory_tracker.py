@@ -43,6 +43,14 @@ class _EdgeRecord:
 
 
 @dataclass
+class _DeleteRecord:
+    node_id: str
+    title: str
+    subtype: str
+    edges_removed: int  # 0 for archive (no edge removal)
+
+
+@dataclass
 class _FailRecord:
     operation: str  # "create_node", "create_edge", etc.
     error: str
@@ -60,6 +68,8 @@ class MutationTracker:
         self._lock = threading.Lock()
         self._nodes: list[_NodeRecord] = []
         self._edges: list[_EdgeRecord] = []
+        self._archives: list[_DeleteRecord] = []
+        self._deletes: list[_DeleteRecord] = []
         self._failures: list[_FailRecord] = []
 
     def reset(self):
@@ -67,6 +77,8 @@ class MutationTracker:
         with self._lock:
             self._nodes.clear()
             self._edges.clear()
+            self._archives.clear()
+            self._deletes.clear()
             self._failures.clear()
         logger.debug("MutationTracker: reset")
 
@@ -85,6 +97,22 @@ class MutationTracker:
             ))
         logger.debug("MutationTracker: recorded edge %s -[%s]-> %s", source_id, edge_type, target_id)
 
+    def record_archive(self, node_id: str, title: str, subtype: str = ""):
+        """Record a node archived (set to DORMANT) via pruning."""
+        with self._lock:
+            self._archives.append(_DeleteRecord(
+                node_id=node_id, title=title, subtype=subtype, edges_removed=0,
+            ))
+        logger.debug("MutationTracker: recorded archive '%s' (%s)", title, node_id)
+
+    def record_delete(self, node_id: str, title: str, subtype: str = "", edges_removed: int = 0):
+        """Record a node permanently deleted via pruning."""
+        with self._lock:
+            self._deletes.append(_DeleteRecord(
+                node_id=node_id, title=title, subtype=subtype, edges_removed=edges_removed,
+            ))
+        logger.debug("MutationTracker: recorded delete '%s' (%s) + %d edges", title, node_id, edges_removed)
+
     def record_fail(self, operation: str, error: str):
         """Record a failed Nous write."""
         with self._lock:
@@ -98,8 +126,10 @@ class MutationTracker:
             {
                 "nodes_created": [{"subtype": "...", "title": "...", "id": "..."}],
                 "edges_created": [{"source": "...", "target": "...", "type": "...", "context": "..."}],
+                "nodes_archived": [{"id": "...", "title": "...", "subtype": "..."}],
+                "nodes_deleted": [{"id": "...", "title": "...", "subtype": "...", "edges_removed": N}],
                 "failures": [{"operation": "...", "error": "..."}],
-                "summary": "Created: 2 nodes (trade_entry, thesis), 1 edge (supports). 0 failures."
+                "summary": "Created: 2 nodes, 1 edge. Archived: 3 nodes. Deleted: 0 nodes. 0 failures."
             }
         """
         with self._lock:
@@ -107,6 +137,14 @@ class MutationTracker:
             edges = [
                 {"source": e.source_id, "target": e.target_id, "type": e.edge_type, "context": e.context}
                 for e in self._edges
+            ]
+            archived = [
+                {"id": a.node_id, "title": a.title, "subtype": a.subtype}
+                for a in self._archives
+            ]
+            deleted = [
+                {"id": d.node_id, "title": d.title, "subtype": d.subtype, "edges_removed": d.edges_removed}
+                for d in self._deletes
             ]
             failures = [{"operation": f.operation, "error": f.error} for f in self._failures]
 
@@ -123,13 +161,21 @@ class MutationTracker:
         else:
             edge_summary = "0 edges"
 
+        archive_summary = f"{len(archived)} node{'s' if len(archived) != 1 else ''}" if archived else "0 nodes"
+        delete_summary = f"{len(deleted)} node{'s' if len(deleted) != 1 else ''}" if deleted else "0 nodes"
         fail_summary = f"{len(failures)} failure{'s' if len(failures) != 1 else ''}"
 
-        summary = f"Created: {node_summary}, {edge_summary}. {fail_summary}."
+        summary = (
+            f"Created: {node_summary}, {edge_summary}. "
+            f"Archived: {archive_summary}. Deleted: {delete_summary}. "
+            f"{fail_summary}."
+        )
 
         return {
             "nodes_created": nodes,
             "edges_created": edges,
+            "nodes_archived": archived,
+            "nodes_deleted": deleted,
             "failures": failures,
             "summary": summary,
         }
@@ -141,7 +187,12 @@ class MutationTracker:
         """
         audit = self.build_audit()
 
-        if not audit["nodes_created"] and not audit["edges_created"] and not audit["failures"]:
+        has_anything = (
+            audit["nodes_created"] or audit["edges_created"]
+            or audit["nodes_archived"] or audit["nodes_deleted"]
+            or audit["failures"]
+        )
+        if not has_anything:
             return ""
 
         lines = [audit["summary"]]
@@ -157,6 +208,19 @@ class MutationTracker:
             for e in audit["edges_created"]:
                 ctx = f" ({e['context']})" if e["context"] else ""
                 lines.append(f"  + {e['source'][:8]}.. -[{e['type']}]-> {e['target'][:8]}..{ctx}")
+
+        if audit["nodes_archived"]:
+            lines.append("Archived:")
+            for a in audit["nodes_archived"]:
+                subtype = a["subtype"].replace("custom:", "") if a["subtype"] else "?"
+                lines.append(f"  ~ [{subtype}] {a['title']} ({a['id'][:8]}..)")
+
+        if audit["nodes_deleted"]:
+            lines.append("Deleted:")
+            for d in audit["nodes_deleted"]:
+                subtype = d["subtype"].replace("custom:", "") if d["subtype"] else "?"
+                extra = f" + {d['edges_removed']} edges" if d["edges_removed"] else ""
+                lines.append(f"  - [{subtype}] {d['title']} ({d['id'][:8]}..){extra}")
 
         if audit["failures"]:
             lines.append("Failures:")

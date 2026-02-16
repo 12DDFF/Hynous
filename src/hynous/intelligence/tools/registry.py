@@ -146,4 +146,7 @@ def get_registry() -> ToolRegistry:
     from . import clusters
     clusters.register(registry)
 
+    from . import pruning
+    pruning.register(registry)
+
     return registry
