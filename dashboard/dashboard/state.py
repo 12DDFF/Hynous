@@ -3241,8 +3241,8 @@ class AppState(rx.State):
             if client is None:
                 return None
 
-            missed = client.list_nodes(subtype="custom:missed_opportunity", limit=50)
-            good = client.list_nodes(subtype="custom:good_pass", limit=50)
+            missed = client.list_nodes(subtype="custom:missed_opportunity", limit=200)
+            good = client.list_nodes(subtype="custom:good_pass", limit=200)
             playbooks = client.list_nodes(subtype="custom:playbook", limit=30)
 
             return {"missed": missed, "good": good, "playbooks": playbooks}

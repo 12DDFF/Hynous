@@ -1992,29 +1992,69 @@ class Daemon:
             _notify_discord("Phantom", title, response)
 
     def _persist_phantoms(self):
-        """Save active phantoms to disk (survives restarts)."""
+        """Save active phantoms + stats to disk (survives restarts)."""
         try:
             import json as _json
-            path = self.config.project_root / "storage" / "phantoms.json"
-            path.parent.mkdir(parents=True, exist_ok=True)
             from ..core.persistence import _atomic_write
-            _atomic_write(path, _json.dumps(self._phantoms, default=str))
+            storage = self.config.project_root / "storage"
+            storage.mkdir(parents=True, exist_ok=True)
+            # Active phantoms
+            _atomic_write(storage / "phantoms.json", _json.dumps(self._phantoms, default=str))
+            # Phantom stats + recent results (persist across restarts)
+            stats_data = {
+                "stats": self._phantom_stats,
+                "results": self._phantom_results[-100:],  # Keep last 100 resolved
+            }
+            _atomic_write(storage / "phantom_stats.json", _json.dumps(stats_data, default=str))
         except Exception as e:
             logger.debug("Failed to persist phantoms: %s", e)
 
     def _load_phantoms(self):
-        """Load active phantoms from disk on startup."""
+        """Load active phantoms + stats from disk on startup."""
         try:
             import json as _json
-            path = self.config.project_root / "storage" / "phantoms.json"
+            storage = self.config.project_root / "storage"
+            # Active phantoms
+            path = storage / "phantoms.json"
             if path.exists():
                 self._phantoms = _json.loads(path.read_text())
-                # Remove expired phantoms
                 now = time.time()
                 self._phantoms = [p for p in self._phantoms if p.get("expires_at", 0) > now]
                 logger.info("Loaded %d active phantoms from disk", len(self._phantoms))
+            # Phantom stats + results
+            stats_path = storage / "phantom_stats.json"
+            if stats_path.exists():
+                data = _json.loads(stats_path.read_text())
+                saved_stats = data.get("stats", {})
+                self._phantom_stats["missed"] = saved_stats.get("missed", 0)
+                self._phantom_stats["good_pass"] = saved_stats.get("good_pass", 0)
+                self._phantom_stats["expired"] = saved_stats.get("expired", 0)
+                self._phantom_results = data.get("results", [])
+                logger.info("Loaded phantom stats: %d missed, %d good pass, %d results",
+                           self._phantom_stats["missed"], self._phantom_stats["good_pass"],
+                           len(self._phantom_results))
+            else:
+                # First run with persistence — seed stats from Nous
+                self._seed_phantom_stats_from_nous()
         except Exception as e:
             logger.debug("Failed to load phantoms: %s", e)
+
+    def _seed_phantom_stats_from_nous(self):
+        """Seed phantom stats from Nous nodes on first run (no phantom_stats.json yet)."""
+        try:
+            nous = self._get_nous()
+            if nous is None:
+                return
+            missed = nous.list_nodes(subtype="custom:missed_opportunity", limit=500)
+            good = nous.list_nodes(subtype="custom:good_pass", limit=500)
+            self._phantom_stats["missed"] = len(missed)
+            self._phantom_stats["good_pass"] = len(good)
+            logger.info("Seeded phantom stats from Nous: %d missed, %d good pass",
+                       len(missed), len(good))
+            # Persist immediately so we don't re-seed next restart
+            self._persist_phantoms()
+        except Exception as e:
+            logger.debug("Failed to seed phantom stats from Nous: %s", e)
 
     def _persist_position_types(self):
         """Save position types to disk (survives restarts)."""
