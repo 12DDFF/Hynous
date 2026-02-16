@@ -1296,11 +1296,15 @@ def format_scanner_wake(
         # position_symbols is set on the scanner instance
         lines.append("Signal or noise? If it matters for your positions or thesis, act on it. 1-2 sentences.")
     elif has_micro and not has_macro:
-        lines.append("Speculative size, tight SL/TP (0.3-0.5% SL, 0.5-1% TP). A small controlled loss is better than another missed winner. If passing, include `[SL X% TP Y%]` and a specific reason — not a general fear. 1-3 sentences.")
+        lines.append("Speculative size, tight SL/TP (0.3-0.5% SL, 0.5-1% TP). A small controlled loss is better than another missed winner. If passing, include `[SL X% TP Y%]` and a specific reason — not a general fear.")
     elif has_macro and not has_micro:
-        lines.append("Signal or noise? If the thesis connects, ACT — don't wait for perfection. If passing, include `[SL X% TP Y%]` and a specific reason. 1-3 sentences.")
+        lines.append("Signal or noise? If the thesis connects, ACT — don't wait for perfection. If passing, include `[SL X% TP Y%]` and a specific reason.")
     else:
-        lines.append("Micro = tight stops, act fast. Macro = thesis-driven, wider stops. If passing, include `[SL X% TP Y%]` and a specific reason. 1-3 sentences.")
+        lines.append("Micro = tight stops, act fast. Macro = thesis-driven, wider stops. If passing, include `[SL X% TP Y%]` and a specific reason.")
+
+    # Critical: prevent text-only narration
+    lines.append("")
+    lines.append("IMPORTANT: If you decide to trade, you MUST call execute_trade. Writing 'Entered long' in text does NOT open a position. If the tool rejects your parameters, ADJUST and retry — don't give up after one rejection.")
 
     return "\n".join(lines)
 

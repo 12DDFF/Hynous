@@ -617,10 +617,11 @@ def handle_execute_trade(
         if stop_loss is not None:
             sl_dist = abs(stop_loss - ref_price) / ref_price
             if sl_dist < micro_sl_min:
+                suggested_sl = ref_price * (1 - micro_sl_warn) if is_buy else ref_price * (1 + micro_sl_warn)
                 return (
-                    f"Error: SL distance {sl_dist*100:.2f}% is way too tight for a micro trade "
-                    f"(minimum {ts.micro_sl_warn_pct}%). At {ts.micro_leverage}x that's {sl_dist*100*ts.micro_leverage:.1f}% ROE — pure noise. "
-                    f"Recalculate: entry {_fmt_price(ref_price)}, {ts.micro_sl_warn_pct}% = {_fmt_price(ref_price * (1 - micro_sl_warn) if is_buy else ref_price * (1 + micro_sl_warn))}."
+                    f"Error: SL distance {sl_dist*100:.2f}% is too tight for a micro trade "
+                    f"(minimum {ts.micro_sl_min_pct}%, recommended {ts.micro_sl_warn_pct}%). "
+                    f"Try again with SL at {_fmt_price(suggested_sl)} ({ts.micro_sl_warn_pct}% from entry {_fmt_price(ref_price)})."
                 )
             if sl_dist < micro_sl_warn:
                 _warnings.append(
