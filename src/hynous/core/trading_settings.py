@@ -38,8 +38,8 @@ class TradingSettings:
     # --- Micro trade limits ---
     micro_sl_min_pct: float = 0.2
     micro_sl_warn_pct: float = 0.3
-    micro_sl_max_pct: float = 0.5
-    micro_tp_min_pct: float = 0.15  # Minimum TP distance — must clear round-trip fees
+    micro_sl_max_pct: float = 0.8
+    micro_tp_min_pct: float = 0.20  # Minimum TP distance — must clear round-trip fees
     micro_tp_max_pct: float = 1.0
     micro_leverage: int = 20
 
