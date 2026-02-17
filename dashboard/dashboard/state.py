@@ -2240,7 +2240,7 @@ class AppState(rx.State):
             client = get_client()
             h = client.health()
 
-            nodes = h.get("node_count", 0)
+            total_nodes = h.get("node_count", 0)
             edges = h.get("edge_count", 0)
             lifecycle = h.get("lifecycle", {})
             active = lifecycle.get("ACTIVE", 0)
@@ -2248,6 +2248,9 @@ class AppState(rx.State):
             dormant = lifecycle.get("DORMANT", 0)
             total = active + weak + dormant
             ratio = round(active / total * 100) if total > 0 else 0
+
+            # Show active+weak as headline count (dormant are archived/hidden)
+            live_nodes = active + weak
 
             # Pre-render lifecycle bar
             if total > 0:
@@ -2271,7 +2274,7 @@ class AppState(rx.State):
                     f'<div style="display:flex;gap:12px;font-size:0.68rem;flex-wrap:wrap">'
                     f'<span style="color:#22c55e;white-space:nowrap">{active} active</span>'
                     f'<span style="color:#eab308;white-space:nowrap">{weak} weak</span>'
-                    f'<span style="color:#525252;white-space:nowrap">{dormant} dormant</span>'
+                    f'<span style="color:#525252;white-space:nowrap">{dormant} archived</span>'
                     f'</div>'
                 )
                 lifecycle_html = bar + labels
@@ -2279,7 +2282,7 @@ class AppState(rx.State):
                 lifecycle_html = '<div style="color:#404040;font-size:0.7rem">No memories yet</div>'
 
             return {
-                "node_count": str(nodes),
+                "node_count": str(live_nodes),
                 "edge_count": str(edges),
                 "health_ratio": f"{ratio}%",
                 "lifecycle_html": lifecycle_html,

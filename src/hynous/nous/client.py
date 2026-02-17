@@ -122,8 +122,9 @@ class NousClient:
         return resp.json()
 
     def delete_node(self, node_id: str) -> bool:
-        """Delete a node."""
+        """Delete a node. Raises on HTTP errors."""
         resp = self._session.delete(self._url(f"/nodes/{node_id}"))
+        resp.raise_for_status()
         return resp.status_code == 200
 
     # ---- Edge CRUD ----
@@ -177,8 +178,9 @@ class NousClient:
         return resp.json()
 
     def delete_edge(self, edge_id: str) -> bool:
-        """Delete an edge."""
+        """Delete an edge. Raises on HTTP errors."""
         resp = self._session.delete(self._url(f"/edges/{edge_id}"))
+        resp.raise_for_status()
         return resp.status_code == 200
 
     # ---- Graph (bulk fetch for visualization) ----

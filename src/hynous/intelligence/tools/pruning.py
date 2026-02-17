@@ -418,11 +418,15 @@ def _prune_one_node(client, nid: str, action: str) -> dict:
             for edge in edges:
                 eid = edge.get("id")
                 if eid:
-                    client.delete_edge(eid)
-                    edges_deleted += 1
+                    if not client.delete_edge(eid):
+                        logger.warning("Failed to delete edge %s for node %s", eid, nid)
+                    else:
+                        edges_deleted += 1
 
             # Delete the node
-            client.delete_node(nid)
+            success = client.delete_node(nid)
+            if not success:
+                return {"status": "failed", "id": nid, "reason": "delete_node returned false"}
             get_tracker().record_delete(nid, title, subtype, edges_deleted)
             logger.info("Pruned (delete): \"%s\" (%s) + %d edges", title, nid, edges_deleted)
             return {
