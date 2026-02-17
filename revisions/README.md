@@ -59,13 +59,37 @@ Three trade retrieval issues resolved:
 
 Deferred for later: TO-5 (streaming cost abort), TO-6 (cron schedule tuning), TO-7 (prompt compression), TO-8 (model routing).
 
-### 5. Trade Debug Interface — ANALYSIS COMPLETE
+### 5. Trade Debug Interface — IMPLEMENTED
 
 | File | Contents |
 |------|----------|
-| `trade-debug-interface/analysis.md` | Trade execution telemetry and sub-span instrumentation proposal. Proposes adding visibility into execute_trade, close_position, modify_position internal steps (validation, order fills, SL/TP placement, memory storage). |
+| `trade-debug-interface/analysis.md` | Original analysis: problem statement, current trade flows, data inventory, proposed solutions |
+| `trade-debug-interface/implementation-guide.md` | Step-by-step implementation guide (6 chunks) — **IMPLEMENTED** |
 
-### 6. Full Issue List
+Added `trade_step` span type (8th span type) to the debug system. Three trade handlers (`execute_trade`, `close_position`, `modify_position`) now emit sub-step spans for every internal operation: circuit breaker, validation, leverage, order fill, SL/TP, PnL calculation, cache invalidation, order cancellation, entry lookup, memory storage. Each span includes timing, success/failure, and human+AI-readable detail strings. 3 files modified (`request_tracer.py`, `trading.py`, `state.py`), ~130 lines added, 0 removed.
+
+### 7. Memory Pruning — IMPLEMENTED
+
+| File | Contents |
+|------|----------|
+| `memory-pruning/implementation-guide.md` | Two-phase implementation guide (Approach B) — **IMPLEMENTED** |
+
+Two-phase memory maintenance system for cleaning up stale nodes:
+
+1. **`analyze_memory`** — Scans entire knowledge graph via `get_graph()`, finds connected components via BFS, scores each group on staleness (0.0-1.0) using retrievability, lifecycle, recency, and access frequency. Returns ranked analysis for agent review.
+2. **`batch_prune`** — Archives (set DORMANT) or deletes nodes in bulk using `ThreadPoolExecutor(max_workers=10)` for concurrent processing. Safety guard: skips ACTIVE nodes with >10 accesses on delete.
+
+Key implementation details:
+- Concurrent batch processing via `_prune_one_node()` thread-safe worker
+- `NousClient.delete_node()` and `delete_edge()` now properly call `raise_for_status()` for error propagation
+- Dashboard health count shows live nodes (active + weak), excludes archived (DORMANT)
+- `MutationTracker` extended with `record_archive()` and `record_delete()` for audit trail
+- System prompt updated: 25 tools total, pruning tools mentioned in Memory strategy
+- 45 tests (38 unit + 7 integration), all passing
+
+Files modified: `pruning.py` (new), `registry.py`, `builder.py`, `agent.py`, `memory_tracker.py`, `client.py`, `state.py`, `test_pruning.py` (new), `test_pruning_integration.py` (new), `test_token_optimization.py`.
+
+### 8. Full Issue List
 
 | File | Contents |
 |------|----------|
@@ -79,14 +103,14 @@ All revisions are complete. If you're fixing a specific issue or starting new wo
 
 If you're fixing a specific issue:
 
-1. Check if it's already resolved in `nous-wiring/`, `memory-search/`, or `token-optimization/`
+1. Check if it's already resolved in `nous-wiring/`, `memory-search/`, `trade-debug-interface/`, or `token-optimization/`
 2. Each issue has exact file paths, line numbers, and implementation instructions
 3. Check `revision-exploration.md` for related issues that may compound with yours
 
 If you're doing a general review or planning work:
 
-1. Read `trade-debug-interface/analysis.md` for the current next proposal (trade execution telemetry)
-2. Read `nous-wiring/executive-summary.md` for Nous integration status
-3. Read `memory-search/design-plan.md` for retrieval orchestrator design
+1. Read `nous-wiring/executive-summary.md` for Nous integration status
+2. Read `memory-search/design-plan.md` for retrieval orchestrator design
+3. Read `trade-debug-interface/analysis.md` for trade execution telemetry design
 4. Read `token-optimization/executive-summary.md` for cost optimization status
 5. Check `revision-exploration.md` for the full issue landscape

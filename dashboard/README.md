@@ -70,7 +70,7 @@ dashboard/
 - Agent trace inspector — every `agent.chat()` / `chat_stream()` call produces a trace
 - Trace list sidebar with source badges, status dots, duration, auto-refresh (15s polling)
 - Span timeline with expandable detail for each step (multiple spans can be open simultaneously)
-- 7 span types: Context, Retrieval, LLM Call, Tool Execution, Memory Op, Compression, Queue Flush
+- 8 span types: Context, Retrieval, LLM Call, Tool Execution, Trade Step, Memory Op, Compression, Queue Flush
 - **Content visibility**: expanded spans show full resolved content, not just hashes:
   - LLM Call spans: full message array (`messages_content`) and response text (`response_content`)
   - Context spans: raw user message + full injected context (briefing/snapshot)

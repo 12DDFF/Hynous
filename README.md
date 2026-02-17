@@ -58,12 +58,14 @@ hynous/
     │   └── implementation-guide.md  # Step-by-step implementation guide (6 chunks)
     ├── graph-changes/              # Graph visualization enhancements
     │   └── cluster-visualization.md # Deterministic cluster layout in force-graph — DONE
-    └── token-optimization/         # Token cost reduction — TO-1 through TO-4 DONE
-        ├── executive-summary.md    # Overview of 8 TOs (4 implemented, 4 deferred)
-        ├── TO-1-dynamic-max-tokens.md
-        ├── TO-2-schema-trimming.md
-        ├── TO-3-stale-tool-truncation.md
-        └── TO-4-window-size.md
+    ├── token-optimization/         # Token cost reduction — TO-1 through TO-4 DONE
+    │   ├── executive-summary.md    # Overview of 8 TOs (4 implemented, 4 deferred)
+    │   ├── TO-1-dynamic-max-tokens.md
+    │   ├── TO-2-schema-trimming.md
+    │   ├── TO-3-stale-tool-truncation.md
+    │   └── TO-4-window-size.md
+    └── memory-pruning/             # Memory pruning tools — IMPLEMENTED
+        └── implementation-guide.md # Two-phase pruning (analyze + batch_prune)
 ```
 
 See `ARCHITECTURE.md` for detailed component documentation.
@@ -76,7 +78,7 @@ If you're an AI agent working on this project:
 
 1. **Read first:** `ARCHITECTURE.md` explains how everything connects
 2. **Check revisions:** `revisions/` has known issues and planned improvements — start with `revisions/nous-wiring/executive-summary.md` for the Nous integration status
-3. **All revisions complete** — Nous wiring, memory search, trade recall, token optimization all resolved. See `revisions/README.md` for details
+3. **All revisions complete** — Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning all resolved. See `revisions/README.md` for details
 4. **Check brainstorms:** `../hynous-brainstorm/` has all design decisions
 5. **Follow patterns:** Each directory has a README explaining conventions
 6. **Stay modular:** One feature = one module. Don't mix concerns.
@@ -99,7 +101,7 @@ If you're an AI agent working on this project:
 
 - [x] Phase 1: Dashboard skeleton
 - [x] Phase 2: Chat with Hynous
-- [x] Phase 3: Add tools incrementally (23 tools, market scanner, Discord bot)
+- [x] Phase 3: Add tools incrementally (25 tools, market scanner, Discord bot)
 - [x] Phase 4: Paper trading (conviction-sized, micro/swing types)
 - [ ] Phase 5: Live trading
 

@@ -82,7 +82,7 @@ The LLM agent that thinks, reasons, and acts.
 |--------|----------------|
 | `agent.py` | LiteLLM multi-provider wrapper (Claude, GPT-4, etc.), tool calling loop |
 | `prompts/` | System prompts (identity, trading knowledge) |
-| `tools/` | Tool definitions and handlers (17 modules, 23 tools) |
+| `tools/` | Tool definitions and handlers (18 modules, 25 tools) |
 | `daemon.py` | Background loop for autonomous operation |
 | `scanner.py` | Market-wide anomaly detection across all Hyperliquid pairs |
 | `briefing.py` | Pre-built briefing injection for daemon wakes |
@@ -91,6 +91,7 @@ The LLM agent that thinks, reasons, and acts.
 | `memory_manager.py` | Tiered memory: working window + Nous-backed compression |
 | `retrieval_orchestrator.py` | Intelligent multi-pass retrieval: classify → decompose → parallel search → quality gate → merge |
 | `gate_filter.py` | Pre-storage quality gate (rejects gibberish, filler, etc.) |
+| `memory_tracker.py` | In-process audit log of all Nous writes per chat cycle (creates, archives, deletes) |
 
 ### `src/hynous/nous/` — The Memory Client
 
@@ -125,7 +126,8 @@ Shared utilities used everywhere.
 | `types.py` | Shared type definitions |
 | `errors.py` | Custom exceptions |
 | `logging.py` | Logging setup |
-| `request_tracer.py` | Debug trace collector — records spans per `agent.chat()` call |
+| `request_tracer.py` | Debug trace collector — records 8 span types per `agent.chat()` call |
+| `memory_tracker.py` | Mutation audit log — tracks node creates, edge creates, archives, deletes per chat cycle |
 | `trace_log.py` | Trace persistence + SHA256 content-addressed payload storage |
 
 ### `dashboard/` — The Face
@@ -173,6 +175,11 @@ intelligence/agent.py (process_message)
     │       ▼
     │    nous/client.py → Nous API (:3100)
     │
+    ├──► tools/pruning.py (if memory hygiene)
+    │       │
+    │       ├── analyze_memory: get_graph() → BFS components → staleness scoring
+    │       └── batch_prune: ThreadPoolExecutor(10) → concurrent archive/delete
+    │
     ▼
 Response returned to dashboard
     │
@@ -216,6 +223,7 @@ agent.chat() / chat_stream() called
     ├── Retrieval span (query, results with content bodies)
     ├── LLM Call span (model, tokens, messages_hash, response_hash)
     ├── Tool Execution span (tool_name, input_args, output_preview)
+    ├── Trade Step span (trade_tool, step, success, detail, duration_ms)
     ├── Memory Op span (store/recall/update, gate_filter result)
     ├── Compression span (exchanges_evicted, window_size)
     ├── Queue Flush span (items_count)
@@ -229,6 +237,10 @@ trace_log.save_trace() → storage/traces.json
     ▼
 Dashboard Debug page reads traces + resolves payload hashes
 ```
+
+Memory Op spans include `analyze` and `prune` operations from the pruning tools, recording node counts, stale groups found, and archive/delete success/failure metrics.
+
+Trade step spans provide sub-step visibility into `execute_trade` (7+ spans: circuit breaker, validation, leverage, order fill, cache, daemon, memory), `close_position` (7 spans), and `modify_position` (5 spans). Each span includes timing, success/failure, and a human-readable detail string. Recorded via `_record_trade_span()` helper in `tools/trading.py` using thread-local trace context.
 
 Large content (LLM messages, responses, injected context) is stored via SHA256 content-addressed payloads in `storage/payloads/`. The dashboard's `debug_spans_display` computed var resolves `*_hash` fields to actual content before rendering.
 
@@ -346,6 +358,15 @@ Graph visualization enhancements:
 
 - **`cluster-visualization.md`** — Deterministic cluster layout in the force-graph — **DONE.** Graph API returns clusters + memberships, toggle pins nodes to Fibonacci spiral positions per cluster with convex hull boundaries. No physics-based forces.
 
+### `revisions/trade-debug-interface/` — IMPLEMENTED
+
+Trade execution telemetry — sub-step visibility into all trade operations:
+
+- **`analysis.md`** — Original analysis: problem statement, trade flow breakdowns, proposed solutions
+- **`implementation-guide.md`** — Step-by-step implementation guide (6 chunks) — **IMPLEMENTED**
+
+Added `trade_step` span type (8th span type) to the debug system. Three trade handlers (`execute_trade`, `close_position`, `modify_position`) now emit sub-step spans for every internal operation (circuit breaker, validation, leverage, order fill, SL/TP, PnL, cache invalidation, memory storage, etc.). 3 files modified (`request_tracer.py`, `trading.py`, `state.py`), ~130 lines added.
+
 ### `revisions/token-optimization/`
 
 Token cost reduction measures. Start with `executive-summary.md`:
@@ -363,7 +384,7 @@ Token cost reduction measures. Start with `executive-summary.md`:
 When working on this codebase:
 
 1. **Check revisions first** — `revisions/` has documented issues and their resolutions
-2. **All revisions complete** — Nous wiring, memory search, trade recall, token optimization all resolved
+2. **All revisions complete** — Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning all resolved
 3. **Check existing patterns** — Don't reinvent, extend
 4. **Keep modules focused** — One responsibility per file
 5. **Update this doc** — If you change architecture, document it

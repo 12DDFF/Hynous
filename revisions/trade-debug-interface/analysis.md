@@ -1,12 +1,14 @@
 # Trade Debug Interface — Analysis
 
-> Add trade execution telemetry to the debug dashboard. Currently, the entire trade flow is a single opaque `tool_execution` span — every internal step is invisible.
+> **STATUS: IMPLEMENTED.** Trade step instrumentation is live. See `implementation-guide.md` for the full implementation (6 chunks, 3 files modified, ~130 lines added). The `trade_step` span type is the 8th span type in the debug system.
+
+> ~~Add trade execution telemetry to the debug dashboard. Currently, the entire trade flow is a single opaque `tool_execution` span — every internal step is invisible.~~
 
 ---
 
 ## Problem
 
-The debug dashboard captures 7 span types per trace: `context`, `retrieval`, `llm_call`, `tool_execution`, `memory_op`, `compression`, `queue_flush`.
+The debug dashboard ~~captures 7 span types~~ now captures 8 span types per trace: `context`, `retrieval`, `llm_call`, `tool_execution`, `trade_step`, `memory_op`, `compression`, `queue_flush`.
 
 For trades (`execute_trade`, `close_position`, `modify_position`), the **only** thing captured is one flat `tool_execution` span:
 
@@ -60,7 +62,7 @@ pages/debug.py (split-pane UI: sidebar trace list + main timeline)
 | `storage/traces.json` | Persistent trace storage (FIFO, max 500, 14-day retention) |
 | `storage/payloads/` | Content-addressed payload files (SHA256[:16]) |
 
-### 7 Existing Span Types
+### 8 Span Types (7 original + trade_step)
 
 | Type | Constant | Captured By | Data |
 |------|----------|-------------|------|
@@ -71,6 +73,7 @@ pages/debug.py (split-pane UI: sidebar trace list + main timeline)
 | `memory_op` | `SPAN_MEMORY_OP` | `tools/memory.py` | operation, memory_type, gate filter, dedup result |
 | `compression` | `SPAN_COMPRESSION` | `memory_manager.py` | exchanges evicted, compression input/output |
 | `queue_flush` | `SPAN_QUEUE_FLUSH` | `tools/memory.py` | items count, per-item results |
+| `trade_step` | `SPAN_TRADE_STEP` | `tools/trading.py` | trade_tool, step, success, detail, duration_ms, step-specific extras |
 
 ### Span Display Mapping (state.py)
 
@@ -85,6 +88,7 @@ Each span type maps to a label and color for the UI:
 | `memory_op` | "Memory" | `#a78bfa` |
 | `compression` | "Compress" | `#fb923c` |
 | `queue_flush` | "Queue" | `#94a3b8` |
+| `trade_step` | "Trade" | `#f472b6` |
 
 ### Thread-Local Trace Context
 
@@ -102,7 +106,7 @@ if trace_id:
     get_tracer().record_span(trace_id, span)
 ```
 
-This same pattern would be used for trade instrumentation.
+This same pattern is used by the trade instrumentation (`_record_trade_span()` helper in `trading.py`).
 
 ---
 
@@ -159,50 +163,49 @@ All linked via `part_of` edges: `entry → close`, `entry → modify` (SSA weigh
 
 ---
 
-## Data Available but Not Captured
+## Data Capture Status — UPDATED
 
 ### execute_trade
 
-| Step | Data Available | Currently Visible in Debug? |
-|------|---------------|-----------------------------|
-| Circuit breaker check | pass/fail, reason (paused, duplicate, max positions) | No |
-| Parameter validation | leverage validated, R:R calculated, portfolio risk %, coherence check | No |
-| Confidence tier | tier name, recommended margin, oversized warning | No |
-| `update_leverage()` | symbol, leverage, success/fail, latency | No |
-| `get_price()` | fetched price, latency | No |
-| `market_open()` / `limit_open()` | avg_px, filled_sz, status, oid, latency | No |
-| Fill quality | slippage (requested vs actual fill) | No |
-| Cache invalidation | snapshot + briefing cleared | No |
-| `place_trigger_order()` SL | price, distance %, success/fail, latency | No |
-| `place_trigger_order()` TP | price, distance %, success/fail, latency | No |
-| Daemon recording | entry count incremented, position type registered | No |
-| `_store_to_nous()` | node_id, subtype, signals dict | No |
+| Step | Data Available | Visible in Debug? |
+|------|---------------|-------------------|
+| Circuit breaker check | pass/fail, reason (paused, duplicate, max positions) | **Yes** — `circuit_breaker` span |
+| Parameter validation | leverage, R:R, portfolio risk %, confidence tier, warnings | **Yes** — `validation` span |
+| `update_leverage()` | symbol, leverage, success/fail, latency | **Yes** — `leverage_set` span |
+| `market_open()` / `limit_open()` | avg_px, filled_sz, status, oid, slippage %, latency | **Yes** — `order_fill` span |
+| Cache invalidation | snapshot + briefing cleared | **Yes** — `cache_invalidation` span |
+| Daemon recording | entry count, position type | **Yes** — `daemon_record` span |
+| `_store_to_nous()` | node_id, subtype | **Yes** — `memory_store` span |
 | Background thesis linking | theses found, edges created | No (runs in background thread) |
 
 ### close_position
 
-| Step | Data Available | Currently Visible in Debug? |
-|------|---------------|-----------------------------|
-| Position lookup | found/not found, entry_px, side, size | No |
-| `market_close()` | exit_px, filled_sz, latency | No |
-| PnL calculation | gross, fee estimate, net, leveraged return % | No |
-| Order cancellation | count of SL/TP/limits cancelled | No |
-| Entry node lookup | `_find_trade_entry()` success/fail, node_id | No |
-| Edge creation | entry→close `part_of` edge, edge_id | No |
-| Hebbian strengthening | edge strength +0.1 (background) | No |
+| Step | Data Available | Visible in Debug? |
+|------|---------------|-------------------|
+| Position lookup | found/not found, entry_px, side, size | **Yes** — `position_lookup` span |
+| `market_close()` | exit_px, filled_sz, latency | **Yes** — `order_fill` span |
+| PnL calculation | gross, fee estimate, net, leveraged return % | **Yes** — `pnl_calculation` span |
+| Order cancellation | count of SL/TP/limits cancelled | **Yes** — `order_cancellation` span |
+| Cache invalidation | snapshot + briefing cleared | **Yes** — `cache_invalidation` span |
+| Entry node lookup | `_find_trade_entry()` success/fail, node_id | **Yes** — `entry_lookup` span |
+| Memory store + edge creation | node_id, entry link, edge strengthened | **Yes** — `memory_store` span |
+| Hebbian strengthening | edge strength +0.1 (background) | Captured in `memory_store` span metadata |
 
 ### modify_position
 
-| Step | Data Available | Currently Visible in Debug? |
-|------|---------------|-----------------------------|
-| Existing trigger fetch | old SL/TP values, count | No |
-| Selective cancellation | which orders cancelled, old prices | No |
-| New trigger placement | new SL/TP, success/fail per order | No |
-| Leverage update | old→new leverage | No |
+| Step | Data Available | Visible in Debug? |
+|------|---------------|-------------------|
+| Position lookup | found/not found, side, mark_px, size | **Yes** — `position_lookup` span |
+| Order management | changes summary, new SL/TP/leverage values | **Yes** — `order_management` span |
+| Cache invalidation | snapshot + briefing cleared | **Yes** — `cache_invalidation` span |
+| Entry node lookup | success/fail, node_id | **Yes** — `entry_lookup` span |
+| Memory store | node_id, entry link | **Yes** — `memory_store` span |
 
 ---
 
-## Proposed Solutions
+## Proposed Solutions — IMPLEMENTED (Option A variant)
+
+> **Implemented:** A variant of Option A using flat `trade_step` sibling spans (not nested sub-spans) was chosen. This avoids any data model changes to `request_tracer.py` or `trace_log.py`. See `implementation-guide.md` for the full implementation.
 
 ### Option A — Sub-Spans Within `tool_execution`
 
@@ -237,13 +240,13 @@ Sub-spans in the debug timeline for the technical/debugging view, plus a dedicat
 
 ---
 
-## Files That Would Be Modified
+## Files Modified — DONE
 
-| File | Change |
-|------|--------|
-| `src/hynous/core/request_tracer.py` | New span type constant(s) for trade sub-spans |
-| `src/hynous/intelligence/tools/trading.py` | Instrument each step with `record_span()` calls |
-| `dashboard/dashboard/state.py` | Add label/color mapping for new span types, handle sub-span rendering |
-| `dashboard/dashboard/pages/debug.py` | Render nested sub-spans (indented, collapsible) |
+| File | Change | Status |
+|------|--------|--------|
+| `src/hynous/core/request_tracer.py` | Added `SPAN_TRADE_STEP = "trade_step"` constant (+1 line) | DONE |
+| `src/hynous/intelligence/tools/trading.py` | Added `_record_trade_span()` helper + instrumented all 3 handlers (~120 lines) | DONE |
+| `dashboard/dashboard/state.py` | Added `trade_step` to label_map + summary generation (~8 lines) | DONE |
+| `dashboard/dashboard/pages/debug.py` | No changes needed — already renders any span type via `debug_spans_display` | N/A |
 
 No changes needed to `trace_log.py` (storage is schema-agnostic — any dict works).
