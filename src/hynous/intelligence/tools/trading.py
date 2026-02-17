@@ -350,21 +350,19 @@ TRADE_TOOL_DEF = {
         "Order types:\n"
         "- market (default): Immediate fill at current price\n"
         "- limit: Resting order at your price, fills when reached\n\n"
-        "Position sizing:\n"
-        "- PREFERRED: Omit size_usd and size — the system auto-sizes from conviction tier:\n"
-        "  High (0.8+) → 30% margin, Medium (0.6+) → 20%, Speculative → 10%.\n"
-        "  This ensures correct position sizing relative to portfolio.\n"
-        "- size_usd: Override with explicit NOTIONAL size in USD (margin = size_usd / leverage).\n"
-        "- size: Override with base asset amount (e.g. 0.03 BTC)\n\n"
-        "Risk management (ALL required):\n"
-        "- leverage: REQUIRED, minimum 5x (micro requires 20x)\n"
+        "Position sizing is AUTOMATIC — the system sizes every trade from your confidence score:\n"
+        "  High (0.8+) → 30% of portfolio as margin\n"
+        "  Medium (0.6-0.79) → 20% of portfolio as margin\n"
+        "  Speculative (0.4-0.59) → 10% of portfolio as margin\n"
+        "  Below threshold → rejected\n"
+        "You never pick a size manually — just pass confidence honestly.\n\n"
+        "Required parameters:\n"
+        "- leverage: minimum 5x (micro requires 20x)\n"
         "- stop_loss: Where my thesis is wrong — auto-placed as trigger order\n"
         "- take_profit: Where I take profit — auto-placed as trigger order\n"
         "- reasoning: My full thesis for this trade — stored in memory\n"
-        "- confidence: REQUIRED conviction score (0.0-1.0) — determines size tier\n\n"
-        "Optional:\n"
-        "- slippage: Max slippage for market orders (default from config)\n\n"
-        "Examples (auto-sized — no size_usd needed):\n"
+        "- confidence: Conviction score (0.0-1.0) — drives position size\n\n"
+        "Examples:\n"
         '  High conviction:\n'
         '    {"symbol": "BTC", "side": "long", "leverage": 20, "stop_loss": 66000, '
         '"take_profit": 72000, "confidence": 0.85, '
@@ -396,18 +394,6 @@ TRADE_TOOL_DEF = {
                 "enum": ["long", "short"],
                 "description": "Trade direction.",
             },
-            "size_usd": {
-                "type": "number",
-                "description": "Optional: notional size in USD. OMIT to auto-size from conviction tier "
-                               "(recommended — ensures correct sizing relative to portfolio). "
-                               "E.g. size_usd=500 at 20x = $25 margin from account.",
-                "minimum": 10,
-            },
-            "size": {
-                "type": "number",
-                "description": "Optional: size in base asset (e.g. 0.03 BTC). OMIT to auto-size from conviction.",
-                "exclusiveMinimum": 0,
-            },
             "order_type": {
                 "type": "string",
                 "enum": ["market", "limit"],
@@ -438,8 +424,9 @@ TRADE_TOOL_DEF = {
             },
             "confidence": {
                 "type": "number",
-                "description": "Conviction score (0.0-1.0). REQUIRED — determines position size tier. "
-                               "0.8+ = full base, 0.6-0.79 = half, 0.4-0.59 = quarter, <0.4 = rejected.",
+                "description": "Conviction score (0.0-1.0). REQUIRED — the system auto-sizes the trade from this. "
+                               "0.8+ = High (30% margin), 0.6-0.79 = Medium (20%), 0.4-0.59 = Speculative (10%), below = rejected. "
+                               "Be honest — higher conviction = bigger size = bigger P&L.",
                 "minimum": 0,
                 "maximum": 1,
             },
@@ -456,7 +443,7 @@ TRADE_TOOL_DEF = {
             "trade_type": {
                 "type": "string",
                 "enum": ["macro", "micro"],
-                "description": "Trade type. 'micro' = 15-60min hold, tight stops, Speculative size max. "
+                "description": "Trade type. 'micro' = 15-60min hold, tight stops. "
                                "'macro' = hours-days, thesis-driven. Defaults to 'macro'.",
             },
         },
@@ -571,11 +558,11 @@ def handle_execute_trade(
             recommended_margin = portfolio * (ts.tier_speculative_margin_pct / 100)
             tier = "Speculative"
 
-        # Auto-size from conviction when no explicit size given
-        if size_usd is None and size is None:
-            size_usd = recommended_margin * leverage
-            logger.info("Auto-sized from %s conviction: $%.2f margin × %dx = $%.2f notional",
-                        tier, recommended_margin, leverage, size_usd)
+        # Auto-size from conviction — conviction always drives sizing
+        size_usd = recommended_margin * leverage
+        size = None  # clear any manual override
+        logger.info("Auto-sized from %s conviction: $%.2f margin × %dx = $%.2f notional",
+                    tier, recommended_margin, leverage, size_usd)
 
     # --- Validate sizing ---
     if size_usd is None and size is None:
@@ -923,9 +910,7 @@ def handle_execute_trade(
     # --- Conviction tier ---
     if confidence is not None and tier and recommended_margin:
         pct_of_portfolio = recommended_margin / portfolio * 100 if portfolio else 0
-        lines.append(f"Confidence: {confidence:.0%} ({tier} — up to {pct_of_portfolio:.0f}% of account)")
-        if oversized:
-            lines.append(f"Warning: Margin ${actual_margin:,.0f} exceeds recommended ${recommended_margin:,.0f}")
+        lines.append(f"Conviction: {confidence:.0%} → {tier} tier → ${recommended_margin:,.0f} margin ({pct_of_portfolio:.0f}% of ${portfolio:,.0f} portfolio)")
     elif confidence is not None:
         lines.append(f"Confidence: {confidence:.0%}")
 
