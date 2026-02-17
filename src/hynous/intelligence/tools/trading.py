@@ -495,10 +495,7 @@ def handle_execute_trade(
 
     # --- Micro trade enforcement ---
     if trade_type == "micro":
-        # Cap confidence at Speculative tier max
-        if confidence is not None and confidence > 0.59:
-            logger.info("Micro trade: clamping confidence %.2f → 0.59", confidence)
-            confidence = 0.59
+        pass  # No confidence cap — micros size by conviction like any trade
 
     provider, config = _get_trading_provider()
 

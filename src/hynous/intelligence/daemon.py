@@ -1253,7 +1253,7 @@ class Daemon:
         Swings are patient — longer gaps are fine.
         """
         if trade_type == "micro":
-            return 900   # 15 min
+            return 300   # 5 min — micros live 3-15 min, need fast re-alerts
         return 2700      # 45 min
 
     @staticmethod
@@ -1325,6 +1325,11 @@ class Daemon:
                     self._maybe_alert(coin, "take_profit", roe_pct, side, entry_px, mark_px, now, alerts, trade_type)
                 elif roe_pct >= nudge:
                     self._maybe_alert(coin, "profit_nudge", roe_pct, side, entry_px, mark_px, now, alerts, trade_type)
+
+                # Check profit fading: peak was strong but profit is dying
+                peak = self._peak_roe.get(coin, 0)
+                if peak >= nudge and roe_pct < peak * 0.4:
+                    self._maybe_alert(coin, "profit_fading", roe_pct, side, entry_px, mark_px, now, alerts, trade_type)
 
                 # Check risk: significant loss with no stop loss
                 if roe_pct <= risk:
@@ -1416,10 +1421,24 @@ class Daemon:
         elif tier == "profit_nudge":
             header = f"[DAEMON WAKE — {coin} {side.upper()} +{roe_pct:.0f}%]"
             if is_scalp:
-                footer = f"Scalp up {roe_pct:+.0f}%. Tighten your stop — this is what micro profits look like."
+                footer = f"Scalp up {roe_pct:+.0f}%. CLOSE THIS TRADE NOW. This is peak micro profit — take it before it reverses."
             else:
                 footer = f"Swing building nicely at +{roe_pct:.0f}%. Trail your stop to lock in the move."
             priority = False
+        elif tier == "profit_fading":
+            peak = self._peak_roe.get(coin, 0)
+            header = f"[DAEMON WAKE — PROFIT FADING: {coin} {side.upper()} peaked +{peak:.0f}% → now {roe_pct:+.0f}%]"
+            if is_scalp:
+                footer = (
+                    f"Scalp peaked at +{peak:.0f}% ROE but now at {roe_pct:+.0f}%. "
+                    f"Your profit is dying. CLOSE NOW or you lose it all."
+                )
+            else:
+                footer = (
+                    f"Swing peaked at +{peak:.0f}% ROE but dropped to {roe_pct:+.0f}%. "
+                    f"Profit is fading fast. Take what's left or tighten your stop."
+                )
+            priority = True
         elif tier == "risk_no_sl":
             header = f"[DAEMON WAKE — RISK: {coin} {side.upper()} {roe_pct:+.0f}%]"
             if is_scalp:
@@ -2800,6 +2819,47 @@ class Daemon:
                 except Exception as e:
                     logger.error("Coach sharpen failed: %s", e)
 
+            # === 3b. Position awareness block (every wake) ===
+            position_block = ""
+            if self._prev_positions:
+                pos_lines = []
+                now_ts = time.time()
+                for coin, pdata in self._prev_positions.items():
+                    p_side = pdata.get("side", "long")
+                    p_entry = pdata.get("entry_px", 0)
+                    p_lev = pdata.get("leverage", 20)
+                    p_px = self.snapshot.prices.get(coin, 0)
+                    if p_entry > 0 and p_px > 0:
+                        if p_side == "long":
+                            p_pct = (p_px - p_entry) / p_entry * 100
+                        else:
+                            p_pct = (p_entry - p_px) / p_entry * 100
+                        p_roe = p_pct * p_lev
+                    else:
+                        p_roe = 0
+                    p_peak = self._peak_roe.get(coin, 0)
+                    p_type = self.get_position_type(coin)
+                    p_hold = ""
+                    if p_type["entry_time"] > 0:
+                        p_mins = max(0, int((now_ts - p_type["entry_time"]) / 60))
+                        p_hold = f" | Hold: {p_mins}m"
+                    p_fade = ""
+                    if p_peak > 5 and p_roe < p_peak * 0.5:
+                        p_fade = " | PROFIT FADING"
+                    px_f = f"${p_px:,.0f}" if p_px >= 100 else f"${p_px:,.2f}"
+                    en_f = f"${p_entry:,.0f}" if p_entry >= 100 else f"${p_entry:,.2f}"
+                    pos_lines.append(
+                        f"  {coin} {p_side.upper()} {p_lev}x ({p_type['type']})"
+                        f" | {en_f} -> {px_f}"
+                        f" | ROE: {p_roe:+.1f}% (peak {p_peak:+.1f}%){p_hold}{p_fade}"
+                    )
+                if pos_lines:
+                    position_block = (
+                        "[YOUR OPEN POSITIONS — manage these before anything else]\n"
+                        + "\n".join(pos_lines)
+                        + "\nIf any position is profitable, decide NOW: close, trail stop, or hold with clear reason."
+                    )
+
             # === 4. Assemble wake message ===
             parts = []
             if briefing_text:
@@ -2809,6 +2869,8 @@ class Daemon:
                 parts.append("[Consider — do NOT list these in your response, just let them inform your thinking]\n" + "\n".join(f"- {q}" for q in all_q))
             if warnings_text:
                 parts.append(warnings_text)
+            if position_block:
+                parts.append(position_block)
             parts.append(message)  # Original wake message
 
             full_message = "\n\n".join(parts)
