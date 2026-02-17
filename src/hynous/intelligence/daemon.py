@@ -512,7 +512,12 @@ class Daemon:
                 if now - self.snapshot.last_price_poll >= self.config.daemon.price_poll_interval:
                     self._poll_prices()
 
-                # 1b. Position tracking — detect SL/TP fills + profit monitoring
+                # 1a. Fast trigger check EVERY loop (10s) for open positions
+                # SL/TP must fire promptly — can't wait 60s between checks.
+                # Fetches fresh prices only for position symbols (1 cheap API call).
+                self._fast_trigger_check()
+
+                # 1b. Full position tracking + profit monitoring (every 60s)
                 if now - self._last_fill_check >= self.config.daemon.price_poll_interval:
                     live_positions = self._check_positions()
                     self._check_profit_levels(live_positions)
@@ -911,6 +916,80 @@ class Daemon:
                 self._tracked_triggers[coin].append(t)
         except Exception as e:
             logger.debug("Trigger cache refresh failed: %s", e)
+
+    def _fast_trigger_check(self):
+        """Check SL/TP triggers every loop iteration (~10s) with fresh prices.
+
+        The full price poll runs every 60s for ~200 symbols (feeds scanner).
+        But SL/TP triggers on open positions need faster checking — a trade
+        can hit TP and reverse within 60s, causing missed exits.
+
+        This fetches fresh prices ONLY for position symbols (1 API call)
+        and runs check_triggers + peak ROE tracking on every loop.
+        """
+        provider = self._get_provider()
+        if not hasattr(provider, "check_triggers") or not self._prev_positions:
+            return
+
+        try:
+            # Fetch fresh prices only for symbols with open positions
+            position_syms = list(self._prev_positions.keys())
+            fresh_prices = {}
+            all_mids = provider.get_all_prices()
+            for sym in position_syms:
+                if sym in all_mids:
+                    fresh_prices[sym] = all_mids[sym]
+                    # Also update snapshot so briefing/scanner see latest
+                    self.snapshot.prices[sym] = all_mids[sym]
+
+            if not fresh_prices:
+                return
+
+            # Check SL/TP/liquidation triggers with fresh prices
+            events = provider.check_triggers(fresh_prices)
+            for event in events:
+                self._update_daily_pnl(event["realized_pnl"])
+                self._record_trigger_close(event)
+                self._wake_for_fill(
+                    event["coin"], event["side"], event["entry_px"],
+                    event["exit_px"], event["realized_pnl"],
+                    event["classification"],
+                )
+
+            if events:
+                for event in events:
+                    self._position_types.pop(event["coin"], None)
+                self._persist_position_types()
+                state = provider.get_user_state()
+                positions = state.get("positions", [])
+                self._prev_positions = {
+                    p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"], "leverage": p.get("leverage", 20)}
+                    for p in positions
+                }
+
+            # Track peak ROE on every check (not just every 60s)
+            for sym in position_syms:
+                px = fresh_prices.get(sym)
+                if not px:
+                    continue
+                pos = self._prev_positions.get(sym)
+                if not pos:
+                    continue
+                entry_px = pos.get("entry_px", 0)
+                leverage = pos.get("leverage", 20)
+                if entry_px <= 0:
+                    continue
+                side = pos.get("side", "long")
+                if side == "long":
+                    price_pct = (px - entry_px) / entry_px * 100
+                else:
+                    price_pct = (entry_px - px) / entry_px * 100
+                roe_pct = price_pct * leverage
+                if roe_pct > self._peak_roe.get(sym, 0):
+                    self._peak_roe[sym] = roe_pct
+
+        except Exception as e:
+            logger.debug("Fast trigger check failed: %s", e)
 
     def _check_positions(self) -> list[dict] | None:
         """Compare current positions to cached snapshot. Detect closes.
