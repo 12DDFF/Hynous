@@ -353,8 +353,7 @@ TRADE_TOOL_DEF = {
         "Position sizing is AUTOMATIC — the system sizes every trade from your confidence score:\n"
         "  High (0.8+) → 30% of portfolio as margin\n"
         "  Medium (0.6-0.79) → 20% of portfolio as margin\n"
-        "  Speculative (0.4-0.59) → 10% of portfolio as margin\n"
-        "  Below threshold → rejected\n"
+        "  Below 0.6 → rejected (not enough conviction)\n"
         "You never pick a size manually — just pass confidence honestly.\n\n"
         "Required parameters:\n"
         "- leverage: minimum 5x (micro requires 20x)\n"
@@ -425,7 +424,7 @@ TRADE_TOOL_DEF = {
             "confidence": {
                 "type": "number",
                 "description": "Conviction score (0.0-1.0). REQUIRED — the system auto-sizes the trade from this. "
-                               "0.8+ = High (30% margin), 0.6-0.79 = Medium (20%), 0.4-0.59 = Speculative (10%), below = rejected. "
+                               "0.8+ = High (30% margin), 0.6-0.79 = Medium (20%), below 0.6 = rejected. "
                                "Be honest — higher conviction = bigger size = bigger P&L.",
                 "minimum": 0,
                 "maximum": 1,

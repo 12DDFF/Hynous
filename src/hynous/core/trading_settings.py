@@ -56,7 +56,7 @@ class TradingSettings:
     tier_high_margin_pct: int = 30
     tier_medium_margin_pct: int = 20
     tier_speculative_margin_pct: int = 10
-    tier_pass_threshold: float = 0.3
+    tier_pass_threshold: float = 0.6
 
     # --- General limits ---
     max_position_usd: float = 10000
