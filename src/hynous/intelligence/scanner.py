@@ -155,6 +155,9 @@ class MarketScanner:
         # Recent anomaly history for dashboard display
         self._recent_anomalies: deque = deque(maxlen=20)
 
+        # Regime shift detection (set by daemon when label changes)
+        self._pending_regime_shift: dict | None = None  # {from, to, score}
+
         self._warmup_logged = False
 
     # -----------------------------------------------------------------
@@ -281,6 +284,14 @@ class MarketScanner:
             self._news = self._news[-50:]
             self._seen_news_ids = {a.get("id", "") for a in self._news}
 
+    def regime_shifted(self, from_label: str, to_label: str, score: float):
+        """Called by daemon when regime label changes. Queues for detection."""
+        self._pending_regime_shift = {
+            "from": from_label,
+            "to": to_label,
+            "score": score,
+        }
+
     # -----------------------------------------------------------------
     # Public Accessors
     # -----------------------------------------------------------------
@@ -354,6 +365,9 @@ class MarketScanner:
             anomalies.extend(self._detect_liquidation_cascades())
             anomalies.extend(self._detect_market_liq_wave())
 
+        # Tier 5: Regime shift (fed by daemon, no warmup)
+        anomalies.extend(self._detect_regime_shift())
+
         # Dedup (per-type TTL)
         self._cleanup_seen()
         unique = []
@@ -369,6 +383,8 @@ class MarketScanner:
                     ttl = 600    # 10min — risk signals need repeat
                 elif a.type == "book_flip":
                     ttl = 1800   # 30min — oscillates too fast for 15min
+                elif a.type == "regime_shift":
+                    ttl = 7200   # 2h — regime shifts are slow
                 elif a.category == "news":
                     ttl = 3600   # 1h — news doesn't repeat
                 elif a.category == "micro":
@@ -1211,6 +1227,36 @@ class MarketScanner:
 
         return results
 
+    # -----------------------------------------------------------------
+    # Tier 5: Regime Shift
+    # -----------------------------------------------------------------
+
+    def _detect_regime_shift(self) -> list[AnomalyEvent]:
+        """Detect regime label changes (fed by daemon via regime_shifted())."""
+        if not self._pending_regime_shift:
+            return []
+
+        shift = self._pending_regime_shift
+        self._pending_regime_shift = None  # Consume
+
+        from_label = shift["from"]
+        to_label = shift["to"]
+        score = shift["score"]
+
+        headline = f"Regime shift: {from_label} -> {to_label}"
+        detail = f"Regime score now {score:+.2f}. Market conditions have shifted — reassess open positions and thesis bias."
+
+        return [AnomalyEvent(
+            type="regime_shift",
+            symbol="MARKET",
+            severity=0.7,
+            headline=headline,
+            detail=detail,
+            fingerprint=f"regime_shift:{from_label}:{to_label}",
+            detected_at=time.time(),
+            category="macro",
+        )]
+
 
 # =============================================================================
 # Wake Message Formatter
@@ -1229,6 +1275,7 @@ def _severity_label(sev: float) -> str:
 def format_scanner_wake(
     anomalies: list[AnomalyEvent],
     position_types: dict[str, dict] | None = None,
+    regime_label: str = "NEUTRAL",
 ) -> str:
     """Format anomalies into a daemon wake message.
 
@@ -1242,6 +1289,7 @@ def format_scanner_wake(
     Args:
         anomalies: Detected anomaly events.
         position_types: {coin: {"type": "micro"|"macro", ...}} from daemon.
+        regime_label: Current regime label for directional guidance.
     """
     # Separate by category
     risk = [a for a in anomalies if a.type == "position_adverse_book"]
@@ -1282,6 +1330,16 @@ def format_scanner_wake(
         lines.append(f"   {a.detail}")
         lines.append("")
 
+    # Regime-aware direction hint for footer
+    is_bear = regime_label in ("BEARISH", "LEAN BEAR")
+    is_bull = regime_label in ("BULLISH", "LEAN BULL")
+    if is_bear:
+        direction_hint = " Regime is BEARISH — your default side is SHORT. Don't go long unless you have an exceptional, specific reason that overcomes the downtrend."
+    elif is_bull:
+        direction_hint = " Regime is BULLISH — your default side is LONG."
+    else:
+        direction_hint = ""
+
     # Footer based on wake type
     if has_risk:
         risk_coin = risk[0].symbol
@@ -1291,16 +1349,13 @@ def format_scanner_wake(
         else:
             lines.append("Swing position — book pressure building. Check if your thesis still holds. Tighten stop or hold if conviction is strong. 1-2 sentences.")
     elif has_news and not has_micro and not has_macro:
-        # Check if any news symbol matches a position
-        news_syms = {a.symbol for a in news}
-        # position_symbols is set on the scanner instance
-        lines.append("Signal or noise? If it matters for your positions or thesis, act on it. 1-2 sentences.")
+        lines.append(f"Signal or noise? If it matters for your positions or thesis, act on it.{direction_hint} 1-2 sentences.")
     elif has_micro and not has_macro:
-        lines.append("Speculative size, tight SL/TP (0.3-0.5% SL, 0.5-1% TP). A small controlled loss is better than another missed winner. If passing, include `[SL X% TP Y%]` and a specific reason — not a general fear.")
+        lines.append(f"Speculative size, tight SL/TP (0.3-0.5% SL, 0.5-1% TP).{direction_hint} If passing, include `[SL X% TP Y%]` and a specific reason — not a general fear.")
     elif has_macro and not has_micro:
-        lines.append("Signal or noise? If the thesis connects, ACT — don't wait for perfection. If passing, include `[SL X% TP Y%]` and a specific reason.")
+        lines.append(f"If the thesis connects, ACT — don't wait for perfection.{direction_hint} If passing, include `[SL X% TP Y%]` and a specific reason.")
     else:
-        lines.append("Micro = tight stops, act fast. Macro = thesis-driven, wider stops. If passing, include `[SL X% TP Y%]` and a specific reason.")
+        lines.append(f"Micro = tight stops, act fast. Macro = thesis-driven, wider stops.{direction_hint} If passing, include `[SL X% TP Y%]` and a specific reason.")
 
     # Critical: prevent text-only narration
     lines.append("")

@@ -80,6 +80,8 @@ class InjectedState:
     funding: dict[str, float] = field(default_factory=dict)
     book_imbalance: dict[str, str] = field(default_factory=dict)
     memory_counts: tuple[int, int, int] = (0, 0, 0)
+    regime_label: str = ""
+    regime_score: float = 0.0
 
 
 # ====================================================================
@@ -313,6 +315,13 @@ def build_briefing(
     market_section = _build_market_line(snapshot, config)
     if market_section:
         sections.append(market_section)
+
+    # --- Regime classification ---
+    if daemon and getattr(daemon, "_regime", None):
+        from .regime import format_regime_line
+        regime_section = format_regime_line(daemon._regime, compact=False)
+        if regime_section:
+            sections.append(regime_section)
 
     # --- Per-asset deep data ---
     for sym in data_cache.symbols:
@@ -865,6 +874,12 @@ def _capture_state(daemon, now: float, user_state: dict | None = None) -> Inject
         if asset and asset.imbalance:
             state.book_imbalance[sym] = asset.imbalance
 
+    # Regime
+    regime = getattr(daemon, "_regime", None)
+    if regime:
+        state.regime_label = regime.label
+        state.regime_score = regime.score
+
     return state
 
 
@@ -1027,6 +1042,10 @@ def _build_delta(daemon, now: float) -> str | None:
             parts.append(f"curiosity {old_cu}->{new_cu}")
         if parts:
             changes.append("Memory: " + ", ".join(parts))
+
+    # Regime label change
+    if current.regime_label and current.regime_label != old.regime_label and old.regime_label:
+        changes.append(f"Regime: {old.regime_label} -> {current.regime_label} ({current.regime_score:+.2f})")
 
     # Circuit breaker
     if current.trading_paused != old.trading_paused:

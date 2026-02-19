@@ -59,6 +59,11 @@ def build_snapshot(provider, daemon, nous_client, config) -> str:
     if market_line:
         sections.append(market_line)
 
+    # --- Regime classification ---
+    regime_line = _build_regime(daemon)
+    if regime_line:
+        sections.append(regime_line)
+
     # --- Memory counts (prefer daemon cache, fallback to Nous) ---
     memory_line = _build_memory_counts(nous_client, daemon)
     if memory_line:
@@ -274,6 +279,17 @@ def _build_memory_counts(nous_client, daemon=None) -> str:
 
     parts = [f"{v} {k}" for k, v in counts.items()]
     return f"Memory: {' | '.join(parts)}"
+
+
+def _build_regime(daemon) -> str:
+    """Regime classification from daemon's cached regime state."""
+    if daemon is None:
+        return ""
+    regime = getattr(daemon, "_regime", None)
+    if not regime:
+        return ""
+    from .regime import format_regime_line
+    return format_regime_line(regime, compact=True)
 
 
 def _build_activity(daemon) -> str:

@@ -256,6 +256,10 @@ class Daemon:
         self._pending_thoughts: list[str] = []       # Haiku questions (max 3)
         self._wake_fingerprints: list[frozenset] = []  # Last 5 tool+mutation fingerprints
 
+        # Regime detection (computed every deriv poll, injected everywhere)
+        self._regime = None             # RegimeState or None
+        self._prev_regime_label = ""    # For shift detection
+
         # Market scanner (anomaly detection across all pairs)
         self._scanner = None
         if config.scanner.enabled:
@@ -419,6 +423,11 @@ class Daemon:
                 "prices": dict(self.snapshot.prices),
                 "fear_greed": self.snapshot.fear_greed,
             },
+            "regime": {
+                "label": self._regime.label if self._regime else "UNKNOWN",
+                "score": round(self._regime.score, 2) if self._regime else 0,
+                "bias": self._regime.bias if self._regime else "NEUTRAL",
+            } if self._regime else None,
         }
 
     @property
@@ -728,6 +737,25 @@ class Daemon:
                 )
         except Exception as e:
             logger.debug("Equity snapshot failed: %s", e)
+
+        # Compute regime classification (zero cost, uses cached data)
+        try:
+            from .regime import RegimeClassifier
+            classifier = RegimeClassifier()
+            self._regime = classifier.compute(
+                self.snapshot, self._data_cache, self._scanner,
+            )
+            # Track label changes for scanner shift detection
+            new_label = self._regime.label
+            if self._prev_regime_label and new_label != self._prev_regime_label:
+                logger.info("Regime shift: %s -> %s (score %.2f)",
+                            self._prev_regime_label, new_label, self._regime.score)
+                # Feed regime shift to scanner for anomaly detection
+                if self._scanner:
+                    self._scanner.regime_shifted(self._prev_regime_label, new_label, self._regime.score)
+            self._prev_regime_label = new_label
+        except Exception as e:
+            logger.debug("Regime computation failed: %s", e)
 
         self.snapshot.last_deriv_poll = time.time()
         self._data_changed = True
@@ -1665,8 +1693,15 @@ class Daemon:
         # Cap to max anomalies per wake
         top = wake_worthy[:cfg.max_anomalies_per_wake]
 
-        # Format the wake message (pass position types for risk context)
-        message = format_scanner_wake(top, position_types=self._position_types)
+        # Format the wake message (pass position types + regime for directional context)
+        regime_label = self._regime.label if self._regime else "NEUTRAL"
+        message = format_scanner_wake(top, position_types=self._position_types, regime_label=regime_label)
+
+        # Inject regime context above the scanner message
+        if self._regime and self._regime.label != "NEUTRAL":
+            from .regime import format_regime_line
+            regime_line = format_regime_line(self._regime, compact=True)
+            message = f"[{regime_line}]\n\n" + message
 
         # Inject historical context above the scanner message
         track_record = self._build_historical_context(top)
@@ -2860,6 +2895,12 @@ class Daemon:
                         + "\nIf any position is profitable, decide NOW: close, trail stop, or hold with clear reason."
                     )
 
+            # === 3c. Regime context (zero cost, already computed) ===
+            regime_block = ""
+            if self._regime and self._regime.label != "NEUTRAL":
+                from .regime import format_regime_line
+                regime_block = format_regime_line(self._regime, compact=False)
+
             # === 4. Assemble wake message ===
             parts = []
             if briefing_text:
@@ -2869,6 +2910,8 @@ class Daemon:
                 parts.append("[Consider — do NOT list these in your response, just let them inform your thinking]\n" + "\n".join(f"- {q}" for q in all_q))
             if warnings_text:
                 parts.append(warnings_text)
+            if regime_block:
+                parts.append(regime_block)
             if position_block:
                 parts.append(position_block)
             parts.append(message)  # Original wake message
