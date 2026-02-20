@@ -1357,6 +1357,7 @@
 
   function smShowTab(tab, profileAddr) {
     smPrevTab = smCurrentTab;
+    window.smPrevTab = smPrevTab;
     smCurrentTab = tab;
     if (profileAddr) smProfileAddr = profileAddr;
 
@@ -1915,6 +1916,30 @@
     updateHeatmapPrice(p);
     updateLandscapePrice(p);
   }
+
+  // =====================================================================
+  // EXPOSE SM FUNCTIONS TO GLOBAL SCOPE (inline onclick/onchange handlers
+  // execute in window scope, not inside this IIFE)
+  // =====================================================================
+  window.smFilters = smFilters;
+  window.smSaveFilters = smSaveFilters;
+  window.updateSM = updateSM;
+  window.smShowTab = smShowTab;
+  window.smPrevTab = smPrevTab;
+  window.smChecked = smChecked;
+  window.smToggleCheck = smToggleCheck;
+  window.smToggleAll = smToggleAll;
+  window.smBatchTrack = smBatchTrack;
+  window.smBatchAnalyze = smBatchAnalyze;
+  window.smTrackAllVisible = smTrackAllVisible;
+  window.smUntrack = smUntrack;
+  window.smInlineRename = smInlineRename;
+  window.smSaveProfileField = smSaveProfileField;
+  window.smAddAlert = smAddAlert;
+  window.smDeleteAlert = smDeleteAlert;
+  window.smSendToAgent = smSendToAgent;
+  window.smTrackFromProfile = smTrackFromProfile;
+  window.smShowToast = smShowToast;
 
   // =====================================================================
   // ORCHESTRATION
