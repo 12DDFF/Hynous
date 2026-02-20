@@ -178,6 +178,13 @@
   .whale-stats .ws-long { color: #22c55e; }
   .whale-stats .ws-short { color: #ef4444; }
   .whale-stats { flex-shrink: 0; }
+  .whale-limit {
+    background: #141414; border: 1px solid #1a1a1a; border-radius: 4px;
+    color: #737373; font-size: 0.6rem; font-family: 'JetBrains Mono', monospace;
+    padding: 2px 4px; cursor: pointer; outline: none;
+  }
+  .whale-limit:hover { border-color: #262626; color: #a3a3a3; }
+  .whale-limit option { background: #0c0c0c; color: #a3a3a3; }
 
   .empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #262626; font-size: 0.78rem; }
 
@@ -258,6 +265,12 @@
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
+          <select id="whale-limit" class="whale-limit">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500" selected>500</option>
+          </select>
           <span class="panel-badge" id="whale-badge"></span>
           <button class="collapse-btn" id="whale-expand">Explore</button>
         </div>
@@ -530,6 +543,7 @@
   let whaleData = [];
   let whaleView = 'landscape';      // panel view
   let whaleOverlayView = 'landscape'; // explorer view
+  function whaleLimit() { return document.getElementById('whale-limit').value || '500'; }
 
   function initWhale() {
     whaleChart = echarts.init(document.getElementById('whale-panel'), null, { renderer: 'canvas' });
@@ -855,7 +869,7 @@
 
   // --- Fetch + render panel ---
   async function updateWhale() {
-    const data = await api(B + '/api/data/whales/' + coin + '?top_n=500');
+    const data = await api(B + '/api/data/whales/' + coin + '?top_n=' + whaleLimit());
     if (!data || data.error) {
       whaleChart.setOption({ title: { text: 'No whale data', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] }, true);
       whaleData = []; updateWhaleStats([]); return;
@@ -885,6 +899,7 @@
       renderWhaleView(whaleChart, whaleView, whaleData, markPx, false);
     }
   });
+  document.getElementById('whale-limit').addEventListener('change', () => updateWhale());
   document.getElementById('whale-overlay-tabs').addEventListener('click', e => {
     const btn = e.target.closest('.whale-tab'); if (!btn) return;
     whaleOverlayView = btn.dataset.view;
@@ -898,7 +913,7 @@
   // --- Explorer overlay ---
   async function openWhaleOverlay() {
     if (!whaleData.length) {
-      const data = await api(B + '/api/data/whales/' + coin + '?top_n=500');
+      const data = await api(B + '/api/data/whales/' + coin + '?top_n=' + whaleLimit());
       if (data && !data.error && data.positions) whaleData = parseWhales(data.positions);
     }
     if (!whaleData.length) return;
