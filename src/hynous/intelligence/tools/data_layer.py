@@ -246,9 +246,9 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
             "",
         ]
         for p in data.get("positions", [])[:top_n]:
-            addr = p.get("address", "")[:10]
+            addr = p.get("address", "")
             lines.append(
-                f"  {addr}… {p['side']} ${p['size_usd']:,.0f} "
+                f"  {addr} {p['side']} ${p['size_usd']:,.0f} "
                 f"({p.get('leverage', 1):.0f}x) entry ${p.get('entry_px', 0):,.2f} "
                 f"PnL ${p.get('unrealized_pnl', 0):+,.0f}"
             )
@@ -290,7 +290,7 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
 
         lines = [f"Smart Money — Top {len(rankings)} by 24h PnL:", ""]
         for r in rankings[:top_n]:
-            addr = r.get("address", "")[:10]
+            addr = r.get("address", "")
             pos_text = ", ".join(
                 f"{p.get('coin', '?')} {p.get('side', '?')}"
                 for p in r.get("positions", [])[:3]
@@ -303,7 +303,7 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
             tc_str = f" {tc}trades" if tc else ""
             bot_str = " [BOT]" if r.get("is_bot") else ""
             lines.append(
-                f"  {addr}... PnL ${r.get('pnl_24h', 0):+,.0f} ({r.get('pnl_pct_24h', 0):+.1f}%) "
+                f"  {addr} PnL ${r.get('pnl_24h', 0):+,.0f} ({r.get('pnl_pct_24h', 0):+.1f}%) "
                 f"equity ${r.get('equity', 0):,.0f}{wr_str}{tc_str}{style_str}{bot_str} | {pos_text}"
             )
 
@@ -336,7 +336,7 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
 
         lines = [f"Tracked Wallets ({len(wallets)}):", ""]
         for w in wallets:
-            addr = w.get("address", "")[:10]
+            addr = w.get("address", "")
             lbl = w.get("label", "")
             wr = w.get("win_rate")
             eq = w.get("equity")
@@ -350,7 +350,7 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
             style_tag = f" ({style})" if style else ""
             pos_tag = f" {pos} pos" if pos else " idle"
 
-            lines.append(f"  {addr}... {lbl:<12} WR {wr_str} eq {eq_str}{style_tag}{bot_tag}{pos_tag}")
+            lines.append(f"  {addr} {lbl:<12} WR {wr_str} eq {eq_str}{style_tag}{bot_tag}{pos_tag}")
 
         return "\n".join(lines)
 

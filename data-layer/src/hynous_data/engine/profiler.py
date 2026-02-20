@@ -498,33 +498,30 @@ class WalletProfiler:
 
         if need_compute:
             fills = self.fetch_fills(address, days=days)
-            profile = self.compute_profile(fills) if fills else {}
-            if profile:
-                eq_row = conn.execute(
-                    "SELECT equity FROM pnl_snapshots WHERE address = ? ORDER BY snapshot_at DESC LIMIT 1",
-                    (address,),
-                ).fetchone()
-                equity = eq_row["equity"] if eq_row else None
-                self._upsert_profile(address, profile, equity)
-                profile_data = profile
-                profile_data["equity"] = equity
-                profile_data["address"] = address
-                profile_data["computed_at"] = time.time()
-            elif row:
-                # Fall back to existing cached profile
-                profile_data = dict(row)
+            if not fills:
+                if row:
+                    # Fall back to existing profile
+                    profile_data = dict(row)
+                else:
+                    return None
             else:
-                # No full profile possible — build partial from live data
-                eq_row = conn.execute(
-                    "SELECT equity FROM pnl_snapshots WHERE address = ? ORDER BY snapshot_at DESC LIMIT 1",
-                    (address,),
-                ).fetchone()
-                profile_data = {
-                    "address": address,
-                    "equity": eq_row["equity"] if eq_row else None,
-                    "computed_at": time.time(),
-                    "partial": True,
-                }
+                profile = self.compute_profile(fills)
+                if not profile:
+                    if row:
+                        profile_data = dict(row)
+                    else:
+                        return None
+                else:
+                    eq_row = conn.execute(
+                        "SELECT equity FROM pnl_snapshots WHERE address = ? ORDER BY snapshot_at DESC LIMIT 1",
+                        (address,),
+                    ).fetchone()
+                    equity = eq_row["equity"] if eq_row else None
+                    self._upsert_profile(address, profile, equity)
+                    profile_data = profile
+                    profile_data["equity"] = equity
+                    profile_data["address"] = address
+                    profile_data["computed_at"] = time.time()
         else:
             profile_data = dict(row)
 
