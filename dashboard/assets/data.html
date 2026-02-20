@@ -156,6 +156,25 @@
   .collapse-btn:hover { color: #a3a3a3; background: #1a1a1a; }
 
   .empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #262626; font-size: 0.78rem; }
+
+  /* Whale Explorer Overlay */
+  .whale-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: #0a0a0a; display: none;
+  }
+  .whale-overlay-hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px; border-bottom: 1px solid #1a1a1a;
+  }
+  .whale-overlay-hdr .title { font-size: 0.95rem; font-weight: 600; }
+  .whale-overlay-hdr .subtitle { font-size: 0.7rem; color: #525252; margin-left: 12px; }
+  .whale-overlay-close {
+    background: none; border: 1px solid #262626; color: #737373;
+    cursor: pointer; padding: 4px 14px; border-radius: 6px;
+    font-family: inherit; font-size: 0.72rem; transition: all 0.15s;
+  }
+  .whale-overlay-close:hover { color: #fafafa; border-color: #404040; }
+  .whale-overlay-chart { position: absolute; top: 46px; left: 0; right: 0; bottom: 0; }
 </style>
 </head>
 <body>
@@ -207,7 +226,10 @@
     <div class="panel">
       <div class="panel-hdr">
         <span class="panel-title">Whale Positions</span>
-        <span class="panel-badge" id="whale-badge"></span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="panel-badge" id="whale-badge"></span>
+          <button class="collapse-btn" id="whale-expand">Explore</button>
+        </div>
       </div>
       <div class="panel-body" id="whale-panel"></div>
     </div>
@@ -242,6 +264,18 @@
       <div class="panel-body" id="hlp-panel" style="overflow-y:auto;min-height:80px"><div class="empty">Waiting for data</div></div>
     </div>
   </div>
+
+<!-- Whale Explorer Overlay -->
+<div class="whale-overlay" id="whale-overlay">
+  <div class="whale-overlay-hdr">
+    <div style="display:flex;align-items:center">
+      <span class="title">Whale Explorer</span>
+      <span class="subtitle" id="whale-overlay-stats"></span>
+    </div>
+    <button class="whale-overlay-close" id="whale-close">Close</button>
+  </div>
+  <div class="whale-overlay-chart" id="whale-overlay-chart"></div>
+</div>
 
 <script>
 (function() {
@@ -453,90 +487,247 @@
   }
 
   // =====================================================================
-  // WHALE POSITIONS — Force-directed scatter
+  // WHALE POSITIONS — Clustered scatter with expandable explorer
   // =====================================================================
   let whaleChart;
+  let whaleData = []; // parsed positions kept for expand view
 
   function initWhale() {
     whaleChart = echarts.init(document.getElementById('whale-panel'), null, { renderer: 'canvas' });
     new ResizeObserver(() => whaleChart.resize()).observe(document.getElementById('whale-panel'));
   }
 
+  // --- Parse raw API positions into clean objects ---
+  function parseWhales(raw) {
+    return (raw || []).map(p => ({
+      size: Math.abs(p.size_usd || p.notional_usd || p.sz_usd || 0),
+      pnl: p.pnl_usd || p.unrealized_pnl || 0,
+      entry: p.entry_px || p.entry_price || p.avg_entry || 0,
+      lev: p.leverage || p.lev || 1,
+      side: ((p.side || '').toLowerCase().startsWith('l') || (p.side || '').toLowerCase() === 'buy') ? 'long' : 'short',
+      address: p.address || p.addr || '',
+      liq: p.liq_px || 0,
+    })).filter(p => p.size > 0);
+  }
+
+  // --- Grid-based clustering: merge nearby whales ---
+  function clusterWhales(whales, gx, gy) {
+    if (!whales.length) return [];
+    const pnls = whales.map(w => w.pnl), sizes = whales.map(w => w.size);
+    const pMin = Math.min(...pnls), pMax = Math.max(...pnls);
+    const sMin = Math.min(...sizes), sMax = Math.max(...sizes);
+    const pRange = pMax - pMin || 1, sRange = sMax - sMin || 1;
+    const cells = {};
+    whales.forEach(w => {
+      const cx = Math.min(gx - 1, Math.floor((w.pnl - pMin) / pRange * gx));
+      const cy = Math.min(gy - 1, Math.floor((w.size - sMin) / sRange * gy));
+      const k = cx + '_' + cy;
+      if (!cells[k]) cells[k] = [];
+      cells[k].push(w);
+    });
+    return Object.values(cells).map(ws => {
+      const longs = ws.filter(w => w.side === 'long').length;
+      const totalSz = ws.reduce((s, w) => s + w.size, 0);
+      return {
+        pnl: ws.reduce((s, w) => s + w.pnl, 0) / ws.length,
+        size: totalSz / ws.length,
+        totalSize: totalSz,
+        count: ws.length,
+        longs: longs, shorts: ws.length - longs,
+        maxPnl: Math.max(...ws.map(w => w.pnl)),
+        minPnl: Math.min(...ws.map(w => w.pnl)),
+        whales: ws.sort((a, b) => b.size - a.size),
+      };
+    });
+  }
+
+  // --- Cluster colors based on dominant side ---
+  function cColor(c) {
+    if (c.count === 1) return c.longs ? 'rgba(34,197,94,0.45)' : 'rgba(239,68,68,0.45)';
+    const r = c.longs / c.count;
+    return r > 0.65 ? 'rgba(34,197,94,0.4)' : r < 0.35 ? 'rgba(239,68,68,0.4)' : 'rgba(99,102,241,0.4)';
+  }
+  function cBorder(c) {
+    if (c.count === 1) return c.longs ? '#22c55e' : '#ef4444';
+    const r = c.longs / c.count;
+    return r > 0.65 ? '#22c55e' : r < 0.35 ? '#ef4444' : '#6366f1';
+  }
+
+  // --- Rich tooltip for clusters ---
+  function cTip(c) {
+    let h = '<div style="min-width:180px">';
+    if (c.count === 1) {
+      const w = c.whales[0], pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
+      h += '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>';
+      h += '<div style="font-size:11px;color:#a3a3a3">Size: <b>' + $(w.size) + '</b> (' + w.lev + 'x)</div>';
+      h += '<div style="font-size:11px;color:#a3a3a3">Entry: <b>$' + (w.entry >= 1 ? w.entry.toLocaleString(undefined,{maximumFractionDigits:2}) : w.entry.toFixed(4)) + '</b></div>';
+      h += '<div style="font-size:11px;color:' + pC + '">PnL: <b>' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</b></div>';
+      h += '<div style="font-size:10px;color:#525252;margin-top:2px">' + (w.side === 'long' ? 'Long' : 'Short') + '</div>';
+    } else {
+      h += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">' + c.count + ' whale' + (c.count > 1 ? 's' : '') + '</div>';
+      h += '<div style="font-size:11px"><span style="color:#22c55e">Long: ' + c.longs + '</span> &middot; <span style="color:#ef4444">Short: ' + c.shorts + '</span></div>';
+      h += '<div style="font-size:11px;color:#737373;margin-top:4px">Total Size: ' + $(c.totalSize) + '</div>';
+      h += '<div style="font-size:11px;color:#737373">Avg PnL: ' + (c.pnl >= 0 ? '+' : '') + $(c.pnl) + '</div>';
+      if (c.minPnl !== c.maxPnl) h += '<div style="font-size:10px;color:#525252">PnL Range: ' + $(c.minPnl) + ' to ' + $(c.maxPnl) + '</div>';
+      const top = c.whales.slice(0, 5);
+      h += '<div style="border-top:1px solid #262626;margin-top:6px;padding-top:6px;font-size:10px">';
+      top.forEach(w => {
+        const pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
+        h += '<div style="color:#737373;margin-bottom:2px">' + addr(w.address) + ' ' + $(w.size) + ' <span style="color:' + pC + '">' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</span></div>';
+      });
+      if (c.whales.length > 5) h += '<div style="color:#404040">+' + (c.whales.length - 5) + ' more</div>';
+      h += '</div>';
+    }
+    return h + '</div>';
+  }
+
+  // --- Panel view: clustered scatter ---
   async function updateWhale() {
-    const data = await api(B + '/api/data/whales/' + coin + '?top_n=50');
+    const data = await api(B + '/api/data/whales/' + coin + '?top_n=2000');
     if (!data || data.error) {
       whaleChart.setOption({ title: { text: 'No whale data', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] });
-      return;
+      whaleData = []; return;
     }
-
-    const positions = data.positions || [];
-    if (!positions.length) {
+    whaleData = parseWhales(data.positions);
+    if (!whaleData.length) {
       whaleChart.setOption({ title: { text: 'No positions', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] });
       return;
     }
 
-    const maxSz = Math.max(...positions.map(p => Math.abs(p.size_usd || p.notional_usd || p.sz_usd || 0)), 1);
-    const longs = [], shorts = [];
+    // Cluster into ~20x15 grid cells → max ~300 cluster bubbles
+    const clusters = clusterWhales(whaleData, 20, 15);
+    const maxClusterSz = Math.max(...clusters.map(c => c.totalSize), 1);
 
-    positions.forEach(p => {
-      const sz = Math.abs(p.size_usd || p.notional_usd || p.sz_usd || 0);
-      const pnl = p.pnl_usd || p.unrealized_pnl || 0;
-      const entry = p.entry_px || p.entry_price || p.avg_entry || 0;
-      const lev = p.leverage || p.lev || 1;
-      const bubble = Math.max(10, (sz / maxSz) * 50);
-      const side = (p.side || '').toLowerCase();
-      const point = {
-        value: [pnl, sz, bubble],
-        label: { show: false },
-        tooltip: addr(p.address || p.addr || '') + '\nSize: ' + $(sz) + ' (' + lev + 'x)\nEntry: $' + (entry >= 1 ? entry.toLocaleString(undefined,{maximumFractionDigits:2}) : entry.toFixed(4)) + '\nPnL: ' + $(pnl)
-      };
-      if (side === 'long' || side === 'buy') longs.push(point);
-      else shorts.push(point);
-    });
+    const points = clusters.map(c => ({
+      value: [c.pnl, c.size],
+      symbolSize: c.count === 1
+        ? Math.max(8, (c.totalSize / maxClusterSz) * 30)
+        : Math.max(18, Math.min(55, Math.sqrt(c.count) * 12)),
+      itemStyle: { color: cColor(c), borderColor: cBorder(c), borderWidth: c.count > 1 ? 2 : 1 },
+      label: {
+        show: c.count > 1,
+        formatter: String(c.count),
+        fontSize: c.count >= 100 ? 11 : c.count >= 10 ? 10 : 9,
+        color: '#fafafa', fontWeight: 600, position: 'inside',
+      },
+      cluster: c,
+    }));
 
     whaleChart.setOption({
       title: null,
       tooltip: {
-        trigger: 'item',
-        backgroundColor: 'rgba(12,12,12,0.95)', borderColor: '#262626',
-        textStyle: { color: '#fafafa', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" },
-        formatter: p => '<pre style="margin:0;white-space:pre-wrap">' + (p.data.tooltip || '') + '</pre>',
+        trigger: 'item', confine: true,
+        backgroundColor: 'rgba(12,12,12,0.95)', borderColor: '#262626', borderRadius: 8,
+        textStyle: { color: '#fafafa', fontSize: 11 },
+        formatter: p => p.data.cluster ? cTip(p.data.cluster) : '',
+        extraCssText: 'max-height:280px;overflow-y:auto;',
       },
-      grid: { left: 60, right: 20, top: 24, bottom: 36 },
+      grid: { left: 60, right: 16, top: 10, bottom: 32 },
       xAxis: {
-        name: 'PnL', nameLocation: 'center', nameGap: 22,
+        name: 'PnL', nameLocation: 'center', nameGap: 20,
         nameTextStyle: { color: '#404040', fontSize: 10 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
         axisLabel: { color: '#525252', fontSize: 9, formatter: v => $(v) },
         splitLine: { lineStyle: { color: '#141414' } },
       },
       yAxis: {
-        name: 'Size (USD)', nameLocation: 'center', nameGap: 44,
+        name: 'Size', nameLocation: 'center', nameGap: 44,
         nameTextStyle: { color: '#404040', fontSize: 10 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
         axisLabel: { color: '#525252', fontSize: 9, formatter: v => $(v) },
         splitLine: { lineStyle: { color: '#141414' } },
       },
+      series: [{ type: 'scatter', data: points }],
+    });
+
+    const longCount = whaleData.filter(w => w.side === 'long').length;
+    document.getElementById('whale-badge').textContent = whaleData.length + ' \u00B7 ' + longCount + 'L/' + (whaleData.length - longCount) + 'S';
+  }
+
+  // --- Expanded full-screen whale explorer ---
+  let whaleOverlayChart;
+
+  function openWhaleOverlay() {
+    if (!whaleData.length) return;
+    document.getElementById('whale-overlay').style.display = '';
+
+    const el = document.getElementById('whale-overlay-chart');
+    whaleOverlayChart = echarts.init(el, null, { renderer: 'canvas' });
+
+    const maxSz = Math.max(...whaleData.map(w => w.size), 1);
+    const mapW = w => ({
+      value: [w.pnl, w.size],
+      symbolSize: Math.max(5, (w.size / maxSz) * 35),
+      whale: w,
+    });
+
+    const longs = whaleData.filter(w => w.side === 'long').map(mapW);
+    const shorts = whaleData.filter(w => w.side !== 'long').map(mapW);
+
+    whaleOverlayChart.setOption({
+      tooltip: {
+        trigger: 'item', confine: true,
+        backgroundColor: 'rgba(12,12,12,0.95)', borderColor: '#262626', borderRadius: 8,
+        textStyle: { color: '#fafafa', fontSize: 11 },
+        formatter: function(p) {
+          const w = p.data.whale; if (!w) return '';
+          const pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
+          return '<div style="min-width:180px">' +
+            '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>' +
+            '<div style="font-size:11px;color:#a3a3a3">Size: <b>' + $(w.size) + '</b> (' + w.lev + 'x)</div>' +
+            '<div style="font-size:11px;color:#a3a3a3">Entry: <b>$' + (w.entry >= 1 ? w.entry.toLocaleString(undefined,{maximumFractionDigits:2}) : w.entry.toFixed(4)) + '</b></div>' +
+            '<div style="font-size:11px;color:' + pC + '">PnL: <b>' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</b></div>' +
+            '<div style="font-size:11px;color:#a3a3a3">Liq: <b>' + (w.liq >= 1 ? '$' + w.liq.toLocaleString(undefined,{maximumFractionDigits:2}) : w.liq > 0 ? '$' + w.liq.toFixed(4) : '-') + '</b></div>' +
+            '<div style="font-size:10px;color:#525252;margin-top:2px">' + (w.side === 'long' ? 'Long' : 'Short') + '</div></div>';
+        },
+      },
+      grid: { left: 80, right: 40, top: 20, bottom: 60 },
+      xAxis: {
+        name: 'Unrealized PnL', nameLocation: 'center', nameGap: 36,
+        nameTextStyle: { color: '#404040', fontSize: 12 },
+        axisLine: { lineStyle: { color: '#1a1a1a' } },
+        axisLabel: { color: '#525252', fontSize: 10, formatter: v => $(v) },
+        splitLine: { lineStyle: { color: '#141414' } },
+      },
+      yAxis: {
+        name: 'Position Size (USD)', nameLocation: 'center', nameGap: 60,
+        nameTextStyle: { color: '#404040', fontSize: 12 },
+        axisLine: { lineStyle: { color: '#1a1a1a' } },
+        axisLabel: { color: '#525252', fontSize: 10, formatter: v => $(v) },
+        splitLine: { lineStyle: { color: '#141414' } },
+      },
+      dataZoom: [
+        { type: 'inside', xAxisIndex: 0, filterMode: 'none' },
+        { type: 'inside', yAxisIndex: 0, filterMode: 'none' },
+      ],
       series: [
         {
           name: 'Long', type: 'scatter', data: longs,
-          symbolSize: d => d[2],
-          itemStyle: { color: 'rgba(34,197,94,0.5)', borderColor: '#22c55e', borderWidth: 1 },
+          itemStyle: { color: 'rgba(34,197,94,0.4)', borderColor: '#22c55e', borderWidth: 1 },
         },
         {
           name: 'Short', type: 'scatter', data: shorts,
-          symbolSize: d => d[2],
-          itemStyle: { color: 'rgba(239,68,68,0.5)', borderColor: '#ef4444', borderWidth: 1 },
+          itemStyle: { color: 'rgba(239,68,68,0.4)', borderColor: '#ef4444', borderWidth: 1 },
         },
       ],
       legend: {
-        show: true, bottom: 2, textStyle: { color: '#525252', fontSize: 10 },
-        itemWidth: 10, itemHeight: 10,
+        show: true, bottom: 4,
+        textStyle: { color: '#525252', fontSize: 11 },
+        itemWidth: 12, itemHeight: 12,
       },
     });
 
     const longCount = longs.length, shortCount = shorts.length;
-    document.getElementById('whale-badge').textContent = (longCount + shortCount) + ' whales \u00B7 ' + longCount + 'L/' + shortCount + 'S';
+    const totalSz = whaleData.reduce((s, w) => s + w.size, 0);
+    document.getElementById('whale-overlay-stats').textContent =
+      whaleData.length + ' positions \u00B7 ' + longCount + ' Long / ' + shortCount + ' Short \u00B7 Total: ' + $(totalSz) + ' \u00B7 Scroll to zoom, drag to pan';
+
+    new ResizeObserver(() => whaleOverlayChart && whaleOverlayChart.resize()).observe(el);
+  }
+
+  function closeWhaleOverlay() {
+    document.getElementById('whale-overlay').style.display = 'none';
+    if (whaleOverlayChart) { whaleOverlayChart.dispose(); whaleOverlayChart = null; }
   }
 
   // =====================================================================
@@ -662,17 +853,13 @@
     }
     dot.className = 'stat-dot on'; status.textContent = 'online';
 
-    const s = await api(B + '/api/data/stats');
-    if (s && !s.error) {
-      const wallets = s.addresses_discovered || s.wallets || s.addresses || 0;
-      document.getElementById('stat-wallets').textContent = wallets ? wallets.toLocaleString() : '-';
-      const pos = s.positions_tracked || s.positions || 0;
-      document.getElementById('stat-positions').textContent = pos ? pos.toLocaleString() : '-';
-      const up = s.uptime_hours ? s.uptime_hours.toFixed(1) + 'h' : s.uptime_seconds ? (s.uptime_seconds/3600).toFixed(1) + 'h' : null;
-      document.getElementById('stat-uptime').textContent = up || '-';
-    }
-
-    // Show last update timestamp
+    // /health returns flat fields: addresses_discovered, positions_tracked, uptime_seconds
+    const wallets = h.addresses_discovered || 0;
+    document.getElementById('stat-wallets').textContent = wallets ? wallets.toLocaleString() : '-';
+    const pos = h.positions_tracked || 0;
+    document.getElementById('stat-positions').textContent = pos ? pos.toLocaleString() : '-';
+    const up = h.uptime_seconds ? (h.uptime_seconds / 3600).toFixed(1) + 'h' : '-';
+    document.getElementById('stat-uptime').textContent = up;
     document.getElementById('stat-updated').textContent = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
@@ -680,6 +867,13 @@
   // ORCHESTRATION
   // =====================================================================
   function refreshAll() { updatePrice(); updateHeatmap(); updateWhale(); updateFlow(); updateSM(); updateHLP(); updateStats(); }
+
+  // Whale explorer expand/close
+  document.getElementById('whale-expand').addEventListener('click', openWhaleOverlay);
+  document.getElementById('whale-close').addEventListener('click', closeWhaleOverlay);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('whale-overlay').style.display !== 'none') closeWhaleOverlay();
+  });
 
   initPrice(); initHeatmap(); initWhale();
   refreshAll();
