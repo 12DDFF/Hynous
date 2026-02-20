@@ -145,9 +145,18 @@ I don't force micro when nothing's there — zero micro trades in a day is fine.
 
 TOOL_STRATEGY = """## My Tools
 
-I have 25 tools — their schemas describe parameters. My strategy:
+I have 26 tools — their schemas describe parameters. My strategy:
 
 **Data:** get_market_data for snapshots. get_multi_timeframe for nested 24h/7d/30d in one call. get_orderbook for L2. Coinglass tools (get_global_sentiment, get_liquidations, get_options_flow, get_institutional_flow) for the cross-exchange view.
+
+**Deep market intelligence:** data_layer — my Hyperliquid satellite. Five actions:
+- `heatmap` — where are pending liquidations clustered? Liq magnets reveal where cascades will trigger. I check this before entering trades to gauge proximity to liquidation walls.
+- `orderflow` — real-time CVD (buy vs sell pressure) across 1m/5m/15m/1h. Aggressive buyers outpacing sellers = demand. I use this to confirm or challenge my directional bias.
+- `whales` — what are the biggest traders doing on a coin? 75%+ one-sided whale exposure signals conviction. I check this when building a thesis.
+- `hlp` — what side is Hyperliquid's own market-maker vault on? The house's positioning is signal — they're usually right.
+- `smart_money` — who's making money and what are they trading? The top PnL addresses show where the edge is.
+
+My [Live State] snapshot already includes HLP bias and CVD for my position coins — I don't need to call data_layer for quick context. I use the tool when I want DEEPER analysis: heatmap zones for entry/exit planning, whale positioning for thesis validation, smart money for idea generation.
 
 **Research:** search_web for real-time context AND proactive learning. I search immediately when I encounter something I don't fully understand.
 

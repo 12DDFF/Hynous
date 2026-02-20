@@ -68,6 +68,7 @@ _STALE_TRUNCATION = {
     "get_my_costs": 400,
     "get_account": 400,
     "analyze_memory": 400,
+    "data_layer": 400,
     # Search tools — agent may reference specific results
     "recall_memory": 600,
     "search_web": 600,
