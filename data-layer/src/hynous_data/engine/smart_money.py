@@ -2,6 +2,7 @@
 
 import time
 import logging
+import threading
 
 from hynous_data.core.db import Database
 
@@ -11,8 +12,11 @@ log = logging.getLogger(__name__)
 class SmartMoneyEngine:
     """Tracks equity over time and ranks addresses by profitability."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, profiler=None):
         self._db = db
+        self._profiler = profiler
+        self._profiling_lock = threading.Lock()
+        self._profiling_active = False
 
     def snapshot_pnl(self, address: str, equity: float, unrealized: float):
         """Record a PnL snapshot for a single address."""
@@ -123,6 +127,7 @@ class SmartMoneyEngine:
             pass  # Table may not exist yet
 
         # Attach positions + profile data
+        missing_profile = []
         for entry in addr_pnl:
             entry["positions"] = pos_map.get(entry["address"], [])
             prof = profile_map.get(entry["address"], {})
@@ -131,9 +136,52 @@ class SmartMoneyEngine:
             entry["is_bot"] = prof.get("is_bot", 0)
             entry["trade_count"] = prof.get("trade_count")
             entry["profit_factor"] = prof.get("profit_factor")
+            if not prof:
+                missing_profile.append(entry["address"])
+
+        # Kick off background profiling for any ranking wallets without profiles
+        if missing_profile and self._profiler:
+            self._trigger_background_profiling(missing_profile)
 
         return {
             "rankings": addr_pnl,
             "count": len(addr_pnl),
             "window_hours": 24,
         }
+
+    def _trigger_background_profiling(self, addresses: list[str]):
+        """Profile missing wallets in a background thread (non-blocking)."""
+        with self._profiling_lock:
+            if self._profiling_active:
+                return  # Already profiling, don't stack
+            self._profiling_active = True
+
+        def _work():
+            try:
+                profiler = self._profiler
+                conn = self._db.conn
+                profiled = 0
+                for addr in addresses:
+                    try:
+                        fills = profiler.fetch_fills(addr)
+                        if not fills:
+                            continue
+                        profile = profiler.compute_profile(fills)
+                        if not profile:
+                            continue
+                        eq_row = conn.execute(
+                            "SELECT equity FROM pnl_snapshots WHERE address = ? ORDER BY snapshot_at DESC LIMIT 1",
+                            (addr,),
+                        ).fetchone()
+                        equity = eq_row["equity"] if eq_row else None
+                        profiler._upsert_profile(addr, profile, equity)
+                        profiled += 1
+                    except Exception:
+                        log.exception("Background profile failed for %s", addr[:10])
+                if profiled:
+                    log.info("Background-profiled %d/%d ranking wallets", profiled, len(addresses))
+            finally:
+                with self._profiling_lock:
+                    self._profiling_active = False
+
+        threading.Thread(target=_work, daemon=True, name="bg-profile").start()
