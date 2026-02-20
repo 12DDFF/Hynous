@@ -155,6 +155,26 @@
   }
   .collapse-btn:hover { color: #a3a3a3; background: #1a1a1a; }
 
+  /* Whale view tabs */
+  .whale-tabs {
+    display: flex; gap: 1px; background: #141414; border-radius: 5px; padding: 2px;
+  }
+  .whale-tab {
+    padding: 2px 8px; border-radius: 4px; border: none;
+    background: transparent; color: #404040;
+    font-size: 0.6rem; font-weight: 500; cursor: pointer;
+    transition: all 0.15s; font-family: inherit;
+  }
+  .whale-tab:hover { color: #737373; }
+  .whale-tab.active { background: #1a1a1a; color: #a3a3a3; }
+  .whale-stats {
+    display: flex; gap: 14px; padding: 4px 12px;
+    font-size: 0.58rem; color: #404040; border-bottom: 1px solid #0f0f0f;
+  }
+  .whale-stats .ws-val { color: #737373; font-family: 'JetBrains Mono', monospace; }
+  .whale-stats .ws-long { color: #22c55e; }
+  .whale-stats .ws-short { color: #ef4444; }
+
   .empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #262626; font-size: 0.78rem; }
 
   /* Whale Explorer Overlay */
@@ -225,12 +245,20 @@
     <!-- Whales -->
     <div class="panel">
       <div class="panel-hdr">
-        <span class="panel-title">Whale Positions</span>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="panel-title">Whale Positions</span>
+          <div class="whale-tabs" id="whale-view-tabs">
+            <button class="whale-tab active" data-view="landscape">Landscape</button>
+            <button class="whale-tab" data-view="cascade">Cascade</button>
+            <button class="whale-tab" data-view="scatter">Scatter</button>
+          </div>
+        </div>
         <div style="display:flex;align-items:center;gap:8px">
           <span class="panel-badge" id="whale-badge"></span>
           <button class="collapse-btn" id="whale-expand">Explore</button>
         </div>
       </div>
+      <div class="whale-stats" id="whale-stats"></div>
       <div class="panel-body" id="whale-panel"></div>
     </div>
 
@@ -268,8 +296,13 @@
 <!-- Whale Explorer Overlay -->
 <div class="whale-overlay" id="whale-overlay">
   <div class="whale-overlay-hdr">
-    <div style="display:flex;align-items:center">
+    <div style="display:flex;align-items:center;gap:12px">
       <span class="title">Whale Explorer</span>
+      <div class="whale-tabs" id="whale-overlay-tabs">
+        <button class="whale-tab active" data-view="landscape">Landscape</button>
+        <button class="whale-tab" data-view="cascade">Cascade</button>
+        <button class="whale-tab" data-view="scatter">Scatter</button>
+      </div>
       <span class="subtitle" id="whale-overlay-stats"></span>
     </div>
     <button class="whale-overlay-close" id="whale-close">Close</button>
@@ -487,17 +520,19 @@
   }
 
   // =====================================================================
-  // WHALE POSITIONS — Clustered scatter with expandable explorer
+  // WHALE POSITIONS — 3 views: Landscape, Cascade, Scatter
   // =====================================================================
-  let whaleChart;
-  let whaleData = []; // parsed positions kept for expand view
+  let whaleChart, whaleOverlayChart;
+  let whaleData = [];
+  let whaleView = 'landscape';      // panel view
+  let whaleOverlayView = 'landscape'; // explorer view
 
   function initWhale() {
     whaleChart = echarts.init(document.getElementById('whale-panel'), null, { renderer: 'canvas' });
     new ResizeObserver(() => whaleChart.resize()).observe(document.getElementById('whale-panel'));
   }
 
-  // --- Parse raw API positions into clean objects ---
+  // --- Parse raw API positions ---
   function parseWhales(raw) {
     return (raw || []).map(p => ({
       size: Math.abs(p.size_usd || p.notional_usd || p.sz_usd || 0),
@@ -512,7 +547,28 @@
   }
   function px(v) { return v >= 1000 ? '$' + (v/1000).toFixed(1) + 'K' : v >= 1 ? '$' + v.toFixed(0) : '$' + v.toFixed(4); }
 
-  // --- Grid-based clustering: merge nearby whales ---
+  // --- Stats strip ---
+  function updateWhaleStats(whales) {
+    const el = document.getElementById('whale-stats');
+    if (!whales.length) { el.innerHTML = ''; return; }
+    const longs = whales.filter(w => w.side === 'long');
+    const shorts = whales.filter(w => w.side !== 'long');
+    const longUSD = longs.reduce((s, w) => s + w.size, 0);
+    const shortUSD = shorts.reduce((s, w) => s + w.size, 0);
+    const total = longUSD + shortUSD;
+    const ratio = shortUSD > 0 ? (longUSD / shortUSD).toFixed(2) : '\u221E';
+    const avgLev = (whales.reduce((s, w) => s + w.lev, 0) / whales.length).toFixed(1);
+    const top = whales.reduce((a, b) => b.size > a.size ? b : a);
+    const liqWhales = whales.filter(w => w.liq > 0);
+    const liqTotal = liqWhales.reduce((s, w) => s + w.size, 0);
+    el.innerHTML =
+      '<span>L/S <span class="ws-val">' + ratio + '</span> <span class="ws-long">' + longs.length + 'L</span>/<span class="ws-short">' + shorts.length + 'S</span></span>' +
+      '<span>Exposure <span class="ws-val">' + $(total) + '</span></span>' +
+      '<span>Avg Lev <span class="ws-val">' + avgLev + 'x</span></span>' +
+      '<span>Liq Vol <span class="ws-val">' + $(liqTotal) + '</span></span>';
+  }
+
+  // --- Grid-based clustering ---
   function clusterWhales(whales, gx, gy) {
     if (!whales.length) return [];
     const entries = whales.map(w => w.entry), levs = whales.map(w => w.lev);
@@ -533,9 +589,8 @@
       return {
         entry: ws.reduce((s, w) => s + w.entry, 0) / ws.length,
         lev: ws.reduce((s, w) => s + w.lev, 0) / ws.length,
-        totalSize: totalSz,
-        count: ws.length,
-        longs: longs, shorts: ws.length - longs,
+        totalSize: totalSz, count: ws.length,
+        longs, shorts: ws.length - longs,
         maxEntry: Math.max(...ws.map(w => w.entry)),
         minEntry: Math.min(...ws.map(w => w.entry)),
         avgPnl: ws.reduce((s, w) => s + w.pnl, 0) / ws.length,
@@ -544,8 +599,6 @@
       };
     });
   }
-
-  // --- Cluster colors based on dominant side ---
   function cColor(c) {
     if (c.count === 1) return c.longs ? 'rgba(34,197,94,0.45)' : 'rgba(239,68,68,0.45)';
     const r = c.longs / c.count;
@@ -556,13 +609,10 @@
     const r = c.longs / c.count;
     return r > 0.65 ? '#22c55e' : r < 0.35 ? '#ef4444' : '#6366f1';
   }
-
-  // --- Rich tooltip for clusters ---
   function cTip(c) {
     let h = '<div style="min-width:190px">';
     if (c.count === 1) {
-      const w = c.whales[0], pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
-      const sC = w.side === 'long' ? '#22c55e' : '#ef4444';
+      const w = c.whales[0], pC = w.pnl >= 0 ? '#22c55e' : '#ef4444', sC = w.side === 'long' ? '#22c55e' : '#ef4444';
       h += '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>';
       h += '<div style="font-size:11px;color:#a3a3a3">Entry: <b>' + px(w.entry) + '</b> <span style="color:' + sC + '">' + w.side.toUpperCase() + '</span></div>';
       h += '<div style="font-size:11px;color:#a3a3a3">Size: <b>' + $(w.size) + '</b> (' + w.lev + 'x)</div>';
@@ -570,60 +620,191 @@
       if (w.liq > 0) h += '<div style="font-size:10px;color:#525252">Liq: ' + px(w.liq) + '</div>';
     } else {
       h += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">' + c.count + ' whales</div>';
-      if (c.minEntry !== c.maxEntry) h += '<div style="font-size:11px;color:#a3a3a3">Entry: ' + px(c.minEntry) + ' – ' + px(c.maxEntry) + '</div>';
-      h += '<div style="font-size:11px;color:#a3a3a3">Avg Leverage: <b>' + c.lev.toFixed(1) + 'x</b>' + (c.maxLev > c.lev * 1.5 ? ' (max ' + c.maxLev.toFixed(0) + 'x)' : '') + '</div>';
-      h += '<div style="font-size:11px"><span style="color:#22c55e">Long: ' + c.longs + '</span> &middot; <span style="color:#ef4444">Short: ' + c.shorts + '</span></div>';
-      h += '<div style="font-size:11px;color:#737373;margin-top:4px">Total Size: ' + $(c.totalSize) + '</div>';
-      h += '<div style="font-size:11px;color:#737373">Avg PnL: ' + (c.avgPnl >= 0 ? '+' : '') + $(c.avgPnl) + '</div>';
-      const top = c.whales.slice(0, 5);
-      h += '<div style="border-top:1px solid #262626;margin-top:6px;padding-top:6px;font-size:10px">';
-      top.forEach(w => {
-        const pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
-        h += '<div style="color:#737373;margin-bottom:2px">' + addr(w.address) + ' ' + $(w.size) + ' <span style="color:' + pC + '">' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</span></div>';
-      });
-      if (c.whales.length > 5) h += '<div style="color:#404040">+' + (c.whales.length - 5) + ' more</div>';
+      if (c.minEntry !== c.maxEntry) h += '<div style="font-size:11px;color:#a3a3a3">Entry: ' + px(c.minEntry) + ' \u2013 ' + px(c.maxEntry) + '</div>';
+      h += '<div style="font-size:11px;color:#a3a3a3">Avg Lev: <b>' + c.lev.toFixed(1) + 'x</b></div>';
+      h += '<div style="font-size:11px"><span style="color:#22c55e">Long: ' + c.longs + '</span> \u00B7 <span style="color:#ef4444">Short: ' + c.shorts + '</span></div>';
+      h += '<div style="font-size:11px;color:#737373;margin-top:4px">Total: ' + $(c.totalSize) + '</div>';
+      const top = c.whales.slice(0, 3);
+      h += '<div style="border-top:1px solid #262626;margin-top:4px;padding-top:4px;font-size:10px">';
+      top.forEach(w => { h += '<div style="color:#737373">' + addr(w.address) + ' ' + $(w.size) + '</div>'; });
+      if (c.whales.length > 3) h += '<div style="color:#404040">+' + (c.whales.length - 3) + ' more</div>';
       h += '</div>';
     }
     return h + '</div>';
   }
 
-  // --- Panel view: clustered scatter ---
-  async function updateWhale() {
-    const data = await api(B + '/api/data/whales/' + coin + '?top_n=500');
-    if (!data || data.error) {
-      whaleChart.setOption({ title: { text: 'No whale data', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] });
-      whaleData = []; return;
+  // =================================================================
+  // VIEW 1: LANDSCAPE — Two-sided depth chart by price level
+  // =================================================================
+  function buildLandscape(chart, whales, markPx, large) {
+    const N = large ? 40 : 28;
+    const entries = whales.map(w => w.entry);
+    const minE = Math.min(...entries), maxE = Math.max(...entries);
+    const range = maxE - minE || 1, step = range / N;
+    const buckets = Array.from({length: N}, (_, i) => {
+      const lo = minE + i * step;
+      return { lo, hi: lo + step, mid: lo + step/2, longUSD: 0, shortUSD: 0, longLiq: 0, shortLiq: 0, longCount: 0, shortCount: 0 };
+    });
+    whales.forEach(w => {
+      const bi = Math.min(N-1, Math.floor((w.entry - minE) / range * N));
+      if (w.side === 'long') { buckets[bi].longUSD += w.size; buckets[bi].longCount++; }
+      else { buckets[bi].shortUSD += w.size; buckets[bi].shortCount++; }
+      if (w.liq > 0 && w.liq >= minE && w.liq <= maxE + step) {
+        const li = Math.min(N-1, Math.max(0, Math.floor((w.liq - minE) / range * N)));
+        if (w.side === 'long') buckets[li].longLiq += w.size;
+        else buckets[li].shortLiq += w.size;
+      }
+    });
+    const labels = buckets.map(b => px(b.mid));
+    const maxVal = Math.max(...buckets.map(b => Math.max(b.longUSD + b.longLiq, b.shortUSD + b.shortLiq)), 1);
+    let midIdx = 0;
+    if (markPx > 0) { let md = Infinity; buckets.forEach((b, i) => { const d = Math.abs(b.mid - markPx); if (d < md) { md = d; midIdx = i; } }); }
+    const g = large ? { left: 70, right: 30, top: 30, bottom: 30 } : { left: 50, right: 12, top: 8, bottom: 20 };
+    const fs = large ? 11 : 9;
+    chart.setOption({
+      tooltip: {
+        trigger: 'axis', axisPointer: { type: 'shadow' },
+        backgroundColor: 'rgba(12,12,12,0.95)', borderColor: '#262626', textStyle: { color: '#fafafa', fontSize: 11 },
+        formatter: function(params) {
+          const idx = params[0]?.dataIndex; if (idx === undefined) return '';
+          const b = buckets[idx];
+          const pLabel = px(b.lo) + ' \u2013 ' + px(b.hi);
+          let h = '<div style="font-size:11px;color:#737373;margin-bottom:4px">' + pLabel + '</div>';
+          if (b.longUSD > 0 || b.longCount > 0) h += '<div style="color:#22c55e">Long: <b>' + $(b.longUSD) + '</b> (' + b.longCount + ')</div>';
+          if (b.shortUSD > 0 || b.shortCount > 0) h += '<div style="color:#ef4444">Short: <b>' + $(b.shortUSD) + '</b> (' + b.shortCount + ')</div>';
+          if (b.longLiq > 0) h += '<div style="color:#fbbf24;font-size:10px">\u26A0 Long liqs here: ' + $(b.longLiq) + '</div>';
+          if (b.shortLiq > 0) h += '<div style="color:#fbbf24;font-size:10px">\u26A0 Short liqs here: ' + $(b.shortLiq) + '</div>';
+          return h;
+        }
+      },
+      grid: g,
+      xAxis: {
+        type: 'value',
+        axisLine: { show: false }, axisTick: { show: false },
+        axisLabel: { color: '#404040', fontSize: fs, formatter: v => $(Math.abs(v)) },
+        splitLine: { lineStyle: { color: '#141414' } },
+      },
+      yAxis: {
+        type: 'category', data: labels,
+        axisLine: { lineStyle: { color: '#1a1a1a' } }, axisTick: { show: false },
+        axisLabel: { color: '#525252', fontSize: large ? 10 : 8 },
+      },
+      legend: large ? { show: true, top: 4, right: 20, textStyle: { color: '#525252', fontSize: 10 }, itemWidth: 10, itemHeight: 10 } : { show: false },
+      dataZoom: large ? [
+        { type: 'inside', yAxisIndex: 0, filterMode: 'none', zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false, throttle: 120 },
+      ] : [],
+      series: [
+        {
+          name: 'Long', type: 'bar', stack: 'pos', data: buckets.map(b => b.longUSD),
+          itemStyle: { color: 'rgba(34,197,94,0.7)', borderRadius: [0, 3, 3, 0] }, barMaxWidth: large ? 18 : 12,
+          markLine: markPx > 0 ? { silent: true, symbol: 'none', data: [{ yAxis: midIdx,
+            lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
+            label: { show: true, formatter: px(markPx), color: '#6366f1', fontSize: large ? 10 : 8, position: 'insideEndTop' } }] } : undefined,
+        },
+        {
+          name: 'Short', type: 'bar', stack: 'pos', data: buckets.map(b => -b.shortUSD),
+          itemStyle: { color: 'rgba(239,68,68,0.7)', borderRadius: [3, 0, 0, 3] }, barMaxWidth: large ? 18 : 12,
+        },
+        {
+          name: 'Long Liq Zone', type: 'bar', stack: 'liq', data: buckets.map(b => b.longLiq),
+          itemStyle: { color: 'rgba(251,191,36,0.15)', borderColor: 'rgba(251,191,36,0.4)', borderWidth: 1 }, barMaxWidth: large ? 18 : 12,
+        },
+        {
+          name: 'Short Liq Zone', type: 'bar', stack: 'liq', data: buckets.map(b => -b.shortLiq),
+          itemStyle: { color: 'rgba(251,191,36,0.15)', borderColor: 'rgba(251,191,36,0.4)', borderWidth: 1 }, barMaxWidth: large ? 18 : 12,
+        },
+      ],
+    }, true);
+  }
+
+  // =================================================================
+  // VIEW 2: CASCADE — Cumulative liquidation fuel gauge
+  // =================================================================
+  function buildCascade(chart, whales, markPx, large) {
+    if (!markPx) { chart.setOption({ title: { text: 'No mark price', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] }, true); return; }
+    const pcts = [], longLiqs = [], shortLiqs = [];
+    for (let p = -15; p <= 15; p += 0.5) {
+      const priceAt = markPx * (1 + p / 100);
+      let lL = 0, sL = 0;
+      whales.forEach(w => {
+        if (w.liq <= 0) return;
+        if (w.side === 'long' && w.liq >= priceAt && w.liq <= markPx) lL += w.size;
+        else if (w.side !== 'long' && w.liq <= priceAt && w.liq >= markPx) sL += w.size;
+      });
+      pcts.push(p); longLiqs.push(lL); shortLiqs.push(sL);
     }
-    whaleData = parseWhales(data.positions);
-    if (!whaleData.length) {
-      whaleChart.setOption({ title: { text: 'No positions', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] });
-      return;
-    }
+    const g = large ? { left: 70, right: 30, top: 40, bottom: 40 } : { left: 48, right: 12, top: 8, bottom: 24 };
+    const fs = large ? 11 : 9;
+    chart.setOption({
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(12,12,12,0.95)', borderColor: '#262626', textStyle: { color: '#fafafa', fontSize: 11 },
+        formatter: function(params) {
+          const idx = params[0]?.dataIndex; if (idx === undefined) return '';
+          const pct = pcts[idx], priceAt = markPx * (1 + pct / 100);
+          let h = '<div style="font-size:11px;color:#737373;margin-bottom:4px">' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% \u2192 ' + px(priceAt) + '</div>';
+          if (longLiqs[idx] > 0) h += '<div style="color:#ef4444">Long liqs: <b>' + $(longLiqs[idx]) + '</b></div>';
+          if (shortLiqs[idx] > 0) h += '<div style="color:#22c55e">Short liqs: <b>' + $(shortLiqs[idx]) + '</b></div>';
+          if (!longLiqs[idx] && !shortLiqs[idx]) h += '<div style="color:#404040">No liquidations</div>';
+          return h;
+        }
+      },
+      grid: g,
+      xAxis: {
+        type: 'category', data: pcts.map(p => (p >= 0 ? '+' : '') + p.toFixed(1) + '%'),
+        axisLine: { lineStyle: { color: '#1a1a1a' } }, axisTick: { show: false },
+        axisLabel: { color: '#525252', fontSize: fs, interval: large ? 3 : 5 },
+        name: large ? 'Price Move from Current' : '', nameLocation: 'center', nameGap: 26,
+        nameTextStyle: { color: '#404040', fontSize: 11 },
+      },
+      yAxis: {
+        type: 'value',
+        axisLine: { show: false }, axisTick: { show: false },
+        axisLabel: { color: '#404040', fontSize: fs, formatter: v => $(v) },
+        splitLine: { lineStyle: { color: '#141414' } },
+        name: large ? 'Cumulative Liquidation Volume' : '', nameLocation: 'center', nameGap: 55,
+        nameTextStyle: { color: '#404040', fontSize: 11 },
+      },
+      legend: large ? { show: true, top: 4, right: 20, textStyle: { color: '#525252', fontSize: 10 }, itemWidth: 10, itemHeight: 10 } : { show: false },
+      dataZoom: large ? [{ type: 'inside', xAxisIndex: 0, filterMode: 'none', zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false }] : [],
+      series: [
+        {
+          name: 'Long Liquidations', type: 'line', data: longLiqs, smooth: true,
+          lineStyle: { color: '#ef4444', width: 2 },
+          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(239,68,68,0.35)' }, { offset: 1, color: 'rgba(239,68,68,0)' }] } },
+          itemStyle: { color: '#ef4444' }, symbol: 'none',
+          markLine: { silent: true, symbol: 'none', data: [{ xAxis: pcts.indexOf(0) >= 0 ? pcts.indexOf(0) : 30,
+            lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
+            label: { show: true, formatter: 'Current', color: '#6366f1', fontSize: large ? 10 : 8, position: 'insideEndTop' } }] },
+        },
+        {
+          name: 'Short Liquidations', type: 'line', data: shortLiqs, smooth: true,
+          lineStyle: { color: '#22c55e', width: 2 },
+          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(34,197,94,0.35)' }, { offset: 1, color: 'rgba(34,197,94,0)' }] } },
+          itemStyle: { color: '#22c55e' }, symbol: 'none',
+        },
+      ],
+    }, true);
+  }
 
-    // Cluster into ~20x15 grid cells → max ~300 cluster bubbles
-    const clusters = clusterWhales(whaleData, 20, 15);
-    const maxClusterSz = Math.max(...clusters.map(c => c.totalSize), 1);
-
-    // Current price from first whale's mark_px
-    const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
-
+  // =================================================================
+  // VIEW 3: SCATTER — Clustered scatter (entry vs leverage)
+  // =================================================================
+  function buildScatter(chart, whales, markPx, large) {
+    const clusters = clusterWhales(whales, large ? 30 : 20, large ? 20 : 15);
+    const maxCSz = Math.max(...clusters.map(c => c.totalSize), 1);
     const points = clusters.map(c => ({
       value: [c.lev, c.entry],
       symbolSize: c.count === 1
-        ? Math.max(8, Math.sqrt(c.totalSize / maxClusterSz) * 30)
+        ? Math.max(8, Math.sqrt(c.totalSize / maxCSz) * (large ? 35 : 30))
         : Math.max(18, Math.min(55, Math.sqrt(c.count) * 12)),
       itemStyle: { color: cColor(c), borderColor: cBorder(c), borderWidth: c.count > 1 ? 2 : 1 },
-      label: {
-        show: c.count > 1,
-        formatter: String(c.count),
-        fontSize: c.count >= 100 ? 11 : c.count >= 10 ? 10 : 9,
-        color: '#fafafa', fontWeight: 600, position: 'inside',
-      },
+      label: { show: c.count > 1, formatter: String(c.count), fontSize: c.count >= 10 ? 10 : 9, color: '#fafafa', fontWeight: 600, position: 'inside' },
       cluster: c,
     }));
-
-    whaleChart.setOption({
-      title: null,
+    const g = large ? { left: 70, right: 30, top: 40, bottom: 40 } : { left: 52, right: 16, top: 10, bottom: 28 };
+    const fs = large ? 11 : 9;
+    chart.setOption({
       tooltip: {
         trigger: 'item', confine: true,
         backgroundColor: 'rgba(12,12,12,0.95)', borderColor: '#262626', borderRadius: 8,
@@ -631,129 +812,103 @@
         formatter: p => p.data.cluster ? cTip(p.data.cluster) : '',
         extraCssText: 'max-height:280px;overflow-y:auto;',
       },
-      grid: { left: 52, right: 16, top: 10, bottom: 28 },
+      grid: g, legend: { show: false },
       xAxis: {
-        name: 'Leverage', nameLocation: 'center', nameGap: 16,
-        nameTextStyle: { color: '#404040', fontSize: 10 },
+        name: 'Leverage', nameLocation: 'center', nameGap: large ? 26 : 16,
+        nameTextStyle: { color: '#404040', fontSize: large ? 12 : 10 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 9, formatter: v => v.toFixed(0) + 'x' },
+        axisLabel: { color: '#525252', fontSize: fs, formatter: v => v.toFixed(0) + 'x' },
         splitLine: { lineStyle: { color: '#141414' } },
       },
       yAxis: {
-        name: 'Entry Price', nameLocation: 'center', nameGap: 38,
-        nameTextStyle: { color: '#404040', fontSize: 10 },
+        name: 'Entry Price', nameLocation: 'center', nameGap: large ? 50 : 38,
+        nameTextStyle: { color: '#404040', fontSize: large ? 12 : 10 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 9, formatter: v => px(v) },
+        axisLabel: { color: '#525252', fontSize: fs, formatter: v => px(v) },
         splitLine: { lineStyle: { color: '#141414' } },
       },
+      dataZoom: large ? [
+        { type: 'inside', xAxisIndex: 0, filterMode: 'none', zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false, throttle: 120 },
+        { type: 'inside', yAxisIndex: 0, filterMode: 'none', zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false, throttle: 120 },
+      ] : [],
       series: [{
         type: 'scatter', data: points,
-        markLine: markPx > 0 ? {
-          silent: true, symbol: 'none',
+        markLine: markPx > 0 ? { silent: true, symbol: 'none',
           data: [{ yAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
-            label: { show: true, formatter: px(markPx), color: '#6366f1', fontSize: 8, position: 'insideEndTop' } }],
-        } : undefined,
+            label: { show: true, formatter: px(markPx), color: '#6366f1', fontSize: large ? 10 : 8, position: 'insideEndTop' } }] } : undefined,
       }],
-    });
-
-    const longCount = whaleData.filter(w => w.side === 'long').length;
-    document.getElementById('whale-badge').textContent = whaleData.length + ' \u00B7 ' + longCount + 'L/' + (whaleData.length - longCount) + 'S';
+    }, true);
   }
 
-  // --- Expanded full-screen whale explorer ---
-  let whaleOverlayChart;
+  // =================================================================
+  // Render dispatch — panel + overlay share the same builders
+  // =================================================================
+  function renderWhaleView(chart, view, whales, markPx, large) {
+    if (view === 'landscape') buildLandscape(chart, whales, markPx, large);
+    else if (view === 'cascade') buildCascade(chart, whales, markPx, large);
+    else buildScatter(chart, whales, markPx, large);
+  }
 
+  // --- Fetch + render panel ---
+  async function updateWhale() {
+    const data = await api(B + '/api/data/whales/' + coin + '?top_n=500');
+    if (!data || data.error) {
+      whaleChart.setOption({ title: { text: 'No whale data', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] }, true);
+      whaleData = []; updateWhaleStats([]); return;
+    }
+    whaleData = parseWhales(data.positions);
+    if (!whaleData.length) {
+      whaleChart.setOption({ title: { text: 'No positions', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] }, true);
+      updateWhaleStats([]); return;
+    }
+    const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
+    updateWhaleStats(whaleData);
+    renderWhaleView(whaleChart, whaleView, whaleData, markPx, false);
+    const lC = whaleData.filter(w => w.side === 'long').length;
+    document.getElementById('whale-badge').textContent = whaleData.length + ' \u00B7 ' + lC + 'L/' + (whaleData.length - lC) + 'S';
+  }
+
+  // --- Tab switching ---
+  function setWhaleTab(tabsEl, view) {
+    tabsEl.querySelectorAll('.whale-tab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
+  }
+  document.getElementById('whale-view-tabs').addEventListener('click', e => {
+    const btn = e.target.closest('.whale-tab'); if (!btn) return;
+    whaleView = btn.dataset.view;
+    setWhaleTab(document.getElementById('whale-view-tabs'), whaleView);
+    if (whaleData.length) {
+      const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
+      renderWhaleView(whaleChart, whaleView, whaleData, markPx, false);
+    }
+  });
+  document.getElementById('whale-overlay-tabs').addEventListener('click', e => {
+    const btn = e.target.closest('.whale-tab'); if (!btn) return;
+    whaleOverlayView = btn.dataset.view;
+    setWhaleTab(document.getElementById('whale-overlay-tabs'), whaleOverlayView);
+    if (whaleOverlayChart && whaleData.length) {
+      const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
+      renderWhaleView(whaleOverlayChart, whaleOverlayView, whaleData, markPx, true);
+    }
+  });
+
+  // --- Explorer overlay ---
   async function openWhaleOverlay() {
-    // If data hasn't loaded yet, fetch it now
     if (!whaleData.length) {
       const data = await api(B + '/api/data/whales/' + coin + '?top_n=500');
       if (data && !data.error && data.positions) whaleData = parseWhales(data.positions);
     }
-    if (!whaleData.length) return; // still nothing after fetch
+    if (!whaleData.length) return;
     document.getElementById('whale-overlay').style.display = 'block';
-
+    whaleOverlayView = whaleView; // sync with panel view
+    setWhaleTab(document.getElementById('whale-overlay-tabs'), whaleOverlayView);
     const el = document.getElementById('whale-overlay-chart');
     whaleOverlayChart = echarts.init(el, null, { renderer: 'canvas' });
-
-    const maxSz = Math.max(...whaleData.map(w => w.size), 1);
     const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
-    const mapW = w => ({
-      value: [w.lev, w.entry],
-      symbolSize: Math.max(4, Math.sqrt(w.size / maxSz) * 28),
-      whale: w,
-    });
-
-    const longs = whaleData.filter(w => w.side === 'long').map(mapW);
-    const shorts = whaleData.filter(w => w.side !== 'long').map(mapW);
-
-    whaleOverlayChart.setOption({
-      tooltip: {
-        trigger: 'item', confine: true,
-        backgroundColor: 'rgba(12,12,12,0.95)', borderColor: '#262626', borderRadius: 8,
-        textStyle: { color: '#fafafa', fontSize: 11 },
-        formatter: function(p) {
-          const w = p.data.whale; if (!w) return '';
-          const pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
-          const sC = w.side === 'long' ? '#22c55e' : '#ef4444';
-          return '<div style="min-width:190px">' +
-            '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>' +
-            '<div style="font-size:11px;color:#a3a3a3">Entry: <b>' + px(w.entry) + '</b> <span style="color:' + sC + '">' + w.side.toUpperCase() + '</span></div>' +
-            '<div style="font-size:11px;color:#a3a3a3">Size: <b>' + $(w.size) + '</b> (' + w.lev + 'x)</div>' +
-            '<div style="font-size:11px;color:' + pC + '">PnL: <b>' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</b></div>' +
-            (w.liq > 0 ? '<div style="font-size:10px;color:#525252">Liq: ' + px(w.liq) + '</div>' : '') +
-            '</div>';
-        },
-      },
-      grid: { left: 70, right: 40, top: 40, bottom: 40 },
-      xAxis: {
-        name: 'Leverage', nameLocation: 'center', nameGap: 26,
-        nameTextStyle: { color: '#404040', fontSize: 12 },
-        axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 10, formatter: v => v.toFixed(0) + 'x' },
-        splitLine: { lineStyle: { color: '#141414' } },
-      },
-      yAxis: {
-        name: 'Entry Price', nameLocation: 'center', nameGap: 50,
-        nameTextStyle: { color: '#404040', fontSize: 12 },
-        axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 10, formatter: v => px(v) },
-        splitLine: { lineStyle: { color: '#141414' } },
-      },
-      dataZoom: [
-        { type: 'inside', xAxisIndex: 0, filterMode: 'none',
-          zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false,
-          throttle: 120 },
-        { type: 'inside', yAxisIndex: 0, filterMode: 'none',
-          zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false,
-          throttle: 120 },
-      ],
-      series: [
-        {
-          name: 'Long', type: 'scatter', data: longs,
-          itemStyle: { color: 'rgba(34,197,94,0.4)', borderColor: '#22c55e', borderWidth: 1 },
-          markLine: markPx > 0 ? {
-            silent: true, symbol: 'none',
-            data: [{ yAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
-              label: { show: true, formatter: 'Current ' + px(markPx), position: 'insideEndTop', color: '#6366f1', fontSize: 10 } }],
-          } : undefined,
-        },
-        {
-          name: 'Short', type: 'scatter', data: shorts,
-          itemStyle: { color: 'rgba(239,68,68,0.4)', borderColor: '#ef4444', borderWidth: 1 },
-        },
-      ],
-      legend: {
-        show: true, top: 8, right: 20,
-        textStyle: { color: '#525252', fontSize: 11 },
-        itemWidth: 12, itemHeight: 12,
-      },
-    });
-
-    const longCount = longs.length, shortCount = shorts.length;
+    renderWhaleView(whaleOverlayChart, whaleOverlayView, whaleData, markPx, true);
+    const lC = whaleData.filter(w => w.side === 'long').length, sC = whaleData.length - lC;
     const totalSz = whaleData.reduce((s, w) => s + w.size, 0);
     document.getElementById('whale-overlay-stats').textContent =
-      whaleData.length + ' positions \u00B7 ' + longCount + ' Long / ' + shortCount + ' Short \u00B7 Total: ' + $(totalSz) + ' \u00B7 Scroll to zoom, drag to pan';
-
+      whaleData.length + ' positions \u00B7 ' + lC + 'L/' + sC + 'S \u00B7 ' + $(totalSz) + ' \u00B7 Scroll to zoom';
     new ResizeObserver(() => whaleOverlayChart && whaleOverlayChart.resize()).observe(el);
   }
 
