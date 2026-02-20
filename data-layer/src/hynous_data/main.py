@@ -100,7 +100,9 @@ class Orchestrator:
         self._components["start_time"] = self.start_time
 
         # Engines (created before collectors so we can wire them)
-        smart_money = SmartMoneyEngine(db)  # profiler wired below
+        smart_money = SmartMoneyEngine(
+            db, min_equity=self.cfg.smart_money.min_equity,
+        )
         order_flow = OrderFlowEngine(windows=self.cfg.order_flow.windows)
         liq_heatmap = LiqHeatmapEngine(db, self.cfg.heatmap, base_url=BASE_URL, rate_limiter=rate_limiter)
         whale_tracker = WhaleTracker(db)
@@ -109,7 +111,8 @@ class Orchestrator:
         position_tracker = PositionChangeTracker(db)
         position_tracker.load_snapshots()
         profiler = WalletProfiler(db, rate_limiter, self.cfg.smart_money, base_url=BASE_URL)
-        smart_money._profiler = profiler  # enable background profiling from rankings
+        smart_money._profiler = profiler
+        smart_money.start_drainer()
 
         self._components["order_flow"] = order_flow
         self._components["liq_heatmap"] = liq_heatmap
