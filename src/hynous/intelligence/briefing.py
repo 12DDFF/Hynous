@@ -335,6 +335,12 @@ def build_briefing(
         if news_section:
             sections.append(news_section)
 
+    # --- Data layer intelligence (heatmap + HLP + CVD) ---
+    if config and config.data_layer.enabled:
+        dl_section = _build_data_layer_section(config, data_cache.symbols)
+        if dl_section:
+            sections.append(dl_section)
+
     # --- Performance stats ---
     stats_line = _build_stats_line()
     if stats_line:
@@ -665,6 +671,37 @@ def _format_sparkline(candles: list[dict], symbol: str) -> str:
         f"    Range: {_fmt_price(low)}-{_fmt_price(high)} | Trend: {trend} | Vol: {vol_label}",
     ]
     return "\n".join(lines)
+
+
+def _build_data_layer_section(config, symbols: list[str]) -> str:
+    """Data layer intelligence for briefing — HLP, heatmaps, CVD."""
+    try:
+        from ..data.providers.hynous_data import get_client
+        client = get_client()
+        if not client.is_available and not client.health():
+            return ""
+
+        parts = []
+
+        # HLP summary
+        hlp_text = client.hlp_summary()
+        if hlp_text:
+            parts.append(hlp_text)
+
+        # Heatmap + CVD for tracked symbols
+        for sym in symbols[:3]:
+            hm_text = client.heatmap_summary(sym)
+            if hm_text:
+                parts.append(hm_text)
+            flow_text = client.order_flow_summary(sym)
+            if flow_text:
+                parts.append(flow_text)
+
+        if not parts:
+            return ""
+        return "Data Layer:\n" + "\n".join(parts)
+    except Exception:
+        return ""
 
 
 def _build_stats_line() -> str:

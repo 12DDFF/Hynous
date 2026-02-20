@@ -149,4 +149,7 @@ def get_registry() -> ToolRegistry:
     from . import pruning
     pruning.register(registry)
 
+    from . import data_layer
+    data_layer.register(registry)
+
     return registry

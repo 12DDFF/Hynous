@@ -266,6 +266,7 @@ class Daemon:
             from .scanner import MarketScanner
             self._scanner = MarketScanner(config.scanner)
             self._scanner.execution_symbols = set(config.execution.symbols)
+            self._scanner._data_layer_enabled = config.data_layer.enabled
 
         # Stats
         self.wake_count: int = 0

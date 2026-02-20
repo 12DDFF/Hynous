@@ -80,6 +80,12 @@ discord:
     - 1415781451474927657                      # David
     - 614868895643205639                       # Kevin
 
+# Data layer (hynous-data service)
+data_layer:
+  url: "http://127.0.0.1:8100"    # hynous-data REST API
+  enabled: true                     # Use data layer signals in briefing/scanner
+  timeout: 5                        # HTTP timeout seconds
+
 # Memory (Nous) settings
 nous:
   url: "http://localhost:3100"        # Nous server URL

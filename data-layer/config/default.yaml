@@ -1,0 +1,47 @@
+# Hynous-Data configuration
+
+server:
+  host: "127.0.0.1"
+  port: 8100
+
+db:
+  path: "storage/hynous-data.db"
+  prune_days: 7          # Keep time-series data for N days
+
+rate_limit:
+  max_weight_per_min: 1200
+  safety_pct: 85         # Use only 85% of budget → 1020 effective
+
+trade_stream:
+  enabled: true
+
+position_poller:
+  enabled: true
+  workers: 8
+  # Tier intervals (seconds between re-polls)
+  tier1_interval: 30     # Whales (>$1M total size)
+  tier2_interval: 120    # Mid ($100K-$1M)
+  tier3_interval: 600    # Small (<$100K)
+  # Tier thresholds (USD)
+  whale_threshold: 1000000
+  mid_threshold: 100000
+
+hlp_tracker:
+  enabled: true
+  poll_interval: 60      # Seconds between HLP vault polls
+  vaults:                # Known HLP vault addresses
+    - "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303"  # HLP Vault A
+    - "0x010461c14e146ac35fe42271bdc1134ee31c703a"  # HLP Vault B
+    - "0x35cfc9c671b9a2f43fa23f3f08fb46e6a893463e"  # HLP Vault C
+
+heatmap:
+  recompute_interval: 10  # Seconds between heatmap refreshes
+  bucket_count: 50        # Number of price buckets per side
+  range_pct: 15           # Price range % above/below current price
+
+order_flow:
+  windows:                # CVD aggregation windows in seconds
+    - 60
+    - 300
+    - 900
+    - 3600

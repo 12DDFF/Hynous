@@ -50,7 +50,7 @@ def build_snapshot(provider, daemon, nous_client, config) -> str:
     sections = []
 
     # --- Portfolio + Positions ---
-    portfolio_line = _build_portfolio(provider, daemon, config)
+    portfolio_line, position_coins = _build_portfolio(provider, daemon, config)
     if portfolio_line:
         sections.append(portfolio_line)
 
@@ -73,6 +73,11 @@ def build_snapshot(provider, daemon, nous_client, config) -> str:
     activity_line = _build_activity(daemon)
     if activity_line:
         sections.append(activity_line)
+
+    # --- Data layer signals (heatmap + HLP + flow for open positions) ---
+    data_layer_line = _build_data_layer(config, position_coins)
+    if data_layer_line:
+        sections.append(data_layer_line)
 
     result = "\n".join(sections)
     _snapshot_cache = result
@@ -104,16 +109,21 @@ def extract_symbols(snapshot: str) -> list[str]:
     return symbols
 
 
-def _build_portfolio(provider, daemon, config) -> str:
-    """Portfolio value + open positions with SL/TP."""
+def _build_portfolio(provider, daemon, config) -> tuple[str, list[str]]:
+    """Portfolio value + open positions with SL/TP.
+
+    Returns (text, position_coins) where position_coins is a list of
+    coin symbols from open positions (used by data layer to avoid
+    a second get_user_state call).
+    """
     if provider is None:
-        return "Portfolio: unavailable (no provider)"
+        return "Portfolio: unavailable (no provider)", []
 
     try:
         state = provider.get_user_state()
     except Exception as e:
         logger.debug("Snapshot: portfolio fetch failed: %s", e)
-        return "Portfolio: unavailable"
+        return "Portfolio: unavailable", []
 
     acct = state["account_value"]
     unrealized = state["unrealized_pnl"]
@@ -138,7 +148,7 @@ def _build_portfolio(provider, daemon, config) -> str:
 
     positions = state.get("positions", [])
     if not positions:
-        return header
+        return header, []
 
     # Build position lines with SL/TP from trigger orders
     trigger_map = _get_trigger_map(provider, positions)
@@ -174,7 +184,8 @@ def _build_portfolio(provider, daemon, config) -> str:
 
         lines.append(pos_str)
 
-    return "\n".join(lines)
+    coins = [p["coin"] for p in positions]
+    return "\n".join(lines), coins
 
 
 def _get_trigger_map(provider, positions: list) -> dict:
@@ -304,6 +315,67 @@ def _build_activity(daemon) -> str:
 
     micro_str = f" ({micro} micro)" if micro > 0 else ""
     return f"Activity: {today} entries today{micro_str}, {week} this week | Last trade: {last} ago"
+
+
+def _build_data_layer(config, position_coins: list[str]) -> str:
+    """Compact data layer signals — HLP bias + CVD for tracked symbols.
+
+    Args:
+        config: Config instance.
+        position_coins: Coins from open positions (already fetched by _build_portfolio).
+    """
+    if not config or not config.data_layer.enabled:
+        return ""
+
+    try:
+        from ..data.providers.hynous_data import get_client
+        client = get_client()
+
+        if not client.is_available:
+            if not client.health():
+                return ""
+
+        parts = []
+
+        # HLP summary (single line)
+        hlp = client.hlp_positions()
+        if hlp and hlp.get("positions"):
+            positions = hlp["positions"]
+            long_usd = sum(p.get("size_usd", 0) for p in positions if p.get("side") == "long")
+            short_usd = sum(p.get("size_usd", 0) for p in positions if p.get("side") == "short")
+            bias = "LONG" if long_usd > short_usd else "SHORT"
+            parts.append(f"HLP: ${(long_usd + short_usd) / 1e6:.0f}M notional, {bias}-biased")
+
+        # CVD for tracked symbols + open position coins (no extra HTTP call)
+        symbols = list(config.execution.symbols)
+        for coin in position_coins:
+            if coin not in symbols:
+                symbols.append(coin)
+
+        flow_parts = []
+        for sym in symbols[:5]:
+            flow = client.order_flow(sym)
+            if flow and flow.get("windows"):
+                w = flow["windows"].get("5m")
+                if w and (w.get("buy_count", 0) + w.get("sell_count", 0)) > 0:
+                    cvd = w.get("cvd", 0)
+                    if abs(cvd) < 500:
+                        continue  # Skip negligible CVD
+                    if cvd >= 0:
+                        flow_parts.append(f"{sym} +${cvd / 1000:.0f}K")
+                    else:
+                        flow_parts.append(f"{sym} -${abs(cvd) / 1000:.0f}K")
+
+        if flow_parts:
+            parts.append(f"CVD 5m: {' | '.join(flow_parts)}")
+
+        if not parts:
+            return ""
+        return "Data: " + " | ".join(parts)
+
+    except Exception:
+        logger.debug("Data layer snapshot failed", exc_info=True)
+        return ""
 
 
 def _fg_label(value: int) -> str:

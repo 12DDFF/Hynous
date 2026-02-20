@@ -158,6 +158,9 @@ class MarketScanner:
         # Regime shift detection (set by daemon when label changes)
         self._pending_regime_shift: dict | None = None  # {from, to, score}
 
+        # Data layer (set by daemon from config.data_layer.enabled)
+        self._data_layer_enabled = True
+
         self._warmup_logged = False
 
     # -----------------------------------------------------------------
@@ -368,6 +371,9 @@ class MarketScanner:
         # Tier 5: Regime shift (fed by daemon, no warmup)
         anomalies.extend(self._detect_regime_shift())
 
+        # Tier 6: Data layer signals (hynous-data service)
+        anomalies.extend(self._detect_data_layer_signals())
+
         # Dedup (per-type TTL)
         self._cleanup_seen()
         unique = []
@@ -385,6 +391,12 @@ class MarketScanner:
                     ttl = 1800   # 30min — oscillates too fast for 15min
                 elif a.type == "regime_shift":
                     ttl = 7200   # 2h — regime shifts are slow
+                elif a.type == "liq_cluster":
+                    ttl = 3600   # 1h — heatmap changes slowly
+                elif a.type == "hlp_flip":
+                    ttl = 7200   # 2h — HLP doesn't flip often
+                elif a.type == "whale_surge":
+                    ttl = 3600   # 1h — whale positions shift slowly
                 elif a.category == "news":
                     ttl = 3600   # 1h — news doesn't repeat
                 elif a.category == "micro":
@@ -1256,6 +1268,189 @@ class MarketScanner:
             detected_at=time.time(),
             category="macro",
         )]
+
+    # -----------------------------------------------------------------
+    # Tier 6: Data Layer Signals (hynous-data service)
+    # -----------------------------------------------------------------
+
+    def _detect_data_layer_signals(self) -> list[AnomalyEvent]:
+        """Detect anomalies from the hynous-data service.
+
+        Three signal types:
+        - liq_cluster: Dense liquidation zone within 3% of current price
+        - hlp_flip: HLP vault changes side on a tracked coin
+        - whale_surge: Extreme net whale bias on a tracked coin
+
+        Rate-limited: only runs every 5th scan (~5min at 60s cycles).
+        Graceful — returns [] if service is down or disabled.
+        """
+        # Throttle: run every 5 scan cycles (~5min), not every 60s
+        self._dl_scan_counter = getattr(self, "_dl_scan_counter", 0) + 1
+        if self._dl_scan_counter % 5 != 1:
+            return []
+
+        # Check if data layer is enabled
+        if not getattr(self, "_data_layer_enabled", True):
+            return []
+
+        try:
+            from ..data.providers.hynous_data import get_client
+            client = get_client()
+            if not client.is_available:
+                if not client.health():
+                    return []
+        except Exception:
+            return []
+
+        results = []
+        now = time.time()
+
+        # Symbols to check: execution symbols + position symbols
+        check_syms = self.execution_symbols | self.position_symbols
+        if not check_syms:
+            check_syms = {"BTC", "ETH", "SOL"}
+
+        # --- Liq cluster detection ---
+        for sym in check_syms:
+            try:
+                hm = client.heatmap(sym)
+                if not hm or "error" in hm:
+                    continue
+
+                mid = hm.get("mid_price", 0)
+                if mid <= 0:
+                    continue
+
+                # Single pass: compute near_long + near_short together
+                near_long = 0.0
+                near_short = 0.0
+                for b in hm.get("buckets", []):
+                    bucket_mid = b.get("price_mid", 0)
+                    if bucket_mid <= 0:
+                        continue
+                    if abs(bucket_mid - mid) / mid <= 0.03:
+                        near_long += b.get("long_liq_usd", 0)
+                        near_short += b.get("short_liq_usd", 0)
+
+                near_liq_usd = near_long + near_short
+                if near_liq_usd >= 5_000_000:
+                    dominant = "long" if near_long > near_short else "short"
+                    severity = min(0.5 + (near_liq_usd / 50_000_000), 0.85)
+
+                    results.append(AnomalyEvent(
+                        type="liq_cluster",
+                        symbol=sym,
+                        severity=severity,
+                        headline=f"{sym}: ${near_liq_usd / 1e6:.0f}M in liquidations within 3% of price",
+                        detail=(
+                            f"Dense {dominant} liquidation cluster near ${mid:,.0f}. "
+                            f"Longs: ${near_long / 1e6:.1f}M, Shorts: ${near_short / 1e6:.1f}M. "
+                            f"Price may be drawn toward this zone — cascade risk if breached."
+                        ),
+                        fingerprint=f"liq_cluster:{sym}",
+                        detected_at=now,
+                        category="macro",
+                    ))
+            except Exception:
+                logger.debug("Data layer liq_cluster failed for %s", sym, exc_info=True)
+                continue
+
+        # --- HLP flip detection ---
+        # Use a proper dict instead of dynamic attrs
+        if not hasattr(self, "_hlp_prev_sides"):
+            self._hlp_prev_sides: dict[str, str] = {}
+
+        try:
+            hlp = client.hlp_positions()
+            if hlp and hlp.get("positions"):
+                hlp_net: dict[str, float] = {}
+                for p in hlp["positions"]:
+                    coin = p.get("coin", "")
+                    size = p.get("size_usd", 0)
+                    if p.get("side") == "short":
+                        size = -size
+                    hlp_net[coin] = hlp_net.get(coin, 0) + size
+
+                for sym in check_syms:
+                    net = hlp_net.get(sym, 0)
+                    if abs(net) < 100_000:
+                        continue
+
+                    curr_side = "long" if net > 0 else "short"
+                    prev_side = self._hlp_prev_sides.get(sym)
+
+                    if prev_side is not None and prev_side != curr_side:
+                        results.append(AnomalyEvent(
+                            type="hlp_flip",
+                            symbol=sym,
+                            severity=0.6,
+                            headline=f"{sym}: HLP flipped {prev_side.upper()} -> {curr_side.upper()}",
+                            detail=(
+                                f"HLP market-maker vault flipped from {prev_side} to {curr_side} "
+                                f"on {sym} (net ${abs(net):,.0f}). The house changed sides."
+                            ),
+                            fingerprint=f"hlp_flip:{sym}:{curr_side}",
+                            detected_at=now,
+                            category="macro",
+                        ))
+
+                    self._hlp_prev_sides[sym] = curr_side
+        except Exception:
+            logger.debug("Data layer hlp_flip failed", exc_info=True)
+
+        # --- Whale surge detection ---
+        for sym in check_syms:
+            try:
+                whales = client.whales(sym, top_n=30)
+                if not whales or whales.get("count", 0) < 5:
+                    continue
+
+                total_long = whales.get("total_long_usd", 0)
+                total_short = whales.get("total_short_usd", 0)
+                total = total_long + total_short
+                if total < 1_000_000:
+                    continue
+
+                long_pct = total_long / total
+                short_pct = total_short / total
+
+                if long_pct >= 0.75:
+                    net = whales.get("net_usd", 0)
+                    results.append(AnomalyEvent(
+                        type="whale_surge",
+                        symbol=sym,
+                        severity=min(0.5 + (long_pct - 0.75) * 2, 0.8),
+                        headline=f"{sym}: Whales {long_pct:.0%} LONG (${total / 1e6:.0f}M total)",
+                        detail=(
+                            f"Top {whales.get('count', 0)} whale positions heavily long-biased. "
+                            f"Longs: ${total_long / 1e6:.1f}M, Shorts: ${total_short / 1e6:.1f}M, "
+                            f"Net: +${abs(net) / 1e6:.1f}M. Strong conviction or crowded trade?"
+                        ),
+                        fingerprint=f"whale_surge:{sym}:long",
+                        detected_at=now,
+                        category="macro",
+                    ))
+                elif short_pct >= 0.75:
+                    net = whales.get("net_usd", 0)
+                    results.append(AnomalyEvent(
+                        type="whale_surge",
+                        symbol=sym,
+                        severity=min(0.5 + (short_pct - 0.75) * 2, 0.8),
+                        headline=f"{sym}: Whales {short_pct:.0%} SHORT (${total / 1e6:.0f}M total)",
+                        detail=(
+                            f"Top {whales.get('count', 0)} whale positions heavily short-biased. "
+                            f"Longs: ${total_long / 1e6:.1f}M, Shorts: ${total_short / 1e6:.1f}M, "
+                            f"Net: -${abs(net) / 1e6:.1f}M. Strong conviction or crowded trade?"
+                        ),
+                        fingerprint=f"whale_surge:{sym}:short",
+                        detected_at=now,
+                        category="macro",
+                    ))
+            except Exception:
+                logger.debug("Data layer whale_surge failed for %s", sym, exc_info=True)
+                continue
+
+        return results
 
 
 # =============================================================================

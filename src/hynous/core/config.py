@@ -136,6 +136,14 @@ class ScannerConfig:
 
 
 @dataclass
+class DataLayerConfig:
+    """Hynous-Data service — Hyperliquid market intelligence."""
+    url: str = "http://127.0.0.1:8100"
+    enabled: bool = True
+    timeout: int = 5
+
+
+@dataclass
 class DiscordConfig:
     """Discord bot settings — chat relay + daemon notifications."""
     enabled: bool = False
@@ -163,6 +171,7 @@ class Config:
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     discord: DiscordConfig = field(default_factory=DiscordConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
+    data_layer: DataLayerConfig = field(default_factory=DataLayerConfig)
 
     # Paths
     project_root: Path = field(default_factory=_find_project_root)
@@ -199,6 +208,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
     scanner_raw = raw.get("scanner", {})
     discord_raw = raw.get("discord", {})
     orch_raw = raw.get("orchestrator", {})
+    dl_raw = raw.get("data_layer", {})
 
     return Config(
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
@@ -289,6 +299,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
             max_retries=orch_raw.get("max_retries", 1),
             timeout_seconds=orch_raw.get("timeout_seconds", 3.0),
             search_limit_per_query=orch_raw.get("search_limit_per_query", 10),
+        ),
+        data_layer=DataLayerConfig(
+            url=dl_raw.get("url", "http://127.0.0.1:8100"),
+            enabled=dl_raw.get("enabled", True),
+            timeout=dl_raw.get("timeout", 5),
         ),
         project_root=root,
     )

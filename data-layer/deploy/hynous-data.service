@@ -1,0 +1,17 @@
+[Unit]
+Description=Hynous Data Layer — Hyperliquid market intelligence
+After=network.target
+
+[Service]
+Type=simple
+User=hynous
+Group=hynous
+WorkingDirectory=/opt/hynous/data-layer
+EnvironmentFile=/opt/hynous/.env
+ExecStart=/opt/hynous/.venv/bin/python3 -m scripts.run
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
