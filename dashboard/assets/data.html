@@ -465,18 +465,22 @@
     new ResizeObserver(() => hmChart.resize()).observe(document.getElementById('hm-panel'));
   }
 
-  // Fast price line update (called every 3s by tickPrice)
+  // Fast price dot update (called every 3s by tickPrice)
+  // Uses a scatter series (index 2) — ECharts animates position change smoothly
   function updateHeatmapPrice(price) {
     if (!hmChart || !hmBuckets.length || !price) return;
     let midIdx = 0, minDist = Infinity;
     hmBuckets.forEach((b, i) => { const d = Math.abs(b.price_mid - price); if (d < minDist) { minDist = d; midIdx = i; } });
     const pLabel = price >= 1 ? '$' + price.toLocaleString(undefined, {maximumFractionDigits: 0}) : '$' + price.toFixed(4);
     hmChart.setOption({
-      series: [{ markLine: { silent: true, symbol: 'none',
-        animationDuration: 800, animationEasing: 'cubicOut',
-        data: [{ yAxis: midIdx, lineStyle: { color: '#6366f1', width: 2, type: 'dashed' },
-          label: { show: true, formatter: pLabel, color: '#6366f1', fontSize: 9, position: 'end' } }],
-      }}]
+      series: [
+        {}, // index 0 — Long bars (unchanged)
+        {}, // index 1 — Short bars (unchanged)
+        {   // index 2 — Price dot
+          data: [[0, midIdx]],
+          label: { formatter: pLabel },
+        }
+      ]
     });
   }
 
@@ -559,18 +563,38 @@
           },
           barMaxWidth: 12,
         },
+        // Price dot — scatter point at x=0 (center), y=price bucket index
+        // tickPrice() updates this every 3s, ECharts animates the Y position change
+        {
+          name: 'Price', type: 'scatter',
+          data: mid > 0 ? [[0, midIdx]] : [],
+          symbolSize: 14,
+          z: 10,
+          itemStyle: {
+            color: '#6366f1',
+            borderColor: '#a5b4fc',
+            borderWidth: 2,
+            shadowColor: 'rgba(99, 102, 241, 0.6)',
+            shadowBlur: 10,
+          },
+          label: {
+            show: true,
+            position: 'right',
+            distance: 8,
+            color: '#a5b4fc',
+            fontSize: 9,
+            fontWeight: 600,
+            fontFamily: 'JetBrains Mono, monospace',
+            formatter: mid >= 1 ? '$' + mid.toLocaleString(undefined, {maximumFractionDigits: 0}) : '$' + mid.toFixed(4),
+            backgroundColor: 'rgba(10, 10, 10, 0.85)',
+            padding: [2, 5],
+            borderRadius: 3,
+          },
+          animationDuration: 800,
+          animationEasing: 'cubicOut',
+        },
       ],
     });
-
-    // Add current price markLine
-    if (mid > 0) {
-      hmChart.setOption({ yAxis: { axisPointer: { show: false } },
-        series: [{ markLine: { silent: true, symbol: 'none',
-          data: [{ yAxis: midIdx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
-            label: { show: true, formatter: 'Price', color: '#6366f1', fontSize: 9, position: 'end' } }],
-        }}]
-      });
-    }
 
     document.getElementById('hm-badge').textContent = buckets.length + ' levels';
   }
