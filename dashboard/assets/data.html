@@ -265,6 +265,7 @@
           </div>
           <div id="whale-treemap-opts" style="display:none;align-items:center;gap:6px">
             <select id="whale-group" class="whale-limit">
+              <option value="none">No Group</option>
               <option value="side">By Side</option>
               <option value="leverage">By Leverage</option>
               <option value="pnl">By PnL</option>
@@ -757,118 +758,150 @@
   // VIEW 3: TREEMAP — Rectangle map sized by position
   // =================================================================
   function buildTreemap(chart, whales, markPx, large) {
-    const groupBy = document.getElementById('whale-group').value || 'side';
+    const groupBy = document.getElementById('whale-group').value || 'none';
     const sizeMetric = document.getElementById('whale-size-metric').value || 'size';
 
-    // Value extractor based on size metric
     function val(w) {
       if (sizeMetric === 'pnl') return Math.abs(w.pnl) || 1;
       if (sizeMetric === 'leverage') return w.lev || 1;
       return w.size;
     }
-
-    // Whale color — always by side
     function wColor(w, alpha) {
       return w.side === 'long' ? 'rgba(34,197,94,' + alpha + ')' : 'rgba(239,68,68,' + alpha + ')';
     }
-
-    // Build groups
-    let groups;
-    if (groupBy === 'leverage') {
-      groups = [
-        { name: '1\u20133x', whales: whales.filter(w => w.lev <= 3) },
-        { name: '3\u201310x', whales: whales.filter(w => w.lev > 3 && w.lev <= 10) },
-        { name: '10\u201325x', whales: whales.filter(w => w.lev > 10 && w.lev <= 25) },
-        { name: '25x+', whales: whales.filter(w => w.lev > 25) },
-      ];
-    } else if (groupBy === 'pnl') {
-      groups = [
-        { name: 'In Profit', whales: whales.filter(w => w.pnl >= 0) },
-        { name: 'Underwater', whales: whales.filter(w => w.pnl < 0) },
-      ];
-    } else {
-      groups = [
-        { name: 'Long', whales: whales.filter(w => w.side === 'long') },
-        { name: 'Short', whales: whales.filter(w => w.side !== 'long') },
-      ];
+    function whaleLeaf(w) {
+      return { name: addr(w.address), value: val(w), whale: w,
+        itemStyle: { color: wColor(w, 0.6), borderColor: wColor(w, 0.85) } };
+    }
+    function whaleTip(w) {
+      const pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
+      const sC = w.side === 'long' ? '#22c55e' : '#ef4444';
+      const pnlStr = (w.pnl >= 0 ? '+' : '') + $(w.pnl);
+      return '<div style="min-width:180px">' +
+        '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>' +
+        '<div style="font-size:11px"><span style="color:' + sC + '">' + w.side.toUpperCase() + '</span> \u00B7 ' + $(w.size) + ' \u00B7 ' + w.lev + 'x</div>' +
+        '<div style="font-size:11px;color:#a3a3a3">Entry: ' + px(w.entry) + '</div>' +
+        '<div style="font-size:11px;color:' + pC + '">PnL: <b>' + pnlStr + '</b></div>' +
+        (w.liq > 0 ? '<div style="font-size:10px;color:#525252">Liq: ' + px(w.liq) + '</div>' : '') +
+        '</div>';
     }
 
-    const data = groups.filter(g => g.whales.length > 0).map(g => {
-      const totalUSD = g.whales.reduce((s, w) => s + w.size, 0);
-      return {
-        name: g.name + ' (' + g.whales.length + ') \u00B7 ' + $(totalUSD),
-        children: g.whales.sort((a, b) => val(b) - val(a)).map(w => ({
-          name: addr(w.address),
-          value: val(w),
-          whale: w,
-          itemStyle: { color: wColor(w, 0.65), borderColor: wColor(w, 0.9) },
-        })),
-      };
-    });
+    // --- Build data: flat or grouped ---
+    let data, isFlat = false;
+    const sorted = [...whales].sort((a, b) => val(b) - val(a));
 
-    const labelMinArea = large ? 800 : 2000;
-    const detailMinArea = large ? 3000 : 8000;
+    if (groupBy === 'none') {
+      // Flat — longs and shorts mixed, biggest first
+      data = sorted.map(whaleLeaf);
+      isFlat = true;
+    } else {
+      let groups;
+      if (groupBy === 'leverage') {
+        groups = [
+          { name: '1\u20133x', whales: sorted.filter(w => w.lev <= 3) },
+          { name: '3\u201310x', whales: sorted.filter(w => w.lev > 3 && w.lev <= 10) },
+          { name: '10\u201325x', whales: sorted.filter(w => w.lev > 10 && w.lev <= 25) },
+          { name: '25x+', whales: sorted.filter(w => w.lev > 25) },
+        ];
+      } else if (groupBy === 'pnl') {
+        groups = [
+          { name: 'In Profit', whales: sorted.filter(w => w.pnl >= 0) },
+          { name: 'Underwater', whales: sorted.filter(w => w.pnl < 0) },
+        ];
+      } else {
+        groups = [
+          { name: 'Long', whales: sorted.filter(w => w.side === 'long') },
+          { name: 'Short', whales: sorted.filter(w => w.side !== 'long') },
+        ];
+      }
+      data = groups.filter(g => g.whales.length > 0).map(g => {
+        const totalUSD = g.whales.reduce((s, w) => s + w.size, 0);
+        const lC = g.whales.filter(w => w.side === 'long').length, sC = g.whales.length - lC;
+        return {
+          name: g.name + ' (' + g.whales.length + ') \u00B7 ' + $(totalUSD) + ' \u00B7 ' + lC + 'L/' + sC + 'S',
+          children: g.whales.map(whaleLeaf),
+        };
+      });
+    }
+
+    // --- Label sizing ---
+    const smallLabel = large ? 600 : 1500;
+    const medLabel = large ? 2500 : 6000;
+    const fullLabel = large ? 6000 : 15000;
+    function leafLabel(p) {
+      const w = p.data.whale; if (!w) return '';
+      const area = p.rect ? p.rect.width * p.rect.height : 0;
+      if (area < smallLabel) return '';
+      const pC = w.pnl >= 0 ? '#4ade80' : '#f87171';
+      const sIcon = w.side === 'long' ? '\u25B2' : '\u25BC';
+      const sC = w.side === 'long' ? '{lg|' + sIcon + '}' : '{sh|' + sIcon + '}';
+      const pnl = (w.pnl >= 0 ? '+' : '') + $(w.pnl);
+      if (area < medLabel) return sC + ' ' + $(val(w));
+      if (area < fullLabel) return sC + ' ' + $(w.size) + ' ' + w.lev + 'x\n{pnl' + (w.pnl >= 0 ? 'g' : 'r') + '|' + pnl + '}';
+      return sC + ' {addr|' + addr(w.address) + '}\n' + $(w.size) + ' \u00B7 ' + w.lev + 'x\n{pnl' + (w.pnl >= 0 ? 'g' : 'r') + '|' + pnl + '}';
+    }
+    const leafRich = {
+      lg: { color: '#22c55e', fontSize: large ? 12 : 10 },
+      sh: { color: '#ef4444', fontSize: large ? 12 : 10 },
+      addr: { color: '#a3a3a3', fontSize: large ? 10 : 8 },
+      pnlg: { color: '#4ade80', fontSize: large ? 10 : 9, fontWeight: 600 },
+      pnlr: { color: '#f87171', fontSize: large ? 10 : 9, fontWeight: 600 },
+    };
+
+    // --- Levels config ---
+    const levels = isFlat ? [
+      {
+        itemStyle: { borderColor: '#0a0a0a', borderWidth: 1, gapWidth: 1 },
+        label: {
+          show: true, formatter: leafLabel, rich: leafRich,
+          color: '#fafafa', fontSize: large ? 11 : 9,
+          fontFamily: "'JetBrains Mono', monospace",
+          lineHeight: large ? 16 : 13, position: 'insideCenter', overflow: 'truncate',
+        },
+      },
+    ] : [
+      {
+        itemStyle: { borderColor: '#1a1a1a', borderWidth: 3, gapWidth: 2 },
+        upperLabel: {
+          show: true, height: large ? 22 : 16,
+          color: '#d4d4d4', fontSize: large ? 11 : 9, fontWeight: 600,
+          backgroundColor: 'rgba(10,10,10,0.85)', padding: [2, 6],
+        },
+      },
+      {
+        itemStyle: { borderColor: '#0a0a0a', borderWidth: 1, gapWidth: 1 },
+        label: {
+          show: true, formatter: leafLabel, rich: leafRich,
+          color: '#fafafa', fontSize: large ? 11 : 9,
+          fontFamily: "'JetBrains Mono', monospace",
+          lineHeight: large ? 16 : 13, position: 'insideCenter', overflow: 'truncate',
+        },
+      },
+    ];
 
     chart.setOption({
       tooltip: {
         backgroundColor: 'rgba(12,12,12,0.95)', borderColor: '#262626', borderRadius: 8,
         textStyle: { color: '#fafafa', fontSize: 11 },
         formatter: function(p) {
-          const w = p.data.whale;
-          if (!w) { return '<b>' + p.name + '</b>'; }
-          const pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
-          const sC = w.side === 'long' ? '#22c55e' : '#ef4444';
-          return '<div style="min-width:180px">' +
-            '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>' +
-            '<div style="font-size:11px;color:#a3a3a3">Size: <b>' + $(w.size) + '</b></div>' +
-            '<div style="font-size:11px;color:#a3a3a3">Entry: <b>' + px(w.entry) + '</b> <span style="color:' + sC + '">' + w.side.toUpperCase() + '</span></div>' +
-            '<div style="font-size:11px;color:#a3a3a3">Leverage: <b>' + w.lev + 'x</b></div>' +
-            '<div style="font-size:11px;color:' + pC + '">PnL: <b>' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</b></div>' +
-            (w.liq > 0 ? '<div style="font-size:10px;color:#525252">Liq: ' + px(w.liq) + '</div>' : '') +
-            '</div>';
+          if (p.data.whale) return whaleTip(p.data.whale);
+          return '<b>' + p.name + '</b>';
         },
       },
       series: [{
         type: 'treemap',
         data: data,
-        roam: false,
-        nodeClick: 'zoomToNode',
+        roam: isFlat ? 'zoomMove' : false,
+        nodeClick: isFlat ? false : 'zoomToNode',
         width: '100%', height: '100%',
+        squareRatio: 0.6,
         breadcrumb: {
-          show: large,
+          show: !isFlat && large,
           top: 4, left: 8,
-          itemStyle: { color: '#1a1a1a', borderColor: '#262626', textStyle: { color: '#737373', fontSize: 10 } },
-          emphasis: { itemStyle: { color: '#262626' } },
+          itemStyle: { color: '#1a1a1a', borderColor: '#262626' },
+          textStyle: { color: '#737373', fontSize: 10 },
         },
-        levels: [
-          {
-            itemStyle: { borderColor: '#1a1a1a', borderWidth: 3, gapWidth: 2 },
-            upperLabel: {
-              show: true, height: large ? 24 : 18,
-              color: '#d4d4d4', fontSize: large ? 12 : 10, fontWeight: 600,
-              backgroundColor: 'rgba(10,10,10,0.8)', padding: [2, 6],
-            },
-          },
-          {
-            itemStyle: { borderColor: '#0a0a0a', borderWidth: 1, gapWidth: 1 },
-            label: {
-              show: true,
-              formatter: function(p) {
-                const w = p.data.whale;
-                if (!w) return '';
-                const area = p.rect ? p.rect.width * p.rect.height : 0;
-                if (area < labelMinArea) return '';
-                if (area < detailMinArea) return $(w.size);
-                return addr(w.address) + '\n' + $(w.size) + ' \u00B7 ' + w.lev + 'x';
-              },
-              color: '#fafafa', fontSize: large ? 11 : 9,
-              fontFamily: "'JetBrains Mono', monospace",
-              lineHeight: large ? 16 : 14,
-              position: 'insideCenter',
-              overflow: 'truncate',
-            },
-          },
-        ],
+        levels: levels,
       }],
     }, true);
   }
