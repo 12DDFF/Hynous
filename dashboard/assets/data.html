@@ -503,23 +503,25 @@
       size: Math.abs(p.size_usd || p.notional_usd || p.sz_usd || 0),
       pnl: p.pnl_usd || p.unrealized_pnl || 0,
       entry: p.entry_px || p.entry_price || p.avg_entry || 0,
+      mark: p.mark_px || 0,
       lev: p.leverage || p.lev || 1,
       side: ((p.side || '').toLowerCase().startsWith('l') || (p.side || '').toLowerCase() === 'buy') ? 'long' : 'short',
       address: p.address || p.addr || '',
       liq: p.liq_px || 0,
-    })).filter(p => p.size > 0);
+    })).filter(p => p.size > 0 && p.entry > 0);
   }
+  function px(v) { return v >= 1000 ? '$' + (v/1000).toFixed(1) + 'K' : v >= 1 ? '$' + v.toFixed(0) : '$' + v.toFixed(4); }
 
   // --- Grid-based clustering: merge nearby whales ---
   function clusterWhales(whales, gx, gy) {
     if (!whales.length) return [];
-    const pnls = whales.map(w => w.pnl), sizes = whales.map(w => w.size);
-    const pMin = Math.min(...pnls), pMax = Math.max(...pnls);
+    const entries = whales.map(w => w.entry), sizes = whales.map(w => w.size);
+    const eMin = Math.min(...entries), eMax = Math.max(...entries);
     const sMin = Math.min(...sizes), sMax = Math.max(...sizes);
-    const pRange = pMax - pMin || 1, sRange = sMax - sMin || 1;
+    const eRange = eMax - eMin || 1, sRange = sMax - sMin || 1;
     const cells = {};
     whales.forEach(w => {
-      const cx = Math.min(gx - 1, Math.floor((w.pnl - pMin) / pRange * gx));
+      const cx = Math.min(gx - 1, Math.floor((w.entry - eMin) / eRange * gx));
       const cy = Math.min(gy - 1, Math.floor((w.size - sMin) / sRange * gy));
       const k = cx + '_' + cy;
       if (!cells[k]) cells[k] = [];
@@ -529,13 +531,14 @@
       const longs = ws.filter(w => w.side === 'long').length;
       const totalSz = ws.reduce((s, w) => s + w.size, 0);
       return {
-        pnl: ws.reduce((s, w) => s + w.pnl, 0) / ws.length,
+        entry: ws.reduce((s, w) => s + w.entry, 0) / ws.length,
         size: totalSz / ws.length,
         totalSize: totalSz,
         count: ws.length,
         longs: longs, shorts: ws.length - longs,
-        maxPnl: Math.max(...ws.map(w => w.pnl)),
-        minPnl: Math.min(...ws.map(w => w.pnl)),
+        maxEntry: Math.max(...ws.map(w => w.entry)),
+        minEntry: Math.min(...ws.map(w => w.entry)),
+        avgPnl: ws.reduce((s, w) => s + w.pnl, 0) / ws.length,
         whales: ws.sort((a, b) => b.size - a.size),
       };
     });
@@ -555,20 +558,21 @@
 
   // --- Rich tooltip for clusters ---
   function cTip(c) {
-    let h = '<div style="min-width:180px">';
+    let h = '<div style="min-width:190px">';
     if (c.count === 1) {
       const w = c.whales[0], pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
+      const sC = w.side === 'long' ? '#22c55e' : '#ef4444';
       h += '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>';
+      h += '<div style="font-size:11px;color:#a3a3a3">Entry: <b>' + px(w.entry) + '</b> <span style="color:' + sC + '">' + w.side.toUpperCase() + '</span></div>';
       h += '<div style="font-size:11px;color:#a3a3a3">Size: <b>' + $(w.size) + '</b> (' + w.lev + 'x)</div>';
-      h += '<div style="font-size:11px;color:#a3a3a3">Entry: <b>$' + (w.entry >= 1 ? w.entry.toLocaleString(undefined,{maximumFractionDigits:2}) : w.entry.toFixed(4)) + '</b></div>';
       h += '<div style="font-size:11px;color:' + pC + '">PnL: <b>' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</b></div>';
-      h += '<div style="font-size:10px;color:#525252;margin-top:2px">' + (w.side === 'long' ? 'Long' : 'Short') + '</div>';
+      if (w.liq > 0) h += '<div style="font-size:10px;color:#525252">Liq: ' + px(w.liq) + '</div>';
     } else {
-      h += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">' + c.count + ' whale' + (c.count > 1 ? 's' : '') + '</div>';
+      h += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">' + c.count + ' whales</div>';
+      if (c.minEntry !== c.maxEntry) h += '<div style="font-size:11px;color:#a3a3a3">Entry: ' + px(c.minEntry) + ' – ' + px(c.maxEntry) + '</div>';
       h += '<div style="font-size:11px"><span style="color:#22c55e">Long: ' + c.longs + '</span> &middot; <span style="color:#ef4444">Short: ' + c.shorts + '</span></div>';
       h += '<div style="font-size:11px;color:#737373;margin-top:4px">Total Size: ' + $(c.totalSize) + '</div>';
-      h += '<div style="font-size:11px;color:#737373">Avg PnL: ' + (c.pnl >= 0 ? '+' : '') + $(c.pnl) + '</div>';
-      if (c.minPnl !== c.maxPnl) h += '<div style="font-size:10px;color:#525252">PnL Range: ' + $(c.minPnl) + ' to ' + $(c.maxPnl) + '</div>';
+      h += '<div style="font-size:11px;color:#737373">Avg PnL: ' + (c.avgPnl >= 0 ? '+' : '') + $(c.avgPnl) + '</div>';
       const top = c.whales.slice(0, 5);
       h += '<div style="border-top:1px solid #262626;margin-top:6px;padding-top:6px;font-size:10px">';
       top.forEach(w => {
@@ -598,8 +602,11 @@
     const clusters = clusterWhales(whaleData, 20, 15);
     const maxClusterSz = Math.max(...clusters.map(c => c.totalSize), 1);
 
+    // Current price from first whale's mark_px
+    const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
+
     const points = clusters.map(c => ({
-      value: [c.pnl, c.size],
+      value: [c.entry, c.size],
       symbolSize: c.count === 1
         ? Math.max(8, (c.totalSize / maxClusterSz) * 30)
         : Math.max(18, Math.min(55, Math.sqrt(c.count) * 12)),
@@ -622,22 +629,29 @@
         formatter: p => p.data.cluster ? cTip(p.data.cluster) : '',
         extraCssText: 'max-height:280px;overflow-y:auto;',
       },
-      grid: { left: 60, right: 16, top: 10, bottom: 32 },
+      grid: { left: 56, right: 16, top: 10, bottom: 32 },
       xAxis: {
-        name: 'PnL', nameLocation: 'center', nameGap: 20,
+        name: 'Entry Price', nameLocation: 'center', nameGap: 20,
         nameTextStyle: { color: '#404040', fontSize: 10 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 9, formatter: v => $(v) },
+        axisLabel: { color: '#525252', fontSize: 9, formatter: v => px(v) },
         splitLine: { lineStyle: { color: '#141414' } },
       },
       yAxis: {
-        name: 'Size', nameLocation: 'center', nameGap: 44,
+        name: 'Size', nameLocation: 'center', nameGap: 40,
         nameTextStyle: { color: '#404040', fontSize: 10 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
         axisLabel: { color: '#525252', fontSize: 9, formatter: v => $(v) },
         splitLine: { lineStyle: { color: '#141414' } },
       },
-      series: [{ type: 'scatter', data: points }],
+      series: [{
+        type: 'scatter', data: points,
+        markLine: markPx > 0 ? {
+          silent: true, symbol: 'none',
+          data: [{ xAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
+            label: { show: true, formatter: 'Price', color: '#6366f1', fontSize: 8, position: 'start' } }],
+        } : undefined,
+      }],
     });
 
     const longCount = whaleData.filter(w => w.side === 'long').length;
@@ -660,8 +674,9 @@
     whaleOverlayChart = echarts.init(el, null, { renderer: 'canvas' });
 
     const maxSz = Math.max(...whaleData.map(w => w.size), 1);
+    const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
     const mapW = w => ({
-      value: [w.pnl, w.size],
+      value: [w.entry, w.size],
       symbolSize: Math.max(4, Math.sqrt(w.size / maxSz) * 28),
       whale: w,
     });
@@ -677,21 +692,22 @@
         formatter: function(p) {
           const w = p.data.whale; if (!w) return '';
           const pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
-          return '<div style="min-width:180px">' +
+          const sC = w.side === 'long' ? '#22c55e' : '#ef4444';
+          return '<div style="min-width:190px">' +
             '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>' +
+            '<div style="font-size:11px;color:#a3a3a3">Entry: <b>' + px(w.entry) + '</b> <span style="color:' + sC + '">' + w.side.toUpperCase() + '</span></div>' +
             '<div style="font-size:11px;color:#a3a3a3">Size: <b>' + $(w.size) + '</b> (' + w.lev + 'x)</div>' +
-            '<div style="font-size:11px;color:#a3a3a3">Entry: <b>$' + (w.entry >= 1 ? w.entry.toLocaleString(undefined,{maximumFractionDigits:2}) : w.entry.toFixed(4)) + '</b></div>' +
             '<div style="font-size:11px;color:' + pC + '">PnL: <b>' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</b></div>' +
-            '<div style="font-size:11px;color:#a3a3a3">Liq: <b>' + (w.liq >= 1 ? '$' + w.liq.toLocaleString(undefined,{maximumFractionDigits:2}) : w.liq > 0 ? '$' + w.liq.toFixed(4) : '-') + '</b></div>' +
-            '<div style="font-size:10px;color:#525252;margin-top:2px">' + (w.side === 'long' ? 'Long' : 'Short') + '</div></div>';
+            (w.liq > 0 ? '<div style="font-size:10px;color:#525252">Liq: ' + px(w.liq) + '</div>' : '') +
+            '</div>';
         },
       },
       grid: { left: 80, right: 40, top: 40, bottom: 40 },
       xAxis: {
-        name: 'Unrealized PnL', nameLocation: 'center', nameGap: 26,
+        name: 'Entry Price', nameLocation: 'center', nameGap: 26,
         nameTextStyle: { color: '#404040', fontSize: 12 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 10, formatter: v => $(v) },
+        axisLabel: { color: '#525252', fontSize: 10, formatter: v => px(v) },
         splitLine: { lineStyle: { color: '#141414' } },
       },
       yAxis: {
@@ -713,6 +729,11 @@
         {
           name: 'Long', type: 'scatter', data: longs,
           itemStyle: { color: 'rgba(34,197,94,0.4)', borderColor: '#22c55e', borderWidth: 1 },
+          markLine: markPx > 0 ? {
+            silent: true, symbol: 'none',
+            data: [{ xAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
+              label: { show: true, formatter: 'Price: ' + px(markPx), position: 'start', color: '#6366f1', fontSize: 10 } }],
+          } : undefined,
         },
         {
           name: 'Short', type: 'scatter', data: shorts,
@@ -862,13 +883,17 @@
     }
     dot.className = 'stat-dot on'; status.textContent = 'online';
 
-    // /health returns flat fields: addresses_discovered, positions_tracked, uptime_seconds
-    const wallets = h.addresses_discovered || 0;
-    document.getElementById('stat-wallets').textContent = wallets ? wallets.toLocaleString() : '-';
+    // /health for positions + uptime, /stats for total wallets (nested field)
     const pos = h.positions_tracked || 0;
     document.getElementById('stat-positions').textContent = pos ? pos.toLocaleString() : '-';
     const up = h.uptime_seconds ? (h.uptime_seconds / 3600).toFixed(1) + 'h' : '-';
     document.getElementById('stat-uptime').textContent = up;
+
+    const s = await api(B + '/api/data/stats');
+    if (s && !s.error) {
+      const wallets = (s.trade_stream && s.trade_stream.total_addresses_discovered) || 0;
+      document.getElementById('stat-wallets').textContent = wallets ? wallets.toLocaleString() : '-';
+    }
     document.getElementById('stat-updated').textContent = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
