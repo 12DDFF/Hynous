@@ -113,7 +113,7 @@ class SmartMoneyEngine:
         profile_map: dict[str, dict] = {}
         try:
             prof_rows = conn.execute(
-                f"SELECT address, win_rate, style, is_bot "
+                f"SELECT address, win_rate, style, is_bot, trade_count, profit_factor "
                 f"FROM wallet_profiles WHERE address IN ({placeholders})",
                 top_addrs,
             ).fetchall()
@@ -129,6 +129,8 @@ class SmartMoneyEngine:
             entry["win_rate"] = prof.get("win_rate")
             entry["style"] = prof.get("style")
             entry["is_bot"] = prof.get("is_bot", 0)
+            entry["trade_count"] = prof.get("trade_count")
+            entry["profit_factor"] = prof.get("profit_factor")
 
         return {
             "rankings": addr_pnl,

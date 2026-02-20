@@ -1315,24 +1315,31 @@
     const f = smFilters;
     return '<div class="sm-filter-bar">' +
       '<select id="smf-wr" onchange="smFilters.min_win_rate=parseFloat(this.value);smSaveFilters();updateSM()">' +
-        '<option value="0"' + (f.min_win_rate==0?' selected':'') + '>Win Rate: Any</option>' +
+        '<option value="0"' + (f.min_win_rate==0?' selected':'') + '>WR: Any</option>' +
+        '<option value="0.40"' + (f.min_win_rate==0.40?' selected':'') + '>40%+</option>' +
         '<option value="0.50"' + (f.min_win_rate==0.50?' selected':'') + '>50%+</option>' +
         '<option value="0.55"' + (f.min_win_rate==0.55?' selected':'') + '>55%+</option>' +
         '<option value="0.60"' + (f.min_win_rate==0.60?' selected':'') + '>60%+</option>' +
         '<option value="0.70"' + (f.min_win_rate==0.70?' selected':'') + '>70%+</option>' +
+        '<option value="0.80"' + (f.min_win_rate==0.80?' selected':'') + '>80%+</option>' +
+        '<option value="0.90"' + (f.min_win_rate==0.90?' selected':'') + '>90%+</option>' +
       '</select>' +
       '<select id="smf-style" onchange="smFilters.style=this.value;smSaveFilters();updateSM()">' +
         '<option value=""' + (!f.style?' selected':'') + '>Style: All</option>' +
         '<option value="scalper"' + (f.style==='scalper'?' selected':'') + '>Scalper</option>' +
         '<option value="swing"' + (f.style==='swing'?' selected':'') + '>Swing</option>' +
         '<option value="mixed"' + (f.style==='mixed'?' selected':'') + '>Mixed</option>' +
+        '<option value="bot"' + (f.style==='bot'?' selected':'') + '>Bot</option>' +
       '</select>' +
       '<select id="smf-trades" onchange="smFilters.min_trades=parseInt(this.value);smSaveFilters();updateSM()">' +
         '<option value="0"' + (f.min_trades==0?' selected':'') + '>Trades: Any</option>' +
+        '<option value="1"' + (f.min_trades==1?' selected':'') + '>1+</option>' +
+        '<option value="3"' + (f.min_trades==3?' selected':'') + '>3+</option>' +
         '<option value="5"' + (f.min_trades==5?' selected':'') + '>5+</option>' +
         '<option value="10"' + (f.min_trades==10?' selected':'') + '>10+</option>' +
         '<option value="25"' + (f.min_trades==25?' selected':'') + '>25+</option>' +
         '<option value="50"' + (f.min_trades==50?' selected':'') + '>50+</option>' +
+        '<option value="100"' + (f.min_trades==100?' selected':'') + '>100+</option>' +
       '</select>' +
       '<label><input type="checkbox" id="smf-bots"' + (f.exclude_bots?' checked':'') +
         ' onchange="smFilters.exclude_bots=this.checked;smSaveFilters();updateSM()"> Hide Bots</label>' +
@@ -1356,18 +1363,20 @@
     let html = smFilterBar(t.length);
     if (!t.length) { html += '<div class="empty">No smart money data matching filters</div>'; el.innerHTML = html; return; }
 
-    html += '<table class="data-table"><thead><tr><th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>WR</th><th>Style</th><th>Pos</th></tr></thead><tbody>';
+    html += '<table class="data-table"><thead><tr><th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>WR</th><th>Trades</th><th>Style</th><th>Pos</th></tr></thead><tbody>';
     t.forEach((tr, i) => {
       const pnl = tr.pnl_24h || 0;
       const c = pnl >= 0 ? '#22c55e' : '#ef4444';
       const s = pnl >= 0 ? '+' : '';
       const posCount = Array.isArray(tr.positions) ? tr.positions.length : (tr.positions || 0);
       const wr = tr.win_rate != null ? (tr.win_rate * 100).toFixed(0) + '%' : '—';
+      const tc = tr.trade_count != null ? tr.trade_count : '—';
       html += '<tr class="sm-clickable" onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' +
         '<td style="color:#525252">' + (i+1) + '</td><td>' + addr(tr.address) + '</td>' +
         '<td style="color:' + c + '">' + s + $(pnl) + '</td>' +
         '<td>' + $(tr.equity || 0) + '</td>' +
         '<td>' + wr + '</td>' +
+        '<td>' + tc + '</td>' +
         '<td>' + smStyleBadge(tr.style || '') + '</td>' +
         '<td>' + posCount + '</td></tr>';
     });
@@ -1515,6 +1524,12 @@
       html += '</tbody></table>';
     }
 
+    // Trade history placeholder — lazy-loaded
+    html += '<div id="sm-trades-section" style="margin-top:10px">' +
+      '<div style="font-size:0.68rem;color:#525252;font-weight:500;padding:0 0 4px 0;cursor:pointer" onclick="smLoadTrades(\'' + address + '\')">' +
+      'TRADE HISTORY <span style="color:#6366f1;font-size:0.6rem">[click to load]</span></div>' +
+      '<div id="sm-trades-body"></div></div>';
+
     // Track/untrack button
     if (data.is_watched) {
       html += '<div style="padding:8px 0"><button class="sm-untrack-btn" onclick="smUntrack(\'' + address + '\');smShowTab(\'tracked\')">Untrack this wallet</button></div>';
@@ -1524,6 +1539,47 @@
 
     html += '</div>';
     el.innerHTML = html;
+  }
+
+  let smTradesCache = {};  // address → trades array (avoid re-fetching)
+  async function smLoadTrades(address) {
+    const body = document.getElementById('sm-trades-body');
+    if (!body) return;
+
+    // Check cache first
+    if (smTradesCache[address]) {
+      smRenderTrades(body, smTradesCache[address]);
+      return;
+    }
+
+    body.innerHTML = '<div style="color:#525252;font-size:0.65rem;padding:4px 0">Loading...</div>';
+    const data = await api(B + '/api/data/smart-money/wallet/' + address + '/trades?limit=50');
+    const trades = (data && data.trades) || [];
+    smTradesCache[address] = trades;
+    smRenderTrades(body, trades);
+  }
+
+  function smRenderTrades(body, trades) {
+    if (!trades.length) { body.innerHTML = '<div style="color:#404040;font-size:0.65rem;padding:4px 0">No trade history cached yet (computed on next profile refresh)</div>'; return; }
+    let html = '<table class="data-table"><thead><tr><th>Date</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>PnL</th><th>Hold</th></tr></thead><tbody>';
+    trades.forEach(t => {
+      const d = new Date((t.exit_time||t.entry_time||0)*1000);
+      const ds = d.getMonth()+1 + '/' + d.getDate() + ' ' + d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+      const pnl = t.pnl_usd || 0;
+      const pc = pnl >= 0 ? '#22c55e' : '#ef4444';
+      const ps = pnl >= 0 ? '+' : '';
+      const holdStr = t.hold_hours < 1 ? (t.hold_hours * 60).toFixed(0) + 'm' : t.hold_hours.toFixed(1) + 'h';
+      html += '<tr><td style="color:#525252">' + ds + '</td>' +
+        '<td>' + (t.coin||'') + '</td>' +
+        '<td><span class="side-dot ' + (t.side||'long') + '"></span>' + (t.side||'') + '</td>' +
+        '<td>$' + (t.entry_px||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
+        '<td>$' + (t.exit_px||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
+        '<td>' + $(t.size_usd||0) + '</td>' +
+        '<td style="color:' + pc + '">' + ps + $(pnl) + '</td>' +
+        '<td>' + holdStr + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
   }
 
   async function smTrackFromProfile(address) {

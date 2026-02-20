@@ -248,9 +248,20 @@ class HynousDataClient:
 
     # ---- Smart Money ----
 
-    def smart_money(self, top_n: int = 50) -> dict | None:
-        """Get most profitable traders."""
-        return self._get("/v1/smart-money", params={"top_n": top_n})
+    def smart_money(self, top_n: int = 50, min_win_rate: float = 0,
+                    style: str = "", exclude_bots: bool = False,
+                    min_trades: int = 0) -> dict | None:
+        """Get most profitable traders with optional filters."""
+        params: dict = {"top_n": top_n}
+        if min_win_rate:
+            params["min_win_rate"] = min_win_rate
+        if style:
+            params["style"] = style
+        if exclude_bots:
+            params["exclude_bots"] = "true"
+        if min_trades:
+            params["min_trades"] = min_trades
+        return self._get("/v1/smart-money", params=params)
 
     # ---- Smart Money: Wallet Tracker ----
 
@@ -259,6 +270,9 @@ class HynousDataClient:
 
     def sm_profile(self, address: str) -> dict | None:
         return self._get(f"/v1/smart-money/wallet/{address}")
+
+    def sm_trades(self, address: str, limit: int = 50) -> dict | None:
+        return self._get(f"/v1/smart-money/wallet/{address}/trades", {"limit": limit})
 
     def sm_changes(self, minutes: int = 30) -> dict | None:
         return self._get("/v1/smart-money/changes", {"minutes": minutes})

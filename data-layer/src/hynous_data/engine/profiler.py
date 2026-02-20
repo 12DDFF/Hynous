@@ -150,6 +150,7 @@ class WalletProfiler:
             "max_drawdown": round(max_dd, 2),
             "style": style,
             "is_bot": 1 if is_bot else 0,
+            "_trades": trades,  # raw matched trades for DB storage
         }
 
     def _match_trades(self, coin: str, fills: list[dict]) -> list[dict]:
@@ -214,6 +215,14 @@ class WalletProfiler:
         trade["hold_hours"] = max(hold_s / 3600, 0.001)
         entry_val = trade["entry_px"] * trade["entry_size"]
         trade["pnl_pct"] = (trade["pnl_usd"] / entry_val) if entry_val > 0 else 0
+        # Derive exit_px from PnL: pnl = (exit - entry) * size for long, inverse for short
+        if trade["entry_size"] > 0 and trade["entry_px"] > 0:
+            if trade["side"] == "long":
+                trade["exit_px"] = trade["entry_px"] + trade["pnl_usd"] / trade["entry_size"]
+            else:
+                trade["exit_px"] = trade["entry_px"] - trade["pnl_usd"] / trade["entry_size"]
+        else:
+            trade["exit_px"] = trade["entry_px"]
         trades.append(trade)
 
     # ------------------------------------------------------------------
@@ -287,8 +296,9 @@ class WalletProfiler:
             log.info("Profiled %d/%d addresses", profiled, len(addresses))
 
     def _upsert_profile(self, address: str, profile: dict, equity: float | None):
-        """Write profile to wallet_profiles table."""
+        """Write profile to wallet_profiles table + cache matched trades."""
         conn = self._db.conn
+        trades = profile.pop("_trades", [])
         with self._db.write_lock:
             conn.execute(
                 """
@@ -311,6 +321,34 @@ class WalletProfiler:
                     equity,
                 ),
             )
+            # Replace cached trades for this address
+            if trades:
+                conn.execute("DELETE FROM wallet_trades WHERE address = ?", (address,))
+                conn.executemany(
+                    """
+                    INSERT INTO wallet_trades
+                    (address, coin, side, entry_px, exit_px, size_usd, pnl_usd,
+                     pnl_pct, hold_hours, entry_time, exit_time, is_win)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            address,
+                            t.get("coin", ""),
+                            t.get("side", ""),
+                            t.get("entry_px", 0),
+                            t.get("exit_px", t.get("entry_px", 0)),
+                            round(t.get("entry_px", 0) * t.get("entry_size", 0), 2),
+                            round(t.get("pnl_usd", 0), 2),
+                            round(t.get("pnl_pct", 0), 6),
+                            round(t.get("hold_hours", 0), 3),
+                            t.get("entry_time", 0),
+                            t.get("exit_time", 0),
+                            1 if t.get("pnl_usd", 0) > 0 else 0,
+                        )
+                        for t in trades
+                    ],
+                )
             conn.commit()
 
     # ------------------------------------------------------------------

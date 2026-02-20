@@ -96,6 +96,25 @@ CREATE TABLE IF NOT EXISTS wallet_profiles (
     equity         REAL
 );
 
+-- Smart Money: Cached matched trades (recomputed with profiles)
+CREATE TABLE IF NOT EXISTS wallet_trades (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    address    TEXT NOT NULL,
+    coin       TEXT NOT NULL,
+    side       TEXT NOT NULL,
+    entry_px   REAL NOT NULL,
+    exit_px    REAL,
+    size_usd   REAL NOT NULL,
+    pnl_usd    REAL NOT NULL DEFAULT 0,
+    pnl_pct    REAL NOT NULL DEFAULT 0,
+    hold_hours REAL NOT NULL DEFAULT 0,
+    entry_time REAL NOT NULL,
+    exit_time  REAL,
+    is_win     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_wt_address ON wallet_trades(address);
+CREATE INDEX IF NOT EXISTS idx_wt_entry_time ON wallet_trades(entry_time);
+
 -- Smart Money: Detected position changes (entry/exit events)
 CREATE TABLE IF NOT EXISTS position_changes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

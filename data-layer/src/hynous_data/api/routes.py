@@ -147,6 +147,23 @@ def create_router(c: dict) -> APIRouter:
             return JSONResponse(status_code=404, content={"error": "No profile data — insufficient trades"})
         return profile
 
+    @router.get("/v1/smart-money/wallet/{address}/trades")
+    def sm_trades(address: str, limit: int = Query(50, ge=1, le=200)):
+        db = c["db"]
+        address = address.strip().lower()
+        rows = db.conn.execute(
+            """
+            SELECT coin, side, entry_px, exit_px, size_usd, pnl_usd,
+                   pnl_pct, hold_hours, entry_time, exit_time, is_win
+            FROM wallet_trades
+            WHERE address = ?
+            ORDER BY exit_time DESC
+            LIMIT ?
+            """,
+            (address, limit),
+        ).fetchall()
+        return {"trades": [dict(r) for r in rows], "count": len(rows), "address": address}
+
     @router.get("/v1/smart-money/changes")
     def sm_changes(minutes: int = Query(30, ge=1, le=1440)):
         db = c["db"]

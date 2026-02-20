@@ -35,20 +35,25 @@ TOOL_DEF = {
         "  hlp — HLP (Hyperliquid's market-maker vault) current positions. "
         "Shows what side the house is on.\n"
         "  smart_money — Most profitable traders in last 24h + their current "
-        "positions.\n"
+        "positions. Supports filters: min_win_rate, style (scalper/swing/mixed), "
+        "exclude_bots, min_trades.\n"
         "  track_wallet — Add an address to the watchlist for position change alerts.\n"
         "  untrack_wallet — Remove an address from the watchlist.\n"
         "  watchlist — View all tracked wallets with win rates and positions.\n"
         "  wallet_profile — Detailed profile of any address (win rate, style, "
-        "positions, recent changes).\n\n"
+        "positions, recent changes).\n"
+        "  wallet_trades — Trade history for an address (cached from profiling). "
+        "Shows individual trades with entry/exit prices, PnL, hold time.\n\n"
         "Examples:\n"
         '  {"action": "heatmap", "coin": "BTC"}\n'
         '  {"action": "orderflow", "coin": "ETH"}\n'
         '  {"action": "whales", "coin": "SOL", "top_n": 20}\n'
         '  {"action": "hlp"}\n'
         '  {"action": "smart_money", "top_n": 10}\n'
+        '  {"action": "smart_money", "min_win_rate": 0.6, "style": "swing", "exclude_bots": true}\n'
         '  {"action": "track_wallet", "address": "0x...", "label": "Top trader"}\n'
         '  {"action": "wallet_profile", "address": "0x..."}\n'
+        '  {"action": "wallet_trades", "address": "0x...", "top_n": 20}\n'
         '  {"action": "watchlist"}'
     ),
     "parameters": {
@@ -59,6 +64,7 @@ TOOL_DEF = {
                 "enum": [
                     "heatmap", "orderflow", "whales", "hlp", "smart_money",
                     "track_wallet", "untrack_wallet", "watchlist", "wallet_profile",
+                    "wallet_trades",
                 ],
                 "description": "Which data layer signal to query.",
             },
@@ -68,15 +74,31 @@ TOOL_DEF = {
             },
             "top_n": {
                 "type": "integer",
-                "description": "Number of results for whales/smart_money (default 20).",
+                "description": "Number of results for whales/smart_money/wallet_trades (default 20).",
             },
             "address": {
                 "type": "string",
-                "description": "Wallet address (required for track/untrack/wallet_profile).",
+                "description": "Wallet address (required for track/untrack/wallet_profile/wallet_trades).",
             },
             "label": {
                 "type": "string",
                 "description": "Optional label for track_wallet.",
+            },
+            "min_win_rate": {
+                "type": "number",
+                "description": "Filter smart_money by minimum win rate (0.0-1.0).",
+            },
+            "style": {
+                "type": "string",
+                "description": "Filter smart_money by style: scalper, swing, mixed.",
+            },
+            "exclude_bots": {
+                "type": "boolean",
+                "description": "Filter smart_money: exclude bot-classified wallets.",
+            },
+            "min_trades": {
+                "type": "integer",
+                "description": "Filter smart_money by minimum trade count.",
             },
         },
         "required": ["action"],
@@ -84,7 +106,9 @@ TOOL_DEF = {
 }
 
 
-def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str = "", label: str = "", **kwargs) -> str:
+def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str = "",
+                      label: str = "", min_win_rate: float = 0, style: str = "",
+                      exclude_bots: bool = False, min_trades: int = 0, **kwargs) -> str:
     """Handle data layer tool calls."""
     from ...data.providers.hynous_data import get_client
 
@@ -211,7 +235,8 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
         return "\n".join(lines)
 
     elif action == "smart_money":
-        data = client.smart_money(top_n)
+        data = client.smart_money(top_n, min_win_rate=min_win_rate, style=style,
+                                  exclude_bots=exclude_bots, min_trades=min_trades)
         if not data:
             return "Smart money data unavailable."
 
@@ -226,9 +251,16 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
                 f"{p.get('coin', '?')} {p.get('side', '?')}"
                 for p in r.get("positions", [])[:3]
             ) or "no positions"
+            wr = r.get("win_rate")
+            wr_str = f" WR {wr:.0%}" if wr is not None else ""
+            style = r.get("style", "")
+            style_str = f" [{style}]" if style else ""
+            tc = r.get("trade_count")
+            tc_str = f" {tc}trades" if tc else ""
+            bot_str = " [BOT]" if r.get("is_bot") else ""
             lines.append(
                 f"  {addr}... PnL ${r.get('pnl_24h', 0):+,.0f} ({r.get('pnl_pct_24h', 0):+.1f}%) "
-                f"equity ${r.get('equity', 0):,.0f} | {pos_text}"
+                f"equity ${r.get('equity', 0):,.0f}{wr_str}{tc_str}{style_str}{bot_str} | {pos_text}"
             )
 
         return "\n".join(lines)
@@ -347,10 +379,38 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
 
         return "\n".join(lines)
 
+    elif action == "wallet_trades":
+        if not address:
+            return "Error: address is required for wallet_trades."
+        data = client.sm_trades(address, limit=top_n or 20)
+        if not data:
+            return f"No trade history for {address[:10]}... (profile may not be computed yet)."
+
+        trades = data.get("trades", [])
+        if not trades:
+            return f"No cached trades for {address[:10]}... — trades are computed during profile refresh."
+
+        import datetime
+        lines = [f"Trade History — {address[:10]}... ({len(trades)} trades):", ""]
+        for t in trades:
+            ts = t.get("exit_time") or t.get("entry_time", 0)
+            d_str = datetime.datetime.fromtimestamp(ts).strftime("%m/%d %H:%M") if ts else "?"
+            pnl = t.get("pnl_usd", 0)
+            hold = t.get("hold_hours", 0)
+            hold_str = f"{hold * 60:.0f}m" if hold < 1 else f"{hold:.1f}h"
+            result = "WIN" if pnl > 0 else "LOSS"
+            lines.append(
+                f"  {d_str} {t.get('coin', '?')} {t.get('side', '?')} "
+                f"${t.get('size_usd', 0):,.0f} entry ${t.get('entry_px', 0):,.2f} "
+                f"exit ${t.get('exit_px', 0):,.2f} PnL ${pnl:+,.0f} ({hold_str}) {result}"
+            )
+
+        return "\n".join(lines)
+
     else:
         return (
             f"Unknown action: {action}. Use: heatmap, orderflow, whales, hlp, "
-            f"smart_money, track_wallet, untrack_wallet, watchlist, wallet_profile"
+            f"smart_money, track_wallet, untrack_wallet, watchlist, wallet_profile, wallet_trades"
         )
 
 
