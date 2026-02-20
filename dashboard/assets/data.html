@@ -515,14 +515,14 @@
   // --- Grid-based clustering: merge nearby whales ---
   function clusterWhales(whales, gx, gy) {
     if (!whales.length) return [];
-    const entries = whales.map(w => w.entry), sizes = whales.map(w => w.size);
+    const entries = whales.map(w => w.entry), levs = whales.map(w => w.lev);
     const eMin = Math.min(...entries), eMax = Math.max(...entries);
-    const sMin = Math.min(...sizes), sMax = Math.max(...sizes);
-    const eRange = eMax - eMin || 1, sRange = sMax - sMin || 1;
+    const lMin = Math.min(...levs), lMax = Math.max(...levs);
+    const eRange = eMax - eMin || 1, lRange = lMax - lMin || 1;
     const cells = {};
     whales.forEach(w => {
       const cx = Math.min(gx - 1, Math.floor((w.entry - eMin) / eRange * gx));
-      const cy = Math.min(gy - 1, Math.floor((w.size - sMin) / sRange * gy));
+      const cy = Math.min(gy - 1, Math.floor((w.lev - lMin) / lRange * gy));
       const k = cx + '_' + cy;
       if (!cells[k]) cells[k] = [];
       cells[k].push(w);
@@ -532,13 +532,14 @@
       const totalSz = ws.reduce((s, w) => s + w.size, 0);
       return {
         entry: ws.reduce((s, w) => s + w.entry, 0) / ws.length,
-        size: totalSz / ws.length,
+        lev: ws.reduce((s, w) => s + w.lev, 0) / ws.length,
         totalSize: totalSz,
         count: ws.length,
         longs: longs, shorts: ws.length - longs,
         maxEntry: Math.max(...ws.map(w => w.entry)),
         minEntry: Math.min(...ws.map(w => w.entry)),
         avgPnl: ws.reduce((s, w) => s + w.pnl, 0) / ws.length,
+        maxLev: Math.max(...ws.map(w => w.lev)),
         whales: ws.sort((a, b) => b.size - a.size),
       };
     });
@@ -570,6 +571,7 @@
     } else {
       h += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">' + c.count + ' whales</div>';
       if (c.minEntry !== c.maxEntry) h += '<div style="font-size:11px;color:#a3a3a3">Entry: ' + px(c.minEntry) + ' – ' + px(c.maxEntry) + '</div>';
+      h += '<div style="font-size:11px;color:#a3a3a3">Avg Leverage: <b>' + c.lev.toFixed(1) + 'x</b>' + (c.maxLev > c.lev * 1.5 ? ' (max ' + c.maxLev.toFixed(0) + 'x)' : '') + '</div>';
       h += '<div style="font-size:11px"><span style="color:#22c55e">Long: ' + c.longs + '</span> &middot; <span style="color:#ef4444">Short: ' + c.shorts + '</span></div>';
       h += '<div style="font-size:11px;color:#737373;margin-top:4px">Total Size: ' + $(c.totalSize) + '</div>';
       h += '<div style="font-size:11px;color:#737373">Avg PnL: ' + (c.avgPnl >= 0 ? '+' : '') + $(c.avgPnl) + '</div>';
@@ -606,9 +608,9 @@
     const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
 
     const points = clusters.map(c => ({
-      value: [c.entry, c.size],
+      value: [c.entry, c.lev],
       symbolSize: c.count === 1
-        ? Math.max(8, (c.totalSize / maxClusterSz) * 30)
+        ? Math.max(8, Math.sqrt(c.totalSize / maxClusterSz) * 30)
         : Math.max(18, Math.min(55, Math.sqrt(c.count) * 12)),
       itemStyle: { color: cColor(c), borderColor: cBorder(c), borderWidth: c.count > 1 ? 2 : 1 },
       label: {
@@ -629,7 +631,7 @@
         formatter: p => p.data.cluster ? cTip(p.data.cluster) : '',
         extraCssText: 'max-height:280px;overflow-y:auto;',
       },
-      grid: { left: 56, right: 16, top: 10, bottom: 32 },
+      grid: { left: 40, right: 16, top: 10, bottom: 32 },
       xAxis: {
         name: 'Entry Price', nameLocation: 'center', nameGap: 20,
         nameTextStyle: { color: '#404040', fontSize: 10 },
@@ -638,10 +640,10 @@
         splitLine: { lineStyle: { color: '#141414' } },
       },
       yAxis: {
-        name: 'Size', nameLocation: 'center', nameGap: 40,
+        name: 'Leverage', nameLocation: 'center', nameGap: 28,
         nameTextStyle: { color: '#404040', fontSize: 10 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 9, formatter: v => $(v) },
+        axisLabel: { color: '#525252', fontSize: 9, formatter: v => v.toFixed(0) + 'x' },
         splitLine: { lineStyle: { color: '#141414' } },
       },
       series: [{
@@ -649,7 +651,7 @@
         markLine: markPx > 0 ? {
           silent: true, symbol: 'none',
           data: [{ xAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
-            label: { show: true, formatter: 'Price', color: '#6366f1', fontSize: 8, position: 'start' } }],
+            label: { show: true, formatter: px(markPx), color: '#6366f1', fontSize: 8, position: 'start' } }],
         } : undefined,
       }],
     });
@@ -676,7 +678,7 @@
     const maxSz = Math.max(...whaleData.map(w => w.size), 1);
     const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
     const mapW = w => ({
-      value: [w.entry, w.size],
+      value: [w.entry, w.lev],
       symbolSize: Math.max(4, Math.sqrt(w.size / maxSz) * 28),
       whale: w,
     });
@@ -711,10 +713,10 @@
         splitLine: { lineStyle: { color: '#141414' } },
       },
       yAxis: {
-        name: 'Position Size (USD)', nameLocation: 'center', nameGap: 60,
+        name: 'Leverage', nameLocation: 'center', nameGap: 36,
         nameTextStyle: { color: '#404040', fontSize: 12 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 10, formatter: v => $(v) },
+        axisLabel: { color: '#525252', fontSize: 10, formatter: v => v.toFixed(0) + 'x' },
         splitLine: { lineStyle: { color: '#141414' } },
       },
       dataZoom: [
@@ -732,7 +734,7 @@
           markLine: markPx > 0 ? {
             silent: true, symbol: 'none',
             data: [{ xAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
-              label: { show: true, formatter: 'Price: ' + px(markPx), position: 'start', color: '#6366f1', fontSize: 10 } }],
+              label: { show: true, formatter: 'Current ' + px(markPx), position: 'insideEndTop', color: '#6366f1', fontSize: 10 } }],
           } : undefined,
         },
         {
