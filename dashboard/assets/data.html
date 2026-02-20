@@ -1254,17 +1254,13 @@
     }
     dot.className = 'stat-dot on'; status.textContent = 'online';
 
-    // /health for positions + uptime, /stats for total wallets (nested field)
+    // /health has DB counts (unique addresses, positions) + uptime
     const pos = h.positions_tracked || 0;
     document.getElementById('stat-positions').textContent = pos ? pos.toLocaleString() : '-';
     const up = h.uptime_seconds ? (h.uptime_seconds / 3600).toFixed(1) + 'h' : '-';
     document.getElementById('stat-uptime').textContent = up;
-
-    const s = await api(B + '/api/data/stats');
-    if (s && !s.error) {
-      const wallets = (s.trade_stream && s.trade_stream.total_addresses_discovered) || 0;
-      document.getElementById('stat-wallets').textContent = wallets ? wallets.toLocaleString() : '-';
-    }
+    const wallets = h.addresses_discovered || 0;
+    document.getElementById('stat-wallets').textContent = wallets ? wallets.toLocaleString() : '-';
     document.getElementById('stat-updated').textContent = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
