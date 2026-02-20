@@ -101,6 +101,7 @@ _TOOL_DISPLAY = {
     "explore_memory": "Exploring memory graph",
     "manage_conflicts": "Managing conflicts",
     "manage_clusters": "Managing clusters",
+    "data_layer": "Querying data layer",
 }
 # --- Model preference persistence ---
 _MODEL_PREFS_FILE = Path(__file__).resolve().parents[2] / "storage" / "model_prefs.json"
@@ -742,6 +743,11 @@ class AppState(rx.State):
     settings_scanner_micro: bool = True
     settings_scanner_max_wakes: int = 5
     settings_scanner_news: bool = True
+    # Smart Money
+    settings_sm_copy_alerts: bool = True
+    settings_sm_exit_alerts: bool = True
+    settings_sm_min_win_rate: float = 0.55
+    settings_sm_min_size: float = 50000
 
     # === Collapsible Toggles ===
 
@@ -3043,6 +3049,10 @@ class AppState(rx.State):
         self.settings_scanner_micro = ts.scanner_micro_enabled
         self.settings_scanner_max_wakes = ts.scanner_max_wakes_per_cycle
         self.settings_scanner_news = ts.scanner_news_enabled
+        self.settings_sm_copy_alerts = ts.sm_copy_alerts
+        self.settings_sm_exit_alerts = ts.sm_exit_alerts
+        self.settings_sm_min_win_rate = ts.sm_min_win_rate
+        self.settings_sm_min_size = ts.sm_min_size
         self.settings_dirty = False
 
     def save_settings(self):
@@ -3079,6 +3089,10 @@ class AppState(rx.State):
             scanner_micro_enabled=self.settings_scanner_micro,
             scanner_max_wakes_per_cycle=self.settings_scanner_max_wakes,
             scanner_news_enabled=self.settings_scanner_news,
+            sm_copy_alerts=self.settings_sm_copy_alerts,
+            sm_exit_alerts=self.settings_sm_exit_alerts,
+            sm_min_win_rate=self.settings_sm_min_win_rate,
+            sm_min_size=self.settings_sm_min_size,
         )
         save_trading_settings(ts)
         _apply_trading_settings(ts)
@@ -3152,6 +3166,14 @@ class AppState(rx.State):
         self.settings_scanner_max_wakes = int(float(v)); self.settings_dirty = True
     def set_settings_scanner_news(self, v: bool):
         self.settings_scanner_news = v; self.settings_dirty = True
+    def set_settings_sm_copy_alerts(self, v: bool):
+        self.settings_sm_copy_alerts = v; self.settings_dirty = True
+    def set_settings_sm_exit_alerts(self, v: bool):
+        self.settings_sm_exit_alerts = v; self.settings_dirty = True
+    def set_settings_sm_min_win_rate(self, v: str):
+        self.settings_sm_min_win_rate = float(v); self.settings_dirty = True
+    def set_settings_sm_min_size(self, v: str):
+        self.settings_sm_min_size = float(v); self.settings_dirty = True
 
     def load_debug_traces(self):
         """Load recent traces for the debug sidebar."""

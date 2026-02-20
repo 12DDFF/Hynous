@@ -273,7 +273,7 @@ app._api.add_route("/api/nous/{path:path}", _nous_proxy)
 
 
 async def _data_proxy(request):
-    """Proxy /api/data/* → localhost:8100/v1/*"""
+    """Proxy /api/data/* → localhost:8100/v1/* (GET/POST/DELETE)"""
     import httpx
     from starlette.responses import JSONResponse
     path = request.path_params.get("path", "stats")
@@ -283,13 +283,20 @@ async def _data_proxy(request):
         url += f"?{qs}"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url)
+            method = request.method.upper()
+            if method == "POST":
+                body = await request.json()
+                resp = await client.post(url, json=body)
+            elif method == "DELETE":
+                resp = await client.delete(url)
+            else:
+                resp = await client.get(url)
             return JSONResponse(resp.json(), status_code=resp.status_code)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
 
 
-app._api.add_route("/api/data/{path:path}", _data_proxy)
+app._api.add_route("/api/data/{path:path}", _data_proxy, methods=["GET", "POST", "DELETE"])
 
 
 async def _data_health_proxy(request):

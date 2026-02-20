@@ -72,6 +72,43 @@ CREATE TABLE IF NOT EXISTS metadata (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- Smart Money: Watched wallets (user-curated list)
+CREATE TABLE IF NOT EXISTS watched_wallets (
+    address    TEXT PRIMARY KEY,
+    label      TEXT DEFAULT '',
+    added_at   REAL NOT NULL,
+    is_active  INTEGER NOT NULL DEFAULT 1
+);
+
+-- Smart Money: Cached profile metrics (recomputed periodically)
+CREATE TABLE IF NOT EXISTS wallet_profiles (
+    address        TEXT PRIMARY KEY,
+    computed_at    REAL NOT NULL,
+    win_rate       REAL,
+    trade_count    INTEGER,
+    profit_factor  REAL,
+    avg_hold_hours REAL,
+    avg_pnl_pct    REAL,
+    max_drawdown   REAL,
+    style          TEXT,
+    is_bot         INTEGER DEFAULT 0,
+    equity         REAL
+);
+
+-- Smart Money: Detected position changes (entry/exit events)
+CREATE TABLE IF NOT EXISTS position_changes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    address    TEXT NOT NULL,
+    coin       TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    side       TEXT,
+    size_usd   REAL,
+    price      REAL,
+    detected_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pc_address ON position_changes(address);
+CREATE INDEX IF NOT EXISTS idx_pc_detected ON position_changes(detected_at);
 """
 
 

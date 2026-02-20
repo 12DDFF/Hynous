@@ -374,6 +374,9 @@ class MarketScanner:
         # Tier 6: Data layer signals (hynous-data service)
         anomalies.extend(self._detect_data_layer_signals())
 
+        # Tier 7: Smart money position changes
+        anomalies.extend(self._detect_smart_money_entry())
+
         # Dedup (per-type TTL)
         self._cleanup_seen()
         unique = []
@@ -397,6 +400,8 @@ class MarketScanner:
                     ttl = 7200   # 2h — HLP doesn't flip often
                 elif a.type == "whale_surge":
                     ttl = 3600   # 1h — whale positions shift slowly
+                elif a.type in ("sm_entry", "sm_exit"):
+                    ttl = 3600   # 1h — one alert per address+coin combo
                 elif a.category == "news":
                     ttl = 3600   # 1h — news doesn't repeat
                 elif a.category == "micro":
@@ -1449,6 +1454,117 @@ class MarketScanner:
             except Exception:
                 logger.debug("Data layer whale_surge failed for %s", sym, exc_info=True)
                 continue
+
+        return results
+
+    # -----------------------------------------------------------------
+    # Tier 7: Smart Money Position Changes
+    # -----------------------------------------------------------------
+
+    def _detect_smart_money_entry(self) -> list[AnomalyEvent]:
+        """Detect when profiled high-win-rate traders enter/exit positions.
+
+        Rate-limited: runs every 5th scan cycle (~5min), same as data layer.
+        Graceful — returns [] if service is down.
+        Respects SM settings from TradingSettings (copy alerts, exit alerts, thresholds).
+        """
+        self._sm_scan_counter = getattr(self, "_sm_scan_counter", 0) + 1
+        if self._sm_scan_counter % 5 != 3:  # offset from data_layer (==1) to avoid burst
+            return []
+
+        if not getattr(self, "_data_layer_enabled", True):
+            return []
+
+        # Read SM settings
+        try:
+            from ..core.trading_settings import get_trading_settings
+            ts = get_trading_settings()
+            copy_alerts = ts.sm_copy_alerts
+            exit_alerts = ts.sm_exit_alerts
+            min_wr = ts.sm_min_win_rate
+            min_size = ts.sm_min_size
+        except Exception:
+            copy_alerts = True
+            exit_alerts = True
+            min_wr = 0.55
+            min_size = 50000
+
+        if not copy_alerts and not exit_alerts:
+            return []
+
+        try:
+            from ..data.providers.hynous_data import get_client
+            client = get_client()
+            if not client.is_available:
+                if not client.health():
+                    return []
+        except Exception:
+            return []
+
+        results = []
+        now = time.time()
+
+        try:
+            data = client.sm_changes(minutes=10)
+            if not data:
+                return []
+
+            changes = data.get("changes", [])
+            for ch in changes:
+                action = ch.get("action", "")
+                if action in ("entry", "flip"):
+                    if not copy_alerts:
+                        continue
+                elif action == "exit":
+                    if not exit_alerts:
+                        continue
+                    coin = ch.get("coin", "")
+                    if coin not in self.position_symbols:
+                        continue
+                else:
+                    continue
+
+                win_rate = ch.get("win_rate")
+                if win_rate is None or win_rate < min_wr:
+                    continue
+
+                size_usd = ch.get("size_usd", 0)
+                if size_usd < min_size:
+                    continue
+
+                if ch.get("is_bot", 0):
+                    continue
+
+                addr = ch.get("address", "")[:10]
+                coin = ch.get("coin", "")
+                side = ch.get("side", "")
+                label = ch.get("label", "")
+                label_str = f' "{label}"' if label else ""
+
+                if action == "exit":
+                    headline = f"Smart money {addr}...{label_str} ({win_rate:.0%} WR) exited {coin}"
+                    severity = 0.6
+                    event_type = "sm_exit"
+                else:
+                    headline = f"Smart money {addr}...{label_str} ({win_rate:.0%} WR) entered {coin} {side} ${size_usd:,.0f}"
+                    severity = 0.7
+                    event_type = "sm_entry"
+
+                results.append(AnomalyEvent(
+                    type=event_type,
+                    symbol=coin,
+                    severity=severity,
+                    headline=headline,
+                    detail=(
+                        f"Address: {addr}...{label_str} | Win Rate: {win_rate:.0%} | "
+                        f"Style: {ch.get('style', '?')} | Action: {action} {side} ${size_usd:,.0f}"
+                    ),
+                    fingerprint=f"sm_{action}:{addr}:{coin}",
+                    detected_at=now,
+                    category="macro",
+                ))
+        except Exception:
+            logger.debug("Smart money entry detection failed", exc_info=True)
 
         return results
 

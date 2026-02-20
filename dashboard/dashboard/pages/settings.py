@@ -258,6 +258,22 @@ def _scanner_card() -> rx.Component:
     )
 
 
+def _smart_money_card() -> rx.Component:
+    return _card(
+        "Smart Money", "brain",
+        "Wallet tracking & copy trade alerts.",
+        _toggle("Copy Trade Alerts", "Wake agent when tracked wallet enters a position",
+                AppState.settings_sm_copy_alerts, AppState.set_settings_sm_copy_alerts),
+        _toggle("Exit Alerts", "Wake agent when tracked wallet exits a position",
+                AppState.settings_sm_exit_alerts, AppState.set_settings_sm_exit_alerts),
+        _divider(),
+        _field("Min Win Rate", "Minimum win rate for alerts (0.0 - 1.0)",
+               AppState.settings_sm_min_win_rate, AppState.set_settings_sm_min_win_rate),
+        _field("Min Position Size", "Minimum size to trigger alert",
+               AppState.settings_sm_min_size, AppState.set_settings_sm_min_size, "$", input_width="90px"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
@@ -343,6 +359,7 @@ def settings_page() -> rx.Component:
                         _risk_card(),
                         _limits_card(),
                         _scanner_card(),
+                        _smart_money_card(),
                         spacing="5",
                         width="100%",
                     ),

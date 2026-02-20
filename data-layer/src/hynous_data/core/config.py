@@ -74,6 +74,19 @@ class OrderFlowConfig:
 
 
 @dataclass
+class SmartMoneyConfig:
+    profile_window_days: int = 7
+    profile_refresh_hours: int = 6
+    min_equity: float = 50_000
+    min_trades_for_profile: int = 5
+    bot_trades_per_day: float = 50
+    bot_avg_hold_min: float = 2
+    max_profiles_per_cycle: int = 5
+    alert_min_size_usd: float = 50_000
+    alert_min_win_rate: float = 0.55
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     db: DbConfig = field(default_factory=DbConfig)
@@ -83,6 +96,7 @@ class Config:
     hlp_tracker: HlpTrackerConfig = field(default_factory=HlpTrackerConfig)
     heatmap: HeatmapConfig = field(default_factory=HeatmapConfig)
     order_flow: OrderFlowConfig = field(default_factory=OrderFlowConfig)
+    smart_money: SmartMoneyConfig = field(default_factory=SmartMoneyConfig)
     project_root: Path = field(default_factory=_find_project_root)
 
 
@@ -121,5 +135,6 @@ def load_config(config_path: str | None = None) -> Config:
         hlp_tracker=_sub(HlpTrackerConfig, "hlp_tracker"),
         heatmap=_sub(HeatmapConfig, "heatmap"),
         order_flow=_sub(OrderFlowConfig, "order_flow"),
+        smart_money=_sub(SmartMoneyConfig, "smart_money"),
         project_root=root,
     )

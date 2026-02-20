@@ -45,3 +45,14 @@ order_flow:
     - 300
     - 900
     - 3600
+
+smart_money:
+  profile_window_days: 7       # How far back to fetch fills for profiling
+  profile_refresh_hours: 6     # Recompute profiles every N hours
+  min_equity: 50000            # Minimum equity for auto-discovery from rankings
+  min_trades_for_profile: 5    # Need N+ trades to compute stats
+  bot_trades_per_day: 50       # Above this = bot classification
+  bot_avg_hold_min: 2          # Below this avg hold = bot classification
+  max_profiles_per_cycle: 5    # Rate limit: profiles per refresh cycle
+  alert_min_size_usd: 50000    # Min position size to trigger alert
+  alert_min_win_rate: 0.55     # Min win rate to trigger alert

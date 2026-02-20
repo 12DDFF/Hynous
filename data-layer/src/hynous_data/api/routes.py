@@ -1,7 +1,7 @@
 """REST API endpoints for hynous-data."""
 
 import time
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Body
 from fastapi.responses import JSONResponse
 
 
@@ -107,5 +107,66 @@ def create_router(c: dict) -> APIRouter:
         if "liq_heatmap" in c:
             result["liq_heatmap"] = c["liq_heatmap"].stats()
         return result
+
+    # ---- Smart Money: Wallet Tracker ----
+
+    @router.get("/v1/smart-money/watchlist")
+    def sm_watchlist():
+        profiler = c.get("profiler")
+        if not profiler:
+            return JSONResponse(status_code=503, content={"error": "Profiler not available"})
+        return {"wallets": profiler.get_watchlist()}
+
+    @router.get("/v1/smart-money/wallet/{address}")
+    def sm_profile(address: str):
+        profiler = c.get("profiler")
+        if not profiler:
+            return JSONResponse(status_code=503, content={"error": "Profiler not available"})
+        profile = profiler.get_profile(address)
+        if not profile:
+            return JSONResponse(status_code=404, content={"error": "No profile data — insufficient trades"})
+        return profile
+
+    @router.get("/v1/smart-money/changes")
+    def sm_changes(minutes: int = Query(30, ge=1, le=1440)):
+        db = c["db"]
+        cutoff = time.time() - minutes * 60
+        rows = db.conn.execute(
+            """
+            SELECT pc.address, pc.coin, pc.action, pc.side, pc.size_usd,
+                   pc.price, pc.detected_at,
+                   wp.win_rate, wp.style, wp.is_bot,
+                   ww.label
+            FROM position_changes pc
+            LEFT JOIN wallet_profiles wp ON pc.address = wp.address
+            LEFT JOIN watched_wallets ww ON pc.address = ww.address AND ww.is_active = 1
+            WHERE pc.detected_at > ?
+            ORDER BY pc.detected_at DESC
+            LIMIT 100
+            """,
+            (cutoff,),
+        ).fetchall()
+        return {"changes": [dict(r) for r in rows], "count": len(rows)}
+
+    @router.post("/v1/smart-money/watch")
+    def sm_watch(body: dict = Body(...)):
+        profiler = c.get("profiler")
+        if not profiler:
+            return JSONResponse(status_code=503, content={"error": "Profiler not available"})
+        address = body.get("address", "").strip().lower()
+        if not address or len(address) < 10:
+            return JSONResponse(status_code=400, content={"error": "Invalid address"})
+        label = body.get("label", "")
+        profiler.watch(address, label)
+        return {"status": "ok", "address": address, "label": label}
+
+    @router.delete("/v1/smart-money/watch/{address}")
+    def sm_unwatch(address: str):
+        profiler = c.get("profiler")
+        if not profiler:
+            return JSONResponse(status_code=503, content={"error": "Profiler not available"})
+        address = address.strip().lower()
+        profiler.unwatch(address)
+        return {"status": "ok", "address": address}
 
     return router

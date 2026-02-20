@@ -80,6 +80,55 @@ class HynousDataClient:
             log.debug("hynous-data request failed: %s", path, exc_info=True)
             return None
 
+    def _post(self, path: str, json_body: dict) -> dict | None:
+        """POST request with timeout and graceful failure."""
+        try:
+            with self._lock:
+                resp = self._session.post(
+                    f"{self.base_url}{path}",
+                    json=json_body,
+                    timeout=self._timeout,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            self._available = True
+            return data
+        except (requests.ConnectionError, requests.Timeout):
+            if self._available:
+                log.warning("hynous-data unavailable at %s", self.base_url)
+            self._available = False
+            return None
+        except requests.HTTPError as e:
+            log.warning("hynous-data HTTP error: %s %s", e.response.status_code, path)
+            return None
+        except Exception:
+            log.debug("hynous-data request failed: %s", path, exc_info=True)
+            return None
+
+    def _delete(self, path: str) -> dict | None:
+        """DELETE request with timeout and graceful failure."""
+        try:
+            with self._lock:
+                resp = self._session.delete(
+                    f"{self.base_url}{path}",
+                    timeout=self._timeout,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            self._available = True
+            return data
+        except (requests.ConnectionError, requests.Timeout):
+            if self._available:
+                log.warning("hynous-data unavailable at %s", self.base_url)
+            self._available = False
+            return None
+        except requests.HTTPError as e:
+            log.warning("hynous-data HTTP error: %s %s", e.response.status_code, path)
+            return None
+        except Exception:
+            log.debug("hynous-data request failed: %s", path, exc_info=True)
+            return None
+
     @property
     def is_available(self) -> bool:
         return self._available
@@ -202,6 +251,23 @@ class HynousDataClient:
     def smart_money(self, top_n: int = 50) -> dict | None:
         """Get most profitable traders."""
         return self._get("/v1/smart-money", params={"top_n": top_n})
+
+    # ---- Smart Money: Wallet Tracker ----
+
+    def sm_watchlist(self) -> dict | None:
+        return self._get("/v1/smart-money/watchlist")
+
+    def sm_profile(self, address: str) -> dict | None:
+        return self._get(f"/v1/smart-money/wallet/{address}")
+
+    def sm_changes(self, minutes: int = 30) -> dict | None:
+        return self._get("/v1/smart-money/changes", {"minutes": minutes})
+
+    def sm_watch(self, address: str, label: str = "") -> dict | None:
+        return self._post("/v1/smart-money/watch", {"address": address, "label": label})
+
+    def sm_unwatch(self, address: str) -> dict | None:
+        return self._delete(f"/v1/smart-money/watch/{address}")
 
     # ---- Stats ----
 

@@ -133,6 +133,60 @@
   }
   .flow-net-label { color: #525252; font-weight: 500; }
 
+  /* SM Tabs */
+  .sm-tabs { display: flex; gap: 2px; padding: 3px; background: #0a0a0a; border-bottom: 1px solid #1a1a1a; }
+  .sm-tab {
+    padding: 4px 12px; border: none; background: transparent; color: #525252;
+    font-size: 0.7rem; font-weight: 500; cursor: pointer; border-radius: 4px;
+    transition: all 0.15s; font-family: inherit;
+  }
+  .sm-tab:hover { color: #a3a3a3; }
+  .sm-tab.active { background: #1a1a1a; color: #fafafa; }
+  .sm-back-btn {
+    padding: 3px 10px; border: 1px solid #262626; background: transparent;
+    color: #737373; font-size: 0.65rem; border-radius: 4px; cursor: pointer;
+    font-family: inherit;
+  }
+  .sm-back-btn:hover { color: #fafafa; border-color: #404040; }
+  .sm-badge-pill {
+    display: inline-block; padding: 1px 6px; border-radius: 8px;
+    font-size: 0.58rem; font-weight: 600; line-height: 1.4;
+  }
+  .sm-badge-pill.scalper { background: rgba(234,179,8,0.15); color: #eab308; }
+  .sm-badge-pill.swing { background: rgba(59,130,246,0.15); color: #3b82f6; }
+  .sm-badge-pill.mixed { background: rgba(168,85,247,0.15); color: #a855f7; }
+  .sm-badge-pill.bot { background: rgba(239,68,68,0.15); color: #ef4444; }
+  .sm-stat-row { display: flex; gap: 16px; padding: 8px 12px; flex-wrap: wrap; }
+  .sm-stat { text-align: center; }
+  .sm-stat-val { font-size: 0.85rem; font-weight: 600; color: #fafafa; font-family: 'JetBrains Mono', monospace; }
+  .sm-stat-lbl { font-size: 0.58rem; color: #525252; margin-top: 1px; }
+  .sm-track-row {
+    display: flex; gap: 6px; padding: 8px 12px; border-top: 1px solid #1a1a1a;
+    align-items: center;
+  }
+  .sm-track-input {
+    flex: 1; padding: 5px 8px; background: #0a0a0a; border: 1px solid #262626;
+    border-radius: 6px; color: #fafafa; font-size: 0.7rem; font-family: 'JetBrains Mono', monospace;
+  }
+  .sm-track-input:focus { outline: none; border-color: #6366f1; }
+  .sm-track-btn {
+    padding: 5px 12px; background: #6366f1; border: none; border-radius: 6px;
+    color: #fff; font-size: 0.68rem; font-weight: 500; cursor: pointer;
+  }
+  .sm-track-btn:hover { opacity: 0.85; }
+  .sm-untrack-btn {
+    padding: 2px 6px; border: 1px solid #262626; background: transparent;
+    color: #525252; font-size: 0.6rem; border-radius: 4px; cursor: pointer;
+  }
+  .sm-untrack-btn:hover { color: #ef4444; border-color: #ef4444; }
+  .sm-pos-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px;
+  }
+  .sm-pos-dot.active { background: #22c55e; box-shadow: 0 0 4px rgba(34,197,94,0.4); }
+  .sm-pos-dot.idle { background: #404040; }
+  .sm-clickable { cursor: pointer; }
+  .sm-clickable:hover td { background: #111 !important; }
+
   /* Tables */
   .data-table { width: 100%; border-collapse: collapse; font-size: 0.7rem; }
   .data-table th {
@@ -308,11 +362,18 @@
       <div class="panel-body padded" id="flow-panel"><div class="empty">Waiting for data</div></div>
     </div>
 
-    <!-- Smart Money -->
+    <!-- Smart Money (Tabbed) -->
     <div class="panel">
       <div class="panel-hdr">
         <span class="panel-title">Smart Money</span>
-        <span class="panel-badge" id="sm-badge"></span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="panel-badge" id="sm-badge"></span>
+          <button class="sm-back-btn" id="sm-back" style="display:none" onclick="smShowTab(smPrevTab||'leaderboard')">← Back</button>
+        </div>
+      </div>
+      <div class="sm-tabs" id="sm-tabs">
+        <button class="sm-tab active" onclick="smShowTab('leaderboard')">Leaderboard</button>
+        <button class="sm-tab" onclick="smShowTab('tracked')">Tracked</button>
       </div>
       <div class="panel-body" id="sm-panel" style="overflow-y:auto"><div class="empty">Waiting for data</div></div>
     </div>
@@ -1176,27 +1237,220 @@
   }
 
   // =====================================================================
-  // SMART MONEY
+  // SMART MONEY (Tabbed: Leaderboard / Tracked / Profile)
   // =====================================================================
-  async function updateSM() {
-    const data = await api(B + '/api/data/smart-money?top_n=20');
-    const el = document.getElementById('sm-panel');
-    const t = data.rankings || data.traders || [];
-    if (!data || data.error || !t.length) { el.innerHTML = '<div class="empty">No smart money data</div>'; return; }
+  let smCurrentTab = 'leaderboard';
+  let smPrevTab = 'leaderboard';
+  let smProfileAddr = null;
+  let smLeaderboardCache = null;
 
-    let html = '<table class="data-table"><thead><tr><th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>Pos</th></tr></thead><tbody>';
+  function smStyleBadge(style) {
+    if (!style) return '';
+    return '<span class="sm-badge-pill ' + style + '">' + style + '</span>';
+  }
+
+  function smShowTab(tab, profileAddr) {
+    smPrevTab = smCurrentTab;
+    smCurrentTab = tab;
+    if (profileAddr) smProfileAddr = profileAddr;
+
+    // Update tab buttons
+    document.querySelectorAll('.sm-tab').forEach(t => t.classList.remove('active'));
+    const tabs = document.getElementById('sm-tabs');
+    const back = document.getElementById('sm-back');
+    if (tab === 'profile') {
+      tabs.style.display = 'none';
+      back.style.display = '';
+    } else {
+      tabs.style.display = '';
+      back.style.display = 'none';
+      document.querySelectorAll('.sm-tab').forEach(t => {
+        if (t.textContent.toLowerCase() === tab) t.classList.add('active');
+      });
+    }
+    updateSM();
+  }
+
+  async function updateSM() {
+    const el = document.getElementById('sm-panel');
+
+    if (smCurrentTab === 'leaderboard') {
+      await smRenderLeaderboard(el);
+    } else if (smCurrentTab === 'tracked') {
+      await smRenderTracked(el);
+    } else if (smCurrentTab === 'profile') {
+      await smRenderProfile(el, smProfileAddr);
+    }
+  }
+
+  async function smRenderLeaderboard(el) {
+    const data = await api(B + '/api/data/smart-money?top_n=20');
+    const t = (data && (data.rankings || data.traders)) || [];
+    if (!t.length) { el.innerHTML = '<div class="empty">No smart money data</div>'; return; }
+    smLeaderboardCache = t;
+
+    let html = '<table class="data-table"><thead><tr><th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>WR</th><th>Style</th><th>Pos</th></tr></thead><tbody>';
     t.forEach((tr, i) => {
       const pnl = tr.pnl_24h || 0;
       const c = pnl >= 0 ? '#22c55e' : '#ef4444';
       const s = pnl >= 0 ? '+' : '';
       const posCount = Array.isArray(tr.positions) ? tr.positions.length : (tr.positions || 0);
-      html += '<tr><td style="color:#525252">' + (i+1) + '</td><td>' + addr(tr.address) + '</td>' +
+      const wr = tr.win_rate != null ? (tr.win_rate * 100).toFixed(0) + '%' : '—';
+      html += '<tr class="sm-clickable" onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' +
+        '<td style="color:#525252">' + (i+1) + '</td><td>' + addr(tr.address) + '</td>' +
         '<td style="color:' + c + '">' + s + $(pnl) + '</td>' +
-        '<td>' + $(tr.equity || 0) + '</td><td>' + posCount + '</td></tr>';
+        '<td>' + $(tr.equity || 0) + '</td>' +
+        '<td>' + wr + '</td>' +
+        '<td>' + smStyleBadge(tr.style || '') + '</td>' +
+        '<td>' + posCount + '</td></tr>';
     });
     html += '</tbody></table>';
     el.innerHTML = html;
     document.getElementById('sm-badge').textContent = t.length + ' traders';
+  }
+
+  async function smRenderTracked(el) {
+    const data = await api(B + '/api/data/smart-money/watchlist');
+    const wallets = (data && data.wallets) || [];
+
+    if (!wallets.length) {
+      el.innerHTML = '<div class="empty" style="padding:16px">No tracked wallets yet</div>' + smTrackInput();
+      smBindTrackInput();
+      return;
+    }
+
+    let html = '<table class="data-table"><thead><tr><th></th><th>Address</th><th>Label</th><th>WR</th><th>Equity</th><th>Style</th><th>Pos</th><th></th></tr></thead><tbody>';
+    wallets.forEach(w => {
+      const hasPos = (w.positions_count || 0) > 0;
+      const dot = '<span class="sm-pos-dot ' + (hasPos ? 'active' : 'idle') + '"></span>';
+      const wr = w.win_rate != null ? (w.win_rate * 100).toFixed(0) + '%' : '—';
+      const eq = w.equity ? $(w.equity) : '—';
+      html += '<tr class="sm-clickable" onclick="smShowTab(\'profile\',\'' + w.address + '\')">' +
+        '<td>' + dot + '</td>' +
+        '<td>' + addr(w.address) + '</td>' +
+        '<td style="color:#737373">' + (w.label || '') + '</td>' +
+        '<td>' + wr + '</td>' +
+        '<td>' + eq + '</td>' +
+        '<td>' + smStyleBadge(w.style || '') + '</td>' +
+        '<td>' + (w.positions_count || 0) + '</td>' +
+        '<td><button class="sm-untrack-btn" onclick="event.stopPropagation();smUntrack(\'' + w.address + '\')">×</button></td></tr>';
+    });
+    html += '</tbody></table>';
+    html += smTrackInput();
+    el.innerHTML = html;
+    smBindTrackInput();
+    document.getElementById('sm-badge').textContent = wallets.length + ' tracked';
+  }
+
+  function smTrackInput() {
+    return '<div class="sm-track-row">' +
+      '<input class="sm-track-input" id="sm-track-addr" placeholder="0x address...">' +
+      '<input class="sm-track-input" id="sm-track-label" placeholder="Label" style="max-width:100px">' +
+      '<button class="sm-track-btn" id="sm-track-submit">Track</button></div>';
+  }
+
+  function smBindTrackInput() {
+    const btn = document.getElementById('sm-track-submit');
+    if (btn) btn.onclick = async () => {
+      const a = document.getElementById('sm-track-addr').value.trim();
+      const l = document.getElementById('sm-track-label').value.trim();
+      if (!a || a.length < 10) return;
+      await fetch(B + '/api/data/smart-money/watch', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({address: a.toLowerCase(), label: l})
+      });
+      updateSM();
+    };
+  }
+
+  async function smUntrack(address) {
+    await fetch(B + '/api/data/smart-money/watch/' + address, {method:'DELETE'});
+    updateSM();
+  }
+
+  async function smRenderProfile(el, address) {
+    if (!address) { el.innerHTML = '<div class="empty">No address selected</div>'; return; }
+    const data = await api(B + '/api/data/smart-money/wallet/' + address);
+    if (!data || data.error) { el.innerHTML = '<div class="empty">' + (data && data.error || 'Failed to load profile') + '</div>'; return; }
+
+    let html = '<div style="padding:10px 12px">';
+    // Header
+    const label = data.label ? ' "' + data.label + '"' : '';
+    const botTag = data.is_bot ? ' <span class="sm-badge-pill bot">BOT</span>' : '';
+    html += '<div style="font-size:0.82rem;font-weight:600;color:#fafafa;margin-bottom:2px">' +
+      addr(address) + label + ' ' + smStyleBadge(data.style || '') + botTag + '</div>';
+
+    // Stats row
+    html += '<div class="sm-stat-row">';
+    const stats = [
+      {v: data.win_rate != null ? (data.win_rate*100).toFixed(0)+'%' : '—', l: 'Win Rate'},
+      {v: data.profit_factor != null ? data.profit_factor.toFixed(1) : '—', l: 'Profit Factor'},
+      {v: data.trade_count || '—', l: 'Trades'},
+      {v: data.avg_hold_hours != null ? data.avg_hold_hours.toFixed(1)+'h' : '—', l: 'Avg Hold'},
+      {v: data.equity ? $(data.equity) : '—', l: 'Equity'},
+    ];
+    if (data.max_drawdown && data.max_drawdown > 0) stats.push({v: '$'+$(data.max_drawdown), l: 'Max DD'});
+    stats.forEach(s => {
+      html += '<div class="sm-stat"><div class="sm-stat-val">' + s.v + '</div><div class="sm-stat-lbl">' + s.l + '</div></div>';
+    });
+    html += '</div>';
+
+    // Current positions
+    const pos = data.positions || [];
+    if (pos.length) {
+      html += '<div style="margin-top:8px;font-size:0.68rem;color:#525252;font-weight:500;padding:0 0 4px 0">POSITIONS (' + pos.length + ')</div>';
+      html += '<table class="data-table"><thead><tr><th>Coin</th><th>Side</th><th>Size</th><th>Lev</th><th>Entry</th><th>PnL</th></tr></thead><tbody>';
+      pos.forEach(p => {
+        const upnl = p.unrealized_pnl || 0;
+        const pc = upnl >= 0 ? '#22c55e' : '#ef4444';
+        const ps = upnl >= 0 ? '+' : '';
+        html += '<tr><td>' + p.coin + '</td>' +
+          '<td><span class="side-dot ' + (p.side||'long') + '"></span>' + (p.side||'') + '</td>' +
+          '<td>' + $(p.size_usd||0) + '</td>' +
+          '<td>' + (p.leverage||1).toFixed(0) + 'x</td>' +
+          '<td>$' + (p.entry_px||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
+          '<td style="color:' + pc + '">' + ps + $(upnl) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<div style="margin-top:8px;font-size:0.7rem;color:#404040;padding:4px 0">No open positions</div>';
+    }
+
+    // Recent changes
+    const changes = data.recent_changes || [];
+    if (changes.length) {
+      html += '<div style="margin-top:10px;font-size:0.68rem;color:#525252;font-weight:500;padding:0 0 4px 0">RECENT ACTIVITY</div>';
+      html += '<table class="data-table"><thead><tr><th>Time</th><th>Action</th><th>Coin</th><th>Side</th><th>Size</th></tr></thead><tbody>';
+      changes.slice(0,15).forEach(c => {
+        const d = new Date((c.detected_at||0)*1000);
+        const t = d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+        const actionColor = c.action === 'entry' ? '#22c55e' : c.action === 'exit' ? '#ef4444' : c.action === 'flip' ? '#eab308' : '#a3a3a3';
+        html += '<tr><td style="color:#525252">' + t + '</td>' +
+          '<td style="color:' + actionColor + '">' + (c.action||'').toUpperCase() + '</td>' +
+          '<td>' + (c.coin||'') + '</td>' +
+          '<td>' + (c.side||'') + '</td>' +
+          '<td>' + $(c.size_usd||0) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+
+    // Track/untrack button
+    if (data.is_watched) {
+      html += '<div style="padding:8px 0"><button class="sm-untrack-btn" onclick="smUntrack(\'' + address + '\');smShowTab(\'tracked\')">Untrack this wallet</button></div>';
+    } else {
+      html += '<div style="padding:8px 0"><button class="sm-track-btn" onclick="smTrackFromProfile(\'' + address + '\')">Track this wallet</button></div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  async function smTrackFromProfile(address) {
+    await fetch(B + '/api/data/smart-money/watch', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({address: address.toLowerCase(), label: ''})
+    });
+    smShowTab('profile', address);
   }
 
   // =====================================================================

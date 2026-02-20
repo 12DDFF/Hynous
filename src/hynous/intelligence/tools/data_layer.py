@@ -35,20 +35,31 @@ TOOL_DEF = {
         "  hlp — HLP (Hyperliquid's market-maker vault) current positions. "
         "Shows what side the house is on.\n"
         "  smart_money — Most profitable traders in last 24h + their current "
-        "positions.\n\n"
+        "positions.\n"
+        "  track_wallet — Add an address to the watchlist for position change alerts.\n"
+        "  untrack_wallet — Remove an address from the watchlist.\n"
+        "  watchlist — View all tracked wallets with win rates and positions.\n"
+        "  wallet_profile — Detailed profile of any address (win rate, style, "
+        "positions, recent changes).\n\n"
         "Examples:\n"
         '  {"action": "heatmap", "coin": "BTC"}\n'
         '  {"action": "orderflow", "coin": "ETH"}\n'
         '  {"action": "whales", "coin": "SOL", "top_n": 20}\n'
         '  {"action": "hlp"}\n'
-        '  {"action": "smart_money", "top_n": 10}'
+        '  {"action": "smart_money", "top_n": 10}\n'
+        '  {"action": "track_wallet", "address": "0x...", "label": "Top trader"}\n'
+        '  {"action": "wallet_profile", "address": "0x..."}\n'
+        '  {"action": "watchlist"}'
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["heatmap", "orderflow", "whales", "hlp", "smart_money"],
+                "enum": [
+                    "heatmap", "orderflow", "whales", "hlp", "smart_money",
+                    "track_wallet", "untrack_wallet", "watchlist", "wallet_profile",
+                ],
                 "description": "Which data layer signal to query.",
             },
             "coin": {
@@ -59,15 +70,27 @@ TOOL_DEF = {
                 "type": "integer",
                 "description": "Number of results for whales/smart_money (default 20).",
             },
+            "address": {
+                "type": "string",
+                "description": "Wallet address (required for track/untrack/wallet_profile).",
+            },
+            "label": {
+                "type": "string",
+                "description": "Optional label for track_wallet.",
+            },
         },
         "required": ["action"],
     },
 }
 
 
-def handle_data_layer(action: str, coin: str = "", top_n: int = 20, **kwargs) -> str:
+def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str = "", label: str = "", **kwargs) -> str:
     """Handle data layer tool calls."""
     from ...data.providers.hynous_data import get_client
+
+    # Normalize address for wallet actions
+    if address:
+        address = address.strip().lower()
 
     client = get_client()
 
@@ -128,12 +151,12 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, **kwargs) ->
             return f"No order flow data for {coin}."
 
         lines = [f"Order Flow — {coin} (total trades: {data.get('total_trades', 0)})"]
-        for label, w in data.get("windows", {}).items():
+        for window_name, w in data.get("windows", {}).items():
             cvd = w.get("cvd", 0)
             buy_pct = w.get("buy_pct", 50)
             direction = "BUY pressure" if cvd > 0 else "SELL pressure"
             lines.append(
-                f"  {label}: buy ${w.get('buy_volume_usd', 0):,.0f} / sell ${w.get('sell_volume_usd', 0):,.0f} "
+                f"  {window_name}: buy ${w.get('buy_volume_usd', 0):,.0f} / sell ${w.get('sell_volume_usd', 0):,.0f} "
                 f"| CVD ${cvd:+,.0f} | {buy_pct:.0f}% buys -> {direction}"
             )
 
@@ -210,8 +233,125 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, **kwargs) ->
 
         return "\n".join(lines)
 
+    elif action == "track_wallet":
+        if not address:
+            return "Error: address is required for track_wallet."
+        data = client.sm_watch(address, label)
+        if not data:
+            return "Failed to track wallet — data layer unavailable."
+        return f"Tracking wallet {address[:10]}... ({label or 'no label'}). Profile will be computed within 6h or on next wallet_profile call."
+
+    elif action == "untrack_wallet":
+        if not address:
+            return "Error: address is required for untrack_wallet."
+        data = client.sm_unwatch(address)
+        if not data:
+            return "Failed to untrack wallet — data layer unavailable."
+        return f"Stopped tracking wallet {address[:10]}..."
+
+    elif action == "watchlist":
+        data = client.sm_watchlist()
+        if not data:
+            return "Watchlist unavailable — data layer not running."
+
+        wallets = data.get("wallets", [])
+        if not wallets:
+            return "Watchlist is empty. Use track_wallet to add addresses."
+
+        lines = [f"Tracked Wallets ({len(wallets)}):", ""]
+        for w in wallets:
+            addr = w.get("address", "")[:10]
+            lbl = w.get("label", "")
+            wr = w.get("win_rate")
+            eq = w.get("equity")
+            style = w.get("style", "")
+            pos = w.get("positions_count", 0)
+            is_bot = w.get("is_bot", 0)
+
+            wr_str = f"{wr:.0%}" if wr is not None else "—"
+            eq_str = f"${eq:,.0f}" if eq else "—"
+            bot_tag = " [BOT]" if is_bot else ""
+            style_tag = f" ({style})" if style else ""
+            pos_tag = f" {pos} pos" if pos else " idle"
+
+            lines.append(f"  {addr}... {lbl:<12} WR {wr_str} eq {eq_str}{style_tag}{bot_tag}{pos_tag}")
+
+        return "\n".join(lines)
+
+    elif action == "wallet_profile":
+        if not address:
+            return "Error: address is required for wallet_profile."
+        data = client.sm_profile(address)
+        if not data:
+            return f"No profile data for {address[:10]}... (insufficient trades or unavailable)."
+
+        lines = [f"Wallet Profile — {address[:10]}..."]
+        lbl = data.get("label", "")
+        if lbl:
+            lines[0] += f' "{lbl}"'
+
+        style = data.get("style", "unknown")
+        is_bot = data.get("is_bot", 0)
+        bot_str = " [BOT]" if is_bot else ""
+        lines.append(f"Style: {style}{bot_str}")
+
+        wr = data.get("win_rate")
+        pf = data.get("profit_factor")
+        tc = data.get("trade_count")
+        ah = data.get("avg_hold_hours")
+        eq = data.get("equity")
+        dd = data.get("max_drawdown")
+
+        stats = []
+        if wr is not None:
+            stats.append(f"Win Rate: {wr:.0%}")
+        if pf is not None:
+            stats.append(f"Profit Factor: {pf:.1f}")
+        if tc is not None:
+            stats.append(f"Trades: {tc}")
+        if ah is not None:
+            stats.append(f"Avg Hold: {ah:.1f}h")
+        if eq is not None:
+            stats.append(f"Equity: ${eq:,.0f}")
+        if dd is not None and dd > 0:
+            stats.append(f"Max DD: ${dd:,.0f}")
+        lines.append(" | ".join(stats))
+
+        # Current positions
+        positions = data.get("positions", [])
+        if positions:
+            lines.append(f"\nCurrent Positions ({len(positions)}):")
+            for p in positions:
+                upnl = p.get("unrealized_pnl", 0)
+                c = "+" if upnl >= 0 else ""
+                lines.append(
+                    f"  {p.get('coin', '?')} {p.get('side', '?')} "
+                    f"${p.get('size_usd', 0):,.0f} ({p.get('leverage', 1):.0f}x) "
+                    f"entry ${p.get('entry_px', 0):,.2f} PnL ${upnl:{c},.0f}"
+                )
+        else:
+            lines.append("\nNo open positions.")
+
+        # Recent changes
+        changes = data.get("recent_changes", [])
+        if changes:
+            import datetime
+            lines.append(f"\nRecent Activity ({len(changes)} events, last 24h):")
+            for ch in changes[:10]:
+                ts = ch.get("detected_at", 0)
+                t_str = datetime.datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "?"
+                lines.append(
+                    f"  {t_str} {ch.get('action', '?').upper()} {ch.get('coin', '?')} "
+                    f"{ch.get('side', '')} ${ch.get('size_usd', 0):,.0f}"
+                )
+
+        return "\n".join(lines)
+
     else:
-        return f"Unknown action: {action}. Use: heatmap, orderflow, whales, hlp, smart_money"
+        return (
+            f"Unknown action: {action}. Use: heatmap, orderflow, whales, hlp, "
+            f"smart_money, track_wallet, untrack_wallet, watchlist, wallet_profile"
+        )
 
 
 def register(registry) -> None:

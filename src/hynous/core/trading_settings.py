@@ -69,6 +69,12 @@ class TradingSettings:
     scanner_max_wakes_per_cycle: int = 5
     scanner_news_enabled: bool = True
 
+    # --- Smart Money ---
+    sm_copy_alerts: bool = True
+    sm_exit_alerts: bool = True
+    sm_min_win_rate: float = 0.55
+    sm_min_size: float = 50000
+
 
 _lock = threading.Lock()
 _cached: TradingSettings | None = None

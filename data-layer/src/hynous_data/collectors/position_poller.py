@@ -12,6 +12,7 @@ from hynous_data.core.db import Database
 from hynous_data.core.rate_limiter import RateLimiter
 from hynous_data.core.utils import safe_float
 from hynous_data.engine.smart_money import SmartMoneyEngine
+from hynous_data.engine.position_tracker import PositionChangeTracker
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,9 @@ class PositionPoller:
         self._cfg = config
         self._info = Info(base_url=base_url, skip_ws=True)
         self._smart_money: SmartMoneyEngine | None = None
+        self._position_tracker: PositionChangeTracker | None = None
+        self._watched_addresses: set[str] = set()
+        self._watched_refresh_at: float = 0
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._executor = ThreadPoolExecutor(max_workers=config.workers)
@@ -49,6 +53,10 @@ class PositionPoller:
         """Wire the smart money engine for PnL snapshot recording."""
         self._smart_money = engine
 
+    def set_position_tracker(self, tracker: PositionChangeTracker):
+        """Wire the position change tracker for watched wallet alerts."""
+        self._position_tracker = tracker
+
     def start(self):
         self._thread = threading.Thread(target=self._run, name="position-poller", daemon=True)
         self._thread.start()
@@ -62,10 +70,18 @@ class PositionPoller:
                 log.exception("PositionPoller cycle error")
             self._stop_event.wait(5)  # Brief sleep between cycles
 
+    def _refresh_watched(self):
+        """Refresh watched addresses set periodically (every 60s)."""
+        now = time.time()
+        if self._position_tracker and now - self._watched_refresh_at > 60:
+            self._watched_addresses = self._position_tracker.get_watched_addresses()
+            self._watched_refresh_at = now
+
     def _poll_cycle(self):
         """Fetch stale addresses and poll them in parallel."""
         now = time.time()
         conn = self._db.conn
+        self._refresh_watched()
 
         # Get addresses that are due for re-polling, ordered by tier then staleness
         # Skip addresses not seen trading in ADDRESS_MAX_AGE_DAYS
@@ -89,6 +105,13 @@ class PositionPoller:
                 now - self._cfg.tier3_interval,
             ),
         ).fetchall()
+
+        # Always include watched addresses regardless of tier/staleness
+        polled_set = {r["address"] for r in rows}
+        for addr in self._watched_addresses:
+            if addr not in polled_set:
+                rows = list(rows) if not isinstance(rows, list) else rows
+                rows.append({"address": addr, "tier": 1})
 
         if not rows:
             self._stop_event.wait(2)
@@ -125,12 +148,38 @@ class PositionPoller:
         if polled_results:
             self._delete_closed_positions(polled_results)
 
+        # Detect position changes for watched wallets
+        if self._position_tracker and self._watched_addresses and all_positions:
+            self._detect_position_changes(all_positions, polled_results)
+
         # Update address metadata
         if polled_addrs:
             self._update_address_meta(polled_addrs)
 
         # Flush equity snapshots for smart money
         self._flush_equity_snapshots()
+
+    def _detect_position_changes(
+        self, all_positions: list[dict], polled_results: list[tuple[str, set[str]]]
+    ):
+        """Run position change detection for watched wallets."""
+        # Group positions by address (only watched ones)
+        by_addr: dict[str, list[dict]] = {}
+        for p in all_positions:
+            addr = p["address"]
+            if addr in self._watched_addresses:
+                by_addr.setdefault(addr, []).append(p)
+
+        # Also handle watched addresses that were polled but have no positions
+        for addr, active_coins in polled_results:
+            if addr in self._watched_addresses and addr not in by_addr:
+                by_addr[addr] = []  # all positions closed
+
+        for addr, positions in by_addr.items():
+            try:
+                self._position_tracker.check_changes(addr, positions)
+            except Exception:
+                log.debug("Position change detection failed for %s", addr[:10])
 
     def _poll_address(self, address: str) -> tuple[list[dict] | None, float, set[str]]:
         """Poll a single address. Returns (positions, total_size_usd, active_coins)."""

@@ -109,9 +109,26 @@ class SmartMoneyEngine:
                 pos_map[addr] = []
             pos_map[addr].append(dict(p))
 
-        # Attach positions
+        # Batch fetch profiles (win_rate, style) if table exists
+        profile_map: dict[str, dict] = {}
+        try:
+            prof_rows = conn.execute(
+                f"SELECT address, win_rate, style, is_bot "
+                f"FROM wallet_profiles WHERE address IN ({placeholders})",
+                top_addrs,
+            ).fetchall()
+            for pr in prof_rows:
+                profile_map[pr["address"]] = dict(pr)
+        except Exception:
+            pass  # Table may not exist yet
+
+        # Attach positions + profile data
         for entry in addr_pnl:
             entry["positions"] = pos_map.get(entry["address"], [])
+            prof = profile_map.get(entry["address"], {})
+            entry["win_rate"] = prof.get("win_rate")
+            entry["style"] = prof.get("style")
+            entry["is_bot"] = prof.get("is_bot", 0)
 
         return {
             "rankings": addr_pnl,

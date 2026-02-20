@@ -19,6 +19,8 @@ from hynous_data.engine.liq_heatmap import LiqHeatmapEngine
 from hynous_data.engine.order_flow import OrderFlowEngine
 from hynous_data.engine.whale_tracker import WhaleTracker
 from hynous_data.engine.smart_money import SmartMoneyEngine
+from hynous_data.engine.profiler import WalletProfiler
+from hynous_data.engine.position_tracker import PositionChangeTracker
 from hynous_data.api.app import create_app
 
 log = logging.getLogger(__name__)
@@ -103,10 +105,17 @@ class Orchestrator:
         liq_heatmap = LiqHeatmapEngine(db, self.cfg.heatmap, base_url=BASE_URL, rate_limiter=rate_limiter)
         whale_tracker = WhaleTracker(db)
 
+        # Smart money wallet profiler + position change tracker
+        position_tracker = PositionChangeTracker(db)
+        position_tracker.load_snapshots()
+        profiler = WalletProfiler(db, rate_limiter, self.cfg.smart_money, base_url=BASE_URL)
+
         self._components["order_flow"] = order_flow
         self._components["liq_heatmap"] = liq_heatmap
         self._components["whale_tracker"] = whale_tracker
         self._components["smart_money"] = smart_money
+        self._components["profiler"] = profiler
+        self._components["position_tracker"] = position_tracker
 
         # Collectors
         if self.cfg.trade_stream.enabled:
@@ -118,6 +127,7 @@ class Orchestrator:
         if self.cfg.position_poller.enabled:
             pp = PositionPoller(db, rate_limiter, self.cfg.position_poller, base_url=BASE_URL)
             pp.set_smart_money(smart_money)  # Wire PnL tracking
+            pp.set_position_tracker(position_tracker)  # Wire change detection
             pp.start()
             self._components["position_poller"] = pp
             log.info("PositionPoller started")
@@ -132,9 +142,11 @@ class Orchestrator:
         liq_heatmap.start()
         log.info("Signal engines started")
 
-        # DB pruner (hourly)
+        # DB pruner (hourly) + profiler refresh
         self._pruner_thread = threading.Thread(target=self._pruner_loop, daemon=True)
         self._pruner_thread.start()
+        self._profiler_thread = threading.Thread(target=self._profiler_loop, daemon=True)
+        self._profiler_thread.start()
 
         # FastAPI
         app = create_app(self._components)
@@ -167,8 +179,31 @@ class Orchestrator:
                     if cur.rowcount:
                         db.conn.commit()
                         log.info("Pruned %d stale positions (>24h old)", cur.rowcount)
+                # Prune old position_changes (>7 days)
+                pc_cutoff = time.time() - 7 * 86400
+                with db.write_lock:
+                    cur = db.conn.execute(
+                        "DELETE FROM position_changes WHERE detected_at < ?", (pc_cutoff,)
+                    )
+                    if cur.rowcount:
+                        db.conn.commit()
+                        log.info("Pruned %d old position changes", cur.rowcount)
             except Exception:
                 log.exception("Pruner error")
+
+    def _profiler_loop(self):
+        """Refresh wallet profiles periodically."""
+        refresh_s = self.cfg.smart_money.profile_refresh_hours * 3600
+        # Initial delay: wait 5min before first profile refresh
+        self._stop_event.wait(300)
+        while not self._stop_event.is_set():
+            try:
+                profiler = self._components.get("profiler")
+                if profiler:
+                    profiler.refresh_profiles()
+            except Exception:
+                log.exception("Profiler refresh error")
+            self._stop_event.wait(refresh_s)
 
     def stop(self):
         """Gracefully shut down all components."""
