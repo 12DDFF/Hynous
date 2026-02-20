@@ -698,6 +698,63 @@ class AppState(rx.State):
     position_chart_html: str = ""  # pre-rendered Lightweight Charts HTML
     position_chart_loading: bool = False
 
+    # === Daemon State (updated by poll loop) ===
+    daemon_running: bool = False
+    daemon_wake_count: str = "0"
+    daemon_status_text: str = "Stopped"
+    daemon_status_color: str = "#525252"
+    daemon_daily_pnl: str = "$0.00"
+    daemon_trading_paused: bool = False
+    daemon_activities: List[DaemonActivity] = []
+    daemon_next_review: str = "—"
+    daemon_cooldown: str = "—"
+    daemon_cooldown_active: bool = False
+    daemon_wake_rate: str = "—"
+    daemon_reviews_until_learning: str = "—"
+    daemon_last_wake_ago: str = "—"
+    daemon_review_count: str = "0"
+    daemon_today_wakes: list[DaemonActivityFormatted] = []
+
+    # === Regime State (updated by poll loop) ===
+    regime_label: str = ""
+    regime_score: str = ""
+    regime_micro_safe: bool = True
+    regime_session: str = ""
+    regime_reversal: bool = False
+    regime_reversal_detail: str = ""
+    regime_guidance: str = ""
+    regime_color: str = "#525252"
+    regime_bg: str = "#111111"
+    regime_border: str = "1px solid #1a1a1a"
+
+    # === Wallet State (updated by poll loop every 60s) ===
+    wallet_total_str: str = "$0.00"
+    wallet_subtitle: str = "This month"
+    wallet_llm_cost: str = "$0.00"
+    wallet_llm_calls: str = "0"
+    wallet_llm_tokens: str = "0 in / 0 out"
+    wallet_models_html: str = ""
+    wallet_sonnet_cost: str = "$0.00"
+    wallet_sonnet_calls: str = "0"
+    wallet_haiku_cost: str = "$0.00"
+    wallet_haiku_calls: str = "0"
+    wallet_cache_savings: str = "$0.00"
+    wallet_perplexity_cost: str = "$0.00"
+    wallet_perplexity_calls: str = "0"
+    total_trades_str: str = "0"
+    micro_entries_today: str = "0"
+    entries_today: str = "0"
+
+    # === Scanner Display (updated by poll loop) ===
+    scanner_status_text: str = "Scanner Offline"
+    scanner_status_color: str = "#525252"
+    scanner_subtitle: str = ""
+    scanner_recent_html: str = ""
+    news_feed_html: str = ""
+
+    # === Journal Equity (updated by poll loop) ===
+    journal_equity_data: list[dict] = []
+
     # === Activity Sidebar (Chat Page) ===
     wake_feed: List[WakeItem] = []
     wake_detail_content: str = ""
@@ -1035,6 +1092,372 @@ class AppState(rx.State):
         except Exception:
             pass
 
+    # === Snapshot Helpers (update state fields from external sources) ===
+
+    def _snapshot_daemon(self):
+        """Update all daemon-related state fields from module-level _daemon."""
+        import time as _time
+        if _daemon is None or not _daemon.is_running:
+            self.daemon_running = False
+            self.daemon_status_text = "Stopped"
+            self.daemon_status_color = "#525252"
+            self.daemon_wake_count = "0"
+            self.daemon_daily_pnl = "$0.00"
+            self.daemon_trading_paused = False
+            self.daemon_next_review = "\u2014"
+            self.daemon_cooldown = "\u2014"
+            self.daemon_cooldown_active = False
+            self.daemon_wake_rate = "\u2014"
+            self.daemon_reviews_until_learning = "\u2014"
+            self.daemon_last_wake_ago = "\u2014"
+            self.daemon_review_count = "0"
+            self.micro_entries_today = "0"
+            self.entries_today = "0"
+            self.scanner_status_text = "Scanner Offline"
+            self.scanner_status_color = "#525252"
+            self.scanner_subtitle = ""
+            return
+
+        self.daemon_running = True
+        self.daemon_trading_paused = _daemon.trading_paused
+        if _daemon.trading_paused:
+            self.daemon_status_text = "Paused"
+            self.daemon_status_color = "#ef4444"
+        else:
+            self.daemon_status_text = "Running"
+            self.daemon_status_color = "#22c55e"
+
+        self.daemon_wake_count = str(_daemon.wake_count)
+
+        pnl = _daemon.daily_realized_pnl
+        sign = "+" if pnl >= 0 else ""
+        self.daemon_daily_pnl = f"{sign}${pnl:,.2f}"
+
+        secs = _daemon.next_review_seconds
+        if secs <= 0:
+            self.daemon_next_review = "Soon"
+        else:
+            mins = secs // 60
+            if mins >= 60:
+                self.daemon_next_review = f"{mins // 60}h {mins % 60}m"
+            else:
+                self.daemon_next_review = f"{mins}m"
+
+        remaining = _daemon.cooldown_remaining
+        self.daemon_cooldown_active = remaining > 0
+        self.daemon_cooldown = "Ready" if remaining <= 0 else f"{remaining}s"
+
+        current = _daemon.wakes_this_hour
+        max_h = _daemon.config.daemon.max_wakes_per_hour
+        self.daemon_wake_rate = f"{current}/{max_h}"
+
+        n = _daemon.reviews_until_learning
+        self.daemon_reviews_until_learning = "Next review" if n <= 1 else f"In {n} reviews"
+
+        ts = _daemon.last_wake_time
+        if not ts:
+            self.daemon_last_wake_ago = "Never"
+        else:
+            elapsed = int(_time.time() - ts)
+            if elapsed < 60:
+                self.daemon_last_wake_ago = "Just now"
+            else:
+                mins = elapsed // 60
+                if mins < 60:
+                    self.daemon_last_wake_ago = f"{mins}m ago"
+                else:
+                    hours = mins // 60
+                    self.daemon_last_wake_ago = f"{hours}h {mins % 60}m ago"
+
+        self.daemon_review_count = str(_daemon.review_count)
+        self.micro_entries_today = str(_daemon.micro_entries_today)
+        self.entries_today = str(_daemon._entries_today)
+
+        # Scanner status (needs daemon check)
+        if _daemon._scanner is None:
+            self.scanner_status_text = "Scanner Offline"
+            self.scanner_status_color = "#525252"
+        elif self.scanner_warming_up:
+            self.scanner_status_text = f"Warming Up  {self.scanner_price_polls}/5 price  {self.scanner_deriv_polls}/2 deriv"
+            self.scanner_status_color = "#fbbf24"
+        elif self.scanner_active:
+            self.scanner_status_text = f"Scanner Active  {self.scanner_pairs_count} pairs"
+            self.scanner_status_color = "#2dd4bf"
+        else:
+            self.scanner_status_text = "Scanner Idle"
+            self.scanner_status_color = "#525252"
+
+        # Scanner subtitle
+        if not self.scanner_active and not self.scanner_warming_up:
+            self.scanner_subtitle = ""
+        else:
+            parts = []
+            if self.scanner_anomalies_total > 0:
+                parts.append(f"{self.scanner_anomalies_total} anomalies")
+            if self.scanner_wakes_total > 0:
+                parts.append(f"{self.scanner_wakes_total} wakes")
+            self.scanner_subtitle = " \u00b7 ".join(parts) if parts else "No anomalies yet"
+
+    def _snapshot_regime(self):
+        """Update all regime-related state fields."""
+        if _daemon is None or _daemon._regime is None:
+            self.regime_label = ""
+            self.regime_score = ""
+            self.regime_micro_safe = True
+            self.regime_session = ""
+            self.regime_reversal = False
+            self.regime_reversal_detail = ""
+            self.regime_guidance = ""
+            self.regime_color = "#525252"
+            self.regime_bg = "#111111"
+            self.regime_border = "1px solid #1a1a1a"
+            return
+
+        r = _daemon._regime
+        label = r.combined_label
+        self.regime_label = label
+        s = r.direction_score
+        self.regime_score = f"{'+' if s >= 0 else ''}{s:.2f}"
+        self.regime_micro_safe = r.micro_safe
+        self.regime_session = r.session
+        self.regime_reversal = r.reversal_flag
+        self.regime_reversal_detail = r.reversal_detail
+        self.regime_guidance = r.guidance
+
+        if "TREND_BULL" in label:
+            self.regime_color = "#22c55e"
+            self.regime_bg = "color-mix(in srgb, #22c55e 6%, #111111)"
+            self.regime_border = "1px solid rgba(34,197,94,0.15)"
+        elif "TREND_BEAR" in label:
+            self.regime_color = "#ef4444"
+            self.regime_bg = "color-mix(in srgb, #ef4444 6%, #111111)"
+            self.regime_border = "1px solid rgba(239,68,68,0.15)"
+        elif "VOLATILE_BULL" in label:
+            self.regime_color = "#f59e0b"
+            self.regime_bg = "color-mix(in srgb, #f59e0b 6%, #111111)"
+            self.regime_border = "1px solid rgba(245,158,11,0.15)"
+        elif "VOLATILE_BEAR" in label:
+            self.regime_color = "#fb923c"
+            self.regime_bg = "color-mix(in srgb, #f59e0b 6%, #111111)"
+            self.regime_border = "1px solid rgba(245,158,11,0.15)"
+        elif "SQUEEZE" in label:
+            self.regime_color = "#a78bfa"
+            self.regime_bg = "color-mix(in srgb, #a78bfa 6%, #111111)"
+            self.regime_border = "1px solid rgba(167,139,250,0.15)"
+        elif "RANGING" in label:
+            self.regime_color = "#737373"
+            self.regime_bg = "#111111"
+            self.regime_border = "1px solid #1a1a1a"
+        else:
+            self.regime_color = "#525252"
+            self.regime_bg = "#111111"
+            self.regime_border = "1px solid #1a1a1a"
+
+    @staticmethod
+    def _fetch_wallet_snapshot() -> dict:
+        """Fetch all wallet data in a single call (sync, runs in thread)."""
+        result = {
+            "total_str": "$0.00", "subtitle": "This month",
+            "llm_cost": "$0.00", "llm_calls": "0", "llm_tokens": "0 in / 0 out",
+            "models_html": "", "sonnet_cost": "$0.00", "sonnet_calls": "0",
+            "haiku_cost": "$0.00", "haiku_calls": "0",
+            "cache_savings": "$0.00", "perplexity_cost": "$0.00",
+            "perplexity_calls": "0", "total_trades": "0",
+        }
+        try:
+            from hynous.core.costs import get_month_summary
+            s = get_month_summary()
+            result["total_str"] = f"${s['total_usd']:.2f}"
+            result["subtitle"] = f"{s['month']} operating costs"
+            llm = s["llm"]
+            result["llm_cost"] = f"${llm['total_cost_usd']:.2f}"
+            result["llm_calls"] = str(llm["total_calls"])
+            result["llm_tokens"] = f"{llm['total_input_tokens']:,} in / {llm['total_output_tokens']:,} out"
+            # Models HTML
+            from html import escape
+            models = llm.get("models", [])
+            if models:
+                rows = []
+                for m in models:
+                    if m["calls"] == 0:
+                        continue
+                    rows.append(
+                        f'<div style="display:flex;align-items:center;gap:0.5rem;padding:0.375rem 0;'
+                        f'border-bottom:1px solid #1a1a1a">'
+                        f'<div style="flex:1;min-width:0">'
+                        f'<div style="color:#d4d4d4;font-size:0.78rem;font-weight:500">'
+                        f'{escape(m["label"])}</div>'
+                        f'<div style="display:flex;gap:0.5rem;font-size:0.65rem;margin-top:2px">'
+                        f'<span style="color:#a78bfa;font-weight:500">${m["cost_usd"]:.2f}</span>'
+                        f'<span style="color:#404040">\u00b7</span>'
+                        f'<span style="color:#525252">{m["calls"]} calls</span>'
+                        f'<span style="color:#404040">\u00b7</span>'
+                        f'<span style="color:#404040">{m["input_tokens"]:,} in / {m["output_tokens"]:,} out</span>'
+                        f'</div></div></div>'
+                    )
+                result["models_html"] = "".join(rows)
+            try:
+                result["sonnet_calls"] = str(s['claude']['sonnet']['calls'])
+            except Exception:
+                pass
+            try:
+                result["haiku_cost"] = f"${s['claude']['haiku']['cost_usd']:.2f}"
+            except Exception:
+                pass
+            try:
+                result["haiku_calls"] = str(s['claude']['haiku']['calls'])
+            except Exception:
+                pass
+            try:
+                result["cache_savings"] = f"${s['claude']['cache_savings_usd']:.2f}"
+            except Exception:
+                pass
+            try:
+                result["perplexity_cost"] = f"${s['perplexity']['cost_usd']:.2f}"
+            except Exception:
+                pass
+            try:
+                result["perplexity_calls"] = str(s["perplexity"]["calls"])
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            from hynous.core.trade_analytics import get_trade_stats
+            result["total_trades"] = str(get_trade_stats().total_trades)
+        except Exception:
+            pass
+        return result
+
+    @staticmethod
+    def _build_scanner_html(recent: list[dict]) -> str:
+        """Pre-build scanner recent anomalies HTML."""
+        import time as _time
+        if not recent:
+            return (
+                '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.72rem;'
+                'color:#404040;text-align:center;padding:0.5rem 0;">'
+                'No anomalies detected yet</div>'
+            )
+        rows = []
+        now = _time.time()
+        for a in recent[:10]:
+            age_s = int(now - a.get("detected_at", now))
+            if age_s < 60:
+                age = "just now"
+            elif age_s < 3600:
+                age = f"{age_s // 60}m ago"
+            else:
+                age = f"{age_s // 3600}h ago"
+            sev = a.get("severity", 0)
+            sev_color = "#ef4444" if sev >= 0.7 else "#fbbf24" if sev >= 0.5 else "#525252"
+            sym = a.get("symbol", "?")
+            from html import escape
+            headline = escape(a.get("headline", ""))
+            rows.append(
+                f'<div style="display:flex;gap:0.75rem;padding:0.25rem 0;align-items:center;">'
+                f'<span style="width:52px;color:#525252;flex-shrink:0">{age}</span>'
+                f'<span style="width:48px;color:#2dd4bf;font-weight:500;flex-shrink:0">{sym}</span>'
+                f'<span style="flex:1;color:#a3a3a3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{headline}</span>'
+                f'<span style="width:36px;text-align:right;color:{sev_color};flex-shrink:0">{sev:.2f}</span>'
+                f'</div>'
+            )
+        return (
+            '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.72rem;">'
+            + "".join(rows) + '</div>'
+        )
+
+    @staticmethod
+    def _build_news_html(news: list[dict]) -> str:
+        """Pre-build news feed HTML."""
+        import time as _time
+        if not news:
+            return (
+                '<div style="font-size:0.8rem;color:#404040;text-align:center;padding:1rem 0;">'
+                'No news yet \u2014 scanner polls every 5 min</div>'
+            )
+        rows = []
+        now = _time.time()
+        for n in news[:8]:
+            pub = n.get("published_on", 0)
+            age_s = int(now - pub) if pub else 0
+            if age_s < 60:
+                age = "now"
+            elif age_s < 3600:
+                age = f"{age_s // 60}m"
+            else:
+                age = f"{age_s // 3600}h"
+            from html import escape
+            title = escape(n.get("title", ""))
+            source = escape(n.get("source", ""))
+            rows.append(
+                f'<div style="display:flex;gap:0.5rem;padding:0.35rem 0;border-bottom:1px solid #1a1a1a;align-items:baseline;min-width:0;overflow:hidden;">'
+                f'<span style="width:28px;color:#525252;flex-shrink:0;font-size:0.7rem;text-align:right">{age}</span>'
+                f'<span style="flex:1;min-width:0;color:#a3a3a3;font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{title}</span>'
+                f'<span style="color:#525252;font-size:0.65rem;flex-shrink:0">{source}</span>'
+                f'</div>'
+            )
+        return '<div style="font-family:inherit;overflow:hidden;width:100%;">' + "".join(rows) + '</div>'
+
+    @staticmethod
+    def _fetch_daemon_events() -> tuple:
+        """Fetch daemon events for activities + today_wakes (sync)."""
+        activities_list = []
+        today_list = []
+        try:
+            from hynous.core.daemon_log import get_events
+            from datetime import datetime, timezone
+            raw = get_events(limit=50)
+            activities_list = [DaemonActivity(**e) for e in raw[:20]]
+            today = datetime.now(timezone.utc).date()
+            for e in raw:
+                ts_str = e.get("timestamp", "")
+                if not ts_str:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if ts.date() != today or e.get("type") == "skip":
+                    continue
+                now = datetime.now(timezone.utc)
+                delta = int((now - ts).total_seconds())
+                if delta < 60:
+                    age = "Just now"
+                elif delta < 3600:
+                    age = f"{delta // 60}m ago"
+                else:
+                    age = f"{delta // 3600}h {(delta % 3600) // 60}m ago"
+                today_list.append(DaemonActivityFormatted(
+                    type=e.get("type", ""),
+                    title=e.get("title", ""),
+                    detail=e.get("detail", ""),
+                    time_display=age,
+                ))
+        except Exception:
+            pass
+        return activities_list, today_list[:15]
+
+    @staticmethod
+    def _fetch_equity_data(days: int) -> list[dict]:
+        """Fetch equity curve data (sync, runs in thread)."""
+        try:
+            from hynous.core.equity_tracker import get_equity_data
+            from datetime import datetime, timezone
+            data = get_equity_data(days=days)
+            result = []
+            for point in data:
+                ts = point.get("timestamp", 0)
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                result.append({
+                    "date": dt.strftime("%m/%d"),
+                    "value": point.get("account_value", 0),
+                    "pnl": point.get("unrealized_pnl", 0),
+                })
+            return result
+        except Exception:
+            return []
+
     # === Portfolio Polling ===
 
     def start_polling(self):
@@ -1091,6 +1514,14 @@ class AppState(rx.State):
                             )
             except Exception as e:
                 logger.debug(f"Portfolio poll error: {e}")
+
+            # Snapshot daemon + regime state (every tick — fast in-memory reads)
+            try:
+                async with self:
+                    self._snapshot_daemon()
+                    self._snapshot_regime()
+            except Exception:
+                pass
 
             # Drain daemon chat queue — show daemon wakes in the chat feed
             try:
@@ -1156,13 +1587,22 @@ class AppState(rx.State):
             _cluster_tick += 1
             if _cluster_tick % 4 == 0:
                 try:
-                    cluster_data, health_data, conflict_data, wp_data, scanner_data = await asyncio.to_thread(
+                    # Grab current equity_days for equity fetch
+                    eq_days = 30
+                    async with self:
+                        eq_days = self.equity_days
+
+                    cluster_data, health_data, conflict_data, wp_data, scanner_data, \
+                        wallet_data, daemon_events, equity_data = await asyncio.to_thread(
                         lambda: (
                             AppState._fetch_clusters(),
                             AppState._fetch_memory_health(),
                             AppState._fetch_conflicts(),
                             AppState._fetch_watchpoints(),
                             AppState._fetch_scanner_status(),
+                            AppState._fetch_wallet_snapshot(),
+                            AppState._fetch_daemon_events(),
+                            AppState._fetch_equity_data(eq_days),
                         )
                     )
                     async with self:
@@ -1189,6 +1629,30 @@ class AppState(rx.State):
                         self.scanner_wakes_total = scanner_data["wakes_triggered"]
                         self.scanner_recent = scanner_data["recent"]
                         self.scanner_news = scanner_data.get("news", [])
+                        # Pre-build HTML (avoids per-tick rebuilds)
+                        self.scanner_recent_html = AppState._build_scanner_html(self.scanner_recent)
+                        self.news_feed_html = AppState._build_news_html(self.scanner_news)
+                        # Wallet (single get_month_summary call for all fields)
+                        self.wallet_total_str = wallet_data["total_str"]
+                        self.wallet_subtitle = wallet_data["subtitle"]
+                        self.wallet_llm_cost = wallet_data["llm_cost"]
+                        self.wallet_llm_calls = wallet_data["llm_calls"]
+                        self.wallet_llm_tokens = wallet_data["llm_tokens"]
+                        self.wallet_models_html = wallet_data["models_html"]
+                        self.wallet_sonnet_cost = wallet_data["sonnet_cost"]
+                        self.wallet_sonnet_calls = wallet_data["sonnet_calls"]
+                        self.wallet_haiku_cost = wallet_data["haiku_cost"]
+                        self.wallet_haiku_calls = wallet_data["haiku_calls"]
+                        self.wallet_cache_savings = wallet_data["cache_savings"]
+                        self.wallet_perplexity_cost = wallet_data["perplexity_cost"]
+                        self.wallet_perplexity_calls = wallet_data["perplexity_calls"]
+                        self.total_trades_str = wallet_data["total_trades"]
+                        # Daemon events
+                        activities, today_wakes = daemon_events
+                        self.daemon_activities = activities
+                        self.daemon_today_wakes = today_wakes
+                        # Equity data
+                        self.journal_equity_data = equity_data
                 except Exception:
                     pass
 
@@ -1352,145 +1816,6 @@ class AppState(rx.State):
             return "#ef4444"
         return "#fafafa"
 
-    @rx.var(cache=False)
-    def wallet_total_str(self) -> str:
-        """Total monthly cost as formatted string."""
-        try:
-            from hynous.core.costs import get_month_summary
-            s = get_month_summary()
-            return f"${s['total_usd']:.2f}"
-        except Exception:
-            return "$0.00"
-
-    @rx.var(cache=False)
-    def wallet_subtitle(self) -> str:
-        """Subtitle for wallet card."""
-        try:
-            from hynous.core.costs import get_month_summary
-            s = get_month_summary()
-            return f"{s['month']} operating costs"
-        except Exception:
-            return "This month"
-
-    @rx.var(cache=False)
-    def wallet_llm_cost(self) -> str:
-        """Total LLM API cost string."""
-        try:
-            from hynous.core.costs import get_month_summary
-            s = get_month_summary()
-            return f"${s['llm']['total_cost_usd']:.2f}"
-        except Exception:
-            return "$0.00"
-
-    @rx.var(cache=False)
-    def wallet_llm_calls(self) -> str:
-        """Total LLM API call count."""
-        try:
-            from hynous.core.costs import get_month_summary
-            return str(get_month_summary()["llm"]["total_calls"])
-        except Exception:
-            return "0"
-
-    @rx.var(cache=False)
-    def wallet_llm_tokens(self) -> str:
-        """Total LLM token usage string."""
-        try:
-            from hynous.core.costs import get_month_summary
-            llm = get_month_summary()["llm"]
-            return f"{llm['total_input_tokens']:,} in / {llm['total_output_tokens']:,} out"
-        except Exception:
-            return "0 in / 0 out"
-
-    @rx.var(cache=False)
-    def wallet_models_html(self) -> str:
-        """Pre-rendered HTML for per-model cost breakdown in wallet dialog."""
-        try:
-            from hynous.core.costs import get_month_summary
-            from html import escape
-            models = get_month_summary()["llm"]["models"]
-            if not models:
-                return '<div style="color:#404040;font-size:0.75rem">No LLM calls yet</div>'
-            rows = []
-            for m in models:
-                if m["calls"] == 0:
-                    continue
-                rows.append(
-                    f'<div style="display:flex;align-items:center;gap:0.5rem;padding:0.375rem 0;'
-                    f'border-bottom:1px solid #1a1a1a">'
-                    f'<div style="flex:1;min-width:0">'
-                    f'<div style="color:#d4d4d4;font-size:0.78rem;font-weight:500">'
-                    f'{escape(m["label"])}</div>'
-                    f'<div style="display:flex;gap:0.5rem;font-size:0.65rem;margin-top:2px">'
-                    f'<span style="color:#a78bfa;font-weight:500">${m["cost_usd"]:.2f}</span>'
-                    f'<span style="color:#404040">\u00b7</span>'
-                    f'<span style="color:#525252">{m["calls"]} calls</span>'
-                    f'<span style="color:#404040">\u00b7</span>'
-                    f'<span style="color:#404040">{m["input_tokens"]:,} in / {m["output_tokens"]:,} out</span>'
-                    f'</div></div></div>'
-                )
-            return "".join(rows)
-        except Exception:
-            return ""
-
-    @rx.var(cache=False)
-    def wallet_sonnet_cost(self) -> str:
-        """Sonnet model cost string (legacy)."""
-        return "$0.00"
-
-    @rx.var(cache=False)
-    def wallet_sonnet_calls(self) -> str:
-        """Sonnet model call count (legacy)."""
-        try:
-            from hynous.core.costs import get_month_summary
-            return str(get_month_summary()['claude']['sonnet']['calls'])
-        except Exception:
-            return "0"
-
-    @rx.var(cache=False)
-    def wallet_haiku_cost(self) -> str:
-        """Haiku model cost string."""
-        try:
-            from hynous.core.costs import get_month_summary
-            return f"${get_month_summary()['claude']['haiku']['cost_usd']:.2f}"
-        except Exception:
-            return "$0.00"
-
-    @rx.var(cache=False)
-    def wallet_haiku_calls(self) -> str:
-        """Haiku model call count."""
-        try:
-            from hynous.core.costs import get_month_summary
-            return str(get_month_summary()['claude']['haiku']['calls'])
-        except Exception:
-            return "0"
-
-    @rx.var(cache=False)
-    def wallet_cache_savings(self) -> str:
-        """Cache savings string."""
-        try:
-            from hynous.core.costs import get_month_summary
-            return f"${get_month_summary()['claude']['cache_savings_usd']:.2f}"
-        except Exception:
-            return "$0.00"
-
-    @rx.var(cache=False)
-    def wallet_perplexity_cost(self) -> str:
-        """Perplexity API cost string."""
-        try:
-            from hynous.core.costs import get_month_summary
-            return f"${get_month_summary()['perplexity']['cost_usd']:.2f}"
-        except Exception:
-            return "$0.00"
-
-    @rx.var(cache=False)
-    def wallet_perplexity_calls(self) -> str:
-        """Perplexity API call count."""
-        try:
-            from hynous.core.costs import get_month_summary
-            return str(get_month_summary()["perplexity"]["calls"])
-        except Exception:
-            return "0"
-
     @rx.var
     def wallet_coinglass_cost(self) -> str:
         """Coinglass monthly subscription cost."""
@@ -1501,292 +1826,11 @@ class AppState(rx.State):
         """Number of open positions — updated by background poller."""
         return str(len(self.positions))
 
-    @rx.var(cache=False)
-    def total_trades_str(self) -> str:
-        """Total closed trades count."""
-        try:
-            from hynous.core.trade_analytics import get_trade_stats
-            stats = get_trade_stats()
-            return str(stats.total_trades)
-        except Exception:
-            return "0"
-
     @rx.var
     def message_count(self) -> str:
         """Number of messages as string."""
         return str(len(self.messages))
 
-    @rx.var(cache=False)
-    def daemon_running(self) -> bool:
-        """Whether the background daemon is active.
-
-        cache=False because this reads module-level _daemon which Reflex
-        auto_deps can't track. Without this, the value is permanently cached.
-        """
-        return _daemon is not None and _daemon.is_running
-
-    @rx.var(cache=False)
-    def daemon_wake_count(self) -> str:
-        """Total daemon wakes this session."""
-        if _daemon is None:
-            return "0"
-        return str(_daemon.wake_count)
-
-    @rx.var(cache=False)
-    def daemon_status_text(self) -> str:
-        """Daemon status: Running / Stopped / Paused."""
-        if _daemon is None or not _daemon.is_running:
-            return "Stopped"
-        if _daemon.trading_paused:
-            return "Paused"
-        return "Running"
-
-    @rx.var(cache=False)
-    def daemon_status_color(self) -> str:
-        """Color for daemon status dot."""
-        if _daemon is None or not _daemon.is_running:
-            return "#525252"
-        if _daemon.trading_paused:
-            return "#ef4444"
-        return "#22c55e"
-
-    @rx.var(cache=False)
-    def daemon_daily_pnl(self) -> str:
-        """Today's realized PnL string."""
-        if _daemon is None:
-            return "$0.00"
-        pnl = _daemon.daily_realized_pnl
-        sign = "+" if pnl >= 0 else ""
-        return f"{sign}${pnl:,.2f}"
-
-    @rx.var(cache=False)
-    def daemon_trading_paused(self) -> bool:
-        """Whether circuit breaker is active."""
-        return _daemon is not None and _daemon.trading_paused
-
-    @rx.var(cache=False)
-    def daemon_activities(self) -> list[DaemonActivity]:
-        """Last 20 daemon events from the activity log."""
-        try:
-            from hynous.core.daemon_log import get_events
-            raw = get_events(limit=20)
-            return [DaemonActivity(**e) for e in raw]
-        except Exception:
-            return []
-
-    @rx.var(cache=False)
-    def daemon_next_review(self) -> str:
-        """Countdown to next periodic review."""
-        if _daemon is None or not _daemon.is_running:
-            return "—"
-        secs = _daemon.next_review_seconds
-        if secs <= 0:
-            return "Soon"
-        mins = secs // 60
-        if mins >= 60:
-            return f"{mins // 60}h {mins % 60}m"
-        return f"{mins}m"
-
-    @rx.var(cache=False)
-    def daemon_cooldown(self) -> str:
-        """Wake cooldown status."""
-        if _daemon is None or not _daemon.is_running:
-            return "—"
-        remaining = _daemon.cooldown_remaining
-        if remaining <= 0:
-            return "Ready"
-        return f"{remaining}s"
-
-    @rx.var(cache=False)
-    def daemon_cooldown_active(self) -> bool:
-        """Whether wake cooldown is active."""
-        if _daemon is None:
-            return False
-        return _daemon.cooldown_remaining > 0
-
-    @rx.var(cache=False)
-    def daemon_wake_rate(self) -> str:
-        """Wakes this hour / max."""
-        if _daemon is None or not _daemon.is_running:
-            return "—"
-        current = _daemon.wakes_this_hour
-        max_h = _daemon.config.daemon.max_wakes_per_hour
-        return f"{current}/{max_h}"
-
-    @rx.var(cache=False)
-    def daemon_reviews_until_learning(self) -> str:
-        """Reviews until next learning session."""
-        if _daemon is None or not _daemon.is_running:
-            return "—"
-        n = _daemon.reviews_until_learning
-        if n <= 1:
-            return "Next review"
-        return f"In {n} reviews"
-
-    @rx.var(cache=False)
-    def daemon_last_wake_ago(self) -> str:
-        """Time since last wake."""
-        if _daemon is None or not _daemon.is_running:
-            return "—"
-        ts = _daemon.last_wake_time
-        if not ts:
-            return "Never"
-        import time as _time
-        elapsed = int(_time.time() - ts)
-        if elapsed < 60:
-            return "Just now"
-        mins = elapsed // 60
-        if mins < 60:
-            return f"{mins}m ago"
-        hours = mins // 60
-        return f"{hours}h {mins % 60}m ago"
-
-    @rx.var(cache=False)
-    def daemon_review_count(self) -> str:
-        """Total reviews completed."""
-        if _daemon is None:
-            return "0"
-        return str(_daemon.review_count)
-
-    # === Regime Display ===
-
-    @rx.var(cache=False)
-    def regime_label(self) -> str:
-        """Current regime label (e.g. TREND_BULL, RANGING)."""
-        if _daemon is None or _daemon._regime is None:
-            return ""
-        return _daemon._regime.combined_label
-
-    @rx.var(cache=False)
-    def regime_score(self) -> str:
-        """Direction score as display string."""
-        if _daemon is None or _daemon._regime is None:
-            return ""
-        s = _daemon._regime.direction_score
-        sign = "+" if s >= 0 else ""
-        return f"{sign}{s:.2f}"
-
-    @rx.var(cache=False)
-    def regime_micro_safe(self) -> bool:
-        """Whether micro trades are currently allowed."""
-        if _daemon is None or _daemon._regime is None:
-            return True
-        return _daemon._regime.micro_safe
-
-    @rx.var(cache=False)
-    def regime_session(self) -> str:
-        """Current trading session (ASIA, LONDON, US_OPEN, etc.)."""
-        if _daemon is None or _daemon._regime is None:
-            return ""
-        return _daemon._regime.session
-
-    @rx.var(cache=False)
-    def regime_reversal(self) -> bool:
-        """Whether a reversal has been detected."""
-        if _daemon is None or _daemon._regime is None:
-            return False
-        return _daemon._regime.reversal_flag
-
-    @rx.var(cache=False)
-    def regime_reversal_detail(self) -> str:
-        """Reversal signal details."""
-        if _daemon is None or _daemon._regime is None:
-            return ""
-        return _daemon._regime.reversal_detail
-
-    @rx.var(cache=False)
-    def regime_guidance(self) -> str:
-        """One-line regime guidance for the current label."""
-        if _daemon is None or _daemon._regime is None:
-            return ""
-        return _daemon._regime.guidance
-
-    @rx.var(cache=False)
-    def regime_color(self) -> str:
-        """Accent color for current regime label."""
-        label = self.regime_label
-        if "TREND_BULL" in label:
-            return "#22c55e"
-        if "TREND_BEAR" in label:
-            return "#ef4444"
-        if "VOLATILE_BULL" in label:
-            return "#f59e0b"
-        if "VOLATILE_BEAR" in label:
-            return "#fb923c"
-        if "SQUEEZE" in label:
-            return "#a78bfa"
-        if "RANGING" in label:
-            return "#737373"
-        return "#525252"
-
-    @rx.var(cache=False)
-    def regime_bg(self) -> str:
-        """Background tint for regime banner."""
-        label = self.regime_label
-        if "TREND_BULL" in label:
-            return "color-mix(in srgb, #22c55e 6%, #111111)"
-        if "TREND_BEAR" in label:
-            return "color-mix(in srgb, #ef4444 6%, #111111)"
-        if "VOLATILE" in label:
-            return "color-mix(in srgb, #f59e0b 6%, #111111)"
-        if "SQUEEZE" in label:
-            return "color-mix(in srgb, #a78bfa 6%, #111111)"
-        return "#111111"
-
-    @rx.var(cache=False)
-    def regime_border(self) -> str:
-        """Border color for regime banner."""
-        label = self.regime_label
-        if "TREND_BULL" in label:
-            return "1px solid rgba(34,197,94,0.15)"
-        if "TREND_BEAR" in label:
-            return "1px solid rgba(239,68,68,0.15)"
-        if "VOLATILE" in label:
-            return "1px solid rgba(245,158,11,0.15)"
-        if "SQUEEZE" in label:
-            return "1px solid rgba(167,139,250,0.15)"
-        return "1px solid #1a1a1a"
-
-    @rx.var(cache=False)
-    def daemon_today_wakes(self) -> list[DaemonActivityFormatted]:
-        """Today's daemon events with relative timestamps."""
-        try:
-            from hynous.core.daemon_log import get_events
-            from datetime import datetime, timezone, timedelta
-            raw = get_events(limit=50)
-            today = datetime.now(timezone.utc).date()
-            result = []
-            for e in raw:
-                ts_str = e.get("timestamp", "")
-                if not ts_str:
-                    continue
-                try:
-                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                except Exception:
-                    continue
-                if ts.date() != today:
-                    continue
-                # Skip "skip" events for cleaner display
-                if e.get("type") == "skip":
-                    continue
-                # Format relative time
-                now = datetime.now(timezone.utc)
-                delta = int((now - ts).total_seconds())
-                if delta < 60:
-                    age = "Just now"
-                elif delta < 3600:
-                    age = f"{delta // 60}m ago"
-                else:
-                    age = f"{delta // 3600}h {(delta % 3600) // 60}m ago"
-                result.append(DaemonActivityFormatted(
-                    type=e.get("type", ""),
-                    title=e.get("title", ""),
-                    detail=e.get("detail", ""),
-                    time_display=age,
-                ))
-            return result[:15]  # Cap at 15
-        except Exception:
-            return []
 
     @rx.var
     def agent_status_display(self) -> str:
@@ -1888,6 +1932,7 @@ class AppState(rx.State):
             # Stop — always instant
             if _daemon is not None and _daemon.is_running:
                 _daemon.stop()
+                self._snapshot_daemon()
                 self._add_activity("system", "Daemon stopped", "info")
             return
 
@@ -1902,6 +1947,9 @@ class AppState(rx.State):
             _daemon = Daemon(agent, agent.config)
         if not _daemon.is_running:
             _daemon.start()
+        # Immediate UI feedback (don't wait for next poll tick)
+        self._snapshot_daemon()
+        self._snapshot_regime()
         self._add_activity("system", "Daemon started", "info")
 
     # === Navigation ===
@@ -2427,90 +2475,6 @@ class AppState(rx.State):
         """Toggle scanner detail panel."""
         self.scanner_expanded = not self.scanner_expanded
 
-    @rx.var(cache=False)
-    def scanner_status_text(self) -> str:
-        """Scanner headline for banner."""
-        if _daemon is None or not _daemon.is_running or _daemon._scanner is None:
-            return "Scanner Offline"
-        if self.scanner_warming_up:
-            return f"Warming Up  {self.scanner_price_polls}/5 price  {self.scanner_deriv_polls}/2 deriv"
-        if self.scanner_active:
-            return f"Scanner Active  {self.scanner_pairs_count} pairs"
-        return "Scanner Idle"
-
-    @rx.var(cache=False)
-    def scanner_status_color(self) -> str:
-        """Color for scanner icon."""
-        if self.scanner_active:
-            return "#2dd4bf"
-        if self.scanner_warming_up:
-            return "#fbbf24"
-        return "#525252"
-
-    @rx.var(cache=False)
-    def scanner_subtitle(self) -> str:
-        """Secondary text for banner."""
-        if not self.scanner_active and not self.scanner_warming_up:
-            return ""
-        parts = []
-        if self.scanner_anomalies_total > 0:
-            parts.append(f"{self.scanner_anomalies_total} anomalies")
-        if self.scanner_wakes_total > 0:
-            parts.append(f"{self.scanner_wakes_total} wakes")
-        if not parts:
-            return "No anomalies yet"
-        return " \u00b7 ".join(parts)
-
-    @rx.var(cache=False)
-    def scanner_recent_html(self) -> str:
-        """Pre-rendered HTML for recent anomaly rows."""
-        import time as _time
-        if not self.scanner_recent:
-            return (
-                '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.72rem;'
-                'color:#404040;text-align:center;padding:0.5rem 0;">'
-                'No anomalies detected yet</div>'
-            )
-        rows = []
-        now = _time.time()
-        for a in self.scanner_recent[:10]:
-            age_s = int(now - a.get("detected_at", now))
-            if age_s < 60:
-                age = "just now"
-            elif age_s < 3600:
-                age = f"{age_s // 60}m ago"
-            else:
-                age = f"{age_s // 3600}h ago"
-
-            sev = a.get("severity", 0)
-            if sev >= 0.7:
-                sev_color = "#ef4444"
-            elif sev >= 0.5:
-                sev_color = "#fbbf24"
-            else:
-                sev_color = "#525252"
-
-            sym = a.get("symbol", "?")
-            headline = a.get("headline", "")
-            # Escape HTML
-            from html import escape
-            headline = escape(headline)
-
-            rows.append(
-                f'<div style="display:flex;gap:0.75rem;padding:0.25rem 0;align-items:center;">'
-                f'<span style="width:52px;color:#525252;flex-shrink:0">{age}</span>'
-                f'<span style="width:48px;color:#2dd4bf;font-weight:500;flex-shrink:0">{sym}</span>'
-                f'<span style="flex:1;color:#a3a3a3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{headline}</span>'
-                f'<span style="width:36px;text-align:right;color:{sev_color};flex-shrink:0">{sev:.2f}</span>'
-                f'</div>'
-            )
-        html = (
-            '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.72rem;">'
-            + "".join(rows)
-            + '</div>'
-        )
-        return html
-
     @staticmethod
     def _fetch_scanner_status() -> dict:
         """Read scanner status from daemon (sync, thread-safe)."""
@@ -2525,54 +2489,6 @@ class AppState(rx.State):
             "pairs_count": 0, "anomalies_detected": 0,
             "wakes_triggered": 0, "recent": [], "news": [],
         }
-
-    @rx.var(cache=False)
-    def news_feed_html(self) -> str:
-        """Pre-rendered HTML for news headlines card."""
-        import time as _time
-        if not self.scanner_news:
-            return (
-                '<div style="font-size:0.8rem;color:#404040;text-align:center;padding:1rem 0;">'
-                'No news yet — scanner polls every 5 min</div>'
-            )
-        rows = []
-        now = _time.time()
-        for n in self.scanner_news[:8]:
-            pub = n.get("published_on", 0)
-            age_s = int(now - pub) if pub else 0
-            if age_s < 60:
-                age = "now"
-            elif age_s < 3600:
-                age = f"{age_s // 60}m"
-            else:
-                age = f"{age_s // 3600}h"
-            title = n.get("title", "")
-            source = n.get("source", "")
-            from html import escape
-            title = escape(title)
-            source = escape(source)
-            rows.append(
-                f'<div style="display:flex;gap:0.5rem;padding:0.35rem 0;border-bottom:1px solid #1a1a1a;align-items:baseline;min-width:0;overflow:hidden;">'
-                f'<span style="width:28px;color:#525252;flex-shrink:0;font-size:0.7rem;text-align:right">{age}</span>'
-                f'<span style="flex:1;min-width:0;color:#a3a3a3;font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{title}</span>'
-                f'<span style="color:#525252;font-size:0.65rem;flex-shrink:0">{source}</span>'
-                f'</div>'
-            )
-        return '<div style="font-family:inherit;overflow:hidden;width:100%;">' + "".join(rows) + '</div>'
-
-    @rx.var(cache=False)
-    def micro_entries_today(self) -> str:
-        """Micro trades entered today."""
-        if _daemon is None:
-            return "0"
-        return str(_daemon.micro_entries_today)
-
-    @rx.var(cache=False)
-    def entries_today(self) -> str:
-        """Total trades entered today."""
-        if _daemon is None:
-            return "0"
-        return str(_daemon._entries_today)
 
     # === Memory Management State ===
 
@@ -3102,8 +3018,9 @@ class AppState(rx.State):
         self.journal_show_all_phantoms = not self.journal_show_all_phantoms
 
     def set_equity_days(self, days: str):
-        """Update equity chart timeframe."""
+        """Update equity chart timeframe and refresh data."""
         self.equity_days = int(days)
+        self.journal_equity_data = AppState._fetch_equity_data(self.equity_days)
 
     def go_to_journal(self):
         """Navigate to journal page and load data."""
@@ -3356,7 +3273,7 @@ class AppState(rx.State):
         except Exception:
             return "(error loading payload)"
 
-    @rx.var(cache=False)
+    @rx.var
     def debug_spans_display(self) -> list[dict]:
         """Prepare spans for display with pre-computed fields.
 
@@ -3715,24 +3632,3 @@ class AppState(rx.State):
             return {"missed": missed, "good": good, "playbooks": playbooks}
         except Exception:
             return None
-
-    @rx.var(cache=False)
-    def journal_equity_data(self) -> list[dict]:
-        """Equity curve data for chart. cache=False: reads external file."""
-        try:
-            from hynous.core.equity_tracker import get_equity_data
-            data = get_equity_data(days=self.equity_days)
-            # Format for recharts
-            result = []
-            for point in data:
-                ts = point.get("timestamp", 0)
-                from datetime import datetime, timezone
-                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-                result.append({
-                    "date": dt.strftime("%m/%d"),
-                    "value": point.get("account_value", 0),
-                    "pnl": point.get("unrealized_pnl", 0),
-                })
-            return result
-        except Exception:
-            return []
