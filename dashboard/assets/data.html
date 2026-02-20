@@ -261,7 +261,19 @@
           <div class="whale-tabs" id="whale-view-tabs">
             <button class="whale-tab active" data-view="landscape">Landscape</button>
             <button class="whale-tab" data-view="cascade">Cascade</button>
-            <button class="whale-tab" data-view="scatter">Scatter</button>
+            <button class="whale-tab" data-view="treemap">Treemap</button>
+          </div>
+          <div id="whale-treemap-opts" style="display:none;align-items:center;gap:6px">
+            <select id="whale-group" class="whale-limit">
+              <option value="side">By Side</option>
+              <option value="leverage">By Leverage</option>
+              <option value="pnl">By PnL</option>
+            </select>
+            <select id="whale-size-metric" class="whale-limit">
+              <option value="size">Size USD</option>
+              <option value="pnl">|PnL|</option>
+              <option value="leverage">Leverage</option>
+            </select>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
@@ -319,7 +331,7 @@
       <div class="whale-tabs" id="whale-overlay-tabs">
         <button class="whale-tab active" data-view="landscape">Landscape</button>
         <button class="whale-tab" data-view="cascade">Cascade</button>
-        <button class="whale-tab" data-view="scatter">Scatter</button>
+        <button class="whale-tab" data-view="treemap">Treemap</button>
       </div>
       <span class="subtitle" id="whale-overlay-stats"></span>
     </div>
@@ -587,71 +599,6 @@
       '<span>Liq Vol <span class="ws-val">' + $(liqTotal) + '</span></span>';
   }
 
-  // --- Grid-based clustering ---
-  function clusterWhales(whales, gx, gy) {
-    if (!whales.length) return [];
-    const entries = whales.map(w => w.entry), levs = whales.map(w => w.lev);
-    const eMin = Math.min(...entries), eMax = Math.max(...entries);
-    const lMin = Math.min(...levs), lMax = Math.max(...levs);
-    const eRange = eMax - eMin || 1, lRange = lMax - lMin || 1;
-    const cells = {};
-    whales.forEach(w => {
-      const cx = Math.min(gx - 1, Math.floor((w.entry - eMin) / eRange * gx));
-      const cy = Math.min(gy - 1, Math.floor((w.lev - lMin) / lRange * gy));
-      const k = cx + '_' + cy;
-      if (!cells[k]) cells[k] = [];
-      cells[k].push(w);
-    });
-    return Object.values(cells).map(ws => {
-      const longs = ws.filter(w => w.side === 'long').length;
-      const totalSz = ws.reduce((s, w) => s + w.size, 0);
-      return {
-        entry: ws.reduce((s, w) => s + w.entry, 0) / ws.length,
-        lev: ws.reduce((s, w) => s + w.lev, 0) / ws.length,
-        totalSize: totalSz, count: ws.length,
-        longs, shorts: ws.length - longs,
-        maxEntry: Math.max(...ws.map(w => w.entry)),
-        minEntry: Math.min(...ws.map(w => w.entry)),
-        avgPnl: ws.reduce((s, w) => s + w.pnl, 0) / ws.length,
-        maxLev: Math.max(...ws.map(w => w.lev)),
-        whales: ws.sort((a, b) => b.size - a.size),
-      };
-    });
-  }
-  function cColor(c) {
-    if (c.count === 1) return c.longs ? 'rgba(34,197,94,0.45)' : 'rgba(239,68,68,0.45)';
-    const r = c.longs / c.count;
-    return r > 0.65 ? 'rgba(34,197,94,0.4)' : r < 0.35 ? 'rgba(239,68,68,0.4)' : 'rgba(99,102,241,0.4)';
-  }
-  function cBorder(c) {
-    if (c.count === 1) return c.longs ? '#22c55e' : '#ef4444';
-    const r = c.longs / c.count;
-    return r > 0.65 ? '#22c55e' : r < 0.35 ? '#ef4444' : '#6366f1';
-  }
-  function cTip(c) {
-    let h = '<div style="min-width:190px">';
-    if (c.count === 1) {
-      const w = c.whales[0], pC = w.pnl >= 0 ? '#22c55e' : '#ef4444', sC = w.side === 'long' ? '#22c55e' : '#ef4444';
-      h += '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>';
-      h += '<div style="font-size:11px;color:#a3a3a3">Entry: <b>' + px(w.entry) + '</b> <span style="color:' + sC + '">' + w.side.toUpperCase() + '</span></div>';
-      h += '<div style="font-size:11px;color:#a3a3a3">Size: <b>' + $(w.size) + '</b> (' + w.lev + 'x)</div>';
-      h += '<div style="font-size:11px;color:' + pC + '">PnL: <b>' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</b></div>';
-      if (w.liq > 0) h += '<div style="font-size:10px;color:#525252">Liq: ' + px(w.liq) + '</div>';
-    } else {
-      h += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">' + c.count + ' whales</div>';
-      if (c.minEntry !== c.maxEntry) h += '<div style="font-size:11px;color:#a3a3a3">Entry: ' + px(c.minEntry) + ' \u2013 ' + px(c.maxEntry) + '</div>';
-      h += '<div style="font-size:11px;color:#a3a3a3">Avg Lev: <b>' + c.lev.toFixed(1) + 'x</b></div>';
-      h += '<div style="font-size:11px"><span style="color:#22c55e">Long: ' + c.longs + '</span> \u00B7 <span style="color:#ef4444">Short: ' + c.shorts + '</span></div>';
-      h += '<div style="font-size:11px;color:#737373;margin-top:4px">Total: ' + $(c.totalSize) + '</div>';
-      const top = c.whales.slice(0, 3);
-      h += '<div style="border-top:1px solid #262626;margin-top:4px;padding-top:4px;font-size:10px">';
-      top.forEach(w => { h += '<div style="color:#737373">' + addr(w.address) + ' ' + $(w.size) + '</div>'; });
-      if (c.whales.length > 3) h += '<div style="color:#404040">+' + (c.whales.length - 3) + ' more</div>';
-      h += '</div>';
-    }
-    return h + '</div>';
-  }
-
   // =================================================================
   // VIEW 1: LANDSCAPE — Two-sided depth chart by price level
   // =================================================================
@@ -807,64 +754,121 @@
   }
 
   // =================================================================
-  // VIEW 3: SCATTER — Clustered scatter (entry vs leverage)
+  // VIEW 3: TREEMAP — Rectangle map sized by position
   // =================================================================
-  function buildScatter(chart, whales, markPx, large) {
-    // Scale grid resolution with whale count — more whales = finer grid
-    const n = whales.length;
-    const baseGx = large ? 30 : 20, baseGy = large ? 20 : 15;
-    const scale = Math.max(1, Math.sqrt(n / 200));
-    const gx = Math.round(baseGx * scale), gy = Math.round(baseGy * scale);
-    const clusters = clusterWhales(whales, gx, gy);
-    const maxCSz = Math.max(...clusters.map(c => c.totalSize), 1);
-    const maxCount = Math.max(...clusters.map(c => c.count), 1);
-    // Shrink bubbles as count grows — target ~120 visible px max
-    const sizeScale = large ? Math.min(1, 400 / n) : Math.min(1, 250 / n);
-    const points = clusters.map(c => {
-      const sz = c.count === 1
-        ? Math.max(5, Math.sqrt(c.totalSize / maxCSz) * 20 * Math.max(0.3, sizeScale))
-        : Math.max(12, Math.min(40, Math.sqrt(c.count / maxCount) * 35));
+  function buildTreemap(chart, whales, markPx, large) {
+    const groupBy = document.getElementById('whale-group').value || 'side';
+    const sizeMetric = document.getElementById('whale-size-metric').value || 'size';
+
+    // Value extractor based on size metric
+    function val(w) {
+      if (sizeMetric === 'pnl') return Math.abs(w.pnl) || 1;
+      if (sizeMetric === 'leverage') return w.lev || 1;
+      return w.size;
+    }
+
+    // Whale color — always by side
+    function wColor(w, alpha) {
+      return w.side === 'long' ? 'rgba(34,197,94,' + alpha + ')' : 'rgba(239,68,68,' + alpha + ')';
+    }
+
+    // Build groups
+    let groups;
+    if (groupBy === 'leverage') {
+      groups = [
+        { name: '1\u20133x', whales: whales.filter(w => w.lev <= 3) },
+        { name: '3\u201310x', whales: whales.filter(w => w.lev > 3 && w.lev <= 10) },
+        { name: '10\u201325x', whales: whales.filter(w => w.lev > 10 && w.lev <= 25) },
+        { name: '25x+', whales: whales.filter(w => w.lev > 25) },
+      ];
+    } else if (groupBy === 'pnl') {
+      groups = [
+        { name: 'In Profit', whales: whales.filter(w => w.pnl >= 0) },
+        { name: 'Underwater', whales: whales.filter(w => w.pnl < 0) },
+      ];
+    } else {
+      groups = [
+        { name: 'Long', whales: whales.filter(w => w.side === 'long') },
+        { name: 'Short', whales: whales.filter(w => w.side !== 'long') },
+      ];
+    }
+
+    const data = groups.filter(g => g.whales.length > 0).map(g => {
+      const totalUSD = g.whales.reduce((s, w) => s + w.size, 0);
       return {
-        value: [c.lev, c.entry], symbolSize: sz,
-        itemStyle: { color: cColor(c), borderColor: cBorder(c), borderWidth: c.count > 1 ? 1.5 : 1 },
-        label: { show: c.count > 2, formatter: String(c.count), fontSize: c.count >= 100 ? 10 : 9, color: '#fafafa', fontWeight: 600, position: 'inside' },
-        cluster: c,
+        name: g.name + ' (' + g.whales.length + ') \u00B7 ' + $(totalUSD),
+        children: g.whales.sort((a, b) => val(b) - val(a)).map(w => ({
+          name: addr(w.address),
+          value: val(w),
+          whale: w,
+          itemStyle: { color: wColor(w, 0.65), borderColor: wColor(w, 0.9) },
+        })),
       };
     });
-    const g = large ? { left: 70, right: 30, top: 40, bottom: 40 } : { left: 52, right: 16, top: 10, bottom: 28 };
-    const fs = large ? 11 : 9;
+
+    const labelMinArea = large ? 800 : 2000;
+    const detailMinArea = large ? 3000 : 8000;
+
     chart.setOption({
       tooltip: {
-        trigger: 'item', confine: true,
         backgroundColor: 'rgba(12,12,12,0.95)', borderColor: '#262626', borderRadius: 8,
         textStyle: { color: '#fafafa', fontSize: 11 },
-        formatter: p => p.data.cluster ? cTip(p.data.cluster) : '',
-        extraCssText: 'max-height:280px;overflow-y:auto;',
+        formatter: function(p) {
+          const w = p.data.whale;
+          if (!w) { return '<b>' + p.name + '</b>'; }
+          const pC = w.pnl >= 0 ? '#22c55e' : '#ef4444';
+          const sC = w.side === 'long' ? '#22c55e' : '#ef4444';
+          return '<div style="min-width:180px">' +
+            '<div style="font-size:12px;font-weight:600;margin-bottom:4px">' + addr(w.address) + '</div>' +
+            '<div style="font-size:11px;color:#a3a3a3">Size: <b>' + $(w.size) + '</b></div>' +
+            '<div style="font-size:11px;color:#a3a3a3">Entry: <b>' + px(w.entry) + '</b> <span style="color:' + sC + '">' + w.side.toUpperCase() + '</span></div>' +
+            '<div style="font-size:11px;color:#a3a3a3">Leverage: <b>' + w.lev + 'x</b></div>' +
+            '<div style="font-size:11px;color:' + pC + '">PnL: <b>' + (w.pnl >= 0 ? '+' : '') + $(w.pnl) + '</b></div>' +
+            (w.liq > 0 ? '<div style="font-size:10px;color:#525252">Liq: ' + px(w.liq) + '</div>' : '') +
+            '</div>';
+        },
       },
-      grid: g, legend: { show: false },
-      xAxis: {
-        name: 'Leverage', nameLocation: 'center', nameGap: large ? 26 : 16,
-        nameTextStyle: { color: '#404040', fontSize: large ? 12 : 10 },
-        axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: fs, formatter: v => v.toFixed(0) + 'x' },
-        splitLine: { lineStyle: { color: '#141414' } },
-      },
-      yAxis: {
-        name: 'Entry Price', nameLocation: 'center', nameGap: large ? 50 : 38,
-        nameTextStyle: { color: '#404040', fontSize: large ? 12 : 10 },
-        axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: fs, formatter: v => px(v) },
-        splitLine: { lineStyle: { color: '#141414' } },
-      },
-      dataZoom: large ? [
-        { type: 'inside', xAxisIndex: 0, filterMode: 'none', zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false, throttle: 120 },
-        { type: 'inside', yAxisIndex: 0, filterMode: 'none', zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false, throttle: 120 },
-      ] : [],
       series: [{
-        type: 'scatter', data: points,
-        markLine: markPx > 0 ? { silent: true, symbol: 'none',
-          data: [{ yAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
-            label: { show: true, formatter: px(markPx), color: '#6366f1', fontSize: large ? 10 : 8, position: 'insideEndTop' } }] } : undefined,
+        type: 'treemap',
+        data: data,
+        roam: false,
+        nodeClick: 'zoomToNode',
+        width: '100%', height: '100%',
+        breadcrumb: {
+          show: large,
+          top: 4, left: 8,
+          itemStyle: { color: '#1a1a1a', borderColor: '#262626', textStyle: { color: '#737373', fontSize: 10 } },
+          emphasis: { itemStyle: { color: '#262626' } },
+        },
+        levels: [
+          {
+            itemStyle: { borderColor: '#1a1a1a', borderWidth: 3, gapWidth: 2 },
+            upperLabel: {
+              show: true, height: large ? 24 : 18,
+              color: '#d4d4d4', fontSize: large ? 12 : 10, fontWeight: 600,
+              backgroundColor: 'rgba(10,10,10,0.8)', padding: [2, 6],
+            },
+          },
+          {
+            itemStyle: { borderColor: '#0a0a0a', borderWidth: 1, gapWidth: 1 },
+            label: {
+              show: true,
+              formatter: function(p) {
+                const w = p.data.whale;
+                if (!w) return '';
+                const area = p.rect ? p.rect.width * p.rect.height : 0;
+                if (area < labelMinArea) return '';
+                if (area < detailMinArea) return $(w.size);
+                return addr(w.address) + '\n' + $(w.size) + ' \u00B7 ' + w.lev + 'x';
+              },
+              color: '#fafafa', fontSize: large ? 11 : 9,
+              fontFamily: "'JetBrains Mono', monospace",
+              lineHeight: large ? 16 : 14,
+              position: 'insideCenter',
+              overflow: 'truncate',
+            },
+          },
+        ],
       }],
     }, true);
   }
@@ -875,7 +879,9 @@
   function renderWhaleView(chart, view, whales, markPx, large) {
     if (view === 'landscape') buildLandscape(chart, whales, markPx, large);
     else if (view === 'cascade') buildCascade(chart, whales, markPx, large);
-    else buildScatter(chart, whales, markPx, large);
+    else buildTreemap(chart, whales, markPx, large);
+    // Show/hide treemap options
+    document.getElementById('whale-treemap-opts').style.display = (view === 'treemap') ? 'flex' : 'none';
   }
 
   // --- Fetch + render panel ---
@@ -911,6 +917,21 @@
     }
   });
   document.getElementById('whale-limit').addEventListener('change', () => updateWhale());
+  // Treemap option changes → re-render
+  document.getElementById('whale-group').addEventListener('change', () => {
+    if (whaleData.length) {
+      const m = whaleData.find(w => w.mark > 0)?.mark || 0;
+      if (whaleView === 'treemap') renderWhaleView(whaleChart, 'treemap', whaleData, m, false);
+      if (whaleOverlayChart && whaleOverlayView === 'treemap') renderWhaleView(whaleOverlayChart, 'treemap', whaleData, m, true);
+    }
+  });
+  document.getElementById('whale-size-metric').addEventListener('change', () => {
+    if (whaleData.length) {
+      const m = whaleData.find(w => w.mark > 0)?.mark || 0;
+      if (whaleView === 'treemap') renderWhaleView(whaleChart, 'treemap', whaleData, m, false);
+      if (whaleOverlayChart && whaleOverlayView === 'treemap') renderWhaleView(whaleOverlayChart, 'treemap', whaleData, m, true);
+    }
+  });
   document.getElementById('whale-overlay-tabs').addEventListener('click', e => {
     const btn = e.target.closest('.whale-tab'); if (!btn) return;
     whaleOverlayView = btn.dataset.view;
