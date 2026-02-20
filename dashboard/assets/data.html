@@ -1181,17 +1181,18 @@
   async function updateSM() {
     const data = await api(B + '/api/data/smart-money?top_n=20');
     const el = document.getElementById('sm-panel');
-    if (!data || data.error || !(data.traders || []).length) { el.innerHTML = '<div class="empty">No smart money data</div>'; return; }
+    const t = data.rankings || data.traders || [];
+    if (!data || data.error || !t.length) { el.innerHTML = '<div class="empty">No smart money data</div>'; return; }
 
-    const t = data.traders;
     let html = '<table class="data-table"><thead><tr><th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>Pos</th></tr></thead><tbody>';
     t.forEach((tr, i) => {
       const pnl = tr.pnl_24h || 0;
       const c = pnl >= 0 ? '#22c55e' : '#ef4444';
       const s = pnl >= 0 ? '+' : '';
+      const posCount = Array.isArray(tr.positions) ? tr.positions.length : (tr.positions || 0);
       html += '<tr><td style="color:#525252">' + (i+1) + '</td><td>' + addr(tr.address) + '</td>' +
         '<td style="color:' + c + '">' + s + $(pnl) + '</td>' +
-        '<td>' + $(tr.equity || 0) + '</td><td>' + (tr.positions || 0) + '</td></tr>';
+        '<td>' + $(tr.equity || 0) + '</td><td>' + posCount + '</td></tr>';
     });
     html += '</tbody></table>';
     el.innerHTML = html;
