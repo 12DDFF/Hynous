@@ -268,8 +268,8 @@ class HynousDataClient:
     def sm_watchlist(self) -> dict | None:
         return self._get("/v1/smart-money/watchlist")
 
-    def sm_profile(self, address: str) -> dict | None:
-        return self._get(f"/v1/smart-money/wallet/{address}")
+    def sm_profile(self, address: str, days: int = 30) -> dict | None:
+        return self._get(f"/v1/smart-money/wallet/{address}", {"days": days})
 
     def sm_trades(self, address: str, limit: int = 50) -> dict | None:
         return self._get(f"/v1/smart-money/wallet/{address}/trades", {"limit": limit})

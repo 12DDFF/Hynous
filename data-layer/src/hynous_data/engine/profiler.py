@@ -471,34 +471,56 @@ class WalletProfiler:
     # Single profile lookup
     # ------------------------------------------------------------------
 
-    def get_profile(self, address: str) -> dict | None:
-        """Get full profile for an address. Computes on-demand if missing."""
+    def get_profile(self, address: str, days: int = 30) -> dict | None:
+        """Get full profile for an address. Computes on-demand if missing/stale.
+
+        Args:
+            address: wallet address
+            days: how many days of fill history to analyze (default 30 for on-demand)
+        """
         address = address.strip().lower()
         conn = self._db.conn
 
-        # Check existing profile
+        # Check existing profile — recompute if missing or if requesting
+        # a deeper window than what was cached (stale = older than refresh window)
         row = conn.execute(
             "SELECT * FROM wallet_profiles WHERE address = ?", (address,)
         ).fetchone()
 
-        if not row:
-            # Compute on-demand
-            fills = self.fetch_fills(address)
+        need_compute = not row
+        if row and days > self._cfg.profile_window_days:
+            # User is requesting deeper analysis — recompute if profile is
+            # older than 1 hour (avoid re-fetching on every page reload)
+            age_hours = (time.time() - (row["computed_at"] or 0)) / 3600
+            if age_hours > 1:
+                need_compute = True
+
+        if need_compute:
+            fills = self.fetch_fills(address, days=days)
             if not fills:
-                return None
-            profile = self.compute_profile(fills)
-            if not profile:
-                return None
-            eq_row = conn.execute(
-                "SELECT equity FROM pnl_snapshots WHERE address = ? ORDER BY snapshot_at DESC LIMIT 1",
-                (address,),
-            ).fetchone()
-            equity = eq_row["equity"] if eq_row else None
-            self._upsert_profile(address, profile, equity)
-            profile_data = profile
-            profile_data["equity"] = equity
-            profile_data["address"] = address
-            profile_data["computed_at"] = time.time()
+                if row:
+                    # Fall back to existing profile
+                    profile_data = dict(row)
+                else:
+                    return None
+            else:
+                profile = self.compute_profile(fills)
+                if not profile:
+                    if row:
+                        profile_data = dict(row)
+                    else:
+                        return None
+                else:
+                    eq_row = conn.execute(
+                        "SELECT equity FROM pnl_snapshots WHERE address = ? ORDER BY snapshot_at DESC LIMIT 1",
+                        (address,),
+                    ).fetchone()
+                    equity = eq_row["equity"] if eq_row else None
+                    self._upsert_profile(address, profile, equity)
+                    profile_data = profile
+                    profile_data["equity"] = equity
+                    profile_data["address"] = address
+                    profile_data["computed_at"] = time.time()
         else:
             profile_data = dict(row)
 
@@ -525,6 +547,20 @@ class WalletProfiler:
             (address, cutoff),
         ).fetchall()
         profile_data["recent_changes"] = [dict(c) for c in changes]
+
+        # Attach cached trade history (last 50)
+        trades = conn.execute(
+            """
+            SELECT coin, side, entry_px, exit_px, size_usd, pnl_usd,
+                   pnl_pct, hold_hours, entry_time, exit_time, is_win
+            FROM wallet_trades
+            WHERE address = ?
+            ORDER BY exit_time DESC
+            LIMIT 50
+            """,
+            (address,),
+        ).fetchall()
+        profile_data["trades"] = [dict(t) for t in trades]
 
         # Check if watched
         watched = conn.execute(

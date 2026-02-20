@@ -1524,11 +1524,31 @@
       html += '</tbody></table>';
     }
 
-    // Trade history placeholder — lazy-loaded
-    html += '<div id="sm-trades-section" style="margin-top:10px">' +
-      '<div style="font-size:0.68rem;color:#525252;font-weight:500;padding:0 0 4px 0;cursor:pointer" onclick="smLoadTrades(\'' + address + '\')">' +
-      'TRADE HISTORY <span style="color:#6366f1;font-size:0.6rem">[click to load]</span></div>' +
-      '<div id="sm-trades-body"></div></div>';
+    // Trade history — included in profile response (one call)
+    const trades = data.trades || [];
+    if (trades.length) {
+      html += '<div style="margin-top:10px;font-size:0.68rem;color:#525252;font-weight:500;padding:0 0 4px 0">TRADE HISTORY (' + trades.length + ')</div>';
+      html += '<table class="data-table"><thead><tr><th>Date</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>PnL</th><th>Hold</th></tr></thead><tbody>';
+      trades.forEach(t => {
+        const d = new Date((t.exit_time||t.entry_time||0)*1000);
+        const ds = (d.getMonth()+1) + '/' + d.getDate() + ' ' + d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+        const pnl = t.pnl_usd || 0;
+        const pc = pnl >= 0 ? '#22c55e' : '#ef4444';
+        const ps = pnl >= 0 ? '+' : '';
+        const holdStr = t.hold_hours < 1 ? (t.hold_hours * 60).toFixed(0) + 'm' : t.hold_hours.toFixed(1) + 'h';
+        html += '<tr><td style="color:#525252">' + ds + '</td>' +
+          '<td>' + (t.coin||'') + '</td>' +
+          '<td><span class="side-dot ' + (t.side||'long') + '"></span>' + (t.side||'') + '</td>' +
+          '<td>$' + (t.entry_px||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
+          '<td>$' + (t.exit_px||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
+          '<td>' + $(t.size_usd||0) + '</td>' +
+          '<td style="color:' + pc + '">' + ps + $(pnl) + '</td>' +
+          '<td>' + holdStr + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<div style="margin-top:8px;font-size:0.7rem;color:#404040;padding:4px 0">No trade history yet (computed on profile refresh)</div>';
+    }
 
     // Track/untrack button
     if (data.is_watched) {
@@ -1539,47 +1559,6 @@
 
     html += '</div>';
     el.innerHTML = html;
-  }
-
-  let smTradesCache = {};  // address → trades array (avoid re-fetching)
-  async function smLoadTrades(address) {
-    const body = document.getElementById('sm-trades-body');
-    if (!body) return;
-
-    // Check cache first
-    if (smTradesCache[address]) {
-      smRenderTrades(body, smTradesCache[address]);
-      return;
-    }
-
-    body.innerHTML = '<div style="color:#525252;font-size:0.65rem;padding:4px 0">Loading...</div>';
-    const data = await api(B + '/api/data/smart-money/wallet/' + address + '/trades?limit=50');
-    const trades = (data && data.trades) || [];
-    smTradesCache[address] = trades;
-    smRenderTrades(body, trades);
-  }
-
-  function smRenderTrades(body, trades) {
-    if (!trades.length) { body.innerHTML = '<div style="color:#404040;font-size:0.65rem;padding:4px 0">No trade history cached yet (computed on next profile refresh)</div>'; return; }
-    let html = '<table class="data-table"><thead><tr><th>Date</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>PnL</th><th>Hold</th></tr></thead><tbody>';
-    trades.forEach(t => {
-      const d = new Date((t.exit_time||t.entry_time||0)*1000);
-      const ds = d.getMonth()+1 + '/' + d.getDate() + ' ' + d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
-      const pnl = t.pnl_usd || 0;
-      const pc = pnl >= 0 ? '#22c55e' : '#ef4444';
-      const ps = pnl >= 0 ? '+' : '';
-      const holdStr = t.hold_hours < 1 ? (t.hold_hours * 60).toFixed(0) + 'm' : t.hold_hours.toFixed(1) + 'h';
-      html += '<tr><td style="color:#525252">' + ds + '</td>' +
-        '<td>' + (t.coin||'') + '</td>' +
-        '<td><span class="side-dot ' + (t.side||'long') + '"></span>' + (t.side||'') + '</td>' +
-        '<td>$' + (t.entry_px||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
-        '<td>$' + (t.exit_px||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
-        '<td>' + $(t.size_usd||0) + '</td>' +
-        '<td style="color:' + pc + '">' + ps + $(pnl) + '</td>' +
-        '<td>' + holdStr + '</td></tr>';
-    });
-    html += '</tbody></table>';
-    body.innerHTML = html;
   }
 
   async function smTrackFromProfile(address) {

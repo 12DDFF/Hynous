@@ -138,11 +138,11 @@ def create_router(c: dict) -> APIRouter:
         return {"wallets": profiler.get_watchlist()}
 
     @router.get("/v1/smart-money/wallet/{address}")
-    def sm_profile(address: str):
+    def sm_profile(address: str, days: int = Query(30, ge=1, le=90)):
         profiler = c.get("profiler")
         if not profiler:
             return JSONResponse(status_code=503, content={"error": "Profiler not available"})
-        profile = profiler.get_profile(address)
+        profile = profiler.get_profile(address, days=days)
         if not profile:
             return JSONResponse(status_code=404, content={"error": "No profile data — insufficient trades"})
         return profile

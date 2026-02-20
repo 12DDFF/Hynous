@@ -40,10 +40,10 @@ TOOL_DEF = {
         "  track_wallet — Add an address to the watchlist for position change alerts.\n"
         "  untrack_wallet — Remove an address from the watchlist.\n"
         "  watchlist — View all tracked wallets with win rates and positions.\n"
-        "  wallet_profile — Detailed profile of any address (win rate, style, "
-        "positions, recent changes).\n"
-        "  wallet_trades — Trade history for an address (cached from profiling). "
-        "Shows individual trades with entry/exit prices, PnL, hold time.\n\n"
+        "  wallet_profile — FULL deep dive on any address in ONE call: "
+        "win rate, profit factor, style, equity, positions, recent activity, "
+        "AND trade history (30 days of fills from Hyperliquid, FIFO matched). "
+        "This is the primary tool for investigating any wallet.\n\n"
         "Examples:\n"
         '  {"action": "heatmap", "coin": "BTC"}\n'
         '  {"action": "orderflow", "coin": "ETH"}\n'
@@ -53,7 +53,6 @@ TOOL_DEF = {
         '  {"action": "smart_money", "min_win_rate": 0.6, "style": "swing", "exclude_bots": true}\n'
         '  {"action": "track_wallet", "address": "0x...", "label": "Top trader"}\n'
         '  {"action": "wallet_profile", "address": "0x..."}\n'
-        '  {"action": "wallet_trades", "address": "0x...", "top_n": 20}\n'
         '  {"action": "watchlist"}'
     ),
     "parameters": {
@@ -310,13 +309,14 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
 
         return "\n".join(lines)
 
-    elif action == "wallet_profile":
+    elif action in ("wallet_profile", "wallet_trades"):
         if not address:
-            return "Error: address is required for wallet_profile."
+            return f"Error: address is required for {action}."
         data = client.sm_profile(address)
         if not data:
             return f"No profile data for {address[:10]}... (insufficient trades or unavailable)."
 
+        import datetime
         lines = [f"Wallet Profile — {address[:10]}..."]
         lbl = data.get("label", "")
         if lbl:
@@ -367,7 +367,6 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
         # Recent changes
         changes = data.get("recent_changes", [])
         if changes:
-            import datetime
             lines.append(f"\nRecent Activity ({len(changes)} events, last 24h):")
             for ch in changes[:10]:
                 ts = ch.get("detected_at", 0)
@@ -377,33 +376,24 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
                     f"{ch.get('side', '')} ${ch.get('size_usd', 0):,.0f}"
                 )
 
-        return "\n".join(lines)
-
-    elif action == "wallet_trades":
-        if not address:
-            return "Error: address is required for wallet_trades."
-        data = client.sm_trades(address, limit=top_n or 20)
-        if not data:
-            return f"No trade history for {address[:10]}... (profile may not be computed yet)."
-
+        # Trade history (included in profile response — one call gets everything)
         trades = data.get("trades", [])
-        if not trades:
-            return f"No cached trades for {address[:10]}... — trades are computed during profile refresh."
-
-        import datetime
-        lines = [f"Trade History — {address[:10]}... ({len(trades)} trades):", ""]
-        for t in trades:
-            ts = t.get("exit_time") or t.get("entry_time", 0)
-            d_str = datetime.datetime.fromtimestamp(ts).strftime("%m/%d %H:%M") if ts else "?"
-            pnl = t.get("pnl_usd", 0)
-            hold = t.get("hold_hours", 0)
-            hold_str = f"{hold * 60:.0f}m" if hold < 1 else f"{hold:.1f}h"
-            result = "WIN" if pnl > 0 else "LOSS"
-            lines.append(
-                f"  {d_str} {t.get('coin', '?')} {t.get('side', '?')} "
-                f"${t.get('size_usd', 0):,.0f} entry ${t.get('entry_px', 0):,.2f} "
-                f"exit ${t.get('exit_px', 0):,.2f} PnL ${pnl:+,.0f} ({hold_str}) {result}"
-            )
+        if trades:
+            lines.append(f"\nTrade History ({len(trades)} recent trades):")
+            for t in trades[:top_n or 15]:
+                ts = t.get("exit_time") or t.get("entry_time", 0)
+                d_str = datetime.datetime.fromtimestamp(ts).strftime("%m/%d %H:%M") if ts else "?"
+                pnl = t.get("pnl_usd", 0)
+                hold = t.get("hold_hours", 0)
+                hold_str = f"{hold * 60:.0f}m" if hold < 1 else f"{hold:.1f}h"
+                result = "WIN" if pnl > 0 else "LOSS"
+                lines.append(
+                    f"  {d_str} {t.get('coin', '?')} {t.get('side', '?')} "
+                    f"${t.get('size_usd', 0):,.0f} entry ${t.get('entry_px', 0):,.2f} "
+                    f"exit ${t.get('exit_px', 0):,.2f} PnL ${pnl:+,.0f} ({hold_str}) {result}"
+                )
+        else:
+            lines.append("\nNo trade history (computed on next profile refresh).")
 
         return "\n".join(lines)
 
