@@ -583,7 +583,7 @@
 
   // --- Panel view: clustered scatter ---
   async function updateWhale() {
-    const data = await api(B + '/api/data/whales/' + coin + '?top_n=2000');
+    const data = await api(B + '/api/data/whales/' + coin + '?top_n=500');
     if (!data || data.error) {
       whaleChart.setOption({ title: { text: 'No whale data', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] });
       whaleData = []; return;
