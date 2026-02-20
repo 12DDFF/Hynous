@@ -86,6 +86,8 @@ def login_page() -> rx.Component:
                     width="100%",
                 ),
                 on_submit=AppState.authenticate,
+                reset_on_submit=True,
+                method="POST",
                 width="100%",
             ),
 
