@@ -271,6 +271,17 @@ def _smart_money_card() -> rx.Component:
                AppState.settings_sm_min_win_rate, AppState.set_settings_sm_min_win_rate),
         _field("Min Position Size", "Minimum size to trigger alert",
                AppState.settings_sm_min_size, AppState.set_settings_sm_min_size, "$", input_width="90px"),
+        _divider(),
+        _toggle("Auto-Curation", "Automatically track profitable wallets",
+                AppState.settings_sm_auto_curate, AppState.set_settings_sm_auto_curate),
+        _field("Min Win Rate", "Auto-curate wallets above this win rate",
+               AppState.settings_sm_auto_min_wr, AppState.set_settings_sm_auto_min_wr),
+        _field("Min Trades", "Minimum trade count to qualify",
+               AppState.settings_sm_auto_min_trades, AppState.set_settings_sm_auto_min_trades),
+        _field("Min Profit Factor", "Minimum profit factor to qualify",
+               AppState.settings_sm_auto_min_pf, AppState.set_settings_sm_auto_min_pf),
+        _field("Max Auto Wallets", "Cap on total auto-curated wallets",
+               AppState.settings_sm_auto_max_wallets, AppState.set_settings_sm_auto_max_wallets),
     )
 
 

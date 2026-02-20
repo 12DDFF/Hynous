@@ -748,6 +748,12 @@ class AppState(rx.State):
     settings_sm_exit_alerts: bool = True
     settings_sm_min_win_rate: float = 0.55
     settings_sm_min_size: float = 50000
+    # Smart Money Auto-Curation
+    settings_sm_auto_curate: bool = True
+    settings_sm_auto_min_wr: float = 0.55
+    settings_sm_auto_min_trades: int = 10
+    settings_sm_auto_min_pf: float = 1.5
+    settings_sm_auto_max_wallets: int = 20
 
     # === Collapsible Toggles ===
 
@@ -3053,6 +3059,11 @@ class AppState(rx.State):
         self.settings_sm_exit_alerts = ts.sm_exit_alerts
         self.settings_sm_min_win_rate = ts.sm_min_win_rate
         self.settings_sm_min_size = ts.sm_min_size
+        self.settings_sm_auto_curate = ts.sm_auto_curate
+        self.settings_sm_auto_min_wr = ts.sm_auto_min_wr
+        self.settings_sm_auto_min_trades = ts.sm_auto_min_trades
+        self.settings_sm_auto_min_pf = ts.sm_auto_min_pf
+        self.settings_sm_auto_max_wallets = ts.sm_auto_max_wallets
         self.settings_dirty = False
 
     def save_settings(self):
@@ -3093,6 +3104,11 @@ class AppState(rx.State):
             sm_exit_alerts=self.settings_sm_exit_alerts,
             sm_min_win_rate=self.settings_sm_min_win_rate,
             sm_min_size=self.settings_sm_min_size,
+            sm_auto_curate=self.settings_sm_auto_curate,
+            sm_auto_min_wr=self.settings_sm_auto_min_wr,
+            sm_auto_min_trades=self.settings_sm_auto_min_trades,
+            sm_auto_min_pf=self.settings_sm_auto_min_pf,
+            sm_auto_max_wallets=self.settings_sm_auto_max_wallets,
         )
         save_trading_settings(ts)
         _apply_trading_settings(ts)
@@ -3174,6 +3190,16 @@ class AppState(rx.State):
         self.settings_sm_min_win_rate = float(v); self.settings_dirty = True
     def set_settings_sm_min_size(self, v: str):
         self.settings_sm_min_size = float(v); self.settings_dirty = True
+    def set_settings_sm_auto_curate(self, v: bool):
+        self.settings_sm_auto_curate = v; self.settings_dirty = True
+    def set_settings_sm_auto_min_wr(self, v: str):
+        self.settings_sm_auto_min_wr = float(v); self.settings_dirty = True
+    def set_settings_sm_auto_min_trades(self, v: str):
+        self.settings_sm_auto_min_trades = int(float(v)); self.settings_dirty = True
+    def set_settings_sm_auto_min_pf(self, v: str):
+        self.settings_sm_auto_min_pf = float(v); self.settings_dirty = True
+    def set_settings_sm_auto_max_wallets(self, v: str):
+        self.settings_sm_auto_max_wallets = int(float(v)); self.settings_dirty = True
 
     def load_debug_traces(self):
         """Load recent traces for the debug sidebar."""

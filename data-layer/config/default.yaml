@@ -56,3 +56,10 @@ smart_money:
   max_profiles_per_cycle: 5    # Rate limit: profiles per refresh cycle
   alert_min_size_usd: 50000    # Min position size to trigger alert
   alert_min_win_rate: 0.55     # Min win rate to trigger alert
+  # Auto-curation — auto-track profitable wallets
+  auto_curate_enabled: true
+  auto_curate_min_win_rate: 0.55
+  auto_curate_min_trades: 10
+  auto_curate_min_profit_factor: 1.5
+  auto_curate_max_wallets: 20
+  auto_curate_exclude_bots: true

@@ -201,6 +201,8 @@ class Orchestrator:
                 profiler = self._components.get("profiler")
                 if profiler:
                     profiler.refresh_profiles()
+                    if self.cfg.smart_money.auto_curate_enabled:
+                        profiler.auto_curate()
             except Exception:
                 log.exception("Profiler refresh error")
             self._stop_event.wait(refresh_s)

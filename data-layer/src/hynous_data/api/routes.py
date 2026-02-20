@@ -85,11 +85,31 @@ def create_router(c: dict) -> APIRouter:
         return result
 
     @router.get("/v1/smart-money")
-    def smart_money(top_n: int = Query(50, ge=1, le=200)):
+    def smart_money(
+        top_n: int = Query(50, ge=1, le=200),
+        min_win_rate: float = Query(0, ge=0, le=1),
+        style: str = Query(""),
+        exclude_bots: bool = Query(False),
+        min_trades: int = Query(0, ge=0),
+    ):
         if "smart_money" not in c:
             return JSONResponse(status_code=503, content={"error": "Smart money engine not available"})
         engine = c["smart_money"]
-        return engine.get_rankings(top_n)
+        # Fetch extra to compensate for post-filtering
+        data = engine.get_rankings(top_n * 3 if (min_win_rate or style or exclude_bots or min_trades) else top_n)
+        rankings = data.get("rankings") or []
+
+        style_set = {s.strip() for s in style.split(",") if s.strip()} if style else set()
+        filtered = [
+            r for r in rankings
+            if (not min_win_rate or (r.get("win_rate") or 0) >= min_win_rate)
+            and (not style_set or r.get("style", "") in style_set)
+            and (not exclude_bots or not r.get("is_bot"))
+            and (not min_trades or (r.get("trade_count") or 0) >= min_trades)
+        ][:top_n]
+
+        data["rankings"] = filtered
+        return data
 
     @router.get("/v1/stats")
     def stats():

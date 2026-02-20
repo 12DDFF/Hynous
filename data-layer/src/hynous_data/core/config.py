@@ -84,6 +84,13 @@ class SmartMoneyConfig:
     max_profiles_per_cycle: int = 5
     alert_min_size_usd: float = 50_000
     alert_min_win_rate: float = 0.55
+    # Auto-curation
+    auto_curate_enabled: bool = True
+    auto_curate_min_win_rate: float = 0.55
+    auto_curate_min_trades: int = 10
+    auto_curate_min_profit_factor: float = 1.5
+    auto_curate_max_wallets: int = 20
+    auto_curate_exclude_bots: bool = True
 
 
 @dataclass

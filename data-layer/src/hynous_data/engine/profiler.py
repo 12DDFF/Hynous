@@ -314,6 +314,59 @@ class WalletProfiler:
             conn.commit()
 
     # ------------------------------------------------------------------
+    # Auto-curation
+    # ------------------------------------------------------------------
+
+    def auto_curate(self) -> int:
+        """Auto-track wallets that meet quality thresholds.
+
+        Returns count of newly added wallets.
+        """
+        cfg = self._cfg
+        conn = self._db.conn
+
+        # Count existing auto-curated wallets
+        auto_count = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM watched_wallets WHERE is_active = 1 AND label LIKE 'auto %'",
+        ).fetchone()["cnt"]
+
+        remaining = cfg.auto_curate_max_wallets - auto_count
+        if remaining <= 0:
+            return 0
+
+        # Build query for qualifying profiles NOT already watched
+        bot_clause = "AND wp.is_bot = 0" if cfg.auto_curate_exclude_bots else ""
+        candidates = conn.execute(
+            f"""
+            SELECT wp.address, wp.win_rate, wp.profit_factor, wp.trade_count, wp.style
+            FROM wallet_profiles wp
+            LEFT JOIN watched_wallets ww ON wp.address = ww.address AND ww.is_active = 1
+            WHERE ww.address IS NULL
+            AND wp.win_rate >= ?
+            AND wp.trade_count >= ?
+            AND wp.profit_factor >= ?
+            {bot_clause}
+            ORDER BY wp.win_rate * wp.profit_factor DESC
+            LIMIT ?
+            """,
+            (cfg.auto_curate_min_win_rate, cfg.auto_curate_min_trades,
+             cfg.auto_curate_min_profit_factor, remaining),
+        ).fetchall()
+
+        added = 0
+        for row in candidates:
+            wr_pct = round((row["win_rate"] or 0) * 100)
+            style = row["style"] or "mixed"
+            label = f"auto | {wr_pct}% WR | {style}"
+            self.watch(row["address"], label)
+            added += 1
+
+        if added:
+            log.info("Auto-curated %d wallets (%d/%d slots used)",
+                     added, auto_count + added, cfg.auto_curate_max_wallets)
+        return added
+
+    # ------------------------------------------------------------------
     # Watchlist management
     # ------------------------------------------------------------------
 

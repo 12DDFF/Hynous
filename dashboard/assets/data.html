@@ -186,6 +186,28 @@
   .sm-pos-dot.idle { background: #404040; }
   .sm-clickable { cursor: pointer; }
   .sm-clickable:hover td { background: #111 !important; }
+  .sm-filter-bar {
+    display: flex; gap: 6px; padding: 6px 10px; align-items: center;
+    border-bottom: 1px solid #1a1a1a; flex-wrap: wrap;
+  }
+  .sm-filter-bar select, .sm-filter-bar label {
+    font-size: 0.65rem; color: #a3a3a3; background: #0a0a0a;
+    border: 1px solid #262626; border-radius: 5px; padding: 3px 6px;
+    font-family: inherit; cursor: pointer;
+  }
+  .sm-filter-bar select:focus { outline: none; border-color: #6366f1; }
+  .sm-filter-bar .sm-filter-count {
+    font-size: 0.6rem; color: #525252; margin-left: auto;
+  }
+  .sm-filter-bar label { display: flex; align-items: center; gap: 3px; border: none; background: none; padding: 0; }
+  .sm-filter-bar input[type="checkbox"] { accent-color: #6366f1; width: 12px; height: 12px; }
+  .sm-badge-pill.auto { background: rgba(34,197,94,0.15); color: #22c55e; }
+  .sm-track-all-btn {
+    padding: 4px 10px; background: transparent; border: 1px solid #6366f1;
+    color: #818cf8; font-size: 0.62rem; font-weight: 500; border-radius: 5px;
+    cursor: pointer; white-space: nowrap;
+  }
+  .sm-track-all-btn:hover { background: rgba(99,102,241,0.1); }
 
   /* Tables */
   .data-table { width: 100%; border-collapse: collapse; font-size: 0.7rem; }
@@ -1244,6 +1266,12 @@
   let smProfileAddr = null;
   let smLeaderboardCache = null;
 
+  // Filter state — persisted to localStorage
+  const SM_FILTER_KEY = 'hynous_sm_filters';
+  let smFilters = { min_win_rate: 0, style: '', min_trades: 0, exclude_bots: false };
+  try { Object.assign(smFilters, JSON.parse(localStorage.getItem(SM_FILTER_KEY) || '{}')); } catch(e) {}
+  function smSaveFilters() { localStorage.setItem(SM_FILTER_KEY, JSON.stringify(smFilters)); }
+
   function smStyleBadge(style) {
     if (!style) return '';
     return '<span class="sm-badge-pill ' + style + '">' + style + '</span>';
@@ -1283,13 +1311,52 @@
     }
   }
 
+  function smFilterBar(count) {
+    const f = smFilters;
+    return '<div class="sm-filter-bar">' +
+      '<select id="smf-wr" onchange="smFilters.min_win_rate=parseFloat(this.value);smSaveFilters();updateSM()">' +
+        '<option value="0"' + (f.min_win_rate==0?' selected':'') + '>Win Rate: Any</option>' +
+        '<option value="0.50"' + (f.min_win_rate==0.50?' selected':'') + '>50%+</option>' +
+        '<option value="0.55"' + (f.min_win_rate==0.55?' selected':'') + '>55%+</option>' +
+        '<option value="0.60"' + (f.min_win_rate==0.60?' selected':'') + '>60%+</option>' +
+        '<option value="0.70"' + (f.min_win_rate==0.70?' selected':'') + '>70%+</option>' +
+      '</select>' +
+      '<select id="smf-style" onchange="smFilters.style=this.value;smSaveFilters();updateSM()">' +
+        '<option value=""' + (!f.style?' selected':'') + '>Style: All</option>' +
+        '<option value="scalper"' + (f.style==='scalper'?' selected':'') + '>Scalper</option>' +
+        '<option value="swing"' + (f.style==='swing'?' selected':'') + '>Swing</option>' +
+        '<option value="mixed"' + (f.style==='mixed'?' selected':'') + '>Mixed</option>' +
+      '</select>' +
+      '<select id="smf-trades" onchange="smFilters.min_trades=parseInt(this.value);smSaveFilters();updateSM()">' +
+        '<option value="0"' + (f.min_trades==0?' selected':'') + '>Trades: Any</option>' +
+        '<option value="5"' + (f.min_trades==5?' selected':'') + '>5+</option>' +
+        '<option value="10"' + (f.min_trades==10?' selected':'') + '>10+</option>' +
+        '<option value="25"' + (f.min_trades==25?' selected':'') + '>25+</option>' +
+        '<option value="50"' + (f.min_trades==50?' selected':'') + '>50+</option>' +
+      '</select>' +
+      '<label><input type="checkbox" id="smf-bots"' + (f.exclude_bots?' checked':'') +
+        ' onchange="smFilters.exclude_bots=this.checked;smSaveFilters();updateSM()"> Hide Bots</label>' +
+      '<span class="sm-filter-count">' + count + ' matching</span>' +
+      '<button class="sm-track-all-btn" onclick="smTrackAllVisible()">Track All Visible</button>' +
+    '</div>';
+  }
+
   async function smRenderLeaderboard(el) {
-    const data = await api(B + '/api/data/smart-money?top_n=20');
+    const f = smFilters;
+    let url = B + '/api/data/smart-money?top_n=50';
+    if (f.min_win_rate) url += '&min_win_rate=' + f.min_win_rate;
+    if (f.style) url += '&style=' + f.style;
+    if (f.exclude_bots) url += '&exclude_bots=true';
+    if (f.min_trades) url += '&min_trades=' + f.min_trades;
+
+    const data = await api(url);
     const t = (data && (data.rankings || data.traders)) || [];
-    if (!t.length) { el.innerHTML = '<div class="empty">No smart money data</div>'; return; }
     smLeaderboardCache = t;
 
-    let html = '<table class="data-table"><thead><tr><th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>WR</th><th>Style</th><th>Pos</th></tr></thead><tbody>';
+    let html = smFilterBar(t.length);
+    if (!t.length) { html += '<div class="empty">No smart money data matching filters</div>'; el.innerHTML = html; return; }
+
+    html += '<table class="data-table"><thead><tr><th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>WR</th><th>Style</th><th>Pos</th></tr></thead><tbody>';
     t.forEach((tr, i) => {
       const pnl = tr.pnl_24h || 0;
       const c = pnl >= 0 ? '#22c55e' : '#ef4444';
@@ -1309,6 +1376,17 @@
     document.getElementById('sm-badge').textContent = t.length + ' traders';
   }
 
+  async function smTrackAllVisible() {
+    if (!smLeaderboardCache || !smLeaderboardCache.length) return;
+    for (const tr of smLeaderboardCache) {
+      await fetch(B + '/api/data/smart-money/watch', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({address: tr.address.toLowerCase(), label: ''})
+      });
+    }
+    smShowTab('tracked');
+  }
+
   async function smRenderTracked(el) {
     const data = await api(B + '/api/data/smart-money/watchlist');
     const wallets = (data && data.wallets) || [];
@@ -1325,10 +1403,13 @@
       const dot = '<span class="sm-pos-dot ' + (hasPos ? 'active' : 'idle') + '"></span>';
       const wr = w.win_rate != null ? (w.win_rate * 100).toFixed(0) + '%' : '—';
       const eq = w.equity ? $(w.equity) : '—';
+      const isAuto = (w.label || '').startsWith('auto');
+      const autoBadge = isAuto ? ' <span class="sm-badge-pill auto">AUTO</span>' : '';
+      const labelText = isAuto ? (w.label || '').replace(/^auto\s*\|\s*/, '') : (w.label || '');
       html += '<tr class="sm-clickable" onclick="smShowTab(\'profile\',\'' + w.address + '\')">' +
         '<td>' + dot + '</td>' +
-        '<td>' + addr(w.address) + '</td>' +
-        '<td style="color:#737373">' + (w.label || '') + '</td>' +
+        '<td>' + addr(w.address) + autoBadge + '</td>' +
+        '<td style="color:#737373">' + labelText + '</td>' +
         '<td>' + wr + '</td>' +
         '<td>' + eq + '</td>' +
         '<td>' + smStyleBadge(w.style || '') + '</td>' +

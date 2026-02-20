@@ -75,6 +75,13 @@ class TradingSettings:
     sm_min_win_rate: float = 0.55
     sm_min_size: float = 50000
 
+    # --- Smart Money Auto-Curation ---
+    sm_auto_curate: bool = True
+    sm_auto_min_wr: float = 0.55
+    sm_auto_min_trades: int = 10
+    sm_auto_min_pf: float = 1.5
+    sm_auto_max_wallets: int = 20
+
 
 _lock = threading.Lock()
 _cached: TradingSettings | None = None
