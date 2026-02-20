@@ -72,7 +72,11 @@ class SmartMoneyEngine:
             self._queue_event.set()  # wake drainer
 
     def _drain_loop(self):
-        """Persistent thread: drains the profiling queue one address at a time."""
+        """Persistent thread: drains the profiling queue one address at a time.
+
+        Throttled to ~1 profile every 3s to avoid starving the rate limiter.
+        Position polling, heatmaps, and other API calls share the same budget.
+        """
         log.info("Profile drainer started")
         while True:
             # Wait until there's work
@@ -86,6 +90,7 @@ class SmartMoneyEngine:
                     addr = self._profile_queue.popleft()
 
                 self._profile_one(addr)
+                time.sleep(3)  # ~20 profiles/min, leaves 60%+ budget for polling
 
     def _profile_one(self, addr: str):
         """Profile a single address. Silently skips on failure."""
@@ -169,7 +174,9 @@ class SmartMoneyEngine:
         cutoff = time.time() - 86400  # 24h
         conn = self._db.conn
 
-        # Single query: get start/end equity per address using subqueries
+        # Single query: compute PnL, sort, and limit in SQL (avoids fetching 10k+ rows)
+        # Fetch 3x top_n to allow for post-filtering in the API route
+        fetch_n = top_n * 3
         rows = conn.execute(
             """
             WITH addr_range AS (
@@ -185,36 +192,33 @@ class SmartMoneyEngine:
             SELECT
                 ar.address,
                 ps_first.equity AS equity_start,
-                ps_last.equity AS equity_end
+                ps_last.equity AS equity_end,
+                (ps_last.equity - ps_first.equity) AS pnl
             FROM addr_range ar
             JOIN pnl_snapshots ps_first
                 ON ps_first.address = ar.address AND ps_first.snapshot_at = ar.first_snap
             JOIN pnl_snapshots ps_last
                 ON ps_last.address = ar.address AND ps_last.snapshot_at = ar.last_snap
+            ORDER BY pnl DESC
+            LIMIT ?
             """,
-            (cutoff,),
+            (cutoff, fetch_n),
         ).fetchall()
 
         if not rows:
             return {"rankings": [], "count": 0, "window_hours": 24}
 
-        # Compute PnL for each address
         addr_pnl = []
         for row in rows:
             start = row["equity_start"]
-            end = row["equity_end"]
-            pnl = end - start
+            pnl = row["pnl"]
             pnl_pct = (pnl / start * 100) if start > 0 else 0
             addr_pnl.append({
                 "address": row["address"],
-                "equity": round(end, 2),
+                "equity": round(row["equity_end"], 2),
                 "pnl_24h": round(pnl, 2),
                 "pnl_pct_24h": round(pnl_pct, 2),
             })
-
-        # Sort by PnL, take top N
-        addr_pnl.sort(key=lambda x: x["pnl_24h"], reverse=True)
-        addr_pnl = addr_pnl[:top_n]
 
         # Batch fetch positions for top addresses (1 query instead of N)
         top_addrs = [a["address"] for a in addr_pnl]

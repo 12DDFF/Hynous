@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS pnl_snapshots (
     PRIMARY KEY (address, snapshot_at)
 );
 CREATE INDEX IF NOT EXISTS idx_pnl_snapshot_at ON pnl_snapshots(snapshot_at);
+CREATE INDEX IF NOT EXISTS idx_pnl_addr_snap ON pnl_snapshots(address, snapshot_at, equity);
 
 CREATE TABLE IF NOT EXISTS metadata (
     key   TEXT PRIMARY KEY,

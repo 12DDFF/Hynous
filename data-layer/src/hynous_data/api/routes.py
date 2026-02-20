@@ -97,9 +97,8 @@ def create_router(c: dict) -> APIRouter:
         if "smart_money" not in c:
             return JSONResponse(status_code=503, content={"error": "Smart money engine not available"})
         engine = c["smart_money"]
-        # Fetch extra to compensate for post-filtering
-        has_filters = min_win_rate or style or exclude_bots or min_trades or min_equity or max_hold_hours
-        data = engine.get_rankings(top_n * 3 if has_filters else top_n)
+        # get_rankings already fetches 3x for filter headroom
+        data = engine.get_rankings(top_n)
         rankings = data.get("rankings") or []
 
         style_set = {s.strip() for s in style.split(",") if s.strip()} if style else set()
