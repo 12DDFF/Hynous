@@ -43,7 +43,12 @@ TOOL_DEF = {
         "  wallet_profile — FULL deep dive on any address in ONE call: "
         "win rate, profit factor, style, equity, positions, recent activity, "
         "AND trade history (30 days of fills from Hyperliquid, FIFO matched). "
-        "This is the primary tool for investigating any wallet.\n\n"
+        "This is the primary tool for investigating any wallet.\n"
+        "  relabel_wallet — Update label/notes/tags on a tracked wallet.\n"
+        "  wallet_alerts — Create/list/delete per-wallet custom alerts. "
+        "Types: any_trade, entry_only, exit_only, size_above, coin_specific.\n"
+        "  analyze_wallet — Deep analysis mode: fetches full profile and returns "
+        "structured data for your assessment (Edge / Positions / Patterns / Risk / Verdict).\n\n"
         "Examples:\n"
         '  {"action": "heatmap", "coin": "BTC"}\n'
         '  {"action": "orderflow", "coin": "ETH"}\n'
@@ -53,6 +58,12 @@ TOOL_DEF = {
         '  {"action": "smart_money", "min_win_rate": 0.6, "style": "swing", "exclude_bots": true}\n'
         '  {"action": "track_wallet", "address": "0x...", "label": "Top trader"}\n'
         '  {"action": "wallet_profile", "address": "0x..."}\n'
+        '  {"action": "relabel_wallet", "address": "0x...", "label": "SOL sniper", "notes": "Consistently front-runs listings", "tags": "SOL,scalper,high-wr"}\n'
+        '  {"action": "wallet_alerts", "alert_action": "create", "address": "0x...", "alert_type": "entry_only"}\n'
+        '  {"action": "wallet_alerts", "alert_action": "create", "address": "0x...", "alert_type": "size_above", "min_size_usd": 100000}\n'
+        '  {"action": "wallet_alerts", "alert_action": "list", "address": "0x..."}\n'
+        '  {"action": "wallet_alerts", "alert_action": "delete", "alert_id": 5}\n'
+        '  {"action": "analyze_wallet", "address": "0x..."}\n'
         '  {"action": "watchlist"}'
     ),
     "parameters": {
@@ -63,7 +74,7 @@ TOOL_DEF = {
                 "enum": [
                     "heatmap", "orderflow", "whales", "hlp", "smart_money",
                     "track_wallet", "untrack_wallet", "watchlist", "wallet_profile",
-                    "wallet_trades",
+                    "relabel_wallet", "wallet_alerts", "analyze_wallet",
                 ],
                 "description": "Which data layer signal to query.",
             },
@@ -99,6 +110,36 @@ TOOL_DEF = {
                 "type": "integer",
                 "description": "Filter smart_money by minimum trade count.",
             },
+            "notes": {
+                "type": "string",
+                "description": "Notes text for relabel_wallet.",
+            },
+            "tags": {
+                "type": "string",
+                "description": "Comma-separated tags for relabel_wallet.",
+            },
+            "alert_action": {
+                "type": "string",
+                "enum": ["create", "list", "delete"],
+                "description": "Sub-action for wallet_alerts.",
+            },
+            "alert_type": {
+                "type": "string",
+                "enum": ["any_trade", "entry_only", "exit_only", "size_above", "coin_specific"],
+                "description": "Alert type for wallet_alerts create.",
+            },
+            "alert_id": {
+                "type": "integer",
+                "description": "Alert ID for wallet_alerts delete.",
+            },
+            "alert_coins": {
+                "type": "string",
+                "description": "Comma-separated coins for coin_specific alert.",
+            },
+            "min_size_usd": {
+                "type": "number",
+                "description": "Minimum size USD for size_above alert.",
+            },
         },
         "required": ["action"],
     },
@@ -107,7 +148,11 @@ TOOL_DEF = {
 
 def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str = "",
                       label: str = "", min_win_rate: float = 0, style: str = "",
-                      exclude_bots: bool = False, min_trades: int = 0, **kwargs) -> str:
+                      exclude_bots: bool = False, min_trades: int = 0,
+                      notes: str = "", tags: str = "",
+                      alert_action: str = "", alert_type: str = "",
+                      alert_id: int = 0, alert_coins: str = "",
+                      min_size_usd: float = 0, **kwargs) -> str:
     """Handle data layer tool calls."""
     from ...data.providers.hynous_data import get_client
 
@@ -309,99 +354,199 @@ def handle_data_layer(action: str, coin: str = "", top_n: int = 20, address: str
 
         return "\n".join(lines)
 
-    elif action in ("wallet_profile", "wallet_trades"):
+    elif action == "wallet_profile":
         if not address:
-            return f"Error: address is required for {action}."
-        data = client.sm_profile(address)
+            return "Error: address is required for wallet_profile."
+        return _format_profile(client.sm_profile(address), address, top_n)
+
+    elif action == "relabel_wallet":
+        if not address:
+            return "Error: address is required for relabel_wallet."
+        update_kwargs: dict = {}
+        if label:
+            update_kwargs["label"] = label
+        if notes:
+            update_kwargs["notes"] = notes
+        if tags:
+            update_kwargs["tags"] = tags
+        if not update_kwargs:
+            return "Error: provide at least one of: label, notes, tags."
+        data = client.sm_update(address, **update_kwargs)
         if not data:
-            return f"No profile data for {address[:10]}... (insufficient trades or unavailable)."
+            return f"Failed to update wallet {address[:10]}... — not tracked or data layer unavailable."
+        fields = ", ".join(f"{k}={v!r}" for k, v in update_kwargs.items())
+        return f"Updated wallet {address[:10]}...: {fields}"
 
-        import datetime
-        lines = [f"Wallet Profile — {address[:10]}..."]
-        lbl = data.get("label", "")
-        if lbl:
-            lines[0] += f' "{lbl}"'
+    elif action == "wallet_alerts":
+        if not alert_action:
+            return "Error: alert_action is required (create/list/delete)."
 
-        style = data.get("style", "unknown")
-        is_bot = data.get("is_bot", 0)
-        bot_str = " [BOT]" if is_bot else ""
-        lines.append(f"Style: {style}{bot_str}")
+        if alert_action == "create":
+            if not address:
+                return "Error: address is required for alert creation."
+            if not alert_type:
+                return "Error: alert_type is required (any_trade/entry_only/exit_only/size_above/coin_specific)."
+            data = client.sm_create_alert(address, alert_type, min_size_usd, alert_coins)
+            if not data:
+                return "Failed to create alert — data layer unavailable."
+            coins_str = f", coins={alert_coins}" if alert_coins else ""
+            size_str = f", min_size=${min_size_usd:,.0f}" if min_size_usd else ""
+            return f"Alert created (id={data.get('id')}): {alert_type} on {address[:10]}...{size_str}{coins_str}"
 
-        wr = data.get("win_rate")
-        pf = data.get("profit_factor")
-        tc = data.get("trade_count")
-        ah = data.get("avg_hold_hours")
-        eq = data.get("equity")
-        dd = data.get("max_drawdown")
+        elif alert_action == "list":
+            if not address:
+                return "Error: address is required for alert listing."
+            data = client.sm_list_alerts(address)
+            if not data:
+                return "Failed to list alerts — data layer unavailable."
+            alerts = data.get("alerts", [])
+            if not alerts:
+                return f"No active alerts for {address[:10]}..."
+            lines = [f"Active alerts for {address[:10]}... ({len(alerts)}):"]
+            for a in alerts:
+                coins_str = f" coins={a.get('coins')}" if a.get("coins") else ""
+                size_str = f" min=${a.get('min_size_usd', 0):,.0f}" if a.get("min_size_usd") else ""
+                lines.append(f"  #{a['id']} {a['alert_type']}{size_str}{coins_str}")
+            return "\n".join(lines)
 
-        stats = []
-        if wr is not None:
-            stats.append(f"Win Rate: {wr:.0%}")
-        if pf is not None:
-            stats.append(f"Profit Factor: {pf:.1f}")
-        if tc is not None:
-            stats.append(f"Trades: {tc}")
-        if ah is not None:
-            stats.append(f"Avg Hold: {ah:.1f}h")
-        if eq is not None:
-            stats.append(f"Equity: ${eq:,.0f}")
-        if dd is not None and dd > 0:
-            stats.append(f"Max DD: ${dd:,.0f}")
-        lines.append(" | ".join(stats))
-
-        # Current positions
-        positions = data.get("positions", [])
-        if positions:
-            lines.append(f"\nCurrent Positions ({len(positions)}):")
-            for p in positions:
-                upnl = p.get("unrealized_pnl", 0)
-                c = "+" if upnl >= 0 else ""
-                lines.append(
-                    f"  {p.get('coin', '?')} {p.get('side', '?')} "
-                    f"${p.get('size_usd', 0):,.0f} ({p.get('leverage', 1):.0f}x) "
-                    f"entry ${p.get('entry_px', 0):,.2f} PnL ${upnl:{c},.0f}"
-                )
+        elif alert_action == "delete":
+            if not alert_id:
+                return "Error: alert_id is required for deletion."
+            data = client.sm_delete_alert(alert_id)
+            if not data:
+                return "Failed to delete alert — data layer unavailable."
+            return f"Alert #{alert_id} deleted."
         else:
-            lines.append("\nNo open positions.")
+            return f"Unknown alert_action: {alert_action}. Use: create, list, delete."
 
-        # Recent changes
-        changes = data.get("recent_changes", [])
-        if changes:
-            lines.append(f"\nRecent Activity ({len(changes)} events, last 24h):")
-            for ch in changes[:10]:
-                ts = ch.get("detected_at", 0)
-                t_str = datetime.datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "?"
-                lines.append(
-                    f"  {t_str} {ch.get('action', '?').upper()} {ch.get('coin', '?')} "
-                    f"{ch.get('side', '')} ${ch.get('size_usd', 0):,.0f}"
-                )
-
-        # Trade history (included in profile response — one call gets everything)
-        trades = data.get("trades", [])
-        if trades:
-            lines.append(f"\nTrade History ({len(trades)} recent trades):")
-            for t in trades[:top_n or 15]:
-                ts = t.get("exit_time") or t.get("entry_time", 0)
-                d_str = datetime.datetime.fromtimestamp(ts).strftime("%m/%d %H:%M") if ts else "?"
-                pnl = t.get("pnl_usd", 0)
-                hold = t.get("hold_hours", 0)
-                hold_str = f"{hold * 60:.0f}m" if hold < 1 else f"{hold:.1f}h"
-                result = "WIN" if pnl > 0 else "LOSS"
-                lines.append(
-                    f"  {d_str} {t.get('coin', '?')} {t.get('side', '?')} "
-                    f"${t.get('size_usd', 0):,.0f} entry ${t.get('entry_px', 0):,.2f} "
-                    f"exit ${t.get('exit_px', 0):,.2f} PnL ${pnl:+,.0f} ({hold_str}) {result}"
-                )
-        else:
-            lines.append("\nNo trade history (computed on next profile refresh).")
-
-        return "\n".join(lines)
+    elif action == "analyze_wallet":
+        if not address:
+            return "Error: address is required for analyze_wallet."
+        data = client.sm_profile(address)
+        profile_text = _format_profile(data, address, top_n)
+        return (
+            "=== ANALYSIS DATA ===\n"
+            f"{profile_text}\n"
+            "=== END DATA ===\n\n"
+            "Provide your structured assessment:\n"
+            "1. EDGE — What makes this trader worth watching? (win rate, profit factor, style)\n"
+            "2. POSITIONS — Current exposure and thesis\n"
+            "3. PATTERNS — Recurring setups, preferred coins, time-of-day\n"
+            "4. RISK — Red flags, drawdown, bot behavior\n"
+            "5. VERDICT — Track / label / set alerts recommendations\n\n"
+            "After analysis, offer to relabel_wallet and set wallet_alerts."
+        )
 
     else:
         return (
             f"Unknown action: {action}. Use: heatmap, orderflow, whales, hlp, "
-            f"smart_money, track_wallet, untrack_wallet, watchlist, wallet_profile, wallet_trades"
+            f"smart_money, track_wallet, untrack_wallet, watchlist, wallet_profile, "
+            f"relabel_wallet, wallet_alerts, analyze_wallet"
         )
+
+
+def _format_profile(data: dict | None, address: str, top_n: int = 15) -> str:
+    """Format a wallet profile into readable text."""
+    if not data:
+        return f"No profile data for {address[:10]}... (insufficient trades or unavailable)."
+
+    import datetime
+    lines = [f"Wallet Profile — {address[:10]}..."]
+    lbl = data.get("label", "")
+    if lbl:
+        lines[0] += f' "{lbl}"'
+
+    style = data.get("style", "unknown")
+    is_bot = data.get("is_bot", 0)
+    bot_str = " [BOT]" if is_bot else ""
+    lines.append(f"Style: {style}{bot_str}")
+
+    wr = data.get("win_rate")
+    pf = data.get("profit_factor")
+    tc = data.get("trade_count")
+    ah = data.get("avg_hold_hours")
+    eq = data.get("equity")
+    dd = data.get("max_drawdown")
+
+    stats = []
+    if wr is not None:
+        stats.append(f"Win Rate: {wr:.0%}")
+    if pf is not None:
+        stats.append(f"Profit Factor: {pf:.1f}")
+    if tc is not None:
+        stats.append(f"Trades: {tc}")
+    if ah is not None:
+        stats.append(f"Avg Hold: {ah:.1f}h")
+    if eq is not None:
+        stats.append(f"Equity: ${eq:,.0f}")
+    if dd is not None and dd > 0:
+        stats.append(f"Max DD: ${dd:,.0f}")
+    lines.append(" | ".join(stats))
+
+    # Notes/tags if present
+    notes = data.get("notes", "")
+    tags = data.get("tags", "")
+    if notes:
+        lines.append(f"Notes: {notes}")
+    if tags:
+        lines.append(f"Tags: {tags}")
+
+    # Active alerts
+    alerts = data.get("alerts", [])
+    if alerts:
+        lines.append(f"\nCustom Alerts ({len(alerts)}):")
+        for a in alerts:
+            coins_str = f" coins={a.get('coins')}" if a.get("coins") else ""
+            size_str = f" min=${a.get('min_size_usd', 0):,.0f}" if a.get("min_size_usd") else ""
+            lines.append(f"  #{a['id']} {a['alert_type']}{size_str}{coins_str}")
+
+    # Current positions
+    positions = data.get("positions", [])
+    if positions:
+        lines.append(f"\nCurrent Positions ({len(positions)}):")
+        for p in positions:
+            upnl = p.get("unrealized_pnl", 0)
+            c = "+" if upnl >= 0 else ""
+            lines.append(
+                f"  {p.get('coin', '?')} {p.get('side', '?')} "
+                f"${p.get('size_usd', 0):,.0f} ({p.get('leverage', 1):.0f}x) "
+                f"entry ${p.get('entry_px', 0):,.2f} PnL ${upnl:{c},.0f}"
+            )
+    else:
+        lines.append("\nNo open positions.")
+
+    # Recent changes
+    changes = data.get("recent_changes", [])
+    if changes:
+        lines.append(f"\nRecent Activity ({len(changes)} events, last 24h):")
+        for ch in changes[:10]:
+            ts = ch.get("detected_at", 0)
+            t_str = datetime.datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "?"
+            lines.append(
+                f"  {t_str} {ch.get('action', '?').upper()} {ch.get('coin', '?')} "
+                f"{ch.get('side', '')} ${ch.get('size_usd', 0):,.0f}"
+            )
+
+    # Trade history
+    trades = data.get("trades", [])
+    if trades:
+        lines.append(f"\nTrade History ({len(trades)} recent trades):")
+        for t in trades[:top_n or 15]:
+            ts = t.get("exit_time") or t.get("entry_time", 0)
+            d_str = datetime.datetime.fromtimestamp(ts).strftime("%m/%d %H:%M") if ts else "?"
+            pnl = t.get("pnl_usd", 0)
+            hold = t.get("hold_hours", 0)
+            hold_str = f"{hold * 60:.0f}m" if hold < 1 else f"{hold:.1f}h"
+            result = "WIN" if pnl > 0 else "LOSS"
+            lines.append(
+                f"  {d_str} {t.get('coin', '?')} {t.get('side', '?')} "
+                f"${t.get('size_usd', 0):,.0f} entry ${t.get('entry_px', 0):,.2f} "
+                f"exit ${t.get('exit_px', 0):,.2f} PnL ${pnl:+,.0f} ({hold_str}) {result}"
+            )
+    else:
+        lines.append("\nNo trade history (computed on next profile refresh).")
+
+    return "\n".join(lines)
 
 
 def register(registry) -> None:

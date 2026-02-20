@@ -161,7 +161,35 @@ class Database:
         """Create tables and indexes."""
         assert self._conn is not None, "Call connect() first"
         self._conn.executescript(SCHEMA)
+        self._run_migrations()
         log.info("Database schema initialized at %s", self._path)
+
+    def _run_migrations(self):
+        """Idempotent migrations — safe to run repeatedly."""
+        c = self._conn
+        assert c is not None
+
+        # v1: Add notes/tags columns to watched_wallets
+        for col, default in [("notes", "''"), ("tags", "''")]:
+            try:
+                c.execute(f"ALTER TABLE watched_wallets ADD COLUMN {col} TEXT DEFAULT {default}")
+            except Exception:
+                pass  # column already exists
+
+        # v2: wallet_alerts table
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS wallet_alerts (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                address    TEXT NOT NULL,
+                alert_type TEXT NOT NULL,
+                min_size_usd REAL DEFAULT 0,
+                coins      TEXT DEFAULT '',
+                enabled    INTEGER NOT NULL DEFAULT 1,
+                created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_wallet_alerts_address ON wallet_alerts(address);
+            CREATE INDEX IF NOT EXISTS idx_wallet_alerts_enabled ON wallet_alerts(enabled);
+        """)
 
     @property
     def conn(self) -> sqlite3.Connection:

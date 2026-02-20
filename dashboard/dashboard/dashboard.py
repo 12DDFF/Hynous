@@ -289,6 +289,9 @@ async def _data_proxy(request):
                 resp = await client.post(url, json=body)
             elif method == "DELETE":
                 resp = await client.delete(url)
+            elif method == "PATCH":
+                body = await request.json()
+                resp = await client.patch(url, json=body)
             else:
                 resp = await client.get(url)
             return JSONResponse(resp.json(), status_code=resp.status_code)
@@ -296,7 +299,36 @@ async def _data_proxy(request):
         return JSONResponse({"error": str(e)}, status_code=502)
 
 
-app._api.add_route("/api/data/{path:path}", _data_proxy, methods=["GET", "POST", "DELETE"])
+app._api.add_route("/api/data/{path:path}", _data_proxy, methods=["GET", "POST", "DELETE", "PATCH"])
+
+
+async def _agent_message(request):
+    """POST /api/agent-message — queue a message for the agent (wake via daemon)."""
+    import asyncio
+    from starlette.responses import JSONResponse
+    try:
+        body = await request.json()
+        message = body.get("message", "").strip()
+        if not message:
+            return JSONResponse({"error": "Empty message"}, status_code=400)
+
+        # Fire-and-forget: wake agent in background thread
+        def _do_wake():
+            try:
+                from .state import _get_agent
+                agent = _get_agent()
+                if agent and hasattr(agent, "daemon") and agent.daemon:
+                    agent.daemon._wake_agent(message)
+            except Exception:
+                pass
+
+        asyncio.get_event_loop().run_in_executor(None, _do_wake)
+        return JSONResponse({"status": "queued"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/agent-message", _agent_message, methods=["POST"])
 
 
 async def _data_health_proxy(request):

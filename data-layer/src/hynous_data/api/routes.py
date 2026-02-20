@@ -91,12 +91,15 @@ def create_router(c: dict) -> APIRouter:
         style: str = Query(""),
         exclude_bots: bool = Query(False),
         min_trades: int = Query(0, ge=0),
+        min_equity: float = Query(0, ge=0),
+        max_hold_hours: float = Query(0, ge=0),
     ):
         if "smart_money" not in c:
             return JSONResponse(status_code=503, content={"error": "Smart money engine not available"})
         engine = c["smart_money"]
         # Fetch extra to compensate for post-filtering
-        data = engine.get_rankings(top_n * 3 if (min_win_rate or style or exclude_bots or min_trades) else top_n)
+        has_filters = min_win_rate or style or exclude_bots or min_trades or min_equity or max_hold_hours
+        data = engine.get_rankings(top_n * 3 if has_filters else top_n)
         rankings = data.get("rankings") or []
 
         style_set = {s.strip() for s in style.split(",") if s.strip()} if style else set()
@@ -106,6 +109,8 @@ def create_router(c: dict) -> APIRouter:
             and (not style_set or r.get("style", "") in style_set)
             and (not exclude_bots or not r.get("is_bot"))
             and (not min_trades or (r.get("trade_count") or 0) >= min_trades)
+            and (not min_equity or (r.get("equity") or 0) >= min_equity)
+            and (not max_hold_hours or (r.get("avg_hold_hours") or 999) <= max_hold_hours)
         ][:top_n]
 
         data["rankings"] = filtered
@@ -205,5 +210,88 @@ def create_router(c: dict) -> APIRouter:
         address = address.strip().lower()
         profiler.unwatch(address)
         return {"status": "ok", "address": address}
+
+    @router.patch("/v1/smart-money/watch/{address}")
+    def sm_update_wallet(address: str, body: dict = Body(...)):
+        """Update label/notes/tags on a tracked wallet."""
+        db = c["db"]
+        address = address.strip().lower()
+        row = db.conn.execute(
+            "SELECT address FROM watched_wallets WHERE address = ? AND is_active = 1",
+            (address,),
+        ).fetchone()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Wallet not tracked"})
+
+        updates = []
+        params = []
+        for field in ("label", "notes", "tags"):
+            if field in body:
+                updates.append(f"{field} = ?")
+                params.append(body[field])
+        if not updates:
+            return JSONResponse(status_code=400, content={"error": "No fields to update"})
+
+        params.append(address)
+        with db.write_lock:
+            db.conn.execute(
+                f"UPDATE watched_wallets SET {', '.join(updates)} WHERE address = ?",
+                params,
+            )
+            db.conn.commit()
+        return {"status": "ok", "address": address}
+
+    @router.post("/v1/smart-money/wallet/{address}/alerts")
+    def sm_create_alert(address: str, body: dict = Body(...)):
+        """Create a per-wallet alert."""
+        db = c["db"]
+        address = address.strip().lower()
+        alert_type = body.get("alert_type", "")
+        valid_types = ("any_trade", "entry_only", "exit_only", "size_above", "coin_specific")
+        if alert_type not in valid_types:
+            return JSONResponse(status_code=400, content={"error": f"Invalid alert_type. Use: {', '.join(valid_types)}"})
+
+        min_size_usd = body.get("min_size_usd", 0)
+        coins = body.get("coins", "")
+        now = time.time()
+
+        with db.write_lock:
+            cur = db.conn.execute(
+                """INSERT INTO wallet_alerts (address, alert_type, min_size_usd, coins, enabled, created_at)
+                   VALUES (?, ?, ?, ?, 1, ?)""",
+                (address, alert_type, min_size_usd, coins, now),
+            )
+            db.conn.commit()
+            alert_id = cur.lastrowid
+        return {"status": "ok", "id": alert_id, "address": address, "alert_type": alert_type}
+
+    @router.get("/v1/smart-money/wallet/{address}/alerts")
+    def sm_list_alerts(address: str):
+        """List active alerts for an address."""
+        db = c["db"]
+        address = address.strip().lower()
+        rows = db.conn.execute(
+            "SELECT id, alert_type, min_size_usd, coins, enabled, created_at FROM wallet_alerts WHERE address = ? AND enabled = 1",
+            (address,),
+        ).fetchall()
+        return {"alerts": [dict(r) for r in rows], "address": address}
+
+    @router.delete("/v1/smart-money/alert/{alert_id}")
+    def sm_delete_alert(alert_id: int):
+        """Delete an alert by ID."""
+        db = c["db"]
+        with db.write_lock:
+            db.conn.execute("DELETE FROM wallet_alerts WHERE id = ?", (alert_id,))
+            db.conn.commit()
+        return {"status": "ok", "id": alert_id}
+
+    @router.get("/v1/smart-money/alerts/active")
+    def sm_active_alerts():
+        """All active alerts, batch (for scanner)."""
+        db = c["db"]
+        rows = db.conn.execute(
+            "SELECT id, address, alert_type, min_size_usd, coins, created_at FROM wallet_alerts WHERE enabled = 1",
+        ).fetchall()
+        return {"alerts": [dict(r) for r in rows]}
 
     return router

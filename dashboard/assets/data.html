@@ -208,6 +208,74 @@
     cursor: pointer; white-space: nowrap;
   }
   .sm-track-all-btn:hover { background: rgba(99,102,241,0.1); }
+  .sm-batch-bar {
+    display: flex; gap: 6px; padding: 6px 10px; align-items: center;
+    background: rgba(99,102,241,0.08); border-bottom: 1px solid #262626;
+  }
+  .sm-batch-bar button {
+    padding: 4px 10px; border: 1px solid #6366f1; background: transparent;
+    color: #818cf8; font-size: 0.62rem; font-weight: 500; border-radius: 5px;
+    cursor: pointer; white-space: nowrap; font-family: inherit;
+  }
+  .sm-batch-bar button:hover { background: rgba(99,102,241,0.15); }
+  .sm-batch-bar button.primary { background: #6366f1; color: #fff; border-color: #6366f1; }
+  .sm-batch-bar button.primary:hover { opacity: 0.85; }
+  .sm-batch-bar span { font-size: 0.62rem; color: #a3a3a3; }
+  .sm-cb { width: 13px; height: 13px; accent-color: #6366f1; cursor: pointer; }
+  .sm-notes-icon { color: #525252; font-size: 0.6rem; cursor: help; }
+  .sm-notes-icon.has { color: #eab308; }
+  .sm-tag-pill {
+    display: inline-block; padding: 0 5px; border-radius: 6px;
+    font-size: 0.52rem; font-weight: 500; background: rgba(99,102,241,0.12);
+    color: #818cf8; margin-left: 3px; line-height: 1.5;
+  }
+  .sm-inline-edit {
+    background: transparent; border: 1px solid transparent; color: #fafafa;
+    font-size: 0.7rem; padding: 2px 4px; border-radius: 4px; width: 120px;
+    font-family: inherit; cursor: text;
+  }
+  .sm-inline-edit:hover { border-color: #262626; }
+  .sm-inline-edit:focus { outline: none; border-color: #6366f1; background: #0a0a0a; }
+  .sm-notes-area {
+    width: 100%; background: #0a0a0a; border: 1px solid #262626; border-radius: 6px;
+    color: #d4d4d4; font-size: 0.68rem; padding: 6px 8px; resize: vertical;
+    min-height: 40px; max-height: 120px; font-family: inherit;
+  }
+  .sm-notes-area:focus { outline: none; border-color: #6366f1; }
+  .sm-alert-row {
+    display: flex; gap: 6px; align-items: center; padding: 4px 0;
+    font-size: 0.65rem; color: #a3a3a3;
+  }
+  .sm-alert-row select, .sm-alert-row input {
+    font-size: 0.63rem; padding: 3px 6px; background: #0a0a0a;
+    border: 1px solid #262626; border-radius: 5px; color: #fafafa;
+    font-family: inherit;
+  }
+  .sm-alert-row input { width: 80px; }
+  .sm-alert-row button {
+    padding: 3px 8px; border: 1px solid #262626; background: transparent;
+    color: #a3a3a3; font-size: 0.6rem; border-radius: 4px; cursor: pointer;
+    font-family: inherit;
+  }
+  .sm-alert-row button.add { border-color: #6366f1; color: #818cf8; }
+  .sm-alert-row button.del { border-color: #ef4444; color: #ef4444; }
+  .sm-send-agent-btn {
+    padding: 5px 12px; background: transparent; border: 1px solid #22c55e;
+    color: #22c55e; font-size: 0.65rem; font-weight: 500; border-radius: 6px;
+    cursor: pointer; font-family: inherit;
+  }
+  .sm-send-agent-btn:hover { background: rgba(34,197,94,0.1); }
+  .sm-toast {
+    position: fixed; bottom: 20px; right: 20px; background: #1a1a1a;
+    border: 1px solid #262626; border-radius: 8px; padding: 10px 16px;
+    color: #fafafa; font-size: 0.72rem; z-index: 9999;
+    animation: fade-slide-in 0.3s ease-out;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  @keyframes fade-slide-in {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
 
   /* Tables */
   .data-table { width: 100%; border-collapse: collapse; font-size: 0.7rem; }
@@ -1265,10 +1333,20 @@
   let smPrevTab = 'leaderboard';
   let smProfileAddr = null;
   let smLeaderboardCache = null;
+  let smChecked = new Set();  // checked addresses for batch actions
+
+  // Toast system
+  function smShowToast(msg) {
+    const el = document.createElement('div');
+    el.className = 'sm-toast';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.3s'; setTimeout(() => el.remove(), 300); }, 3000);
+  }
 
   // Filter state — persisted to localStorage
   const SM_FILTER_KEY = 'hynous_sm_filters';
-  let smFilters = { min_win_rate: 0, style: '', min_trades: 0, exclude_bots: false };
+  let smFilters = { min_win_rate: 0, style: '', min_trades: 0, exclude_bots: false, min_equity: 0, max_hold_hours: 0 };
   try { Object.assign(smFilters, JSON.parse(localStorage.getItem(SM_FILTER_KEY) || '{}')); } catch(e) {}
   function smSaveFilters() { localStorage.setItem(SM_FILTER_KEY, JSON.stringify(smFilters)); }
 
@@ -1341,6 +1419,19 @@
         '<option value="50"' + (f.min_trades==50?' selected':'') + '>50+</option>' +
         '<option value="100"' + (f.min_trades==100?' selected':'') + '>100+</option>' +
       '</select>' +
+      '<select id="smf-equity" onchange="smFilters.min_equity=parseFloat(this.value);smSaveFilters();updateSM()">' +
+        '<option value="0"' + (f.min_equity==0?' selected':'') + '>Equity: Any</option>' +
+        '<option value="10000"' + (f.min_equity==10000?' selected':'') + '>$10k+</option>' +
+        '<option value="50000"' + (f.min_equity==50000?' selected':'') + '>$50k+</option>' +
+        '<option value="100000"' + (f.min_equity==100000?' selected':'') + '>$100k+</option>' +
+        '<option value="500000"' + (f.min_equity==500000?' selected':'') + '>$500k+</option>' +
+      '</select>' +
+      '<select id="smf-hold" onchange="smFilters.max_hold_hours=parseFloat(this.value);smSaveFilters();updateSM()">' +
+        '<option value="0"' + (f.max_hold_hours==0?' selected':'') + '>Hold: Any</option>' +
+        '<option value="1"' + (f.max_hold_hours==1?' selected':'') + '>&lt;1h</option>' +
+        '<option value="4"' + (f.max_hold_hours==4?' selected':'') + '>&lt;4h</option>' +
+        '<option value="24"' + (f.max_hold_hours==24?' selected':'') + '>&lt;24h</option>' +
+      '</select>' +
       '<label><input type="checkbox" id="smf-bots"' + (f.exclude_bots?' checked':'') +
         ' onchange="smFilters.exclude_bots=this.checked;smSaveFilters();updateSM()"> Hide Bots</label>' +
       '<span class="sm-filter-count">' + count + ' matching</span>' +
@@ -1355,15 +1446,30 @@
     if (f.style) url += '&style=' + f.style;
     if (f.exclude_bots) url += '&exclude_bots=true';
     if (f.min_trades) url += '&min_trades=' + f.min_trades;
+    if (f.min_equity) url += '&min_equity=' + f.min_equity;
+    if (f.max_hold_hours) url += '&max_hold_hours=' + f.max_hold_hours;
 
     const data = await api(url);
     const t = (data && (data.rankings || data.traders)) || [];
     smLeaderboardCache = t;
 
     let html = smFilterBar(t.length);
+
+    // Batch action bar (visible when any checked)
+    if (smChecked.size > 0) {
+      html += '<div class="sm-batch-bar">' +
+        '<span>' + smChecked.size + ' selected</span>' +
+        '<button class="primary" onclick="smBatchTrack()">Track Selected</button>' +
+        '<button onclick="smBatchAnalyze()">Analyze Selected</button>' +
+        '<button onclick="smChecked.clear();updateSM()">Clear</button>' +
+      '</div>';
+    }
+
     if (!t.length) { html += '<div class="empty">No smart money data matching filters</div>'; el.innerHTML = html; return; }
 
-    html += '<table class="data-table"><thead><tr><th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>WR</th><th>Trades</th><th>Style</th><th>Pos</th></tr></thead><tbody>';
+    html += '<table class="data-table"><thead><tr>' +
+      '<th><input type="checkbox" class="sm-cb" onchange="smToggleAll(this.checked)"></th>' +
+      '<th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>WR</th><th>Trades</th><th>Style</th><th>Pos</th></tr></thead><tbody>';
     t.forEach((tr, i) => {
       const pnl = tr.pnl_24h || 0;
       const c = pnl >= 0 ? '#22c55e' : '#ef4444';
@@ -1371,18 +1477,63 @@
       const posCount = Array.isArray(tr.positions) ? tr.positions.length : (tr.positions || 0);
       const wr = tr.win_rate != null ? (tr.win_rate * 100).toFixed(0) + '%' : '—';
       const tc = tr.trade_count != null ? tr.trade_count : '—';
-      html += '<tr class="sm-clickable" onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' +
-        '<td style="color:#525252">' + (i+1) + '</td><td>' + addr(tr.address) + '</td>' +
-        '<td style="color:' + c + '">' + s + $(pnl) + '</td>' +
-        '<td>' + $(tr.equity || 0) + '</td>' +
-        '<td>' + wr + '</td>' +
-        '<td>' + tc + '</td>' +
-        '<td>' + smStyleBadge(tr.style || '') + '</td>' +
-        '<td>' + posCount + '</td></tr>';
+      const chk = smChecked.has(tr.address) ? ' checked' : '';
+      html += '<tr class="sm-clickable">' +
+        '<td onclick="event.stopPropagation()"><input type="checkbox" class="sm-cb" data-addr="' + tr.address + '"' + chk +
+        ' onchange="smToggleCheck(this.dataset.addr,this.checked)"></td>' +
+        '<td style="color:#525252" onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' + (i+1) + '</td>' +
+        '<td onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' + addr(tr.address) + '</td>' +
+        '<td style="color:' + c + '" onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' + s + $(pnl) + '</td>' +
+        '<td onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' + $(tr.equity || 0) + '</td>' +
+        '<td onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' + wr + '</td>' +
+        '<td onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' + tc + '</td>' +
+        '<td onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' + smStyleBadge(tr.style || '') + '</td>' +
+        '<td onclick="smShowTab(\'profile\',\'' + tr.address + '\')">' + posCount + '</td></tr>';
     });
     html += '</tbody></table>';
     el.innerHTML = html;
     document.getElementById('sm-badge').textContent = t.length + ' traders';
+  }
+
+  function smToggleCheck(addr, checked) {
+    if (checked) smChecked.add(addr); else smChecked.delete(addr);
+    // Re-render batch bar without full reload
+    updateSM();
+  }
+
+  function smToggleAll(checked) {
+    if (!smLeaderboardCache) return;
+    smLeaderboardCache.forEach(tr => {
+      if (checked) smChecked.add(tr.address); else smChecked.delete(tr.address);
+    });
+    updateSM();
+  }
+
+  async function smBatchTrack() {
+    const addrs = [...smChecked];
+    for (const a of addrs) {
+      await fetch(B + '/api/data/smart-money/watch', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({address: a.toLowerCase(), label: ''})
+      });
+    }
+    smShowToast('Tracked ' + addrs.length + ' wallets');
+    smChecked.clear();
+    smShowTab('tracked');
+  }
+
+  async function smBatchAnalyze() {
+    const addrs = [...smChecked];
+    const addrList = addrs.map(a => a.substring(0,10) + '...').join(', ');
+    const msg = '[Dashboard Request] Analyze these wallets and compare them: ' + addrs.join(', ') +
+      '. For each wallet use analyze_wallet, then provide a comparative summary.';
+    await fetch(B + '/api/agent-message', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({message: msg})
+    });
+    smShowToast('Queued analysis of ' + addrs.length + ' wallets — check Chat tab');
+    smChecked.clear();
+    updateSM();
   }
 
   async function smTrackAllVisible() {
@@ -1393,6 +1544,7 @@
         body: JSON.stringify({address: tr.address.toLowerCase(), label: ''})
       });
     }
+    smShowToast('Tracked ' + smLeaderboardCache.length + ' wallets');
     smShowTab('tracked');
   }
 
@@ -1406,7 +1558,7 @@
       return;
     }
 
-    let html = '<table class="data-table"><thead><tr><th></th><th>Address</th><th>Label</th><th>WR</th><th>Equity</th><th>Style</th><th>Pos</th><th></th></tr></thead><tbody>';
+    let html = '<table class="data-table"><thead><tr><th></th><th>Address</th><th>Label</th><th>WR</th><th>Equity</th><th>Style</th><th>Pos</th><th></th><th></th></tr></thead><tbody>';
     wallets.forEach(w => {
       const hasPos = (w.positions_count || 0) > 0;
       const dot = '<span class="sm-pos-dot ' + (hasPos ? 'active' : 'idle') + '"></span>';
@@ -1415,14 +1567,25 @@
       const isAuto = (w.label || '').startsWith('auto');
       const autoBadge = isAuto ? ' <span class="sm-badge-pill auto">AUTO</span>' : '';
       const labelText = isAuto ? (w.label || '').replace(/^auto\s*\|\s*/, '') : (w.label || '');
+      // Notes icon
+      const hasNotes = !!(w.notes || '').trim();
+      const notesIcon = '<span class="sm-notes-icon' + (hasNotes ? ' has' : '') + '" title="' +
+        (hasNotes ? (w.notes||'').replace(/"/g,'&quot;').substring(0,80) : 'No notes') + '">&#9998;</span>';
+      // Tags as pills
+      const tagsPills = (w.tags || '').split(',').filter(t=>t.trim()).map(t =>
+        '<span class="sm-tag-pill">' + t.trim() + '</span>').join('');
+      // Inline label click → edit
+      const labelCell = '<span class="sm-inline-label" onclick="event.stopPropagation();smInlineRename(\'' + w.address + '\',this)">' +
+        (labelText || '<span style="color:#404040">click to label</span>') + '</span>' + tagsPills;
       html += '<tr class="sm-clickable" onclick="smShowTab(\'profile\',\'' + w.address + '\')">' +
         '<td>' + dot + '</td>' +
         '<td>' + addr(w.address) + autoBadge + '</td>' +
-        '<td style="color:#737373">' + labelText + '</td>' +
+        '<td style="color:#737373">' + labelCell + '</td>' +
         '<td>' + wr + '</td>' +
         '<td>' + eq + '</td>' +
         '<td>' + smStyleBadge(w.style || '') + '</td>' +
         '<td>' + (w.positions_count || 0) + '</td>' +
+        '<td>' + notesIcon + '</td>' +
         '<td><button class="sm-untrack-btn" onclick="event.stopPropagation();smUntrack(\'' + w.address + '\')">×</button></td></tr>';
     });
     html += '</tbody></table>';
@@ -1430,6 +1593,24 @@
     el.innerHTML = html;
     smBindTrackInput();
     document.getElementById('sm-badge').textContent = wallets.length + ' tracked';
+  }
+
+  function smInlineRename(address, spanEl) {
+    const current = spanEl.textContent.trim();
+    const input = document.createElement('input');
+    input.className = 'sm-inline-edit';
+    input.value = current === 'click to label' ? '' : current;
+    input.onblur = async () => {
+      const val = input.value.trim();
+      await fetch(B + '/api/data/smart-money/watch/' + address, {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({label: val})
+      });
+      updateSM();
+    };
+    input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') updateSM(); };
+    spanEl.replaceWith(input);
+    input.focus();
   }
 
   function smTrackInput() {
@@ -1464,11 +1645,14 @@
     if (!data || data.error) { el.innerHTML = '<div class="empty">' + (data && data.error || 'Failed to load profile') + '</div>'; return; }
 
     let html = '<div style="padding:10px 12px">';
-    // Header
-    const label = data.label ? ' "' + data.label + '"' : '';
+    // Header with inline editable label
     const botTag = data.is_bot ? ' <span class="sm-badge-pill bot">BOT</span>' : '';
-    html += '<div style="font-size:0.82rem;font-weight:600;color:#fafafa;margin-bottom:2px">' +
-      addr(address) + label + ' ' + smStyleBadge(data.style || '') + botTag + '</div>';
+    html += '<div style="font-size:0.82rem;font-weight:600;color:#fafafa;margin-bottom:2px;display:flex;align-items:center;gap:6px">' +
+      addr(address) + ' ' + smStyleBadge(data.style || '') + botTag +
+      ' <input class="sm-inline-edit" id="sm-prof-label" value="' + (data.label||'').replace(/"/g,'&quot;') +
+      '" placeholder="Label..." onblur="smSaveProfileField(\'' + address + '\',\'label\',this.value)"' +
+      ' onkeydown="if(event.key===\'Enter\')this.blur()">' +
+      '</div>';
 
     // Stats row
     html += '<div class="sm-stat-row">';
@@ -1484,6 +1668,46 @@
       html += '<div class="sm-stat"><div class="sm-stat-val">' + s.v + '</div><div class="sm-stat-lbl">' + s.l + '</div></div>';
     });
     html += '</div>';
+
+    // Notes + Tags (only if watched)
+    if (data.is_watched) {
+      html += '<div style="margin:6px 0;display:flex;gap:8px;align-items:flex-start">';
+      // Notes textarea
+      html += '<div style="flex:1"><div style="font-size:0.6rem;color:#525252;margin-bottom:2px">NOTES</div>' +
+        '<textarea class="sm-notes-area" id="sm-prof-notes" placeholder="Add notes..."' +
+        ' onblur="smSaveProfileField(\'' + address + '\',\'notes\',this.value)">' +
+        (data.notes||'').replace(/</g,'&lt;') + '</textarea></div>';
+      // Tags
+      html += '<div style="flex:1"><div style="font-size:0.6rem;color:#525252;margin-bottom:2px">TAGS (comma-separated)</div>' +
+        '<input class="sm-inline-edit" id="sm-prof-tags" style="width:100%" value="' + (data.tags||'').replace(/"/g,'&quot;') +
+        '" placeholder="tag1, tag2, ..." onblur="smSaveProfileField(\'' + address + '\',\'tags\',this.value)"' +
+        ' onkeydown="if(event.key===\'Enter\')this.blur()"></div>';
+      html += '</div>';
+
+      // Custom Alerts section
+      const alerts = data.alerts || [];
+      html += '<div style="margin-top:8px"><div style="font-size:0.6rem;color:#525252;margin-bottom:4px">CUSTOM ALERTS (' + alerts.length + ')</div>';
+      alerts.forEach(a => {
+        const coins = a.coins ? ' coins=' + a.coins : '';
+        const size = a.min_size_usd ? ' min=$' + a.min_size_usd.toLocaleString() : '';
+        html += '<div class="sm-alert-row">' +
+          '<span>#' + a.id + ' ' + a.alert_type + size + coins + '</span>' +
+          '<button class="del" onclick="smDeleteAlert(' + a.id + ',\'' + address + '\')">Delete</button></div>';
+      });
+      // Add alert row
+      html += '<div class="sm-alert-row">' +
+        '<select id="sm-new-alert-type"><option value="any_trade">Any Trade</option>' +
+        '<option value="entry_only">Entry Only</option><option value="exit_only">Exit Only</option>' +
+        '<option value="size_above">Size Above</option><option value="coin_specific">Coin Specific</option></select>' +
+        '<input id="sm-new-alert-size" placeholder="Min $" type="number">' +
+        '<input id="sm-new-alert-coins" placeholder="BTC,ETH..." style="width:100px">' +
+        '<button class="add" onclick="smAddAlert(\'' + address + '\')">Add</button></div>';
+      html += '</div>';
+
+      // Send to Agent button
+      html += '<div style="margin-top:8px;display:flex;gap:6px">' +
+        '<button class="sm-send-agent-btn" onclick="smSendToAgent(\'' + address + '\')">Send to Agent for Analysis</button></div>';
+    }
 
     // Current positions
     const pos = data.positions || [];
@@ -1561,11 +1785,49 @@
     el.innerHTML = html;
   }
 
+  async function smSaveProfileField(address, field, value) {
+    const body = {};
+    body[field] = value.trim();
+    await fetch(B + '/api/data/smart-money/watch/' + address, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+  }
+
+  async function smAddAlert(address) {
+    const type = document.getElementById('sm-new-alert-type').value;
+    const size = parseFloat(document.getElementById('sm-new-alert-size').value) || 0;
+    const coins = document.getElementById('sm-new-alert-coins').value.trim();
+    await fetch(B + '/api/data/smart-money/wallet/' + address + '/alerts', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({alert_type: type, min_size_usd: size, coins: coins})
+    });
+    smShowToast('Alert created: ' + type);
+    smShowTab('profile', address);
+  }
+
+  async function smDeleteAlert(alertId, address) {
+    await fetch(B + '/api/data/smart-money/alert/' + alertId, {method: 'DELETE'});
+    smShowToast('Alert #' + alertId + ' deleted');
+    smShowTab('profile', address);
+  }
+
+  async function smSendToAgent(address) {
+    const msg = '[Dashboard Request] Deep-analyze wallet ' + address +
+      '. Use analyze_wallet action. After analysis, offer to relabel and set custom alerts.';
+    await fetch(B + '/api/agent-message', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({message: msg})
+    });
+    smShowToast('Queued for agent analysis — check Chat tab');
+  }
+
   async function smTrackFromProfile(address) {
     await fetch(B + '/api/data/smart-money/watch', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({address: address.toLowerCase(), label: ''})
     });
+    smShowToast('Tracking wallet');
     smShowTab('profile', address);
   }
 

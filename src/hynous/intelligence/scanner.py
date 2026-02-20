@@ -400,6 +400,8 @@ class MarketScanner:
                     ttl = 7200   # 2h — HLP doesn't flip often
                 elif a.type == "whale_surge":
                     ttl = 3600   # 1h — whale positions shift slowly
+                elif a.fingerprint.startswith("walert_"):
+                    ttl = 1800   # 30min — per-wallet custom alerts
                 elif a.type in ("sm_entry", "sm_exit"):
                     ttl = 3600   # 1h — one alert per address+coin combo
                 elif a.category == "news":
@@ -1467,6 +1469,7 @@ class MarketScanner:
         Rate-limited: runs every 5th scan cycle (~5min), same as data layer.
         Graceful — returns [] if service is down.
         Respects SM settings from TradingSettings (copy alerts, exit alerts, thresholds).
+        Also evaluates per-wallet custom alerts (bypass global thresholds).
         """
         self._sm_scan_counter = getattr(self, "_sm_scan_counter", 0) + 1
         if self._sm_scan_counter % 5 != 3:  # offset from data_layer (==1) to avoid burst
@@ -1489,9 +1492,6 @@ class MarketScanner:
             min_wr = 0.55
             min_size = 50000
 
-        if not copy_alerts and not exit_alerts:
-            return []
-
         try:
             from ..data.providers.hynous_data import get_client
             client = get_client()
@@ -1504,6 +1504,21 @@ class MarketScanner:
         results = []
         now = time.time()
 
+        # --- Per-wallet custom alerts cache (60s TTL) ---
+        alerts_by_addr: dict[str, list[dict]] = {}
+        cache_age = now - getattr(self, "_wallet_alerts_cache_ts", 0)
+        if cache_age > 60 or not hasattr(self, "_wallet_alerts_cache"):
+            try:
+                alert_data = client.sm_active_alerts()
+                self._wallet_alerts_cache = alert_data.get("alerts", []) if alert_data else []
+                self._wallet_alerts_cache_ts = now
+            except Exception:
+                self._wallet_alerts_cache = getattr(self, "_wallet_alerts_cache", [])
+
+        for a in self._wallet_alerts_cache:
+            addr = a.get("address", "")
+            alerts_by_addr.setdefault(addr, []).append(a)
+
         try:
             data = client.sm_changes(minutes=10)
             if not data:
@@ -1512,34 +1527,79 @@ class MarketScanner:
             changes = data.get("changes", [])
             for ch in changes:
                 action = ch.get("action", "")
+                if action not in ("entry", "flip", "exit"):
+                    continue
+
+                addr_full = ch.get("address", "")
+                addr = addr_full[:10]
+                coin = ch.get("coin", "")
+                side = ch.get("side", "")
+                size_usd = ch.get("size_usd", 0)
+                win_rate = ch.get("win_rate")
+                label = ch.get("label", "")
+                label_str = f' "{label}"' if label else ""
+
+                # --- Check per-wallet custom alerts (bypass global thresholds) ---
+                wallet_alerts = alerts_by_addr.get(addr_full, [])
+                for wa in wallet_alerts:
+                    at = wa.get("alert_type", "")
+                    fired = False
+
+                    if at == "any_trade":
+                        fired = True
+                    elif at == "entry_only" and action in ("entry", "flip"):
+                        fired = True
+                    elif at == "exit_only" and action == "exit":
+                        fired = True
+                    elif at == "size_above" and size_usd >= wa.get("min_size_usd", 0):
+                        fired = True
+                    elif at == "coin_specific":
+                        alert_coins = {c.strip().upper() for c in (wa.get("coins", "") or "").split(",") if c.strip()}
+                        if coin.upper() in alert_coins:
+                            fired = True
+
+                    if fired:
+                        wr_str = f" ({win_rate:.0%} WR)" if win_rate is not None else ""
+                        event_type = "sm_exit" if action == "exit" else "sm_entry"
+                        if action == "exit":
+                            headline = f"[Custom Alert] {addr}...{label_str}{wr_str} exited {coin}"
+                        else:
+                            headline = f"[Custom Alert] {addr}...{label_str}{wr_str} entered {coin} {side} ${size_usd:,.0f}"
+
+                        results.append(AnomalyEvent(
+                            type=event_type,
+                            symbol=coin,
+                            severity=0.75,
+                            headline=headline,
+                            detail=(
+                                f"Custom alert #{wa.get('id')} ({at}) | "
+                                f"Address: {addr}...{label_str} | "
+                                f"Action: {action} {side} ${size_usd:,.0f}"
+                            ),
+                            fingerprint=f"walert_{wa.get('id')}:{coin}",
+                            detected_at=now,
+                            category="macro",
+                        ))
+                        break  # One alert per change per wallet is enough
+
+                # --- Global threshold check (existing logic) ---
                 if action in ("entry", "flip"):
                     if not copy_alerts:
                         continue
                 elif action == "exit":
                     if not exit_alerts:
                         continue
-                    coin = ch.get("coin", "")
                     if coin not in self.position_symbols:
                         continue
                 else:
                     continue
 
-                win_rate = ch.get("win_rate")
                 if win_rate is None or win_rate < min_wr:
                     continue
-
-                size_usd = ch.get("size_usd", 0)
                 if size_usd < min_size:
                     continue
-
                 if ch.get("is_bot", 0):
                     continue
-
-                addr = ch.get("address", "")[:10]
-                coin = ch.get("coin", "")
-                side = ch.get("side", "")
-                label = ch.get("label", "")
-                label_str = f' "{label}"' if label else ""
 
                 if action == "exit":
                     headline = f"Smart money {addr}...{label_str} ({win_rate:.0%} WR) exited {coin}"

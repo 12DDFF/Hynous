@@ -445,12 +445,13 @@ class WalletProfiler:
         log.info("Unwatched wallet %s", address[:10])
 
     def get_watchlist(self) -> list[dict]:
-        """Get all active watched wallets with profile data + position counts."""
+        """Get all active watched wallets with profile data + position counts + notes/tags."""
         conn = self._db.conn
         rows = conn.execute(
             """
             SELECT
                 w.address, w.label, w.added_at,
+                w.notes, w.tags,
                 p.win_rate, p.trade_count, p.profit_factor,
                 p.avg_hold_hours, p.style, p.is_bot, p.equity,
                 p.computed_at,
@@ -562,12 +563,21 @@ class WalletProfiler:
         ).fetchall()
         profile_data["trades"] = [dict(t) for t in trades]
 
-        # Check if watched
+        # Check if watched + get notes/tags
         watched = conn.execute(
-            "SELECT label FROM watched_wallets WHERE address = ? AND is_active = 1",
+            "SELECT label, notes, tags FROM watched_wallets WHERE address = ? AND is_active = 1",
             (address,),
         ).fetchone()
         profile_data["is_watched"] = watched is not None
         profile_data["label"] = watched["label"] if watched else ""
+        profile_data["notes"] = watched["notes"] if watched else ""
+        profile_data["tags"] = watched["tags"] if watched else ""
+
+        # Active alerts
+        alerts = conn.execute(
+            "SELECT id, alert_type, min_size_usd, coins, created_at FROM wallet_alerts WHERE address = ? AND enabled = 1",
+            (address,),
+        ).fetchall()
+        profile_data["alerts"] = [dict(a) for a in alerts]
 
         return profile_data

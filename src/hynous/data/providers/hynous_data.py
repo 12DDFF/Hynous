@@ -105,6 +105,31 @@ class HynousDataClient:
             log.debug("hynous-data request failed: %s", path, exc_info=True)
             return None
 
+    def _patch(self, path: str, json_body: dict) -> dict | None:
+        """PATCH request with timeout and graceful failure."""
+        try:
+            with self._lock:
+                resp = self._session.patch(
+                    f"{self.base_url}{path}",
+                    json=json_body,
+                    timeout=self._timeout,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            self._available = True
+            return data
+        except (requests.ConnectionError, requests.Timeout):
+            if self._available:
+                log.warning("hynous-data unavailable at %s", self.base_url)
+            self._available = False
+            return None
+        except requests.HTTPError as e:
+            log.warning("hynous-data HTTP error: %s %s", e.response.status_code, path)
+            return None
+        except Exception:
+            log.debug("hynous-data request failed: %s", path, exc_info=True)
+            return None
+
     def _delete(self, path: str) -> dict | None:
         """DELETE request with timeout and graceful failure."""
         try:
@@ -282,6 +307,35 @@ class HynousDataClient:
 
     def sm_unwatch(self, address: str) -> dict | None:
         return self._delete(f"/v1/smart-money/watch/{address}")
+
+    def sm_update(self, address: str, label: str | None = None,
+                  notes: str | None = None, tags: str | None = None) -> dict | None:
+        """Update label/notes/tags on a tracked wallet."""
+        body: dict = {}
+        if label is not None:
+            body["label"] = label
+        if notes is not None:
+            body["notes"] = notes
+        if tags is not None:
+            body["tags"] = tags
+        return self._patch(f"/v1/smart-money/watch/{address}", body)
+
+    def sm_create_alert(self, address: str, alert_type: str,
+                        min_size_usd: float = 0, coins: str = "") -> dict | None:
+        return self._post(f"/v1/smart-money/wallet/{address}/alerts", {
+            "alert_type": alert_type,
+            "min_size_usd": min_size_usd,
+            "coins": coins,
+        })
+
+    def sm_list_alerts(self, address: str) -> dict | None:
+        return self._get(f"/v1/smart-money/wallet/{address}/alerts")
+
+    def sm_delete_alert(self, alert_id: int) -> dict | None:
+        return self._delete(f"/v1/smart-money/alert/{alert_id}")
+
+    def sm_active_alerts(self) -> dict | None:
+        return self._get("/v1/smart-money/alerts/active")
 
     # ---- Stats ----
 
