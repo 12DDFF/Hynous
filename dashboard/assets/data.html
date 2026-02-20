@@ -609,17 +609,21 @@
   let landscapeBuckets = [];        // stored for live price line
   function whaleLimit() { return document.getElementById('whale-limit').value || '500'; }
 
-  // Fast landscape price line update (called every 3s by tickPrice)
+  // Fast landscape price dot update (called every 3s by tickPrice)
+  // Updates scatter series (index 2) — ECharts animates Y position smoothly
   function updateLandscapePrice(price) {
     if (!whaleChart || whaleView !== 'landscape' || !landscapeBuckets.length || !price) return;
     let midIdx = 0, minDist = Infinity;
     landscapeBuckets.forEach((b, i) => { const d = Math.abs(b.mid - price); if (d < minDist) { minDist = d; midIdx = i; } });
     whaleChart.setOption({
-      series: [{ markLine: { silent: true, symbol: 'none',
-        animationDuration: 800, animationEasing: 'cubicOut',
-        data: [{ yAxis: midIdx, lineStyle: { color: '#6366f1', width: 2, type: 'dashed' },
-          label: { show: true, formatter: px(price), color: '#6366f1', fontSize: 8, position: 'insideEndTop' } }],
-      }}]
+      series: [
+        {}, // index 0 — Long bars
+        {}, // index 1 — Short bars
+        {   // index 2 — Price dot
+          data: [[0, midIdx]],
+          label: { formatter: px(price) },
+        }
+      ]
     });
   }
 
@@ -688,7 +692,6 @@
     });
     if (!large) landscapeBuckets = buckets; // store for live price ticks
     const labels = buckets.map(b => px(b.mid));
-    const maxVal = Math.max(...buckets.map(b => Math.max(b.longUSD + b.longLiq, b.shortUSD + b.shortLiq)), 1);
     let midIdx = 0;
     if (markPx > 0) { let md = Infinity; buckets.forEach((b, i) => { const d = Math.abs(b.mid - markPx); if (d < md) { md = d; midIdx = i; } }); }
     const g = large ? { left: 70, right: 30, top: 30, bottom: 30 } : { left: 50, right: 12, top: 8, bottom: 20 };
@@ -729,21 +732,39 @@
         {
           name: 'Long', type: 'bar', stack: 'pos', data: buckets.map(b => b.longUSD),
           itemStyle: { color: 'rgba(34,197,94,0.7)', borderRadius: [0, 3, 3, 0] }, barMaxWidth: large ? 18 : 12,
-          markLine: markPx > 0 ? { silent: true, symbol: 'none', data: [{ yAxis: midIdx,
-            lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
-            label: { show: true, formatter: px(markPx), color: '#6366f1', fontSize: large ? 10 : 8, position: 'insideEndTop' } }] } : undefined,
         },
         {
           name: 'Short', type: 'bar', stack: 'pos', data: buckets.map(b => -b.shortUSD),
           itemStyle: { color: 'rgba(239,68,68,0.7)', borderRadius: [3, 0, 0, 3] }, barMaxWidth: large ? 18 : 12,
         },
+        // Price dot — scatter at x=0 (center), y=price bucket. tickPrice updates every 3s.
         {
-          name: 'Long Liq Zone', type: 'bar', stack: 'liq', data: buckets.map(b => b.longLiq),
-          itemStyle: { color: 'rgba(251,191,36,0.15)', borderColor: 'rgba(251,191,36,0.4)', borderWidth: 1 }, barMaxWidth: large ? 18 : 12,
-        },
-        {
-          name: 'Short Liq Zone', type: 'bar', stack: 'liq', data: buckets.map(b => -b.shortLiq),
-          itemStyle: { color: 'rgba(251,191,36,0.15)', borderColor: 'rgba(251,191,36,0.4)', borderWidth: 1 }, barMaxWidth: large ? 18 : 12,
+          name: 'Price', type: 'scatter',
+          data: markPx > 0 ? [[0, midIdx]] : [],
+          symbolSize: large ? 16 : 12,
+          z: 10,
+          itemStyle: {
+            color: '#6366f1',
+            borderColor: '#a5b4fc',
+            borderWidth: 2,
+            shadowColor: 'rgba(99, 102, 241, 0.6)',
+            shadowBlur: 8,
+          },
+          label: {
+            show: true,
+            position: 'right',
+            distance: 6,
+            color: '#a5b4fc',
+            fontSize: large ? 10 : 8,
+            fontWeight: 600,
+            fontFamily: 'JetBrains Mono, monospace',
+            formatter: markPx > 0 ? px(markPx) : '',
+            backgroundColor: 'rgba(10, 10, 10, 0.85)',
+            padding: [2, 4],
+            borderRadius: 3,
+          },
+          animationDuration: 800,
+          animationEasing: 'cubicOut',
         },
       ],
     }, true);
