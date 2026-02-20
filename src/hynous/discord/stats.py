@@ -1,9 +1,9 @@
 """
 Discord Stats Embed Builder
 
-Builds a clean, rich embed showing portfolio, positions, market data,
-and daemon status. Called every 30s by the bot's background task to
-keep the stats panel updated in-place.
+Builds a clean, rich embed showing portfolio, positions, regime, market data,
+trade performance, scanner status, and daemon status. Called every 30s by the
+bot's background task to keep the stats panel updated in-place.
 
 Zero Claude tokens — uses daemon snapshot + provider HTTP only.
 """
@@ -15,6 +15,17 @@ from datetime import datetime, timezone
 import discord
 
 logger = logging.getLogger(__name__)
+
+
+# Regime label → emoji mapping
+_REGIME_EMOJI = {
+    "TREND_BULL": "\U0001f7e2",     # green circle
+    "TREND_BEAR": "\U0001f534",     # red circle
+    "VOLATILE_BULL": "\U0001f7e1",  # yellow circle
+    "VOLATILE_BEAR": "\U0001f7e0",  # orange circle
+    "RANGING": "\u26aa",            # white circle
+    "SQUEEZE": "\U0001f7e3",        # purple circle
+}
 
 
 def build_stats_embed(provider, daemon, config) -> discord.Embed:
@@ -69,8 +80,9 @@ def build_stats_embed(provider, daemon, config) -> discord.Embed:
             pnl = p["unrealized_pnl"]
             ret = p["return_pct"]
             liq = p["liquidation_px"]
+            lev = p.get("leverage", 1)
             line = (
-                f"**{symbol} {side}**  {size} @ ${entry:,.2f}\n"
+                f"**{symbol} {side}** {lev}x  {size} @ ${entry:,.2f}\n"
                 f"PnL: ${pnl:+,.2f} ({ret:+.2f}%)  \u2022  Liq: ${liq:,.0f}"
             )
             pos_lines.append(line)
@@ -84,7 +96,7 @@ def build_stats_embed(provider, daemon, config) -> discord.Embed:
             pass
 
         embed.add_field(
-            name="Positions",
+            name=f"Positions ({len(positions)})",
             value="\n\n".join(pos_lines),
             inline=False,
         )
@@ -95,7 +107,23 @@ def build_stats_embed(provider, daemon, config) -> discord.Embed:
             inline=False,
         )
 
-    # 5. Market section (from daemon snapshot — zero cost)
+    # 5. Regime section
+    regime = getattr(daemon, '_regime', None) if daemon else None
+    if regime:
+        emoji = _REGIME_EMOJI.get(regime.combined_label, "\u2754")
+        micro = "\u2705 Micros OK" if regime.micro_safe else "\u274c Micros Blocked"
+        regime_text = (
+            f"{emoji} **{regime.combined_label}**  ({regime.direction_score:+.2f})\n"
+            f"{micro}  \u2502  Session: {regime.session}"
+        )
+        if regime.reversal_flag:
+            regime_text += f"\n\u26a0\ufe0f Reversal: {regime.reversal_detail}"
+        regime_text += f"\n_{regime.guidance}_"
+    else:
+        regime_text = "Not computed yet"
+    embed.add_field(name="Regime", value=regime_text, inline=False)
+
+    # 6. Market section (from daemon snapshot — zero cost)
     if daemon and daemon.snapshot.prices:
         prices = daemon.snapshot.prices
         price_parts = []
@@ -115,31 +143,62 @@ def build_stats_embed(provider, daemon, config) -> discord.Embed:
         market_text = "Daemon not running"
     embed.add_field(name="Market", value=market_text, inline=False)
 
-    # 6. Daemon section
+    # 7. Trade performance (from Nous — zero cost)
+    try:
+        from ..core.trade_analytics import get_trade_stats, format_stats_compact
+        stats = get_trade_stats()
+        if stats and stats.total_trades > 0:
+            account_pnl = account_value - initial if initial else None
+            perf_text = format_stats_compact(stats, account_pnl=account_pnl)
+        else:
+            perf_text = "No closed trades yet"
+    except Exception:
+        perf_text = "Unavailable"
+    embed.add_field(name="Performance", value=perf_text, inline=False)
+
+    # 8. Scanner + Daemon section (combined, compact)
+    status_parts = []
     if daemon and daemon.is_running:
         now = time.time()
 
-        # Next review countdown (doubles on weekends)
+        # Scanner status
+        scanner = getattr(daemon, '_scanner', None)
+        if scanner:
+            try:
+                ss = scanner.get_status()
+                if ss.get("active"):
+                    status_parts.append(
+                        f"Scanner: {ss['pairs_count']} pairs  \u2502  "
+                        f"{ss['anomalies_detected']} anomalies  \u2502  "
+                        f"{ss['wakes_triggered']} wakes"
+                    )
+                elif ss.get("warming_up"):
+                    status_parts.append("Scanner: Warming up")
+                else:
+                    status_parts.append("Scanner: Idle")
+            except Exception:
+                pass
+
+        # Daemon status
         review_interval = config.daemon.periodic_interval
         if datetime.now(timezone.utc).weekday() >= 5:
             review_interval *= 2
         next_review = max(0, daemon._last_review + review_interval - now)
         next_review_min = int(next_review // 60)
 
-        # Wakes this hour
         wakes_hr = len([t for t in daemon._wake_timestamps if t > now - 3600])
         max_hr = config.daemon.max_wakes_per_hour
 
         paused = "\u26a0\ufe0f PAUSED" if daemon._trading_paused else "OK"
-        daemon_text = (
-            f"Status: Running  \u2502  Wakes: {wakes_hr}/{max_hr} hr\n"
+        status_parts.append(
+            f"Daemon: Running  \u2502  Wakes: {wakes_hr}/{max_hr} hr\n"
             f"Next Review: {next_review_min}m  \u2502  Circuit: {paused}"
         )
     else:
-        daemon_text = "Daemon not running"
-    embed.add_field(name="Daemon", value=daemon_text, inline=False)
+        status_parts.append("Daemon not running")
+    embed.add_field(name="System", value="\n".join(status_parts), inline=False)
 
-    # 7. Footer + timestamp
+    # 9. Footer + timestamp
     mode = config.execution.mode.upper()
     embed.set_footer(text=f"{mode} \u2022 Refreshes every 30s")
     embed.timestamp = datetime.now(timezone.utc)
