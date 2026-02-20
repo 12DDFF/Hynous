@@ -195,6 +195,8 @@ class TradeStream:
         conn = self._db.conn
         try:
             with self._db.write_lock:
+                # Count only genuinely new inserts (not re-seen addresses)
+                before = conn.execute("SELECT COUNT(*) FROM addresses").fetchone()[0]
                 conn.executemany(
                     """
                     INSERT INTO addresses (address, first_seen, last_seen, trade_count)
@@ -209,7 +211,8 @@ class TradeStream:
                     ],
                 )
                 conn.commit()
-            self.total_addresses_discovered += len(batch)
+                after = conn.execute("SELECT COUNT(*) FROM addresses").fetchone()[0]
+            self.total_addresses_discovered += (after - before)
         except Exception:
             log.exception("Failed to flush %d addresses", len(batch))
 
