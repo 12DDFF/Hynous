@@ -692,6 +692,11 @@ class AppState(rx.State):
     news_expanded: bool = True
     clusters_sidebar_expanded: bool = True
 
+    # === Position Chart (Sidebar Expand) ===
+    expanded_position: str = ""  # symbol of expanded position ("" = none)
+    position_chart_html: str = ""  # pre-rendered Lightweight Charts HTML
+    position_chart_loading: bool = False
+
     # === Activity Sidebar (Chat Page) ===
     wake_feed: List[WakeItem] = []
     wake_detail_content: str = ""
@@ -1059,6 +1064,13 @@ class AppState(rx.State):
                                 ((value - initial) / initial) * 100, 2
                             )
                         self.positions = positions
+                        # Clear expanded chart if position was closed
+                        if self.expanded_position and not any(
+                            p.symbol == self.expanded_position for p in positions
+                        ):
+                            self.expanded_position = ""
+                            self.position_chart_html = ""
+                            self.position_chart_loading = False
                         # Update sparkline SVG
                         if len(_portfolio_history) >= 3:
                             self.portfolio_sparkline_svg = _build_sparkline_svg(
@@ -1197,6 +1209,30 @@ class AppState(rx.State):
                         _daemon.start()
             except Exception as e:
                 logger.debug(f"Daemon watchdog error: {e}")
+
+            # Refresh position chart every ~30s (every other poll)
+            if _cluster_tick % 2 == 0:
+                try:
+                    chart_sym = ""
+                    entry_px = 0.0
+                    chart_side = "long"
+                    async with self:
+                        chart_sym = self.expanded_position
+                        if chart_sym:
+                            for p in self.positions:
+                                if p.symbol == chart_sym:
+                                    entry_px = p.entry
+                                    chart_side = p.side
+                                    break
+                    if chart_sym:
+                        chart_html = await asyncio.to_thread(
+                            self._fetch_position_chart_data, chart_sym, entry_px, chart_side
+                        )
+                        async with self:
+                            if self.expanded_position == chart_sym:
+                                self.position_chart_html = chart_html
+                except Exception:
+                    pass
 
             await asyncio.sleep(_POLL_INTERVAL)
 
@@ -1768,6 +1804,10 @@ class AppState(rx.State):
         self.current_page = "chat"
         self.chat_unread = False
 
+    def go_to_data(self):
+        """Navigate to data intelligence page."""
+        self.current_page = "data"
+
     def go_to_memory(self):
         """Navigate to memory management page and load data."""
         self.current_page = "memory"
@@ -1780,6 +1820,176 @@ class AppState(rx.State):
         self.chat_unread = False
         self._pending_input = msg
         return self.send_message()
+
+    # === Position Chart (Sidebar Expand) ===
+
+    def toggle_position_chart(self, symbol: str):
+        """Expand/collapse position chart for a symbol."""
+        if self.expanded_position == symbol:
+            self.expanded_position = ""
+            self.position_chart_html = ""
+            self.position_chart_loading = False
+        else:
+            self.expanded_position = symbol
+            self.position_chart_html = ""
+            self.position_chart_loading = True
+            return AppState._load_position_chart
+
+    @_background
+    async def _load_position_chart(self):
+        """Background task: fetch candle + trigger data and build chart HTML."""
+        async with self:
+            symbol = self.expanded_position
+            if not symbol:
+                return
+            # Grab entry price from current positions
+            entry_px = 0.0
+            side = "long"
+            for p in self.positions:
+                if p.symbol == symbol:
+                    entry_px = p.entry
+                    side = p.side
+                    break
+
+        try:
+            html = await asyncio.to_thread(
+                self._fetch_position_chart_data, symbol, entry_px, side
+            )
+        except Exception as e:
+            logger.debug(f"Position chart error: {e}")
+            html = ""
+
+        async with self:
+            if self.expanded_position == symbol:
+                self.position_chart_html = html
+                self.position_chart_loading = False
+
+    @staticmethod
+    def _fetch_position_chart_data(symbol: str, entry_px: float, side: str) -> str:
+        """Build self-contained Lightweight Charts HTML for a position."""
+        import time as _time
+        from hynous.data.providers.hyperliquid import get_provider
+        from hynous.core.config import load_config
+
+        provider = get_provider(config=load_config())
+        end_ms = int(_time.time() * 1000)
+        start_ms = end_ms - 3600 * 1000  # 1 hour of 1m candles
+
+        candles = provider.get_candles(symbol, "1m", start_ms, end_ms)
+        if not candles:
+            return ""
+
+        # Get trigger orders (SL/TP)
+        sl_px = 0.0
+        tp_px = 0.0
+        try:
+            triggers = provider.get_trigger_orders(symbol)
+            for t in triggers:
+                if t.get("order_type") == "stop_loss" and t.get("trigger_px"):
+                    sl_px = t["trigger_px"]
+                elif t.get("order_type") == "take_profit" and t.get("trigger_px"):
+                    tp_px = t["trigger_px"]
+        except Exception:
+            pass
+
+        # Get heatmap overlay (optional)
+        heatmap_buckets = []
+        try:
+            from hynous.data.providers.hynous_data import get_client
+            hm = get_client().heatmap(symbol)
+            if hm and "buckets" in hm:
+                heatmap_buckets = hm["buckets"]
+        except Exception:
+            pass
+
+        return AppState._build_position_chart_html(
+            candles, entry_px, sl_px, tp_px, side, symbol, heatmap_buckets
+        )
+
+    @staticmethod
+    def _build_position_chart_html(
+        candles: list, entry: float, sl: float, tp: float,
+        side: str, symbol: str, heatmap_buckets: list,
+    ) -> str:
+        """Return self-contained HTML for a sidebar position chart."""
+        import json as _json
+
+        # Convert candles to Lightweight Charts format
+        chart_data = []
+        for c in candles:
+            chart_data.append({
+                "time": c["t"] // 1000,
+                "open": c["o"],
+                "high": c["h"],
+                "low": c["l"],
+                "close": c["c"],
+            })
+
+        data_json = _json.dumps(chart_data)
+
+        # Build price lines
+        price_lines = ""
+        if entry > 0:
+            price_lines += f"""
+            series.createPriceLine({{price:{entry},color:'#6366f1',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:'Entry'}});"""
+        if sl > 0:
+            price_lines += f"""
+            series.createPriceLine({{price:{sl},color:'#ef4444',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:'SL'}});"""
+        if tp > 0:
+            price_lines += f"""
+            series.createPriceLine({{price:{tp},color:'#22c55e',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:'TP'}});"""
+
+        # Build heatmap background markers (optional — subtle colored zones)
+        heatmap_js = ""
+        if heatmap_buckets:
+            markers = []
+            for b in heatmap_buckets[:20]:  # limit to 20 levels
+                liq_total = (b.get("long_liq_usd", 0) + b.get("short_liq_usd", 0))
+                if liq_total > 10000:  # only show significant levels
+                    price_mid = b.get("price_mid", 0)
+                    if price_mid > 0:
+                        markers.append({"px": price_mid, "val": liq_total})
+            if markers:
+                max_liq = max(m["val"] for m in markers)
+                for m in markers:
+                    opacity = min(0.3, (m["val"] / max_liq) * 0.3)
+                    heatmap_js += f"""
+            series.createPriceLine({{price:{m['px']},color:'rgba(250,204,21,{opacity:.2f})',lineWidth:4,lineStyle:0,axisLabelVisible:false,title:''}});"""
+
+        # Last price for header
+        last_px = candles[-1]["c"] if candles else 0
+        px_str = f"${last_px:,.2f}" if last_px >= 1 else f"${last_px:.4f}"
+
+        return f"""<div style="position:relative;width:100%">
+<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px;margin-bottom:2px">
+<span style="font-size:0.65rem;color:#6366f1;font-weight:600">{symbol}</span>
+<span style="font-size:0.6rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace">{px_str}</span>
+</div>
+<div id="pos-chart-{symbol}" style="width:100%;height:180px"></div>
+<script>
+(function(){{
+if(typeof LightweightCharts==='undefined')return;
+var el=document.getElementById('pos-chart-{symbol}');
+if(!el)return;
+var w=el.clientWidth||256;
+var chart=LightweightCharts.createChart(el,{{
+width:w,height:180,
+layout:{{background:{{color:'#0c0c0c'}},textColor:'#525252',fontSize:9}},
+grid:{{vertLines:{{color:'#141414'}},horzLines:{{color:'#141414'}}}},
+crosshair:{{mode:0}},
+rightPriceScale:{{borderColor:'#1a1a1a',scaleMargins:{{top:0.08,bottom:0.08}}}},
+timeScale:{{borderColor:'#1a1a1a',timeVisible:true,secondsVisible:false,tickMarkFormatter:function(t){{var d=new Date(t*1000);return d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');}}}},
+handleScroll:false,handleScale:false,
+}});
+var series=chart.addCandlestickSeries({{
+upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',
+wickUpColor:'#22c55e',wickDownColor:'#ef4444',
+}});
+series.setData({data_json});{price_lines}{heatmap_js}
+chart.timeScale().fitContent();
+}})();
+</script>
+</div>"""
 
     # === Model Selection ===
     selected_model: str = "openrouter/anthropic/claude-sonnet-4-5-20250929"

@@ -206,8 +206,14 @@ def _status_section() -> rx.Component:
 
 
 def _position_row(pos: Position) -> rx.Component:
-    """Single position in sidebar."""
+    """Single position in sidebar — clickable to expand chart."""
     return rx.hstack(
+        rx.icon(
+            rx.cond(AppState.expanded_position == pos.symbol, "chevron-down", "chevron-right"),
+            size=12,
+            color="#525252",
+            flex_shrink="0",
+        ),
         ticker_badge(pos.symbol, font_size="0.7rem", font_weight="600"),
         rx.text(
             pos.side.upper(),
@@ -236,7 +242,40 @@ def _position_row(pos: Position) -> rx.Component:
         width="100%",
         align="center",
         spacing="2",
-        padding_y="1px",
+        padding_y="2px",
+        padding_x="4px",
+        cursor="pointer",
+        border_radius="4px",
+        _hover={"background": "#141414"},
+        on_click=AppState.toggle_position_chart(pos.symbol),
+    )
+
+
+def _position_chart_panel() -> rx.Component:
+    """Expandable chart panel below position rows."""
+    return rx.cond(
+        AppState.expanded_position != "",
+        rx.vstack(
+            rx.cond(
+                AppState.position_chart_loading,
+                rx.hstack(
+                    rx.spinner(size="1"),
+                    rx.text("Loading chart...", font_size="0.65rem", color="#525252"),
+                    spacing="2",
+                    align="center",
+                    padding="8px 4px",
+                ),
+                rx.fragment(),
+            ),
+            rx.cond(
+                AppState.position_chart_html != "",
+                rx.html(AppState.position_chart_html),
+                rx.fragment(),
+            ),
+            spacing="0",
+            width="100%",
+        ),
+        rx.fragment(),
     )
 
 
@@ -251,6 +290,7 @@ def _positions_section() -> rx.Component:
                 spacing="1",
                 width="100%",
             ),
+            _position_chart_panel(),
             spacing="2",
             width="100%",
         ),

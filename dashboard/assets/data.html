@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hynous Data Intelligence</title>
+<script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #fafafa;
+    font-family: Inter, system-ui, sans-serif;
+    overflow-x: hidden;
+  }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #262626; border-radius: 4px; }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid #1a1a1a;
+    background: #0a0a0a;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .header-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #fafafa;
+  }
+  .header-subtitle {
+    font-size: 0.7rem;
+    color: #525252;
+    margin-left: 8px;
+  }
+
+  /* Coin Tabs */
+  .coin-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: #0f0f0f;
+    border-radius: 8px;
+    border: 1px solid #1a1a1a;
+  }
+  .coin-tab {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: #737373;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .coin-tab:hover { background: #1a1a1a; color: #e5e5e5; }
+  .coin-tab.active { background: #1a1a1a; color: #fafafa; }
+
+  /* Stats Bar */
+  .stats-bar {
+    display: flex;
+    gap: 24px;
+    padding: 8px 20px;
+    background: #0c0c0c;
+    border-bottom: 1px solid #141414;
+    font-size: 0.7rem;
+  }
+  .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #525252;
+  }
+  .stat-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .stat-dot.green { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+  .stat-dot.red { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+  .stat-dot.yellow { background: #eab308; box-shadow: 0 0 6px #eab308; }
+  .stat-value {
+    color: #a3a3a3;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Panel Grid */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding: 12px;
+    background: #0a0a0a;
+  }
+  .panel {
+    background: #0c0c0c;
+    border: 1px solid #141414;
+    border-radius: 8px;
+    overflow: hidden;
+    min-height: 280px;
+  }
+  .panel.full { grid-column: 1 / -1; }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid #141414;
+  }
+  .panel-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #a3a3a3;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .panel-badge {
+    font-size: 0.65rem;
+    color: #525252;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .panel-body {
+    padding: 8px;
+    height: calc(100% - 40px);
+    position: relative;
+  }
+
+  /* Order Flow Bars */
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .flow-label {
+    font-size: 0.72rem;
+    color: #525252;
+    width: 32px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .flow-bar-container {
+    flex: 1;
+    height: 28px;
+    display: flex;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .flow-bar-buy {
+    background: linear-gradient(90deg, #166534, #22c55e);
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    color: #fafafa;
+    font-weight: 500;
+    min-width: 30px;
+  }
+  .flow-bar-sell {
+    background: linear-gradient(90deg, #ef4444, #991b1b);
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    color: #fafafa;
+    font-weight: 500;
+    min-width: 30px;
+  }
+  .flow-cvd {
+    font-size: 0.7rem;
+    font-family: 'JetBrains Mono', monospace;
+    width: 90px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .flow-cvd.positive { color: #22c55e; }
+  .flow-cvd.negative { color: #ef4444; }
+
+  /* Smart Money Table */
+  .sm-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+  }
+  .sm-table th {
+    text-align: left;
+    padding: 6px 8px;
+    color: #525252;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.65rem;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .sm-table td {
+    padding: 5px 8px;
+    color: #a3a3a3;
+    border-bottom: 1px solid #0f0f0f;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .sm-table tr:hover td { background: #111; }
+
+  /* HLP Table */
+  .hlp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+  }
+  .hlp-table th {
+    text-align: left;
+    padding: 6px 8px;
+    color: #525252;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.65rem;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .hlp-table td {
+    padding: 5px 8px;
+    color: #a3a3a3;
+    border-bottom: 1px solid #0f0f0f;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .side-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+  .side-dot.long { background: #22c55e; }
+  .side-dot.short { background: #ef4444; }
+  .size-bar {
+    display: inline-block;
+    height: 4px;
+    border-radius: 2px;
+    background: #6366f1;
+    opacity: 0.6;
+  }
+
+  /* Loading */
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #333;
+    font-size: 0.8rem;
+  }
+  .error-msg {
+    color: #ef4444;
+    font-size: 0.75rem;
+    text-align: center;
+    padding: 20px;
+  }
+</style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div style="display:flex;align-items:center">
+      <span class="header-title">Data Intelligence</span>
+      <span class="header-subtitle">Liquidation heatmaps, order flow, whale tracking</span>
+    </div>
+    <div class="coin-tabs" id="coin-tabs">
+      <button class="coin-tab active" data-coin="BTC">BTC</button>
+      <button class="coin-tab" data-coin="ETH">ETH</button>
+      <button class="coin-tab" data-coin="SOL">SOL</button>
+    </div>
+  </div>
+
+  <!-- Stats Bar -->
+  <div class="stats-bar" id="stats-bar">
+    <div class="stat-item">
+      <div class="stat-dot yellow" id="ws-dot"></div>
+      <span>Data Layer</span>
+      <span class="stat-value" id="stat-status">connecting...</span>
+    </div>
+    <div class="stat-item">
+      <span>Addresses</span>
+      <span class="stat-value" id="stat-addresses">-</span>
+    </div>
+    <div class="stat-item">
+      <span>Positions Tracked</span>
+      <span class="stat-value" id="stat-positions">-</span>
+    </div>
+    <div class="stat-item">
+      <span>Uptime</span>
+      <span class="stat-value" id="stat-uptime">-</span>
+    </div>
+  </div>
+
+  <!-- Chart Grid -->
+  <div class="grid">
+    <!-- Price + CVD (full width) -->
+    <div class="panel full">
+      <div class="panel-header">
+        <span class="panel-title">Price + CVD</span>
+        <span class="panel-badge" id="price-badge">loading...</span>
+      </div>
+      <div class="panel-body" id="price-panel" style="height:320px"></div>
+    </div>
+
+    <!-- Liquidation Heatmap -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Liquidation Heatmap</span>
+        <span class="panel-badge" id="heatmap-badge"></span>
+      </div>
+      <div class="panel-body" id="heatmap-panel"></div>
+    </div>
+
+    <!-- Whale Positions -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Whale Positions</span>
+        <span class="panel-badge" id="whale-badge"></span>
+      </div>
+      <div class="panel-body" id="whale-panel"></div>
+    </div>
+
+    <!-- Order Flow -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Order Flow</span>
+        <span class="panel-badge" id="flow-badge"></span>
+      </div>
+      <div class="panel-body" id="flow-panel">
+        <div class="loading">Waiting for data...</div>
+      </div>
+    </div>
+
+    <!-- Smart Money Leaderboard -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Smart Money</span>
+        <span class="panel-badge" id="sm-badge"></span>
+      </div>
+      <div class="panel-body" id="sm-panel" style="overflow-y:auto">
+        <div class="loading">Waiting for data...</div>
+      </div>
+    </div>
+
+    <!-- HLP Vault (full width) -->
+    <div class="panel full">
+      <div class="panel-header">
+        <span class="panel-title">HLP Vault Positions</span>
+        <span class="panel-badge" id="hlp-badge"></span>
+      </div>
+      <div class="panel-body" id="hlp-panel" style="overflow-y:auto;min-height:160px">
+        <div class="loading">Waiting for data...</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function() {
+  'use strict';
+
+  // Backend URL detection — same pattern as graph.html
+  const BACKEND = location.origin.replace(':3000', ':8000');
+  let activeCoin = 'BTC';
+
+  // --- Coin Tab Switching ---
+  document.getElementById('coin-tabs').addEventListener('click', function(e) {
+    const btn = e.target.closest('.coin-tab');
+    if (!btn) return;
+    document.querySelectorAll('.coin-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeCoin = btn.dataset.coin;
+    refreshAll();
+  });
+
+  // --- Fetch helpers ---
+  async function fetchJSON(url) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch { return null; }
+  }
+
+  function fmtUSD(n) {
+    if (Math.abs(n) >= 1e6) return '$' + (n/1e6).toFixed(1) + 'M';
+    if (Math.abs(n) >= 1e3) return '$' + (n/1e3).toFixed(1) + 'K';
+    return '$' + n.toFixed(0);
+  }
+
+  function truncAddr(addr) {
+    if (!addr || addr.length < 10) return addr || '?';
+    return addr.slice(0, 6) + '...' + addr.slice(-4);
+  }
+
+  // ==========================================================================
+  // PRICE + CVD CHART (Lightweight Charts)
+  // ==========================================================================
+  let priceChart = null;
+  let priceSeries = null;
+  let cvdSeries = null;
+
+  function initPriceChart() {
+    const el = document.getElementById('price-panel');
+    priceChart = LightweightCharts.createChart(el, {
+      width: el.clientWidth,
+      height: el.clientHeight,
+      layout: { background: { color: '#0c0c0c' }, textColor: '#525252', fontSize: 11 },
+      grid: { vertLines: { color: '#141414' }, horzLines: { color: '#141414' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#1a1a1a', scaleMargins: { top: 0.1, bottom: 0.3 } },
+      timeScale: { borderColor: '#1a1a1a', timeVisible: true, secondsVisible: false },
+    });
+
+    priceSeries = priceChart.addAreaSeries({
+      topColor: 'rgba(99,102,241,0.3)',
+      bottomColor: 'rgba(99,102,241,0.02)',
+      lineColor: '#6366f1',
+      lineWidth: 2,
+    });
+
+    cvdSeries = priceChart.addHistogramSeries({
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'cvd',
+    });
+    priceChart.priceScale('cvd').applyOptions({
+      scaleMargins: { top: 0.75, bottom: 0 },
+    });
+
+    new ResizeObserver(() => {
+      priceChart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+    }).observe(el);
+  }
+
+  async function updatePriceChart() {
+    const candles = await fetchJSON(`${BACKEND}/api/candles?symbol=${activeCoin}&interval=5m&hours=24`);
+    if (!candles || candles.error || !Array.isArray(candles) || candles.length === 0) {
+      document.getElementById('price-badge').textContent = 'no data';
+      return;
+    }
+
+    const priceData = candles.map(c => ({
+      time: Math.floor(c.t / 1000),
+      value: c.c,
+    }));
+    priceSeries.setData(priceData);
+
+    // CVD from order flow
+    const flow = await fetchJSON(`${BACKEND}/api/data/orderflow/${activeCoin}`);
+    if (flow && flow.ticks && Array.isArray(flow.ticks)) {
+      const cvdData = flow.ticks.map(t => ({
+        time: Math.floor(t.t / 1000),
+        value: t.cvd || 0,
+        color: (t.cvd || 0) >= 0 ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)',
+      }));
+      cvdSeries.setData(cvdData);
+    }
+
+    const last = candles[candles.length - 1];
+    const px = last.c >= 1 ? '$' + last.c.toLocaleString(undefined, {maximumFractionDigits: 2}) : '$' + last.c.toFixed(4);
+    document.getElementById('price-badge').textContent = activeCoin + ' ' + px;
+    priceChart.timeScale().fitContent();
+  }
+
+  // ==========================================================================
+  // LIQUIDATION HEATMAP (ECharts)
+  // ==========================================================================
+  let heatmapChart = null;
+
+  function initHeatmap() {
+    heatmapChart = echarts.init(document.getElementById('heatmap-panel'), null, { renderer: 'canvas' });
+    new ResizeObserver(() => heatmapChart.resize()).observe(document.getElementById('heatmap-panel'));
+  }
+
+  async function updateHeatmap() {
+    const data = await fetchJSON(`${BACKEND}/api/data/heatmap/${activeCoin}`);
+    if (!data || data.error) {
+      heatmapChart.setOption({ title: { text: 'No heatmap data', left: 'center', top: 'center', textStyle: { color: '#333', fontSize: 13 } } });
+      return;
+    }
+
+    const buckets = data.buckets || [];
+    if (buckets.length === 0) return;
+
+    const midPrice = data.mid_price || 0;
+    // Build heatmap: Y = price level index, X = 0 (long) / 1 (short)
+    const prices = buckets.map(b => b.price_mid);
+    const hmData = [];
+    let maxVal = 0;
+    buckets.forEach((b, i) => {
+      const longVal = b.long_liq_usd || 0;
+      const shortVal = b.short_liq_usd || 0;
+      hmData.push([0, i, longVal]);
+      hmData.push([1, i, shortVal]);
+      maxVal = Math.max(maxVal, longVal, shortVal);
+    });
+
+    const priceLabels = prices.map(p => p >= 1 ? '$' + p.toLocaleString(undefined, {maximumFractionDigits: 0}) : '$' + p.toFixed(4));
+
+    heatmapChart.setOption({
+      title: null,
+      tooltip: {
+        formatter: function(p) {
+          const side = p.data[0] === 0 ? 'Long Liqs' : 'Short Liqs';
+          return priceLabels[p.data[1]] + '<br/>' + side + ': ' + fmtUSD(p.data[2]);
+        }
+      },
+      grid: { left: 70, right: 20, top: 10, bottom: 30 },
+      xAxis: { type: 'category', data: ['Long Liqs', 'Short Liqs'], axisLine: { lineStyle: { color: '#1a1a1a' } }, axisLabel: { color: '#525252', fontSize: 10 } },
+      yAxis: { type: 'category', data: priceLabels, axisLine: { lineStyle: { color: '#1a1a1a' } }, axisLabel: { color: '#525252', fontSize: 9 } },
+      visualMap: {
+        min: 0, max: maxVal || 1,
+        show: false,
+        inRange: { color: ['#0c0c0c', '#422006', '#a16207', '#facc15', '#ef4444'] },
+      },
+      series: [{
+        type: 'heatmap',
+        data: hmData,
+        itemStyle: { borderWidth: 1, borderColor: '#0c0c0c' },
+        emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(250,204,21,0.4)' } },
+      }],
+    });
+
+    // Mark current price
+    if (midPrice > 0) {
+      const idx = prices.findIndex(p => p >= midPrice);
+      if (idx >= 0) {
+        heatmapChart.setOption({
+          series: [{
+            markLine: {
+              silent: true,
+              data: [{ yAxis: idx, lineStyle: { color: '#6366f1', width: 1, type: 'dashed' }, label: { show: true, formatter: 'Price', color: '#6366f1', fontSize: 9 } }],
+            },
+          }],
+        });
+      }
+    }
+
+    document.getElementById('heatmap-badge').textContent = buckets.length + ' levels';
+  }
+
+  // ==========================================================================
+  // WHALE POSITIONS (ECharts scatter)
+  // ==========================================================================
+  let whaleChart = null;
+
+  function initWhaleChart() {
+    whaleChart = echarts.init(document.getElementById('whale-panel'), null, { renderer: 'canvas' });
+    new ResizeObserver(() => whaleChart.resize()).observe(document.getElementById('whale-panel'));
+  }
+
+  async function updateWhaleChart() {
+    const data = await fetchJSON(`${BACKEND}/api/data/whales/${activeCoin}?top_n=50`);
+    if (!data || data.error) {
+      whaleChart.setOption({ title: { text: 'No whale data', left: 'center', top: 'center', textStyle: { color: '#333', fontSize: 13 } } });
+      return;
+    }
+
+    const positions = data.positions || [];
+    if (positions.length === 0) {
+      whaleChart.setOption({ title: { text: 'No whale positions', left: 'center', top: 'center', textStyle: { color: '#333', fontSize: 13 } } });
+      return;
+    }
+
+    const maxSize = Math.max(...positions.map(p => Math.abs(p.size_usd || 0)), 1);
+    const longs = [];
+    const shorts = [];
+
+    positions.forEach(p => {
+      const entry = p.entry_px || 0;
+      const pnl = p.pnl_usd || 0;
+      const sz = Math.abs(p.size_usd || 0);
+      const bubble = Math.max(8, (sz / maxSize) * 40);
+      const point = [pnl, entry, bubble, truncAddr(p.address), fmtUSD(sz), p.leverage || 1];
+      if (p.side === 'long') longs.push(point);
+      else shorts.push(point);
+    });
+
+    whaleChart.setOption({
+      title: null,
+      tooltip: {
+        formatter: function(p) {
+          const d = p.data;
+          return d[3] + '<br/>Size: ' + d[4] + ' (' + d[5] + 'x)<br/>PnL: ' + fmtUSD(d[0]);
+        }
+      },
+      grid: { left: 60, right: 20, top: 20, bottom: 40 },
+      xAxis: { name: 'PnL ($)', nameTextStyle: { color: '#525252', fontSize: 10 }, axisLine: { lineStyle: { color: '#1a1a1a' } }, axisLabel: { color: '#525252', fontSize: 9, formatter: v => fmtUSD(v) }, splitLine: { lineStyle: { color: '#141414' } } },
+      yAxis: { name: 'Entry', nameTextStyle: { color: '#525252', fontSize: 10 }, axisLine: { lineStyle: { color: '#1a1a1a' } }, axisLabel: { color: '#525252', fontSize: 9 }, splitLine: { lineStyle: { color: '#141414' } } },
+      series: [
+        {
+          name: 'Long',
+          type: 'scatter',
+          data: longs,
+          symbolSize: function(d) { return d[2]; },
+          itemStyle: { color: 'rgba(34,197,94,0.6)', borderColor: '#22c55e' },
+        },
+        {
+          name: 'Short',
+          type: 'scatter',
+          data: shorts,
+          symbolSize: function(d) { return d[2]; },
+          itemStyle: { color: 'rgba(239,68,68,0.6)', borderColor: '#ef4444' },
+        },
+      ],
+    });
+
+    document.getElementById('whale-badge').textContent = positions.length + ' traders';
+  }
+
+  // ==========================================================================
+  // ORDER FLOW BARS (HTML/CSS)
+  // ==========================================================================
+  async function updateOrderFlow() {
+    const data = await fetchJSON(`${BACKEND}/api/data/orderflow/${activeCoin}`);
+    const el = document.getElementById('flow-panel');
+
+    if (!data || data.error) {
+      el.innerHTML = '<div class="loading">No order flow data</div>';
+      return;
+    }
+
+    const windows = data.windows || {};
+    const timeframes = ['1m', '5m', '15m', '1h'];
+    let html = '';
+
+    timeframes.forEach(tf => {
+      const w = windows[tf];
+      if (!w) return;
+      const buyPct = w.buy_pct || 50;
+      const sellPct = 100 - buyPct;
+      const cvd = w.cvd || 0;
+      const arrow = cvd >= 0 ? '\u2191' : '\u2193';
+      const cls = cvd >= 0 ? 'positive' : 'negative';
+
+      html += `<div class="flow-row">
+        <span class="flow-label">${tf}</span>
+        <div class="flow-bar-container">
+          <div class="flow-bar-buy" style="width:${buyPct}%">${buyPct.toFixed(0)}%</div>
+          <div class="flow-bar-sell" style="width:${sellPct}%">${sellPct.toFixed(0)}%</div>
+        </div>
+        <span class="flow-cvd ${cls}">${arrow} ${fmtUSD(Math.abs(cvd))}</span>
+      </div>`;
+    });
+
+    el.innerHTML = html || '<div class="loading">No windows available</div>';
+    document.getElementById('flow-badge').textContent = Object.keys(windows).length + ' windows';
+  }
+
+  // ==========================================================================
+  // SMART MONEY LEADERBOARD (HTML table)
+  // ==========================================================================
+  async function updateSmartMoney() {
+    const data = await fetchJSON(`${BACKEND}/api/data/smart-money?top_n=20`);
+    const el = document.getElementById('sm-panel');
+
+    if (!data || data.error) {
+      el.innerHTML = '<div class="loading">No smart money data</div>';
+      return;
+    }
+
+    const traders = data.traders || [];
+    if (traders.length === 0) {
+      el.innerHTML = '<div class="loading">No traders found</div>';
+      return;
+    }
+
+    let html = `<table class="sm-table">
+      <thead><tr><th>#</th><th>Address</th><th>PnL 24h</th><th>Equity</th><th>Pos</th></tr></thead>
+      <tbody>`;
+
+    traders.forEach((t, i) => {
+      const pnl = t.pnl_24h || 0;
+      const color = pnl >= 0 ? '#22c55e' : '#ef4444';
+      const sign = pnl >= 0 ? '+' : '';
+      html += `<tr>
+        <td>${i + 1}</td>
+        <td>${truncAddr(t.address)}</td>
+        <td style="color:${color}">${sign}${fmtUSD(pnl)}</td>
+        <td>${fmtUSD(t.equity || 0)}</td>
+        <td>${t.positions || 0}</td>
+      </tr>`;
+    });
+
+    html += '</tbody></table>';
+    el.innerHTML = html;
+    document.getElementById('sm-badge').textContent = traders.length + ' traders';
+  }
+
+  // ==========================================================================
+  // HLP VAULT POSITIONS (HTML table)
+  // ==========================================================================
+  async function updateHLP() {
+    const data = await fetchJSON(`${BACKEND}/api/data/hlp/positions`);
+    const el = document.getElementById('hlp-panel');
+
+    if (!data || data.error) {
+      el.innerHTML = '<div class="loading">No HLP data</div>';
+      return;
+    }
+
+    const positions = data.positions || [];
+    if (positions.length === 0) {
+      el.innerHTML = '<div class="loading">HLP: no open positions</div>';
+      return;
+    }
+
+    const maxSize = Math.max(...positions.map(p => p.size_usd || 0), 1);
+
+    let html = `<table class="hlp-table">
+      <thead><tr><th>Coin</th><th>Side</th><th>Size</th><th style="width:120px">Relative</th><th>Leverage</th><th>Entry</th><th>PnL</th></tr></thead>
+      <tbody>`;
+
+    positions.forEach(p => {
+      const side = p.side || 'long';
+      const dotCls = side === 'long' ? 'long' : 'short';
+      const sizeUsd = p.size_usd || 0;
+      const barW = Math.max(4, (sizeUsd / maxSize) * 100);
+      const pnl = p.pnl_usd || 0;
+      const pnlColor = pnl >= 0 ? '#22c55e' : '#ef4444';
+      const entry = p.entry_px || 0;
+      const entryStr = entry >= 1 ? '$' + entry.toLocaleString(undefined, {maximumFractionDigits: 2}) : '$' + entry.toFixed(4);
+
+      html += `<tr>
+        <td style="font-weight:500;color:#e5e5e5">${p.coin || '?'}</td>
+        <td><span class="side-dot ${dotCls}"></span>${side.toUpperCase()}</td>
+        <td>${fmtUSD(sizeUsd)}</td>
+        <td><span class="size-bar" style="width:${barW}%"></span></td>
+        <td>${(p.leverage || 1).toFixed(0)}x</td>
+        <td>${entryStr}</td>
+        <td style="color:${pnlColor}">${pnl >= 0 ? '+' : ''}${fmtUSD(pnl)}</td>
+      </tr>`;
+    });
+
+    html += '</tbody></table>';
+    el.innerHTML = html;
+    document.getElementById('hlp-badge').textContent = positions.length + ' positions';
+  }
+
+  // ==========================================================================
+  // STATS BAR
+  // ==========================================================================
+  async function updateStats() {
+    const data = await fetchJSON(`${BACKEND}/api/data-health`);
+    const dot = document.getElementById('ws-dot');
+    const statusEl = document.getElementById('stat-status');
+
+    if (!data || data.error) {
+      dot.className = 'stat-dot red';
+      statusEl.textContent = 'offline';
+      return;
+    }
+
+    dot.className = 'stat-dot green';
+    statusEl.textContent = 'online';
+
+    // Try stats endpoint for detailed numbers
+    const stats = await fetchJSON(`${BACKEND}/api/data/stats`);
+    if (stats && !stats.error) {
+      const addrs = stats.addresses_discovered || stats.addresses || 0;
+      document.getElementById('stat-addresses').textContent = addrs ? addrs.toLocaleString() : '-';
+      const posT = stats.positions_tracked || stats.positions || 0;
+      document.getElementById('stat-positions').textContent = posT ? posT.toLocaleString() : '-';
+      const upH = stats.uptime_hours ? stats.uptime_hours.toFixed(1) : stats.uptime_seconds ? (stats.uptime_seconds / 3600).toFixed(1) : null;
+      document.getElementById('stat-uptime').textContent = upH ? upH + 'h' : '-';
+    }
+  }
+
+  // ==========================================================================
+  // REFRESH ORCHESTRATION
+  // ==========================================================================
+  function refreshAll() {
+    updatePriceChart();
+    updateHeatmap();
+    updateWhaleChart();
+    updateOrderFlow();
+    updateSmartMoney();
+    updateHLP();
+    updateStats();
+  }
+
+  // Init charts
+  initPriceChart();
+  initHeatmap();
+  initWhaleChart();
+
+  // Initial load
+  refreshAll();
+
+  // Auto-refresh intervals — paused when tab/iframe is not visible
+  function isVisible() { return !document.hidden; }
+
+  setInterval(() => { if (isVisible()) updatePriceChart(); }, 10000);
+  setInterval(() => {
+    if (!isVisible()) return;
+    updateHeatmap();
+    updateWhaleChart();
+    updateOrderFlow();
+  }, 30000);
+  setInterval(() => {
+    if (!isVisible()) return;
+    updateSmartMoney();
+    updateHLP();
+    updateStats();
+  }, 60000);
+
+})();
+</script>
+</body>
+</html>

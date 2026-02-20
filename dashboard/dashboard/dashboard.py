@@ -11,7 +11,7 @@ Run with:
 import reflex as rx
 from .state import AppState
 from .components import navbar
-from .pages import home_page, chat_page, graph_page, journal_page, memory_page, login_page, debug_page, settings_page
+from .pages import home_page, chat_page, graph_page, journal_page, memory_page, login_page, debug_page, settings_page, data_page
 
 
 def _dashboard_content() -> rx.Component:
@@ -104,6 +104,9 @@ def _dashboard_content() -> rx.Component:
             })();
         """),
 
+        # Lightweight Charts CDN (35KB gzipped, cached — needed by position chart rx.html)
+        rx.script(src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"),
+
         # Smart auto-scroll — ChatGPT-style sticky bottom.
         rx.script("""
             (function() {
@@ -157,6 +160,7 @@ def _dashboard_content() -> rx.Component:
                 on_chat=AppState.go_to_chat,
                 on_journal=AppState.go_to_journal,
                 on_memory=AppState.go_to_memory,
+                on_data=AppState.go_to_data,
                 on_settings=AppState.go_to_settings,
                 on_debug=AppState.go_to_debug,
                 on_logout=AppState.logout,
@@ -183,12 +187,16 @@ def _dashboard_content() -> rx.Component:
                         AppState.current_page == "journal",
                         journal_page(),
                         rx.cond(
-                            AppState.current_page == "settings",
-                            settings_page(),
+                            AppState.current_page == "data",
+                            data_page(),
                             rx.cond(
-                                AppState.current_page == "debug",
-                                debug_page(),
-                                memory_page(),
+                                AppState.current_page == "settings",
+                                settings_page(),
+                                rx.cond(
+                                    AppState.current_page == "debug",
+                                    debug_page(),
+                                    memory_page(),
+                                ),
                             ),
                         ),
                     ),
@@ -265,6 +273,63 @@ async def _nous_proxy(request):
 
 
 app._api.add_route("/api/nous/{path:path}", _nous_proxy)
+
+
+async def _data_proxy(request):
+    """Proxy /api/data/* → localhost:8100/v1/*"""
+    import httpx
+    from starlette.responses import JSONResponse
+    path = request.path_params.get("path", "stats")
+    qs = str(request.query_params)
+    url = f"http://localhost:8100/v1/{path}"
+    if qs:
+        url += f"?{qs}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+            return JSONResponse(resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+app._api.add_route("/api/data/{path:path}", _data_proxy)
+
+
+async def _data_health_proxy(request):
+    """Proxy /api/data-health → localhost:8100/health"""
+    import httpx
+    from starlette.responses import JSONResponse
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get("http://localhost:8100/health")
+            return JSONResponse(resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+app._api.add_route("/api/data-health", _data_health_proxy)
+
+
+async def _candle_proxy(request):
+    """Proxy /api/candles?symbol=BTC&interval=5m&hours=24 → Hyperliquid API"""
+    import asyncio, time
+    from starlette.responses import JSONResponse
+    symbol = request.query_params.get("symbol", "BTC")
+    interval = request.query_params.get("interval", "5m")
+    hours = float(request.query_params.get("hours", "24"))
+    end_ms = int(time.time() * 1000)
+    start_ms = end_ms - int(hours * 3600 * 1000)
+    try:
+        from hynous.data.providers.hyperliquid import get_provider
+        from hynous.core.config import load_config
+        provider = get_provider(config=load_config())
+        candles = await asyncio.to_thread(provider.get_candles, symbol, interval, start_ms, end_ms)
+        return JSONResponse(candles)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+app._api.add_route("/api/candles", _candle_proxy)
 
 
 # Eagerly start agent + daemon when the ASGI backend starts.
