@@ -107,23 +107,29 @@
     background: linear-gradient(90deg, #14532d, #22c55e);
     display: flex; align-items: center; justify-content: center;
     font-size: 0.6rem; color: #fff; font-weight: 500; min-width: 28px;
+    transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
   }
   .flow-sell {
     background: linear-gradient(90deg, #ef4444, #7f1d1d);
     display: flex; align-items: center; justify-content: center;
     font-size: 0.6rem; color: #fff; font-weight: 500; min-width: 28px;
+    transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
   }
   .flow-cvd {
     font-size: 0.68rem; font-family: 'JetBrains Mono', monospace;
     width: 80px; text-align: right; flex-shrink: 0;
+    transition: color 0.3s ease;
   }
   .flow-cvd.pos { color: #22c55e; }
   .flow-cvd.neg { color: #ef4444; }
+  @keyframes flow-flash { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+  .flow-cvd.flash { animation: flow-flash 0.4s ease-out; }
   .flow-net {
     margin-top: 10px; padding: 8px 10px;
     background: #111; border-radius: 6px;
     display: flex; justify-content: space-between; align-items: center;
     font-size: 0.72rem;
+    transition: background 0.3s ease;
   }
   .flow-net-label { color: #525252; font-weight: 500; }
 
@@ -356,6 +362,8 @@
     document.querySelectorAll('.coin-tab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     coin = btn.dataset.coin;
+    flowBuilt = false;  // force skeleton rebuild for new coin
+    livePrice = 0;      // reset price ticker
     refreshAll();
   });
 
@@ -450,20 +458,37 @@
   // LIQUIDATION HEATMAP — Coinglass-inspired vertical heatmap
   // =====================================================================
   let hmChart;
+  let hmBuckets = []; // stored for live price line updates
 
   function initHeatmap() {
     hmChart = echarts.init(document.getElementById('hm-panel'), null, { renderer: 'canvas' });
     new ResizeObserver(() => hmChart.resize()).observe(document.getElementById('hm-panel'));
   }
 
+  // Fast price line update (called every 3s by tickPrice)
+  function updateHeatmapPrice(price) {
+    if (!hmChart || !hmBuckets.length || !price) return;
+    let midIdx = 0, minDist = Infinity;
+    hmBuckets.forEach((b, i) => { const d = Math.abs(b.price_mid - price); if (d < minDist) { minDist = d; midIdx = i; } });
+    const pLabel = price >= 1 ? '$' + price.toLocaleString(undefined, {maximumFractionDigits: 0}) : '$' + price.toFixed(4);
+    hmChart.setOption({
+      series: [{ markLine: { silent: true, symbol: 'none',
+        animationDuration: 800, animationEasing: 'cubicOut',
+        data: [{ yAxis: midIdx, lineStyle: { color: '#6366f1', width: 2, type: 'dashed' },
+          label: { show: true, formatter: pLabel, color: '#6366f1', fontSize: 9, position: 'end' } }],
+      }}]
+    });
+  }
+
   async function updateHeatmap() {
     const data = await api(B + '/api/data/heatmap/' + coin);
     if (!data || data.error || !data.buckets || !data.buckets.length) {
       hmChart.setOption({ title: { text: 'No heatmap data', left: 'center', top: 'center', textStyle: { color: '#262626', fontSize: 12 } }, series: [] });
-      return;
+      hmBuckets = []; return;
     }
 
     const buckets = data.buckets;
+    hmBuckets = buckets; // store for live price line
     const mid = data.mid_price || 0;
 
     // Build vertical bar-style heatmap — each bucket is a horizontal bar
@@ -557,7 +582,22 @@
   let whaleData = [];
   let whaleView = 'landscape';      // panel view
   let whaleOverlayView = 'landscape'; // explorer view
+  let landscapeBuckets = [];        // stored for live price line
   function whaleLimit() { return document.getElementById('whale-limit').value || '500'; }
+
+  // Fast landscape price line update (called every 3s by tickPrice)
+  function updateLandscapePrice(price) {
+    if (!whaleChart || whaleView !== 'landscape' || !landscapeBuckets.length || !price) return;
+    let midIdx = 0, minDist = Infinity;
+    landscapeBuckets.forEach((b, i) => { const d = Math.abs(b.mid - price); if (d < minDist) { minDist = d; midIdx = i; } });
+    whaleChart.setOption({
+      series: [{ markLine: { silent: true, symbol: 'none',
+        animationDuration: 800, animationEasing: 'cubicOut',
+        data: [{ yAxis: midIdx, lineStyle: { color: '#6366f1', width: 2, type: 'dashed' },
+          label: { show: true, formatter: px(price), color: '#6366f1', fontSize: 8, position: 'insideEndTop' } }],
+      }}]
+    });
+  }
 
   function initWhale() {
     whaleChart = echarts.init(document.getElementById('whale-panel'), null, { renderer: 'canvas' });
@@ -622,6 +662,7 @@
         else buckets[li].shortLiq += w.size;
       }
     });
+    if (!large) landscapeBuckets = buckets; // store for live price ticks
     const labels = buckets.map(b => px(b.mid));
     const maxVal = Math.max(...buckets.map(b => Math.max(b.longUSD + b.longLiq, b.shortUSD + b.shortLiq)), 1);
     let midIdx = 0;
@@ -1004,44 +1045,88 @@
   // =====================================================================
   // ORDER FLOW
   // =====================================================================
+  let flowBuilt = false; // true after first render — enables DOM updates for CSS transitions
+
   async function updateFlow() {
     const data = await api(B + '/api/data/orderflow/' + coin);
     const el = document.getElementById('flow-panel');
-    if (!data || data.error) { el.innerHTML = '<div class="empty">No order flow data</div>'; return; }
+    if (!data || data.error) { el.innerHTML = '<div class="empty">No order flow data</div>'; flowBuilt = false; return; }
 
     const w = data.windows || {};
     const tfs = ['1m', '5m', '15m', '1h'];
-    let html = '';
     let netCvd = 0;
 
-    tfs.forEach(tf => {
-      const d = w[tf];
-      if (!d) return;
-      const bp = d.buy_pct || 50;
-      const sp = 100 - bp;
-      const cvd = d.cvd || 0;
-      netCvd += cvd;
-      const arrow = cvd >= 0 ? '\u2191' : '\u2193';
-      const cls = cvd >= 0 ? 'pos' : 'neg';
-      html += '<div class="flow-row">' +
-        '<span class="flow-tf">' + tf + '</span>' +
-        '<div class="flow-bar-wrap">' +
-        '<div class="flow-buy" style="width:' + bp + '%">' + bp.toFixed(0) + '%</div>' +
-        '<div class="flow-sell" style="width:' + sp + '%">' + sp.toFixed(0) + '%</div>' +
-        '</div>' +
-        '<span class="flow-cvd ' + cls + '">' + arrow + ' ' + $(Math.abs(cvd)) + '</span>' +
+    // First render: build DOM skeleton so subsequent updates can transition
+    if (!flowBuilt || !el.querySelector('.flow-row')) {
+      let html = '';
+      tfs.forEach(tf => {
+        const d = w[tf];
+        if (!d) return;
+        const bp = d.buy_pct || 50;
+        const sp = 100 - bp;
+        const cvd = d.cvd || 0;
+        netCvd += cvd;
+        const arrow = cvd >= 0 ? '\u2191' : '\u2193';
+        const cls = cvd >= 0 ? 'pos' : 'neg';
+        html += '<div class="flow-row" data-tf="' + tf + '">' +
+          '<span class="flow-tf">' + tf + '</span>' +
+          '<div class="flow-bar-wrap">' +
+          '<div class="flow-buy" style="width:' + bp + '%">' + bp.toFixed(0) + '%</div>' +
+          '<div class="flow-sell" style="width:' + sp + '%">' + sp.toFixed(0) + '%</div>' +
+          '</div>' +
+          '<span class="flow-cvd ' + cls + '">' + arrow + ' ' + $(Math.abs(cvd)) + '</span>' +
+          '</div>';
+      });
+      const netCls = netCvd >= 0 ? 'pos' : 'neg';
+      const netArrow = netCvd >= 0 ? '\u2191 Net Buy' : '\u2193 Net Sell';
+      html += '<div class="flow-net" id="flow-net-row">' +
+        '<span class="flow-net-label">Aggregate</span>' +
+        '<span class="flow-cvd ' + netCls + '" id="flow-net-cvd" style="width:auto">' + netArrow + ' ' + $(Math.abs(netCvd)) + '</span>' +
         '</div>';
-    });
-
-    // Net summary
-    const netCls = netCvd >= 0 ? 'pos' : 'neg';
-    const netArrow = netCvd >= 0 ? '\u2191 Net Buy' : '\u2193 Net Sell';
-    html += '<div class="flow-net">' +
-      '<span class="flow-net-label">Aggregate</span>' +
-      '<span class="flow-cvd ' + netCls + '" style="width:auto">' + netArrow + ' ' + $(Math.abs(netCvd)) + '</span>' +
-      '</div>';
-
-    el.innerHTML = html || '<div class="empty">No windows</div>';
+      el.innerHTML = html || '<div class="empty">No windows</div>';
+      flowBuilt = true;
+    } else {
+      // Subsequent updates: modify existing DOM → CSS transitions fire smoothly
+      tfs.forEach(tf => {
+        const d = w[tf];
+        if (!d) return;
+        const bp = d.buy_pct || 50;
+        const sp = 100 - bp;
+        const cvd = d.cvd || 0;
+        netCvd += cvd;
+        const row = el.querySelector('[data-tf="' + tf + '"]');
+        if (!row) return;
+        const buyBar = row.querySelector('.flow-buy');
+        const sellBar = row.querySelector('.flow-sell');
+        const cvdEl = row.querySelector('.flow-cvd');
+        if (buyBar) { buyBar.style.width = bp + '%'; buyBar.textContent = bp.toFixed(0) + '%'; }
+        if (sellBar) { sellBar.style.width = sp + '%'; sellBar.textContent = sp.toFixed(0) + '%'; }
+        if (cvdEl) {
+          const arrow = cvd >= 0 ? '\u2191' : '\u2193';
+          const oldText = cvdEl.textContent;
+          const newText = arrow + ' ' + $(Math.abs(cvd));
+          cvdEl.className = 'flow-cvd ' + (cvd >= 0 ? 'pos' : 'neg');
+          if (oldText !== newText) {
+            cvdEl.textContent = newText;
+            cvdEl.classList.add('flash');
+            setTimeout(() => cvdEl.classList.remove('flash'), 400);
+          }
+        }
+      });
+      // Update aggregate
+      const netEl = document.getElementById('flow-net-cvd');
+      if (netEl) {
+        const netArrow = netCvd >= 0 ? '\u2191 Net Buy' : '\u2193 Net Sell';
+        const oldNet = netEl.textContent;
+        const newNet = netArrow + ' ' + $(Math.abs(netCvd));
+        netEl.className = 'flow-cvd ' + (netCvd >= 0 ? 'pos' : 'neg');
+        if (oldNet !== newNet) {
+          netEl.textContent = newNet;
+          netEl.classList.add('flash');
+          setTimeout(() => netEl.classList.remove('flash'), 400);
+        }
+      }
+    }
     document.getElementById('flow-badge').textContent = Object.keys(w).length + ' windows';
   }
 
@@ -1139,6 +1224,25 @@
   }
 
   // =====================================================================
+  // LIVE PRICE TICKER — 3s fast tick drives price lines on all charts
+  // =====================================================================
+  let livePrice = 0;
+
+  async function tickPrice() {
+    const c = await api(B + '/api/candles?symbol=' + coin + '&interval=1m&hours=0.05');
+    if (!c || !c.length) return;
+    const p = c[c.length - 1].c;
+    if (p === livePrice) return;
+    livePrice = p;
+    // Update header badge
+    const fmtP = p >= 1 ? '$' + p.toLocaleString(undefined, {maximumFractionDigits: 2}) : '$' + p.toFixed(4);
+    document.getElementById('price-badge').textContent = coin + ' ' + fmtP;
+    // Slide price lines on heatmap + landscape
+    updateHeatmapPrice(p);
+    updateLandscapePrice(p);
+  }
+
+  // =====================================================================
   // ORCHESTRATION
   // =====================================================================
   function refreshAll() { updatePrice(); updateHeatmap(); updateWhale(); updateFlow(); updateSM(); updateHLP(); updateStats(); }
@@ -1153,8 +1257,13 @@
   initPrice(); initHeatmap(); initWhale();
   refreshAll();
 
-  setInterval(() => { if (vis()) updatePrice(); }, 10000);
-  setInterval(() => { if (!vis()) return; updateHeatmap(); updateWhale(); updateFlow(); }, 30000);
+  // Fast tick: price line slides on heatmap + landscape every 3s
+  setInterval(() => { if (vis()) tickPrice(); }, 3000);
+  // Price chart + order flow: 10s
+  setInterval(() => { if (vis()) { updatePrice(); updateFlow(); } }, 10000);
+  // Heatmap + whales: 30s
+  setInterval(() => { if (!vis()) return; updateHeatmap(); updateWhale(); }, 30000);
+  // Smart money + HLP + stats: 60s
   setInterval(() => { if (!vis()) return; updateSM(); updateHLP(); updateStats(); }, 60000);
 })();
 </script>
