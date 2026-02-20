@@ -76,12 +76,12 @@ class OrderFlowConfig:
 @dataclass
 class SmartMoneyConfig:
     profile_window_days: int = 7
-    profile_refresh_hours: int = 6
+    profile_refresh_hours: int = 2
     min_equity: float = 50_000
     min_trades_for_profile: int = 5
     bot_trades_per_day: float = 50
     bot_avg_hold_min: float = 2
-    max_profiles_per_cycle: int = 5
+    max_profiles_per_cycle: int = 50
     alert_min_size_usd: float = 50_000
     alert_min_win_rate: float = 0.55
     # Auto-curation

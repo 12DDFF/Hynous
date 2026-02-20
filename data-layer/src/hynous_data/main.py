@@ -194,8 +194,8 @@ class Orchestrator:
     def _profiler_loop(self):
         """Refresh wallet profiles periodically."""
         refresh_s = self.cfg.smart_money.profile_refresh_hours * 3600
-        # Initial delay: wait 5min before first profile refresh
-        self._stop_event.wait(300)
+        # Initial delay: wait 30s for position poller to seed snapshots
+        self._stop_event.wait(30)
         while not self._stop_event.is_set():
             try:
                 profiler = self._components.get("profiler")

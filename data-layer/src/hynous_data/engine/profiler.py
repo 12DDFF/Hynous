@@ -230,41 +230,69 @@ class WalletProfiler:
     # ------------------------------------------------------------------
 
     def refresh_profiles(self):
-        """Recompute profiles for watched + auto-discovered addresses."""
+        """Recompute profiles for top-ranked + watched + stale addresses.
+
+        Priority order:
+        1. Top leaderboard wallets without profiles (what users see first)
+        2. Watched wallets needing refresh
+        3. Stale profiles past refresh window
+        """
         conn = self._db.conn
         now = time.time()
-        cutoff = now - self._cfg.profile_refresh_hours * 3600
+        profile_cutoff = now - self._cfg.profile_refresh_hours * 3600
+        limit = self._cfg.max_profiles_per_cycle
+        seen = set()
+        addresses = []
 
-        # 1. Watched wallets needing refresh
-        stale = conn.execute(
+        def _add(addr_list):
+            for a in addr_list:
+                if a not in seen and len(addresses) < limit:
+                    seen.add(a)
+                    addresses.append(a)
+
+        # 1. Top-ranked by 24h PnL that have no profile or stale profile.
+        #    Same ranking logic as get_rankings — these are what the
+        #    leaderboard shows, so they MUST have profile data.
+        ranked = conn.execute(
             """
-            SELECT w.address FROM watched_wallets w
-            LEFT JOIN wallet_profiles p ON w.address = p.address
-            WHERE w.is_active = 1
-            AND (p.computed_at IS NULL OR p.computed_at < ?)
+            WITH top_pnl AS (
+                SELECT address,
+                       MIN(snapshot_at) AS first_snap,
+                       MAX(snapshot_at) AS last_snap
+                FROM pnl_snapshots
+                WHERE snapshot_at >= ?
+                GROUP BY address
+                HAVING COUNT(*) >= 2
+            )
+            SELECT tp.address,
+                   ps_last.equity - ps_first.equity AS pnl
+            FROM top_pnl tp
+            JOIN pnl_snapshots ps_first
+                ON ps_first.address = tp.address AND ps_first.snapshot_at = tp.first_snap
+            JOIN pnl_snapshots ps_last
+                ON ps_last.address = tp.address AND ps_last.snapshot_at = tp.last_snap
+            LEFT JOIN wallet_profiles wp ON tp.address = wp.address
+            WHERE wp.address IS NULL OR wp.computed_at < ?
+            ORDER BY pnl DESC
             LIMIT ?
             """,
-            (cutoff, self._cfg.max_profiles_per_cycle),
+            (now - 86400, profile_cutoff, limit),
         ).fetchall()
+        _add([r["address"] for r in ranked])
 
-        addresses = [r["address"] for r in stale]
-
-        # 2. Auto-discovery: top ranked addresses without profiles
-        remaining = self._cfg.max_profiles_per_cycle - len(addresses)
-        if remaining > 0:
-            ranked = conn.execute(
+        # 2. Watched wallets needing refresh
+        if len(addresses) < limit:
+            stale = conn.execute(
                 """
-                SELECT DISTINCT ps.address FROM pnl_snapshots ps
-                LEFT JOIN wallet_profiles wp ON ps.address = wp.address
-                WHERE wp.address IS NULL
-                AND ps.snapshot_at > ?
-                AND ps.equity >= ?
-                ORDER BY ps.equity DESC
+                SELECT w.address FROM watched_wallets w
+                LEFT JOIN wallet_profiles p ON w.address = p.address
+                WHERE w.is_active = 1
+                AND (p.computed_at IS NULL OR p.computed_at < ?)
                 LIMIT ?
                 """,
-                (now - 86400, self._cfg.min_equity, remaining),
+                (profile_cutoff, limit),
             ).fetchall()
-            addresses.extend(r["address"] for r in ranked)
+            _add([r["address"] for r in stale])
 
         if not addresses:
             return
