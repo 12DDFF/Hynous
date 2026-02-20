@@ -266,10 +266,11 @@
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <select id="whale-limit" class="whale-limit">
-            <option value="50">50</option>
             <option value="100">100</option>
-            <option value="200">200</option>
             <option value="500" selected>500</option>
+            <option value="1000">1K</option>
+            <option value="2000">2K</option>
+            <option value="5000">5K</option>
           </select>
           <span class="panel-badge" id="whale-badge"></span>
           <button class="collapse-btn" id="whale-expand">Explore</button>
@@ -809,17 +810,27 @@
   // VIEW 3: SCATTER — Clustered scatter (entry vs leverage)
   // =================================================================
   function buildScatter(chart, whales, markPx, large) {
-    const clusters = clusterWhales(whales, large ? 30 : 20, large ? 20 : 15);
+    // Scale grid resolution with whale count — more whales = finer grid
+    const n = whales.length;
+    const baseGx = large ? 30 : 20, baseGy = large ? 20 : 15;
+    const scale = Math.max(1, Math.sqrt(n / 200));
+    const gx = Math.round(baseGx * scale), gy = Math.round(baseGy * scale);
+    const clusters = clusterWhales(whales, gx, gy);
     const maxCSz = Math.max(...clusters.map(c => c.totalSize), 1);
-    const points = clusters.map(c => ({
-      value: [c.lev, c.entry],
-      symbolSize: c.count === 1
-        ? Math.max(8, Math.sqrt(c.totalSize / maxCSz) * (large ? 35 : 30))
-        : Math.max(18, Math.min(55, Math.sqrt(c.count) * 12)),
-      itemStyle: { color: cColor(c), borderColor: cBorder(c), borderWidth: c.count > 1 ? 2 : 1 },
-      label: { show: c.count > 1, formatter: String(c.count), fontSize: c.count >= 10 ? 10 : 9, color: '#fafafa', fontWeight: 600, position: 'inside' },
-      cluster: c,
-    }));
+    const maxCount = Math.max(...clusters.map(c => c.count), 1);
+    // Shrink bubbles as count grows — target ~120 visible px max
+    const sizeScale = large ? Math.min(1, 400 / n) : Math.min(1, 250 / n);
+    const points = clusters.map(c => {
+      const sz = c.count === 1
+        ? Math.max(5, Math.sqrt(c.totalSize / maxCSz) * 20 * Math.max(0.3, sizeScale))
+        : Math.max(12, Math.min(40, Math.sqrt(c.count / maxCount) * 35));
+      return {
+        value: [c.lev, c.entry], symbolSize: sz,
+        itemStyle: { color: cColor(c), borderColor: cBorder(c), borderWidth: c.count > 1 ? 1.5 : 1 },
+        label: { show: c.count > 2, formatter: String(c.count), fontSize: c.count >= 100 ? 10 : 9, color: '#fafafa', fontWeight: 600, position: 'inside' },
+        cluster: c,
+      };
+    });
     const g = large ? { left: 70, right: 30, top: 40, bottom: 40 } : { left: 52, right: 16, top: 10, bottom: 28 };
     const fs = large ? 11 : 9;
     chart.setOption({
