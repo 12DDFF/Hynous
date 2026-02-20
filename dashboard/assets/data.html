@@ -647,9 +647,14 @@
   // --- Expanded full-screen whale explorer ---
   let whaleOverlayChart;
 
-  function openWhaleOverlay() {
-    if (!whaleData.length) return;
-    document.getElementById('whale-overlay').style.display = '';
+  async function openWhaleOverlay() {
+    // If data hasn't loaded yet, fetch it now
+    if (!whaleData.length) {
+      const data = await api(B + '/api/data/whales/' + coin + '?top_n=500');
+      if (data && !data.error && data.positions) whaleData = parseWhales(data.positions);
+    }
+    if (!whaleData.length) return; // still nothing after fetch
+    document.getElementById('whale-overlay').style.display = 'block';
 
     const el = document.getElementById('whale-overlay-chart');
     whaleOverlayChart = echarts.init(el, null, { renderer: 'canvas' });
@@ -726,7 +731,7 @@
   }
 
   function closeWhaleOverlay() {
-    document.getElementById('whale-overlay').style.display = 'none';
+    document.getElementById('whale-overlay').style.display = '';
     if (whaleOverlayChart) { whaleOverlayChart.dispose(); whaleOverlayChart = null; }
   }
 
@@ -872,7 +877,7 @@
   document.getElementById('whale-expand').addEventListener('click', openWhaleOverlay);
   document.getElementById('whale-close').addEventListener('click', closeWhaleOverlay);
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && document.getElementById('whale-overlay').style.display !== 'none') closeWhaleOverlay();
+    if (e.key === 'Escape' && document.getElementById('whale-overlay').style.display === 'block') closeWhaleOverlay();
   });
 
   initPrice(); initHeatmap(); initWhale();
