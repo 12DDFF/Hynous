@@ -1911,85 +1911,160 @@ class AppState(rx.State):
         candles: list, entry: float, sl: float, tp: float,
         side: str, symbol: str, heatmap_buckets: list,
     ) -> str:
-        """Return self-contained HTML for a sidebar position chart."""
-        import json as _json
+        """Return pure SVG candlestick chart — no script tags (rx.html strips them)."""
+        if not candles:
+            return ""
 
-        # Convert candles to Lightweight Charts format
-        chart_data = []
+        W, H = 256, 170
+        PAD_L, PAD_R, PAD_T, PAD_B = 42, 4, 8, 18  # axis label space
+        cw = W - PAD_L - PAD_R
+        ch = H - PAD_T - PAD_B
+
+        # Price range — include entry/SL/TP in range calculation
+        all_prices = []
         for c in candles:
-            chart_data.append({
-                "time": c["t"] // 1000,
-                "open": c["o"],
-                "high": c["h"],
-                "low": c["l"],
-                "close": c["c"],
-            })
+            all_prices.extend([c["h"], c["l"]])
+        for px in (entry, sl, tp):
+            if px > 0:
+                all_prices.append(px)
+        hi = max(all_prices)
+        lo = min(all_prices)
+        rng = hi - lo if hi != lo else hi * 0.01 or 1
+        # Add 5% padding
+        hi += rng * 0.05
+        lo -= rng * 0.05
+        rng = hi - lo
 
-        data_json = _json.dumps(chart_data)
+        def y(price):
+            return round(PAD_T + ch * (1 - (price - lo) / rng), 1)
 
-        # Build price lines
-        price_lines = ""
-        if entry > 0:
-            price_lines += f"""
-            series.createPriceLine({{price:{entry},color:'#6366f1',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:'Entry'}});"""
-        if sl > 0:
-            price_lines += f"""
-            series.createPriceLine({{price:{sl},color:'#ef4444',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:'SL'}});"""
-        if tp > 0:
-            price_lines += f"""
-            series.createPriceLine({{price:{tp},color:'#22c55e',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:'TP'}});"""
+        n = len(candles)
+        bar_w = max(1.5, min(4, cw / n * 0.7))
+        gap = cw / n if n > 1 else cw
 
-        # Build heatmap background markers (optional — subtle colored zones)
-        heatmap_js = ""
+        # Format price for axis labels
+        def fmt_px(p):
+            if p >= 1000:
+                return f"${p:,.0f}"
+            elif p >= 1:
+                return f"${p:.2f}"
+            else:
+                return f"${p:.4f}"
+
+        last_px = candles[-1]["c"]
+        px_str = fmt_px(last_px)
+        last_pnl_color = "#22c55e" if last_px >= candles[0]["o"] else "#ef4444"
+
+        # Build SVG
+        svg_parts = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="{H}" '
+            f'viewBox="0 0 {W} {H}" style="display:block;background:#0c0c0c;border-radius:4px">'
+        ]
+
+        # Y-axis grid lines + labels (4 levels)
+        for i in range(5):
+            price = lo + rng * i / 4
+            yp = y(price)
+            svg_parts.append(
+                f'<line x1="{PAD_L}" y1="{yp}" x2="{W-PAD_R}" y2="{yp}" '
+                f'stroke="#1a1a1a" stroke-width="0.5"/>'
+            )
+            svg_parts.append(
+                f'<text x="{PAD_L-3}" y="{yp+3}" text-anchor="end" '
+                f'font-size="7" fill="#404040" font-family="JetBrains Mono,monospace">'
+                f'{fmt_px(price)}</text>'
+            )
+
+        # Heatmap zones (subtle yellow bands at liquidation levels)
         if heatmap_buckets:
-            markers = []
-            for b in heatmap_buckets[:20]:  # limit to 20 levels
-                liq_total = (b.get("long_liq_usd", 0) + b.get("short_liq_usd", 0))
-                if liq_total > 10000:  # only show significant levels
-                    price_mid = b.get("price_mid", 0)
-                    if price_mid > 0:
-                        markers.append({"px": price_mid, "val": liq_total})
-            if markers:
-                max_liq = max(m["val"] for m in markers)
-                for m in markers:
-                    opacity = min(0.3, (m["val"] / max_liq) * 0.3)
-                    heatmap_js += f"""
-            series.createPriceLine({{price:{m['px']},color:'rgba(250,204,21,{opacity:.2f})',lineWidth:4,lineStyle:0,axisLabelVisible:false,title:''}});"""
+            max_liq = 0
+            hm_items = []
+            for b in heatmap_buckets[:20]:
+                liq_t = b.get("long_liq_usd", 0) + b.get("short_liq_usd", 0)
+                pm = b.get("price_mid", 0)
+                if liq_t > 10000 and pm > 0 and lo <= pm <= hi:
+                    hm_items.append((pm, liq_t))
+                    max_liq = max(max_liq, liq_t)
+            for pm, liq_t in hm_items:
+                opacity = round(min(0.15, (liq_t / max_liq) * 0.15), 3) if max_liq else 0
+                yp = y(pm)
+                svg_parts.append(
+                    f'<rect x="{PAD_L}" y="{yp-2}" width="{cw}" height="4" '
+                    f'fill="rgba(250,204,21,{opacity})" rx="1"/>'
+                )
 
-        # Last price for header
-        last_px = candles[-1]["c"] if candles else 0
-        px_str = f"${last_px:,.2f}" if last_px >= 1 else f"${last_px:.4f}"
+        # Price lines (Entry, SL, TP)
+        markers = []
+        if entry > 0 and lo <= entry <= hi:
+            markers.append((entry, "#6366f1", "Entry"))
+        if sl > 0 and lo <= sl <= hi:
+            markers.append((sl, "#ef4444", "SL"))
+        if tp > 0 and lo <= tp <= hi:
+            markers.append((tp, "#22c55e", "TP"))
 
-        return f"""<div style="position:relative;width:100%">
-<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px;margin-bottom:2px">
-<span style="font-size:0.65rem;color:#6366f1;font-weight:600">{symbol}</span>
-<span style="font-size:0.6rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace">{px_str}</span>
-</div>
-<div id="pos-chart-{symbol}" style="width:100%;height:180px"></div>
-<script>
-(function(){{
-if(typeof LightweightCharts==='undefined')return;
-var el=document.getElementById('pos-chart-{symbol}');
-if(!el)return;
-var w=el.clientWidth||256;
-var chart=LightweightCharts.createChart(el,{{
-width:w,height:180,
-layout:{{background:{{color:'#0c0c0c'}},textColor:'#525252',fontSize:9}},
-grid:{{vertLines:{{color:'#141414'}},horzLines:{{color:'#141414'}}}},
-crosshair:{{mode:0}},
-rightPriceScale:{{borderColor:'#1a1a1a',scaleMargins:{{top:0.08,bottom:0.08}}}},
-timeScale:{{borderColor:'#1a1a1a',timeVisible:true,secondsVisible:false,tickMarkFormatter:function(t){{var d=new Date(t*1000);return d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');}}}},
-handleScroll:false,handleScale:false,
-}});
-var series=chart.addCandlestickSeries({{
-upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',
-wickUpColor:'#22c55e',wickDownColor:'#ef4444',
-}});
-series.setData({data_json});{price_lines}{heatmap_js}
-chart.timeScale().fitContent();
-}})();
-</script>
-</div>"""
+        for px, color, label in markers:
+            yp = y(px)
+            svg_parts.append(
+                f'<line x1="{PAD_L}" y1="{yp}" x2="{W-PAD_R}" y2="{yp}" '
+                f'stroke="{color}" stroke-width="0.7" stroke-dasharray="3,2" opacity="0.8"/>'
+            )
+            svg_parts.append(
+                f'<text x="{W-PAD_R+2}" y="{yp+3}" font-size="6.5" fill="{color}" '
+                f'font-family="JetBrains Mono,monospace" font-weight="500">{label}</text>'
+            )
+
+        # Candlesticks
+        for i, c in enumerate(candles):
+            cx = round(PAD_L + gap * (i + 0.5), 1)
+            o, h_p, l_p, cl = c["o"], c["h"], c["l"], c["c"]
+            is_up = cl >= o
+            color = "#22c55e" if is_up else "#ef4444"
+            body_top = y(max(o, cl))
+            body_bot = y(min(o, cl))
+            body_h = max(0.5, body_bot - body_top)
+
+            # Wick
+            svg_parts.append(
+                f'<line x1="{cx}" y1="{y(h_p)}" x2="{cx}" y2="{y(l_p)}" '
+                f'stroke="{color}" stroke-width="0.7"/>'
+            )
+            # Body
+            svg_parts.append(
+                f'<rect x="{cx - bar_w/2}" y="{body_top}" width="{bar_w}" height="{body_h}" '
+                f'fill="{color}" rx="0.3"/>'
+            )
+
+        # Current price indicator (right edge)
+        yp_last = y(last_px)
+        svg_parts.append(
+            f'<circle cx="{PAD_L + cw}" cy="{yp_last}" r="2" fill="{last_pnl_color}"/>'
+        )
+
+        # Time axis labels (first, middle, last)
+        from datetime import datetime, timezone
+        for idx in (0, n // 2, n - 1):
+            if idx < n:
+                t = candles[idx]["t"] / 1000
+                dt = datetime.fromtimestamp(t, tz=timezone.utc)
+                label = f"{dt.hour}:{dt.minute:02d}"
+                cx = round(PAD_L + gap * (idx + 0.5), 1)
+                svg_parts.append(
+                    f'<text x="{cx}" y="{H-4}" text-anchor="middle" font-size="7" '
+                    f'fill="#404040" font-family="JetBrains Mono,monospace">{label}</text>'
+                )
+
+        svg_parts.append("</svg>")
+        svg = "\n".join(svg_parts)
+
+        return (
+            f'<div style="width:100%">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:2px 4px;margin-bottom:2px">'
+            f'<span style="font-size:0.65rem;color:#6366f1;font-weight:600">{symbol}</span>'
+            f'<span style="font-size:0.6rem;color:{last_pnl_color};font-family:JetBrains Mono,monospace;'
+            f'font-weight:500">{px_str}</span>'
+            f'</div>{svg}</div>'
+        )
 
     # === Model Selection ===
     selected_model: str = "openrouter/anthropic/claude-sonnet-4-5-20250929"

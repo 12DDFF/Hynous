@@ -104,9 +104,6 @@ def _dashboard_content() -> rx.Component:
             })();
         """),
 
-        # Lightweight Charts CDN (35KB gzipped, cached — needed by position chart rx.html)
-        rx.script(src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"),
-
         # Smart auto-scroll — ChatGPT-style sticky bottom.
         rx.script("""
             (function() {
