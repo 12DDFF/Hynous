@@ -149,7 +149,7 @@ def create_router(c: dict) -> APIRouter:
             return JSONResponse(status_code=503, content={"error": "Profiler not available"})
         profile = profiler.get_profile(address, days=days)
         if not profile:
-            return JSONResponse(status_code=404, content={"error": "No profile data — insufficient trades"})
+            return JSONResponse(status_code=404, content={"error": "Address not found in system"})
         return profile
 
     @router.get("/v1/smart-money/wallet/{address}/trades")

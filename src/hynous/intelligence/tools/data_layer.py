@@ -451,7 +451,7 @@ def _format_profile(data: dict | None, address: str, top_n: int = 15) -> str:
         return f"No profile data for {address[:10]}... (insufficient trades or unavailable)."
 
     import datetime
-    lines = [f"Wallet Profile — {address[:10]}..."]
+    lines = [f"Wallet Profile — {address}"]
     lbl = data.get("label", "")
     if lbl:
         lines[0] += f' "{lbl}"'
