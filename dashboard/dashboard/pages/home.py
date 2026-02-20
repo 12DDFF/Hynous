@@ -1449,6 +1449,121 @@ def positions_section() -> rx.Component:
     )
 
 
+def _regime_banner() -> rx.Component:
+    """Regime indicator — shows current market regime, micro status, session."""
+    return rx.cond(
+        AppState.regime_label != "",
+        rx.box(
+            rx.vstack(
+                # Main row
+                rx.hstack(
+                    # Colored dot + label
+                    rx.hstack(
+                        rx.box(
+                            width="8px",
+                            height="8px",
+                            border_radius="50%",
+                            background=AppState.regime_color,
+                            flex_shrink="0",
+                        ),
+                        rx.text(
+                            AppState.regime_label,
+                            font_size="0.8rem",
+                            font_weight="600",
+                            color=AppState.regime_color,
+                            font_family="JetBrains Mono, monospace",
+                        ),
+                        spacing="2",
+                        align="center",
+                    ),
+                    # Direction score
+                    rx.text(
+                        AppState.regime_score,
+                        font_size="0.75rem",
+                        color="#525252",
+                        font_family="JetBrains Mono, monospace",
+                    ),
+                    rx.text("\u00b7", color="#333"),
+                    # Session badge
+                    rx.text(
+                        AppState.regime_session,
+                        font_size="0.7rem",
+                        color="#525252",
+                    ),
+                    rx.spacer(),
+                    # Micro status badge
+                    rx.cond(
+                        AppState.regime_micro_safe,
+                        rx.hstack(
+                            rx.box(
+                                width="6px", height="6px",
+                                border_radius="50%",
+                                background="#22c55e",
+                            ),
+                            rx.text(
+                                "Micros OK",
+                                font_size="0.65rem",
+                                color="#525252",
+                            ),
+                            spacing="1",
+                            align="center",
+                        ),
+                        rx.hstack(
+                            rx.box(
+                                width="6px", height="6px",
+                                border_radius="50%",
+                                background="#ef4444",
+                            ),
+                            rx.text(
+                                "Micros Blocked",
+                                font_size="0.65rem",
+                                color="#ef4444",
+                            ),
+                            spacing="1",
+                            align="center",
+                        ),
+                    ),
+                    width="100%",
+                    spacing="2",
+                    align="center",
+                ),
+                # Reversal warning (conditional)
+                rx.cond(
+                    AppState.regime_reversal,
+                    rx.hstack(
+                        rx.icon("alert-triangle", size=12, color="#fbbf24"),
+                        rx.text(
+                            "Reversal: " + AppState.regime_reversal_detail,
+                            font_size="0.7rem",
+                            color="#fbbf24",
+                        ),
+                        spacing="2",
+                        align="center",
+                        padding_top="0.25rem",
+                    ),
+                    rx.fragment(),
+                ),
+                # Guidance text
+                rx.text(
+                    AppState.regime_guidance,
+                    font_size="0.7rem",
+                    color="#525252",
+                    line_height="1.4",
+                ),
+                spacing="1",
+                width="100%",
+            ),
+            background=AppState.regime_bg,
+            border=AppState.regime_border,
+            border_radius="12px",
+            padding="0.75rem 1rem",
+            width="100%",
+            transition="all 0.3s ease",
+        ),
+        rx.fragment(),
+    )
+
+
 def _scanner_banner() -> rx.Component:
     """Collapsible scanner activity banner — shows market scanner status + recent anomalies."""
     return rx.box(
@@ -1601,6 +1716,9 @@ def home_page() -> rx.Component:
 
                 # Scanner banner
                 _scanner_banner(),
+
+                # Regime indicator
+                _regime_banner(),
 
                 # News
                 rx.box(_news_card(), width="100%"),

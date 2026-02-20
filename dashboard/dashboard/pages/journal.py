@@ -14,9 +14,9 @@ def _stats_row() -> rx.Component:
     return rx.grid(
         stat_card("Win Rate", AppState.journal_win_rate, "closed trades"),
         stat_card(
-            "Total PnL",
+            "Account PnL",
             AppState.journal_total_pnl,
-            "realized",
+            "recorded: " + AppState.journal_recorded_pnl,
             value_color=rx.cond(
                 AppState.journal_total_pnl.contains("+"),
                 "#4ade80",

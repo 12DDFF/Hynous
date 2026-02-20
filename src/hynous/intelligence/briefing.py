@@ -342,7 +342,19 @@ def build_briefing(
             sections.append(dl_section)
 
     # --- Performance stats ---
-    stats_line = _build_stats_line()
+    # Compute real account PnL for the performance line
+    _account_pnl = None
+    try:
+        state_for_pnl = user_state
+        if state_for_pnl is None and provider is not None:
+            state_for_pnl = provider.get_user_state()
+        if state_for_pnl and config:
+            _acct = state_for_pnl["account_value"]
+            _init = config.execution.paper_balance if config else 1000
+            _account_pnl = _acct - _init
+    except Exception:
+        pass
+    stats_line = _build_stats_line(account_pnl=_account_pnl)
     if stats_line:
         sections.append(stats_line)
 
@@ -704,13 +716,13 @@ def _build_data_layer_section(config, symbols: list[str]) -> str:
         return ""
 
 
-def _build_stats_line() -> str:
+def _build_stats_line(account_pnl: float | None = None) -> str:
     """Performance stats one-liner from trade analytics."""
     try:
         from ..core.trade_analytics import get_trade_stats, format_stats_compact
         stats = get_trade_stats()
         if stats.total_trades > 0:
-            return format_stats_compact(stats)
+            return format_stats_compact(stats, account_pnl=account_pnl)
     except Exception:
         pass
     return ""

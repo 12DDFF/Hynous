@@ -1648,6 +1648,105 @@ class AppState(rx.State):
             return "0"
         return str(_daemon.review_count)
 
+    # === Regime Display ===
+
+    @rx.var(cache=False)
+    def regime_label(self) -> str:
+        """Current regime label (e.g. TREND_BULL, RANGING)."""
+        if _daemon is None or _daemon._regime is None:
+            return ""
+        return _daemon._regime.combined_label
+
+    @rx.var(cache=False)
+    def regime_score(self) -> str:
+        """Direction score as display string."""
+        if _daemon is None or _daemon._regime is None:
+            return ""
+        s = _daemon._regime.direction_score
+        sign = "+" if s >= 0 else ""
+        return f"{sign}{s:.2f}"
+
+    @rx.var(cache=False)
+    def regime_micro_safe(self) -> bool:
+        """Whether micro trades are currently allowed."""
+        if _daemon is None or _daemon._regime is None:
+            return True
+        return _daemon._regime.micro_safe
+
+    @rx.var(cache=False)
+    def regime_session(self) -> str:
+        """Current trading session (ASIA, LONDON, US_OPEN, etc.)."""
+        if _daemon is None or _daemon._regime is None:
+            return ""
+        return _daemon._regime.session
+
+    @rx.var(cache=False)
+    def regime_reversal(self) -> bool:
+        """Whether a reversal has been detected."""
+        if _daemon is None or _daemon._regime is None:
+            return False
+        return _daemon._regime.reversal_flag
+
+    @rx.var(cache=False)
+    def regime_reversal_detail(self) -> str:
+        """Reversal signal details."""
+        if _daemon is None or _daemon._regime is None:
+            return ""
+        return _daemon._regime.reversal_detail
+
+    @rx.var(cache=False)
+    def regime_guidance(self) -> str:
+        """One-line regime guidance for the current label."""
+        if _daemon is None or _daemon._regime is None:
+            return ""
+        return _daemon._regime.guidance
+
+    @rx.var(cache=False)
+    def regime_color(self) -> str:
+        """Accent color for current regime label."""
+        label = self.regime_label
+        if "TREND_BULL" in label:
+            return "#22c55e"
+        if "TREND_BEAR" in label:
+            return "#ef4444"
+        if "VOLATILE_BULL" in label:
+            return "#f59e0b"
+        if "VOLATILE_BEAR" in label:
+            return "#fb923c"
+        if "SQUEEZE" in label:
+            return "#a78bfa"
+        if "RANGING" in label:
+            return "#737373"
+        return "#525252"
+
+    @rx.var(cache=False)
+    def regime_bg(self) -> str:
+        """Background tint for regime banner."""
+        label = self.regime_label
+        if "TREND_BULL" in label:
+            return "color-mix(in srgb, #22c55e 6%, #111111)"
+        if "TREND_BEAR" in label:
+            return "color-mix(in srgb, #ef4444 6%, #111111)"
+        if "VOLATILE" in label:
+            return "color-mix(in srgb, #f59e0b 6%, #111111)"
+        if "SQUEEZE" in label:
+            return "color-mix(in srgb, #a78bfa 6%, #111111)"
+        return "#111111"
+
+    @rx.var(cache=False)
+    def regime_border(self) -> str:
+        """Border color for regime banner."""
+        label = self.regime_label
+        if "TREND_BULL" in label:
+            return "1px solid rgba(34,197,94,0.15)"
+        if "TREND_BEAR" in label:
+            return "1px solid rgba(239,68,68,0.15)"
+        if "VOLATILE" in label:
+            return "1px solid rgba(245,158,11,0.15)"
+        if "SQUEEZE" in label:
+            return "1px solid rgba(167,139,250,0.15)"
+        return "1px solid #1a1a1a"
+
     @rx.var(cache=False)
     def daemon_today_wakes(self) -> list[DaemonActivityFormatted]:
         """Today's daemon events with relative timestamps."""
@@ -2953,7 +3052,8 @@ class AppState(rx.State):
     # === Journal State ===
 
     journal_win_rate: str = "—"
-    journal_total_pnl: str = "—"
+    journal_total_pnl: str = "—"        # Real PnL from exchange (account - initial)
+    journal_recorded_pnl: str = "—"     # PnL sum from recorded trades in Nous
     journal_profit_factor: str = "—"
     journal_total_trades: str = "0"
     journal_fee_losses: str = "0"
@@ -3386,8 +3486,19 @@ class AppState(rx.State):
             async with self:
                 stats, trades, breakdown = data
                 self.journal_win_rate = f"{stats['win_rate']:.0f}%" if stats['total_trades'] > 0 else "—"
-                sign = "+" if stats['total_pnl'] >= 0 else ""
-                self.journal_total_pnl = f"{sign}${stats['total_pnl']:.2f}" if stats['total_trades'] > 0 else "—"
+                # Real PnL from exchange (account_value - initial)
+                if self.portfolio_value > 0 and self.portfolio_initial > 0:
+                    real_pnl = self.portfolio_value - self.portfolio_initial
+                    rsign = "+" if real_pnl >= 0 else ""
+                    self.journal_total_pnl = f"{rsign}${real_pnl:.2f}"
+                else:
+                    self.journal_total_pnl = "—"
+                # Recorded trade PnL from Nous (for reference)
+                if stats['total_trades'] > 0:
+                    rsign2 = "+" if stats['total_pnl'] >= 0 else ""
+                    self.journal_recorded_pnl = f"{rsign2}${stats['total_pnl']:.2f}"
+                else:
+                    self.journal_recorded_pnl = "—"
                 pf = stats['profit_factor']
                 self.journal_profit_factor = f"{pf:.2f}" if pf != float('inf') else "∞" if stats['total_trades'] > 0 else "—"
                 self.journal_total_trades = str(stats['total_trades'])

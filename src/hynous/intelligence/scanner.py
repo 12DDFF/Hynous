@@ -156,7 +156,10 @@ class MarketScanner:
         self._recent_anomalies: deque = deque(maxlen=20)
 
         # Regime shift detection (set by daemon when label changes)
-        self._pending_regime_shift: dict | None = None  # {from, to, score}
+        self._pending_regime_shift: dict | None = None  # {from, to, score, ...}
+
+        # Micro safety gate (set by daemon after regime computation)
+        self._micro_safe: bool = True
 
         # Data layer (set by daemon from config.data_layer.enabled)
         self._data_layer_enabled = True
@@ -287,12 +290,15 @@ class MarketScanner:
             self._news = self._news[-50:]
             self._seen_news_ids = {a.get("id", "") for a in self._news}
 
-    def regime_shifted(self, from_label: str, to_label: str, score: float):
+    def regime_shifted(self, from_label: str, to_label: str, score: float,
+                       micro_safe: bool = True, reversal_detail: str = ""):
         """Called by daemon when regime label changes. Queues for detection."""
         self._pending_regime_shift = {
             "from": from_label,
             "to": to_label,
             "score": score,
+            "micro_safe": micro_safe,
+            "reversal_detail": reversal_detail,
         }
 
     # -----------------------------------------------------------------
@@ -974,6 +980,8 @@ class MarketScanner:
         Requires imbalance consistently skewed across last 3 snapshots (3+ min),
         filtering natural orderbook oscillation.
         """
+        if not self._micro_safe:
+            return []
         results = []
         if len(self._books) < 3:
             return results
@@ -1049,6 +1057,8 @@ class MarketScanner:
 
     def _detect_momentum_burst(self) -> list[AnomalyEvent]:
         """Detect 5m candle velocity + volume spikes."""
+        if not self._micro_safe:
+            return []
         results = []
         now = time.time()
         move_threshold = self.config.momentum_5m_pct / 100.0
@@ -1123,7 +1133,11 @@ class MarketScanner:
     # -----------------------------------------------------------------
 
     def _detect_position_adverse_book(self) -> list[AnomalyEvent]:
-        """Detect orderbook flipping against open positions."""
+        """Detect orderbook flipping against open positions.
+
+        NOT gated by micro_safe — this is a defensive risk signal for existing
+        positions, not a speculative entry. We WANT warnings during volatility.
+        """
         results = []
         current = self._books.latest()
         if not current or not self.position_directions:
@@ -1261,14 +1275,28 @@ class MarketScanner:
         from_label = shift["from"]
         to_label = shift["to"]
         score = shift["score"]
+        micro_safe = shift.get("micro_safe", True)
+        reversal_detail = shift.get("reversal_detail", "")
 
+        # Severity based on new label type
+        if "VOLATILE" in to_label:
+            severity = 0.8
+        elif reversal_detail:
+            severity = 0.85
+        else:
+            severity = 0.7
+
+        micro_str = "OK" if micro_safe else "BLOCKED"
         headline = f"Regime shift: {from_label} -> {to_label}"
-        detail = f"Regime score now {score:+.2f}. Market conditions have shifted — reassess open positions and thesis bias."
+        detail = f"Regime score {score:+.2f} | Micro: {micro_str}"
+        if reversal_detail:
+            detail += f" | Reversal: {reversal_detail}"
+        detail += " — reassess open positions and thesis bias."
 
         return [AnomalyEvent(
             type="regime_shift",
             symbol="MARKET",
-            severity=0.7,
+            severity=severity,
             headline=headline,
             detail=detail,
             fingerprint=f"regime_shift:{from_label}:{to_label}",
@@ -1646,7 +1674,7 @@ def _severity_label(sev: float) -> str:
 def format_scanner_wake(
     anomalies: list[AnomalyEvent],
     position_types: dict[str, dict] | None = None,
-    regime_label: str = "NEUTRAL",
+    regime_label: str = "RANGING",
 ) -> str:
     """Format anomalies into a daemon wake message.
 
@@ -1702,12 +1730,14 @@ def format_scanner_wake(
         lines.append("")
 
     # Regime-aware direction hint for footer
-    is_bear = regime_label in ("BEARISH", "LEAN BEAR")
-    is_bull = regime_label in ("BULLISH", "LEAN BULL")
+    is_bear = regime_label in ("TREND_BEAR", "VOLATILE_BEAR")
+    is_bull = regime_label in ("TREND_BULL", "VOLATILE_BULL")
     if is_bear:
-        direction_hint = " Regime is BEARISH — your default side is SHORT. Don't go long unless you have an exceptional, specific reason that overcomes the downtrend."
+        direction_hint = f" Regime is {regime_label} — your default side is SHORT. Don't go long unless you have an exceptional, specific reason."
     elif is_bull:
-        direction_hint = " Regime is BULLISH — your default side is LONG."
+        direction_hint = f" Regime is {regime_label} — your default side is LONG."
+    elif regime_label == "SQUEEZE":
+        direction_hint = " Regime is SQUEEZE — wait for breakout, no new positions."
     else:
         direction_hint = ""
 

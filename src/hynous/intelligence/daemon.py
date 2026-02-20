@@ -257,8 +257,11 @@ class Daemon:
         self._wake_fingerprints: list[frozenset] = []  # Last 5 tool+mutation fingerprints
 
         # Regime detection (computed every deriv poll, injected everywhere)
+        from .regime import RegimeClassifier
+        self._regime_classifier = RegimeClassifier()  # Persistent for hysteresis
         self._regime = None             # RegimeState or None
         self._prev_regime_label = ""    # For shift detection
+        self._micro_safe = True         # Micro safety gate from regime
 
         # Market scanner (anomaly detection across all pairs)
         self._scanner = None
@@ -427,7 +430,11 @@ class Daemon:
             "regime": {
                 "label": self._regime.label if self._regime else "UNKNOWN",
                 "score": round(self._regime.score, 2) if self._regime else 0,
-                "bias": self._regime.bias if self._regime else "NEUTRAL",
+                "bias": self._regime.bias if self._regime else "neutral",
+                "structure": self._regime.structure_label if self._regime else "RANGING",
+                "micro_safe": self._regime.micro_safe if self._regime else True,
+                "session": self._regime.session if self._regime else "QUIET",
+                "reversal": self._regime.reversal_flag if self._regime else False,
             } if self._regime else None,
         }
 
@@ -739,28 +746,49 @@ class Daemon:
         except Exception as e:
             logger.debug("Equity snapshot failed: %s", e)
 
-        # Compute regime classification (zero cost, uses cached data)
+        # Compute regime classification (zero cost, uses cached data + 1h candles)
         try:
-            from .regime import RegimeClassifier
-            classifier = RegimeClassifier()
-            self._regime = classifier.compute(
+            candles_1h = self._fetch_regime_candles()
+            self._regime = self._regime_classifier.classify(
                 self.snapshot, self._data_cache, self._scanner,
+                candles_1h=candles_1h,
             )
+            self._micro_safe = self._regime.micro_safe
             # Track label changes for scanner shift detection
             new_label = self._regime.label
             if self._prev_regime_label and new_label != self._prev_regime_label:
                 logger.info("Regime shift: %s -> %s (score %.2f)",
                             self._prev_regime_label, new_label, self._regime.score)
-                # Feed regime shift to scanner for anomaly detection
                 if self._scanner:
-                    self._scanner.regime_shifted(self._prev_regime_label, new_label, self._regime.score)
+                    self._scanner.regime_shifted(
+                        self._prev_regime_label, new_label, self._regime.score,
+                        micro_safe=self._regime.micro_safe,
+                        reversal_detail=self._regime.reversal_detail,
+                    )
             self._prev_regime_label = new_label
+            # Feed micro_safe to scanner
+            if self._scanner:
+                self._scanner._micro_safe = self._regime.micro_safe
         except Exception as e:
             logger.debug("Regime computation failed: %s", e)
 
         self.snapshot.last_deriv_poll = time.time()
         self._data_changed = True
         self.polls += 1
+
+    def _fetch_regime_candles(self) -> list[dict]:
+        """Fetch 50 x 1h BTC candles for regime classification."""
+        try:
+            provider = self._get_provider()
+            now_ms = int(time.time() * 1000)
+            start_ms = now_ms - 50 * 3600 * 1000  # 50h lookback
+            candles = provider.get_candles("BTC", "1h", start_ms, now_ms)
+            if candles and len(candles) > 1:
+                return candles[:-1]  # Drop forming candle
+            return candles or []
+        except Exception as e:
+            logger.debug("Regime candle fetch failed: %s", e)
+            return []
 
     # ================================================================
     # Watchpoint System
@@ -1695,11 +1723,11 @@ class Daemon:
         top = wake_worthy[:cfg.max_anomalies_per_wake]
 
         # Format the wake message (pass position types + regime for directional context)
-        regime_label = self._regime.label if self._regime else "NEUTRAL"
+        regime_label = self._regime.label if self._regime else "RANGING"
         message = format_scanner_wake(top, position_types=self._position_types, regime_label=regime_label)
 
         # Inject regime context above the scanner message
-        if self._regime and self._regime.label != "NEUTRAL":
+        if self._regime and self._regime.label != "RANGING":
             from .regime import format_regime_line
             regime_line = format_regime_line(self._regime, compact=True)
             message = f"[{regime_line}]\n\n" + message
@@ -2898,7 +2926,7 @@ class Daemon:
 
             # === 3c. Regime context (zero cost, already computed) ===
             regime_block = ""
-            if self._regime and self._regime.label != "NEUTRAL":
+            if self._regime and self._regime.label != "RANGING":
                 from .regime import format_regime_line
                 regime_block = format_regime_line(self._regime, compact=False)
 

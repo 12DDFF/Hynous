@@ -384,13 +384,21 @@ def get_trade_stats(
     return stats
 
 
-def format_stats_compact(stats: TradeStats) -> str:
-    """~80 token one-liner for briefing injection."""
+def format_stats_compact(stats: TradeStats, account_pnl: float | None = None) -> str:
+    """~80 token one-liner for briefing injection.
+
+    account_pnl: real PnL from exchange (account_value - initial). If provided,
+    used instead of Nous-recorded sum which may be incomplete.
+    """
     if stats.total_trades == 0:
         return "Performance: No closed trades yet"
 
     pf_str = f"{stats.profit_factor:.1f}" if stats.profit_factor != float('inf') else "inf"
-    sign = "+" if stats.total_pnl >= 0 else ""
+
+    # Use exchange truth if available, fall back to recorded sum
+    pnl = account_pnl if account_pnl is not None else stats.total_pnl
+    sign = "+" if pnl >= 0 else ""
+
     streak = ""
     if stats.current_streak > 1:
         streak = f", {stats.current_streak}W streak"
@@ -404,6 +412,6 @@ def format_stats_compact(stats: TradeStats) -> str:
     return (
         f"Performance: {stats.total_trades} trades, "
         f"{stats.win_rate:.0f}% win, "
-        f"{sign}${stats.total_pnl:.2f}, "
+        f"{sign}${pnl:.2f}, "
         f"PF {pf_str}{streak}{fee_note}"
     )

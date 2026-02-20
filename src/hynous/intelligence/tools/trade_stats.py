@@ -74,23 +74,45 @@ def handle_get_trade_stats(
             return "No closed trades in the specified time range."
         return "No closed trades yet. Start trading to build your track record."
 
+    # Get real account PnL from exchange for accurate reporting
+    account_pnl = None
+    try:
+        from ...data.providers.hyperliquid import get_provider
+        from ...core.config import load_config
+        config = load_config()
+        provider = get_provider(config=config)
+        if provider.can_trade:
+            state = provider.get_user_state()
+            account_pnl = state["account_value"] - config.execution.paper_balance
+    except Exception:
+        pass
+
     if symbol:
         symbol = symbol.upper()
         return _format_symbol_report(stats, symbol, limit)
 
-    return _format_full_report(stats, limit)
+    return _format_full_report(stats, limit, account_pnl=account_pnl)
 
 
-def _format_full_report(stats, limit: int = 5) -> str:
+def _format_full_report(stats, limit: int = 5, account_pnl: float | None = None) -> str:
     """Format a full performance report."""
     pf_str = f"{stats.profit_factor:.2f}" if stats.profit_factor != float('inf') else "∞"
-    sign = "+" if stats.total_pnl >= 0 else ""
 
     lines = [
         "=== Trading Performance ===",
         f"Total Trades: {stats.total_trades} ({stats.wins}W / {stats.losses}L)",
         f"Win Rate: {stats.win_rate:.1f}%",
-        f"Total PnL: {sign}${stats.total_pnl:.2f}",
+    ]
+    # Show real account PnL if available, with recorded trade sum for context
+    if account_pnl is not None:
+        asign = "+" if account_pnl >= 0 else ""
+        lines.append(f"Account PnL: {asign}${account_pnl:.2f} (from exchange)")
+        rsign = "+" if stats.total_pnl >= 0 else ""
+        lines.append(f"Recorded Trade PnL: {rsign}${stats.total_pnl:.2f} ({stats.total_trades} trades)")
+    else:
+        sign = "+" if stats.total_pnl >= 0 else ""
+        lines.append(f"Total PnL: {sign}${stats.total_pnl:.2f}")
+    lines += [
         f"Profit Factor: {pf_str}",
         f"Avg Win: +${stats.avg_win:.2f} | Avg Loss: ${stats.avg_loss:.2f}",
         f"Best: +${stats.best_trade:.2f} | Worst: ${stats.worst_trade:.2f}",
