@@ -662,7 +662,7 @@
     const maxSz = Math.max(...whaleData.map(w => w.size), 1);
     const mapW = w => ({
       value: [w.pnl, w.size],
-      symbolSize: Math.max(5, (w.size / maxSz) * 35),
+      symbolSize: Math.max(4, Math.sqrt(w.size / maxSz) * 28),
       whale: w,
     });
 
@@ -686,9 +686,9 @@
             '<div style="font-size:10px;color:#525252;margin-top:2px">' + (w.side === 'long' ? 'Long' : 'Short') + '</div></div>';
         },
       },
-      grid: { left: 80, right: 40, top: 20, bottom: 60 },
+      grid: { left: 80, right: 40, top: 40, bottom: 40 },
       xAxis: {
-        name: 'Unrealized PnL', nameLocation: 'center', nameGap: 36,
+        name: 'Unrealized PnL', nameLocation: 'center', nameGap: 26,
         nameTextStyle: { color: '#404040', fontSize: 12 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
         axisLabel: { color: '#525252', fontSize: 10, formatter: v => $(v) },
@@ -702,8 +702,12 @@
         splitLine: { lineStyle: { color: '#141414' } },
       },
       dataZoom: [
-        { type: 'inside', xAxisIndex: 0, filterMode: 'none' },
-        { type: 'inside', yAxisIndex: 0, filterMode: 'none' },
+        { type: 'inside', xAxisIndex: 0, filterMode: 'none',
+          zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false,
+          throttle: 120 },
+        { type: 'inside', yAxisIndex: 0, filterMode: 'none',
+          zoomOnMouseWheel: true, moveOnMouseWheel: false, moveOnMouseMove: false,
+          throttle: 120 },
       ],
       series: [
         {
@@ -716,7 +720,7 @@
         },
       ],
       legend: {
-        show: true, bottom: 4,
+        show: true, top: 8, right: 20,
         textStyle: { color: '#525252', fontSize: 11 },
         itemWidth: 12, itemHeight: 12,
       },
