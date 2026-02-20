@@ -60,16 +60,19 @@
   /* Panel Grid */
   .grid {
     display: grid; grid-template-columns: 1fr 1fr;
+    grid-auto-rows: minmax(260px, 340px);
     gap: 10px; padding: 12px;
   }
   .panel {
     background: #0c0c0c; border: 1px solid #141414;
     border-radius: 8px; overflow: hidden; min-height: 260px;
+    display: flex; flex-direction: column;
   }
   .panel.full { grid-column: 1 / -1; }
   .panel-hdr {
     display: flex; align-items: center; justify-content: space-between;
     padding: 8px 12px; border-bottom: 1px solid #141414;
+    flex-shrink: 0;
   }
   .panel-title {
     font-size: 0.72rem; font-weight: 600; color: #737373;
@@ -79,7 +82,7 @@
     font-size: 0.62rem; color: #404040;
     font-family: 'JetBrains Mono', monospace;
   }
-  .panel-body { padding: 0; height: calc(100% - 36px); position: relative; }
+  .panel-body { padding: 0; flex: 1; min-height: 0; position: relative; }
   .panel-body.padded { padding: 10px; }
 
   /* Tooltip */
@@ -174,6 +177,7 @@
   .whale-stats .ws-val { color: #737373; font-family: 'JetBrains Mono', monospace; }
   .whale-stats .ws-long { color: #22c55e; }
   .whale-stats .ws-short { color: #ef4444; }
+  .whale-stats { flex-shrink: 0; }
 
   .empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #262626; font-size: 0.78rem; }
 
