@@ -57,8 +57,8 @@ class HyperliquidConfig:
 class MemoryConfig:
     """Tiered memory settings — working window + Nous-backed compression."""
     window_size: int = 4            # Complete exchanges to keep in working window
-    max_context_tokens: int = 800   # Token budget for injected recalled context
-    retrieve_limit: int = 5         # Max Nous results per retrieval
+    max_context_tokens: int = 4000  # Token budget for injected recalled context
+    retrieve_limit: int = 20        # Max Nous results per retrieval (token budget is the real limiter)
     compression_model: str = "openrouter/anthropic/claude-haiku-4-5-20251001"  # OpenRouter
     compress_enabled: bool = True   # Master switch for automatic compression
     gate_filter_enabled: bool = True  # Pre-storage quality gate (MF-15)
@@ -70,11 +70,11 @@ class OrchestratorConfig:
     enabled: bool = True                    # Master switch
     quality_threshold: float = 0.20         # Min top-result score to accept
     relevance_ratio: float = 0.4            # Dynamic cutoff: score >= top * ratio
-    max_results: int = 8                    # Hard cap on merged results
+    max_results: int = 20                   # Hard cap on merged results (token budget is the real limiter)
     max_sub_queries: int = 4                # Max decomposition parts
     max_retries: int = 1                    # Reformulation attempts per sub-query
     timeout_seconds: float = 3.0            # Total orchestration timeout
-    search_limit_per_query: int = 10        # Results to fetch per sub-query (overfetch)
+    search_limit_per_query: int = 25        # Results to fetch per sub-query (overfetch for quality gate)
 
 
 @dataclass
@@ -231,8 +231,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
         ),
         memory=MemoryConfig(
             window_size=mem_raw.get("window_size", 4),
-            max_context_tokens=mem_raw.get("max_context_tokens", 800),
-            retrieve_limit=mem_raw.get("retrieve_limit", 5),
+            max_context_tokens=mem_raw.get("max_context_tokens", 4000),
+            retrieve_limit=mem_raw.get("retrieve_limit", 20),
             compression_model=mem_raw.get("compression_model", "openrouter/anthropic/claude-haiku-4-5-20251001"),
             compress_enabled=mem_raw.get("compress_enabled", True),
             gate_filter_enabled=mem_raw.get("gate_filter_enabled", True),
@@ -294,11 +294,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
             enabled=orch_raw.get("enabled", True),
             quality_threshold=orch_raw.get("quality_threshold", 0.20),
             relevance_ratio=orch_raw.get("relevance_ratio", 0.4),
-            max_results=orch_raw.get("max_results", 8),
+            max_results=orch_raw.get("max_results", 20),
             max_sub_queries=orch_raw.get("max_sub_queries", 4),
             max_retries=orch_raw.get("max_retries", 1),
             timeout_seconds=orch_raw.get("timeout_seconds", 3.0),
-            search_limit_per_query=orch_raw.get("search_limit_per_query", 10),
+            search_limit_per_query=orch_raw.get("search_limit_per_query", 25),
         ),
         data_layer=DataLayerConfig(
             url=dl_raw.get("url", "http://127.0.0.1:8100"),

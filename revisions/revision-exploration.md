@@ -25,7 +25,13 @@ The agent talks to Nous via HTTP through a Python client at `src/hynous/nous/cli
 
 ---
 
-## Issues Found
+## Active Work: Memory Sections
+
+> **All 21 issues below are resolved.** The next development focus is **Memory Sections** — brain-inspired sectioned memory that gives different memory types (signals, episodes, lessons, playbooks) fundamentally different retrieval weights, decay curves, encoding strength, and consolidation rules. See `memory-sections/executive-summary.md` for the full theory, 6 issues, and design constraints.
+
+---
+
+## Issues Found (All Resolved)
 
 ### ~~!! P0 — Python retrieval layer strips full memory content — Nous stores everything correctly but the agent only sees summaries~~ FIXED
 
@@ -393,6 +399,8 @@ It also bumps `version` and `last_modified` automatically.
 **What's missing:** No tool in `src/hynous/intelligence/tools/` wraps `update_node()`. The agent has `store_memory` (create), `recall_memory` (search), and `delete_memory` (delete) — but no `update_memory` or `revise_memory`.
 
 **Status:** Resolved. The `update_memory` tool was added to `src/hynous/intelligence/tools/memory.py`. The agent can now update titles, content (replace or append), summaries, and lifecycle states on existing nodes. JSON bodies are handled correctly. Registered as blocking (not background). The agent now has full CRUD: store, recall, update, delete.
+
+**Follow-up fix (2026-02-20):** The tool was registered and present in the LLM tool schema, but was never added to `prompts/builder.py`. The agent had no system prompt guidance to use it, causing it to silently create duplicate nodes instead of editing existing ones. Fixed by adding `update_memory` to the `TOOL_STRATEGY` memory list and adding an explicit behavioral rule to the "How My Memory Works" section. E2E verified.
 
 ---
 

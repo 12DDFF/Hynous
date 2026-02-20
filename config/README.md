@@ -63,11 +63,11 @@ orchestrator:
   enabled: true               # Master switch (false = single search, zero overhead)
   quality_threshold: 0.20      # Min top-result score to accept
   relevance_ratio: 0.4         # Dynamic cutoff: score >= top * ratio
-  max_results: 8               # Hard cap on merged results
+  max_results: 20              # Hard cap on merged results (token budget is the real limiter)
   max_sub_queries: 4           # Max decomposition parts
   max_retries: 1               # Reformulation attempts per sub-query
   timeout_seconds: 3.0         # Total orchestration timeout
-  search_limit_per_query: 10   # Overfetch per sub-query
+  search_limit_per_query: 25   # Overfetch per sub-query
 ```
 
 See `src/hynous/core/config.py` → `OrchestratorConfig` dataclass.

@@ -269,6 +269,7 @@ export interface ExecutionMetrics {
   reranking_ms: number;
   seeds_found: number;
   nodes_activated: number;
+  nodes_filtered: number;
   nodes_returned: number;
 }
 
@@ -281,6 +282,7 @@ export const ExecutionMetricsSchema = z.object({
   reranking_ms: z.number().nonnegative(),
   seeds_found: z.number().int().nonnegative(),
   nodes_activated: z.number().int().nonnegative(),
+  nodes_filtered: z.number().int().nonnegative(),
   nodes_returned: z.number().int().nonnegative(),
 });
 
@@ -903,13 +905,10 @@ export async function spreadActivation(
     toProcess.push(...nextRound);
   }
 
-  // Convert map to array and normalize activations
+  // Convert map to array — raw activations may exceed 1.0 from sum aggregation.
+  // Normalization happens downstream in executeSSA after the query-relevance filter,
+  // so graph scores are relative to the surviving result set, not deleted hub nodes.
   const activated = Array.from(activations.values());
-
-  // Cap activations at 1.0
-  for (const node of activated) {
-    node.activation = Math.min(node.activation, 1.0);
-  }
 
   return {
     activated,
@@ -1099,6 +1098,7 @@ export function createEmptyMetrics(): ExecutionMetrics {
     reranking_ms: 0,
     seeds_found: 0,
     nodes_activated: 0,
+    nodes_filtered: 0,
     nodes_returned: 0,
   };
 }
@@ -1235,10 +1235,32 @@ export async function executeSSA(options: ExecuteSSAOptions): Promise<SSAResult>
   metrics.spreading_ms = performance.now() - spreadingStart;
   metrics.nodes_activated = spreadingResult.activated.length;
 
+  // Step 3.5: Query-relevance floor — drop nodes with zero topical connection.
+  // Nodes discovered purely through graph edges (not seeds) have bm25_score=0
+  // and vector_score=0. They got activated because they're well-connected, not
+  // because they match the query. Seeds always pass (they matched during seeding).
+  const relevantActivated = spreadingResult.activated.filter(
+    (node) => node.is_seed || node.bm25_score > 0 || node.vector_score > 0,
+  );
+  metrics.nodes_filtered = spreadingResult.activated.length - relevantActivated.length;
+
+  // Step 3.6: Normalize activations to [0, 1] across surviving nodes.
+  // Raw activations from sum aggregation can exceed 1.0 when multiple paths converge.
+  // Normalizing here (after the filter) ensures graph scores are relative to the
+  // surviving result set — not inflated by removed hub nodes.
+  if (relevantActivated.length > 0) {
+    const maxActivation = Math.max(...relevantActivated.map((n) => n.activation));
+    if (maxActivation > 0) {
+      for (const node of relevantActivated) {
+        node.activation = node.activation / maxActivation;
+      }
+    }
+  }
+
   // Step 4: Reranking using storm-028's function
   const rerankingStart = performance.now();
   const graphMetrics = await context.getGraphMetrics();
-  const scoredNodes = await buildScoredNodes(spreadingResult.activated, context);
+  const scoredNodes = await buildScoredNodes(relevantActivated, context);
   const rankedNodes = rerankCandidates(scoredNodes, graphMetrics);
   metrics.reranking_ms = performance.now() - rerankingStart;
 

@@ -337,6 +337,7 @@ describe('@nous/core/ssa - Schemas', () => {
         reranking_ms: 5.0,
         seeds_found: 10,
         nodes_activated: 150,
+        nodes_filtered: 0,
         nodes_returned: 30,
       });
       expect(result.success).toBe(true);
@@ -1327,6 +1328,7 @@ describe('@nous/core/ssa - Main Execution', () => {
           reranking_ms: 2,
           seeds_found: 5,
           nodes_activated: 20,
+          nodes_filtered: 0,
           nodes_returned: 1,
         },
       };
@@ -1432,6 +1434,245 @@ describe('@nous/core/ssa - Edge Cases', () => {
       expect(result.metrics.spreading_ms).toBeGreaterThanOrEqual(0);
       expect(result.metrics.reranking_ms).toBeGreaterThanOrEqual(0);
       expect(result.metrics.total_ms).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  // ============================================================
+  // QUERY-RELEVANCE FLOOR TESTS (Step 3.5)
+  // ============================================================
+
+  describe('Query-relevance floor filter', () => {
+    /**
+     * Helper: build a context where seeds have neighbors (hub simulation).
+     * seed-A and seed-B are seeds (returned by vector/bm25 search).
+     * hub-H is a hub node connected to both seeds via related_to edges.
+     * hop-C is a regular hop node connected only to seed-A.
+     */
+    function createHubScenarioContext() {
+      const ctx = createMockGraphContext();
+
+      // Seeds: returned by both vector and BM25 search
+      (ctx.vectorSearch as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { nodeId: 'seed-A', score: 0.9 },
+        { nodeId: 'seed-B', score: 0.7 },
+      ]);
+      (ctx.bm25Search as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { nodeId: 'seed-A', score: 5.0 },
+        { nodeId: 'seed-B', score: 3.0 },
+      ]);
+
+      // Node lookup for seeding phase
+      (ctx.getNode as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+        return createMockNode(id);
+      });
+
+      // Neighbors: seed-A → hub-H, hop-C; seed-B → hub-H
+      // Hub-H is connected to both seeds (classic hub pattern)
+      (ctx.getNeighbors as ReturnType<typeof vi.fn>).mockImplementation(async (nodeId: string) => {
+        if (nodeId === 'seed-A') {
+          return [
+            { node: createMockNode('hub-H'), edge: createMockEdge('seed-A', 'hub-H', 'related_to'), weight: 0.5 },
+            { node: createMockNode('hop-C'), edge: createMockEdge('seed-A', 'hop-C', 'related_to'), weight: 0.5 },
+          ];
+        }
+        if (nodeId === 'seed-B') {
+          return [
+            { node: createMockNode('hub-H'), edge: createMockEdge('seed-B', 'hub-H', 'related_to'), weight: 0.5 },
+          ];
+        }
+        // Hub-H and hop-C have no further neighbors (stop traversal)
+        return [];
+      });
+
+      // Reranking data for all nodes
+      (ctx.getNodeForReranking as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => ({
+        id,
+        last_accessed: new Date('2026-01-30T10:00:00.000Z'),
+        created_at: new Date('2026-01-15T10:00:00.000Z'),
+        access_count: 5,
+        inbound_edge_count: id === 'hub-H' ? 50 : 3,  // Hub has many inbound edges
+      }));
+
+      return ctx;
+    }
+
+    it('should filter out hub nodes reached only through graph edges', async () => {
+      const ctx = createHubScenarioContext();
+
+      const result = await executeSSA({
+        request: { query: 'test query', limit: 10 },
+        context: ctx,
+        embed: createMockEmbed,
+      });
+
+      // Only seeds should appear in results
+      const nodeIds = result.relevant_nodes.map(n => n.node_id);
+      expect(nodeIds).toContain('seed-A');
+      expect(nodeIds).toContain('seed-B');
+      expect(nodeIds).not.toContain('hub-H');
+      expect(nodeIds).not.toContain('hop-C');
+    });
+
+    it('should track nodes_filtered metric correctly', async () => {
+      const ctx = createHubScenarioContext();
+
+      const result = await executeSSA({
+        request: { query: 'test query', limit: 10 },
+        context: ctx,
+        embed: createMockEmbed,
+        config: { seed_threshold: 0.05 },
+      });
+
+      // hub-H and hop-C should be filtered (they have bm25=0, vector=0, not seeds)
+      expect(result.metrics.nodes_filtered).toBe(2);
+      // nodes_activated includes all discovered nodes (seeds + hop nodes)
+      expect(result.metrics.nodes_activated).toBe(4); // seed-A, seed-B, hub-H, hop-C
+    });
+
+    it('should preserve seeds even when they receive activation from hops', async () => {
+      const ctx = createMockGraphContext();
+
+      // Two seeds that are connected to each other
+      (ctx.vectorSearch as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { nodeId: 'seed-A', score: 0.8 },
+        { nodeId: 'seed-B', score: 0.6 },
+      ]);
+      (ctx.bm25Search as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { nodeId: 'seed-A', score: 4.0 },
+      ]);
+      (ctx.getNode as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) =>
+        createMockNode(id),
+      );
+
+      // Seeds connected to each other
+      (ctx.getNeighbors as ReturnType<typeof vi.fn>).mockImplementation(async (nodeId: string) => {
+        if (nodeId === 'seed-A') {
+          return [{ node: createMockNode('seed-B'), edge: createMockEdge('seed-A', 'seed-B', 'related_to'), weight: 0.5 }];
+        }
+        if (nodeId === 'seed-B') {
+          return [{ node: createMockNode('seed-A'), edge: createMockEdge('seed-B', 'seed-A', 'related_to'), weight: 0.5 }];
+        }
+        return [];
+      });
+
+      (ctx.getNodeForReranking as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => ({
+        id,
+        last_accessed: new Date('2026-01-30T10:00:00.000Z'),
+        created_at: new Date('2026-01-15T10:00:00.000Z'),
+        access_count: 5,
+        inbound_edge_count: 3,
+      }));
+
+      const result = await executeSSA({
+        request: { query: 'test query', limit: 10 },
+        context: ctx,
+        embed: createMockEmbed,
+        config: { seed_threshold: 0.05 },
+      });
+
+      // Both seeds should survive despite receiving hop activation
+      const nodeIds = result.relevant_nodes.map(n => n.node_id);
+      expect(nodeIds).toContain('seed-A');
+      expect(nodeIds).toContain('seed-B');
+      // No nodes should be filtered since both are seeds
+      expect(result.metrics.nodes_filtered).toBe(0);
+    });
+
+    it('should not filter any nodes when there are no hop-discovered nodes', async () => {
+      const ctx = createMockGraphContext();
+
+      // Seeds with no neighbors (no spreading possible)
+      (ctx.vectorSearch as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { nodeId: 'node-1', score: 0.9 },
+        { nodeId: 'node-2', score: 0.8 },
+      ]);
+      (ctx.bm25Search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (ctx.getNode as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) =>
+        createMockNode(id),
+      );
+      (ctx.getNodeForReranking as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => ({
+        id,
+        last_accessed: new Date('2026-01-30T10:00:00.000Z'),
+        created_at: new Date('2026-01-15T10:00:00.000Z'),
+        access_count: 5,
+        inbound_edge_count: 3,
+      }));
+
+      const result = await executeSSA({
+        request: { query: 'test query', limit: 10 },
+        context: ctx,
+        embed: createMockEmbed,
+        config: { seed_threshold: 0.05 },
+      });
+
+      expect(result.metrics.nodes_filtered).toBe(0);
+      expect(result.relevant_nodes.length).toBe(2);
+    });
+
+    it('should still allow serendipity candidates from unfiltered spreading', async () => {
+      const ctx = createHubScenarioContext();
+
+      const result = await executeSSA({
+        request: { query: 'test query', limit: 10, serendipity_level: 'medium' },
+        context: ctx,
+        embed: createMockEmbed,
+      });
+
+      // Main results should NOT contain hub
+      const mainIds = result.relevant_nodes.map(n => n.node_id);
+      expect(mainIds).not.toContain('hub-H');
+
+      // Serendipity candidates should still be evaluated from full spreading
+      expect(result.serendipity_candidates).toBeDefined();
+    });
+
+    it('should handle large fan-out hub connected to many seeds', async () => {
+      const ctx = createMockGraphContext();
+
+      // 10 seeds, all connected to single hub node
+      const seeds = Array.from({ length: 10 }, (_, i) => `seed-${i}`);
+      (ctx.vectorSearch as ReturnType<typeof vi.fn>).mockResolvedValue(
+        seeds.map((id, i) => ({ nodeId: id, score: 0.9 - i * 0.05 })),
+      );
+      (ctx.bm25Search as ReturnType<typeof vi.fn>).mockResolvedValue(
+        seeds.map((id, i) => ({ nodeId: id, score: 5.0 - i * 0.3 })),
+      );
+      (ctx.getNode as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) =>
+        createMockNode(id),
+      );
+
+      // Every seed connects to the same hub
+      (ctx.getNeighbors as ReturnType<typeof vi.fn>).mockImplementation(async (nodeId: string) => {
+        if (nodeId.startsWith('seed-')) {
+          return [{ node: createMockNode('mega-hub'), edge: createMockEdge(nodeId, 'mega-hub', 'related_to'), weight: 0.5 }];
+        }
+        return [];
+      });
+
+      (ctx.getNodeForReranking as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => ({
+        id,
+        last_accessed: new Date('2026-01-30T10:00:00.000Z'),
+        created_at: new Date('2026-01-15T10:00:00.000Z'),
+        access_count: id === 'mega-hub' ? 100 : 5,
+        inbound_edge_count: id === 'mega-hub' ? 200 : 3,
+      }));
+
+      const result = await executeSSA({
+        request: { query: 'test query', limit: 20 },
+        context: ctx,
+        embed: createMockEmbed,
+        config: { seed_threshold: 0.05 },
+      });
+
+      // Mega-hub should be filtered despite receiving activation from 10 paths
+      const nodeIds = result.relevant_nodes.map(n => n.node_id);
+      expect(nodeIds).not.toContain('mega-hub');
+      // All 10 seeds should remain
+      for (const seed of seeds) {
+        expect(nodeIds).toContain(seed);
+      }
+      // Exactly 1 node filtered (mega-hub)
+      expect(result.metrics.nodes_filtered).toBe(1);
     });
   });
 });

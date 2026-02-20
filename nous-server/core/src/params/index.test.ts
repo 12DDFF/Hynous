@@ -254,8 +254,8 @@ describe('Decay Lifecycle States', () => {
 describe('SSA Params', () => {
   it('should have correct spreading activation values', () => {
     expect(SSA_PARAMS.initial_activation).toBe(1.0);
-    expect(SSA_PARAMS.hop_decay).toBe(0.5);
-    expect(SSA_PARAMS.min_threshold).toBe(0.05);
+    expect(SSA_PARAMS.hop_decay).toBe(0.80);
+    expect(SSA_PARAMS.min_threshold).toBe(0.01);
     expect(SSA_PARAMS.max_hops).toBe(3);
     expect(SSA_PARAMS.max_nodes).toBe(500);
     expect(SSA_PARAMS.aggregation).toBe('sum');

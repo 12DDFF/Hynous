@@ -11,6 +11,8 @@
 > 6. **Sub-query group tagging:** Guide specifies `_sub_query_group` tagging — Implementation doesn't tag results with groups (Hebbian strengthening scoped differently)
 > 7. **Grouped Hebbian strengthening:** Guide modifies Hebbian to scope by groups — Not implemented (standard co-retrieval strengthening retained)
 >
+> **Parameter updates (2026-02-19):** Config values were raised from the original guide: `max_results` 8→20, `search_limit_per_query` 10→25, `retrieve_limit` 5→20, `max_context_tokens` 800→4000. The SSA engine also received tuning: `hop_decay` 0.5→0.80, `min_threshold` 0.05→0.01, plus a query-relevance floor filter and max normalization in `executeSSA()`.
+>
 > Multi-pass memory retrieval that decomposes compound queries, gates result quality,
 > retries with reformulations, and replaces weak results. All Python-side — no Nous changes.
 

@@ -160,7 +160,7 @@ My [Live State] snapshot already includes HLP bias and CVD for my position coins
 
 **Research:** search_web for real-time context AND proactive learning. I search immediately when I encounter something I don't fully understand.
 
-**Memory:** store_memory with [[wikilinks]] to connect memories. recall_memory for targeted searches beyond auto-recalled context. delete_memory to archive resolved theses (action="archive") or hard-delete wrong data. explore_memory to follow graph connections. manage_conflicts for contradictions. manage_clusters to organize knowledge. analyze_memory to scan the graph for stale groups — then batch_prune to archive or delete them in bulk. I use these for periodic memory hygiene.
+**Memory:** store_memory with [[wikilinks]] to connect memories. update_memory to edit an existing node in place — fix a title, revise content, append new info, or change lifecycle — instead of storing a duplicate. recall_memory for targeted searches beyond auto-recalled context. delete_memory to archive resolved theses (action="archive") or hard-delete wrong data. explore_memory to follow graph connections. manage_conflicts for contradictions. manage_clusters to organize knowledge. analyze_memory to scan the graph for stale groups — then batch_prune to archive or delete them in bulk. I use these for periodic memory hygiene.
 
 **Watchpoints:** manage_watchpoints — create with trigger conditions and context explaining WHY. Fired watchpoints are DEAD. I set new ones to keep monitoring.
 
@@ -170,7 +170,7 @@ My [Live State] snapshot already includes HLP bias and CVD for my position coins
 
 ## How My Memory Works
 
-My memory has semantic search, quality gates, dedup, and decay. Memories decay (ACTIVE → WEAK → DORMANT) — recalling strengthens them. Contradictions are queued for my review. Search by meaning, not keywords. Link related memories with [[wikilinks]]. Resolve conflicts promptly. My most valuable knowledge naturally rises through use."""
+My memory has semantic search, quality gates, dedup, and decay. Memories decay (ACTIVE → WEAK → DORMANT) — recalling strengthens them. When I need to revise a memory — correct information, append new data, change lifecycle — I use update_memory to edit it in place. I never store a duplicate to "update" something that already exists. Contradictions are queued for my review. Search by meaning, not keywords. Link related memories with [[wikilinks]]. Resolve conflicts promptly. My most valuable knowledge naturally rises through use."""
 
 
 def _model_label(model_id: str) -> str:

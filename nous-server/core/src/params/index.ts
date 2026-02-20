@@ -271,8 +271,8 @@ export type SSAAggregation = 'sum' | 'max';
  */
 export interface SSAParams {
   initial_activation: number;   // 1.0 - Seeds start at full
-  hop_decay: number;            // 0.5 - 50% loss per hop
-  min_threshold: number;        // 0.05 - Stop spreading below 5%
+  hop_decay: number;            // 0.80 - 20% loss per hop
+  min_threshold: number;        // 0.01 - Stop spreading below 1%
   max_hops: number;             // 3 - Hard limit
   max_nodes: number;            // 500 - Breadth limit
   aggregation: SSAAggregation;  // 'sum' - Allow path reinforcement
@@ -289,8 +289,8 @@ export const SSAParamsSchema = z.object({
 
 export const SSA_PARAMS: SSAParams = {
   initial_activation: 1.0,
-  hop_decay: 0.5,
-  min_threshold: 0.05,
+  hop_decay: 0.80,
+  min_threshold: 0.01,
   max_hops: 3,
   max_nodes: 500,
   aggregation: 'sum',

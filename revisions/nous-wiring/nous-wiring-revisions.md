@@ -132,6 +132,12 @@ Added `update_memory` tool in `src/hynous/intelligence/tools/memory.py` (lines 5
 
 **The agent now has the full CRUD set:** `store_memory` (create), `recall_memory` (search), `update_memory` (update), `delete_memory` (delete).
 
+**Follow-up fix (2026-02-20):** Although the tool was implemented and registered, it was never added to the system prompt (`prompts/builder.py`). The agent's `TOOL_STRATEGY` section listed every other memory tool but omitted `update_memory`, meaning the agent had no behavioral guidance to use it and defaulted to creating duplicate nodes instead. Fixed by:
+1. Adding `update_memory` to the **Memory** tools list in `TOOL_STRATEGY` with a description of when to use it.
+2. Adding an explicit rule to the **"How My Memory Works"** section: *"When I need to revise a memory... I use update_memory to edit it in place. I never store a duplicate to 'update' something that already exists."*
+
+E2E verified: agent correctly called `update_memory` and all three fields (title, content, summary) were durably written to Nous.
+
 ---
 
 ## NW-5. ~~[P2] Contradiction detection API is fully dead — queued conflicts never checked~~ FIXED

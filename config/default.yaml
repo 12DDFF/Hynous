@@ -98,17 +98,17 @@ orchestrator:
   enabled: true                    # Master switch
   quality_threshold: 0.20          # Min top-result SSA score to accept without retry
   relevance_ratio: 0.4             # Dynamic cutoff: keep results scoring >= top * ratio
-  max_results: 8                   # Hard cap on merged results
+  max_results: 20                  # Hard cap on merged results (token budget is the real limiter)
   max_sub_queries: 4               # Max decomposition parts for compound queries
   max_retries: 1                   # Reformulation attempts per sub-query
   timeout_seconds: 3.0             # Total orchestration timeout
-  search_limit_per_query: 10       # Results to fetch per sub-query (overfetch for quality gate)
+  search_limit_per_query: 25       # Results to fetch per sub-query (overfetch for quality gate)
 
 # Tiered memory settings (working window + Nous-backed compression)
 memory:
   window_size: 4                 # Complete exchanges to keep in working window
   max_context_tokens: 4000       # Token budget for recalled context injected per call (~1000 words)
-  retrieve_limit: 5              # Max memories to retrieve per query
+  retrieve_limit: 20             # Max memories to retrieve per query (token budget is the real limiter)
   compression_model: "openrouter/anthropic/claude-haiku-4-5-20251001"  # OpenRouter
   compress_enabled: true         # Enable/disable automatic compression
 

@@ -28,7 +28,7 @@ The Python intelligence layer (agent, daemon, tools, memory manager) communicate
 Three stacking truncation layers:
 - **Summary preference**: Two formatting functions prefer `content_summary` (a short one-liner) over `content_body` (the full content). Whenever a summary exists — which it always does for trades and long content — the full body is discarded.
 - **Per-memory character clip**: Each memory is hard-clipped to 300 chars (auto-retrieval) or 400 chars (explicit recall). A 2,000-word analysis becomes ~75 words.
-- **Global token budget**: All auto-recalled memories share a combined budget of 800 tokens (~200 words total). Even if per-memory clips are fixed, this budget caps the agent's total recalled context to roughly one paragraph.
+- **Global token budget**: ~~All auto-recalled memories share a combined budget of 800 tokens (~200 words total).~~ **UPDATED:** Token budget raised to 4,000 tokens (~1,000 words) and retrieve_limit raised from 5 to 20. The token budget is now the natural limiter rather than an artificial cap.
 
 The result: the agent operates on ~5% of the knowledge it stored. The system prompt tells it to "write rich, detailed content" — it does, Nous saves it, and the retrieval layer throws it away. The agent itself diagnosed this bug during live trading.
 
@@ -126,6 +126,8 @@ Lesson and curiosity types bypass the memory queue to get real-time dedup feedba
 The `update_memory` tool now exists in `src/hynous/intelligence/tools/memory.py`. The agent can update titles, content (replace or append), summaries, and lifecycle states on existing nodes. JSON bodies (trades, watchpoints) are handled correctly — the `text` field is updated while preserving other JSON fields (signals, trigger).
 
 The agent now has full CRUD: `store_memory` (create), `recall_memory` (search), `update_memory` (update), `delete_memory` (delete). Theses can accumulate evidence, predictions can be annotated with outcomes, and lessons can be refined — all while preserving node IDs, edges, and FSRS stability.
+
+**Follow-up fix (2026-02-20):** Despite the tool being registered, it was absent from `prompts/builder.py` — the agent had no system prompt guidance to use it and was creating duplicate nodes instead of editing existing ones. `update_memory` was added to the `TOOL_STRATEGY` memory tools list and a behavioral rule was added to the "How My Memory Works" section explicitly prohibiting duplicate-node creation. E2E verified working.
 
 **See:** `nous-wiring-revisions.md` → NW-4 (FIXED); `more-functionality.md` → MF-4 (DONE)
 

@@ -68,6 +68,21 @@ Deferred for later: TO-5 (streaming cost abort), TO-6 (cron schedule tuning), TO
 
 Added `trade_step` span type (8th span type) to the debug system. Three trade handlers (`execute_trade`, `close_position`, `modify_position`) now emit sub-step spans for every internal operation: circuit breaker, validation, leverage, order fill, SL/TP, PnL calculation, cache invalidation, order cancellation, entry lookup, memory storage. Each span includes timing, success/failure, and human+AI-readable detail strings. 3 files modified (`request_tracer.py`, `trading.py`, `state.py`), ~130 lines added, 0 removed.
 
+### 6. Debug Dashboard — IMPLEMENTED
+
+| File | Contents |
+|------|----------|
+| `../debugging/brief-planning.md` | Architectural plan: data model, span types, architecture overview |
+| `../debugging/implementation-guide.md` | Detailed 10-chunk implementation guide — **IMPLEMENTED** |
+
+Full pipeline transparency for every `agent.chat()` call. Request tracer captures spans across the entire agent lifecycle: context injection, Nous retrieval, LLM calls, tool execution, memory operations, compression, and queue flushes.
+
+Key components:
+- **`src/hynous/core/request_tracer.py`** — Tracer singleton with thread-safe span recording, trace lifecycle management (`begin_trace`, `record_span`, `end_trace`, `export_partial`)
+- **`src/hynous/core/trace_log.py`** — Persistence layer with content-addressed payload dedup (SHA256), 500-trace cap, 14-day retention, auto-prune
+- **`dashboard/dashboard/pages/debug.py`** — Reflex `/debug` page with sidebar trace list + main area timeline view, expandable span details, live auto-refresh
+- **Instrumentation** in `agent.py`, `memory_manager.py`, `tools/memory.py`, `daemon.py` — all tracer calls wrapped in try/except for zero impact on agent operation
+
 ### 7. Memory Pruning — IMPLEMENTED
 
 | File | Contents |
@@ -97,11 +112,31 @@ Files modified: `pruning.py` (new), `registry.py`, `builder.py`, `agent.py`, `me
 
 ---
 
+### 9. Memory Sections — NEXT UP (Active Development)
+
+| File | Contents |
+|------|----------|
+| `memory-sections/executive-summary.md` | **START HERE.** Theory, 6 issues, proposed section model, design constraints |
+
+Brain-inspired memory sectioning: giving different memory types (signals, episodes, lessons, playbooks) fundamentally different retrieval weights, decay curves, encoding strength, and consolidation rules. Sections are a **bias layer on top of existing SSA search**, not hard partitions — all nodes stay in one table, all queries still search everything, but results are reranked per-section and boosted by query intent.
+
+Six issues to address:
+1. **Uniform SSA retrieval weights** — same 6-signal weights for all memory types
+2. **Uniform FSRS decay curves** — same decay rate for signals and lessons
+3. **No cross-episode generalization** — no background process to extract patterns across trades
+4. **No stakes weighting** — catastrophic losses encode identically to routine scans
+5. **No procedural memory** — playbooks are text blobs, not structured pattern→action pairs
+6. **Flat retrieval** — no section-aware reranking or intent-based priority boost
+
+Implementation guides for each issue will be added as companion files. The executive summary contains the full theory and problem statement.
+
+---
+
 ## For Agents
 
-All revisions are complete. If you're fixing a specific issue or starting new work:
+**What to work on next:** Memory Sections. Read `memory-sections/executive-summary.md` first. All prior revisions are complete — memory sections is the active development frontier.
 
-If you're fixing a specific issue:
+If you're fixing a specific issue from a prior revision:
 
 1. Check if it's already resolved in `nous-wiring/`, `memory-search/`, `trade-debug-interface/`, or `token-optimization/`
 2. Each issue has exact file paths, line numbers, and implementation instructions
@@ -109,8 +144,10 @@ If you're fixing a specific issue:
 
 If you're doing a general review or planning work:
 
-1. Read `nous-wiring/executive-summary.md` for Nous integration status
-2. Read `memory-search/design-plan.md` for retrieval orchestrator design
-3. Read `trade-debug-interface/analysis.md` for trade execution telemetry design
-4. Read `token-optimization/executive-summary.md` for cost optimization status
-5. Check `revision-exploration.md` for the full issue landscape
+1. **Read `memory-sections/executive-summary.md`** — this is the current focus
+2. Read `nous-wiring/executive-summary.md` for Nous integration status (all resolved)
+3. Read `memory-search/design-plan.md` for retrieval orchestrator design
+4. Read `trade-debug-interface/analysis.md` for trade execution telemetry design
+5. Read `token-optimization/executive-summary.md` for cost optimization status
+6. Read `../debugging/brief-planning.md` for debug dashboard architecture
+7. Check `revision-exploration.md` for the full issue landscape (all 21 resolved)
