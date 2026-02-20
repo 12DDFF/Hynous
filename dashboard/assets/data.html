@@ -608,7 +608,7 @@
     const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
 
     const points = clusters.map(c => ({
-      value: [c.entry, c.lev],
+      value: [c.lev, c.entry],
       symbolSize: c.count === 1
         ? Math.max(8, Math.sqrt(c.totalSize / maxClusterSz) * 30)
         : Math.max(18, Math.min(55, Math.sqrt(c.count) * 12)),
@@ -631,27 +631,27 @@
         formatter: p => p.data.cluster ? cTip(p.data.cluster) : '',
         extraCssText: 'max-height:280px;overflow-y:auto;',
       },
-      grid: { left: 40, right: 16, top: 10, bottom: 32 },
+      grid: { left: 52, right: 16, top: 10, bottom: 28 },
       xAxis: {
-        name: 'Entry Price', nameLocation: 'center', nameGap: 20,
-        nameTextStyle: { color: '#404040', fontSize: 10 },
-        axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 9, formatter: v => px(v) },
-        splitLine: { lineStyle: { color: '#141414' } },
-      },
-      yAxis: {
-        name: 'Leverage', nameLocation: 'center', nameGap: 28,
+        name: 'Leverage', nameLocation: 'center', nameGap: 16,
         nameTextStyle: { color: '#404040', fontSize: 10 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
         axisLabel: { color: '#525252', fontSize: 9, formatter: v => v.toFixed(0) + 'x' },
+        splitLine: { lineStyle: { color: '#141414' } },
+      },
+      yAxis: {
+        name: 'Entry Price', nameLocation: 'center', nameGap: 38,
+        nameTextStyle: { color: '#404040', fontSize: 10 },
+        axisLine: { lineStyle: { color: '#1a1a1a' } },
+        axisLabel: { color: '#525252', fontSize: 9, formatter: v => px(v) },
         splitLine: { lineStyle: { color: '#141414' } },
       },
       series: [{
         type: 'scatter', data: points,
         markLine: markPx > 0 ? {
           silent: true, symbol: 'none',
-          data: [{ xAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
-            label: { show: true, formatter: px(markPx), color: '#6366f1', fontSize: 8, position: 'start' } }],
+          data: [{ yAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
+            label: { show: true, formatter: px(markPx), color: '#6366f1', fontSize: 8, position: 'insideEndTop' } }],
         } : undefined,
       }],
     });
@@ -678,7 +678,7 @@
     const maxSz = Math.max(...whaleData.map(w => w.size), 1);
     const markPx = whaleData.find(w => w.mark > 0)?.mark || 0;
     const mapW = w => ({
-      value: [w.entry, w.lev],
+      value: [w.lev, w.entry],
       symbolSize: Math.max(4, Math.sqrt(w.size / maxSz) * 28),
       whale: w,
     });
@@ -704,19 +704,19 @@
             '</div>';
         },
       },
-      grid: { left: 80, right: 40, top: 40, bottom: 40 },
+      grid: { left: 70, right: 40, top: 40, bottom: 40 },
       xAxis: {
-        name: 'Entry Price', nameLocation: 'center', nameGap: 26,
-        nameTextStyle: { color: '#404040', fontSize: 12 },
-        axisLine: { lineStyle: { color: '#1a1a1a' } },
-        axisLabel: { color: '#525252', fontSize: 10, formatter: v => px(v) },
-        splitLine: { lineStyle: { color: '#141414' } },
-      },
-      yAxis: {
-        name: 'Leverage', nameLocation: 'center', nameGap: 36,
+        name: 'Leverage', nameLocation: 'center', nameGap: 26,
         nameTextStyle: { color: '#404040', fontSize: 12 },
         axisLine: { lineStyle: { color: '#1a1a1a' } },
         axisLabel: { color: '#525252', fontSize: 10, formatter: v => v.toFixed(0) + 'x' },
+        splitLine: { lineStyle: { color: '#141414' } },
+      },
+      yAxis: {
+        name: 'Entry Price', nameLocation: 'center', nameGap: 50,
+        nameTextStyle: { color: '#404040', fontSize: 12 },
+        axisLine: { lineStyle: { color: '#1a1a1a' } },
+        axisLabel: { color: '#525252', fontSize: 10, formatter: v => px(v) },
         splitLine: { lineStyle: { color: '#141414' } },
       },
       dataZoom: [
@@ -733,7 +733,7 @@
           itemStyle: { color: 'rgba(34,197,94,0.4)', borderColor: '#22c55e', borderWidth: 1 },
           markLine: markPx > 0 ? {
             silent: true, symbol: 'none',
-            data: [{ xAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
+            data: [{ yAxis: markPx, lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' },
               label: { show: true, formatter: 'Current ' + px(markPx), position: 'insideEndTop', color: '#6366f1', fontSize: 10 } }],
           } : undefined,
         },
