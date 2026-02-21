@@ -718,6 +718,8 @@ class AppState(rx.State):
     # === Regime State (updated by poll loop) ===
     regime_label: str = ""
     regime_score: str = ""
+    regime_macro_score: str = ""
+    regime_micro_score: str = ""
     regime_micro_safe: bool = True
     regime_session: str = ""
     regime_reversal: bool = False
@@ -1203,6 +1205,8 @@ class AppState(rx.State):
         if _daemon is None or _daemon._regime is None:
             self.regime_label = ""
             self.regime_score = ""
+            self.regime_macro_score = ""
+            self.regime_micro_score = ""
             self.regime_micro_safe = True
             self.regime_session = ""
             self.regime_reversal = False
@@ -1216,8 +1220,11 @@ class AppState(rx.State):
         r = _daemon._regime
         label = r.combined_label
         self.regime_label = label
-        s = r.direction_score
-        self.regime_score = f"{'+' if s >= 0 else ''}{s:.2f}"
+        macro_fmt = f"{r.macro_score:+.2f}"
+        self.regime_score = macro_fmt
+        self.regime_macro_score = macro_fmt
+        micro_avail = r.signals.get("_micro_available", False)
+        self.regime_micro_score = f"{r.micro_score:+.2f}" if micro_avail else ""
         self.regime_micro_safe = r.micro_safe
         self.regime_session = r.session
         self.regime_reversal = r.reversal_flag

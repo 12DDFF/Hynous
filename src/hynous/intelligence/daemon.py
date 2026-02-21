@@ -430,6 +430,8 @@ class Daemon:
             "regime": {
                 "label": self._regime.label if self._regime else "UNKNOWN",
                 "score": round(self._regime.score, 2) if self._regime else 0,
+                "macro_score": round(self._regime.macro_score, 2) if self._regime else 0,
+                "micro_score": round(self._regime.micro_score, 2) if self._regime else 0,
                 "bias": self._regime.bias if self._regime else "neutral",
                 "structure": self._regime.structure_label if self._regime else "RANGING",
                 "micro_safe": self._regime.micro_safe if self._regime else True,
@@ -749,21 +751,25 @@ class Daemon:
         # Compute regime classification (zero cost, uses cached data + 1h candles)
         try:
             candles_1h = self._fetch_regime_candles()
+            fast_signals = self._fetch_fast_signals()
             self._regime = self._regime_classifier.classify(
                 self.snapshot, self._data_cache, self._scanner,
                 candles_1h=candles_1h,
+                fast_signals=fast_signals,
             )
             self._micro_safe = self._regime.micro_safe
             # Track label changes for scanner shift detection
             new_label = self._regime.label
             if self._prev_regime_label and new_label != self._prev_regime_label:
-                logger.info("Regime shift: %s -> %s (score %.2f)",
-                            self._prev_regime_label, new_label, self._regime.score)
+                logger.info("Regime shift: %s -> %s (macro %.2f, micro %.2f)",
+                            self._prev_regime_label, new_label,
+                            self._regime.macro_score, self._regime.micro_score)
                 if self._scanner:
                     self._scanner.regime_shifted(
                         self._prev_regime_label, new_label, self._regime.score,
                         micro_safe=self._regime.micro_safe,
                         reversal_detail=self._regime.reversal_detail,
+                        micro_score=self._regime.micro_score,
                     )
             self._prev_regime_label = new_label
             # Feed micro_safe to scanner
@@ -789,6 +795,55 @@ class Daemon:
         except Exception as e:
             logger.debug("Regime candle fetch failed: %s", e)
             return []
+
+    def _fetch_fast_signals(self) -> dict | None:
+        """Fetch real-time signals from data layer for regime classifier.
+
+        Returns dict with CVD, whale, HLP signals — or None if unavailable.
+        Graceful: never raises, never blocks classify().
+        """
+        if not self.config.data_layer.enabled:
+            return None
+        try:
+            from ..data.providers.hynous_data import get_client
+            client = get_client()
+            if not client.is_available:
+                return None
+
+            signals = {}
+
+            # CVD (order flow) — sub-second via WebSocket trade stream
+            of = client.order_flow("BTC")
+            if of and "windows" in of:
+                for window_name, window_data in of["windows"].items():
+                    cvd = window_data.get("cvd")
+                    if cvd is not None:
+                        signals[f"cvd_{window_name}"] = cvd
+
+            # Whale bias — 30s-10min refresh
+            wh = client.whales("BTC", top_n=20)
+            if wh:
+                if "net_usd" in wh:
+                    signals["whale_net_usd"] = wh["net_usd"]
+                total_long = wh.get("total_long_usd", 0)
+                total_short = wh.get("total_short_usd", 0)
+                total = total_long + total_short
+                if total > 0:
+                    signals["whale_long_pct"] = total_long / total * 100
+
+            # HLP vault — 60s refresh
+            hlp = client.hlp_positions()
+            if hlp:
+                for p in hlp.get("positions", []):
+                    if p.get("coin") == "BTC":
+                        signals["hlp_btc_side"] = p.get("side", "")
+                        signals["hlp_btc_size_usd"] = p.get("size_usd", 0)
+                        break
+
+            return signals if signals else None
+        except Exception as e:
+            logger.debug("Fast signals fetch failed: %s", e)
+            return None
 
     # ================================================================
     # Watchpoint System

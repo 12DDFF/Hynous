@@ -1,5 +1,5 @@
 """
-Regime Detection v2 — 2-axis market regime classification.
+Regime Detection v4 — Hybrid macro/micro market regime classification.
 
 Two axes:
   Direction: BULL / BEAR / NEUTRAL (score -1.0 to +1.0)
@@ -8,13 +8,13 @@ Two axes:
 Combined labels (6):
   TREND_BULL, TREND_BEAR, RANGING, VOLATILE_BULL, VOLATILE_BEAR, SQUEEZE
 
-New in v2:
-  - Technical indicators (EMA, ADX, ATR, BBW, RSI) from 1h BTC candles
-  - Reversal detection (funding flip, OI divergence, EMA cross, liq cascade)
-  - Micro safety gate (ATR, structure, session)
-  - Session awareness (ASIA, LONDON, US_OPEN, US, LATE_US, QUIET)
-  - Hysteresis (30min minimum between label changes, 5min for reversals)
-  - Fast signal rebalancing (EMA + 4h = 40% weight, slow signals = 10%)
+v4 changes (from v3):
+  - Split into independent macro_score (5 structural signals, hours) and
+    micro_score (3 real-time signals, minutes)
+  - Dropped 3 weak signals: Fear & Greed (daily noise), BTC 7d (weekly lag),
+    orderbook imbalance (text label, redundant with CVD)
+  - Direction label + hysteresis driven by macro_score
+  - format_regime_line shows both scores
 
 Zero LLM cost — pure Python. Called from daemon every 300s.
 """
@@ -34,8 +34,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RegimeState:
-    """Current market regime classification (2-axis)."""
-    direction_score: float = 0.0       # -1.0 to +1.0
+    """Current market regime classification (2-axis, dual-score)."""
+    direction_score: float = 0.0       # backward compat — always equals macro_score
+    macro_score: float = 0.0           # -1.0 to +1.0 (5 structural signals, hours)
+    micro_score: float = 0.0           # -1.0 to +1.0 (3 real-time signals, minutes)
     direction_label: str = "NEUTRAL"   # BULL / BEAR / NEUTRAL
     structure_label: str = "RANGING"   # TRENDING / RANGING / VOLATILE / SQUEEZE
     combined_label: str = "RANGING"    # one of 6 labels
@@ -55,7 +57,7 @@ class RegimeState:
 
     @property
     def score(self) -> float:
-        return self.direction_score
+        return self.macro_score
 
 
 # ============================================================
@@ -304,28 +306,31 @@ def _get_session(utc_hour: int) -> str:
 # ============================================================
 
 _GUIDANCE = {
-    "TREND_BULL":    "Strong bullish trend. Favor longs, add on dips.",
-    "TREND_BEAR":    "Strong bearish trend. Favor shorts, sell rallies.",
-    "RANGING":       "Sideways. Fade extremes, tight stops, smaller size.",
-    "VOLATILE_BULL": "Volatile upside. Macro longs only, wide stops, no micros.",
-    "VOLATILE_BEAR": "Volatile downside. Macro shorts only, wide stops, no micros.",
-    "SQUEEZE":       "Low vol squeeze building. Wait for breakout, no new positions.",
+    "TREND_BULL":    "Bullish trend backdrop. Momentum favors longs.",
+    "TREND_BEAR":    "Bearish trend backdrop. Momentum favors shorts.",
+    "RANGING":       "Sideways chop. No clear directional edge from structure.",
+    "VOLATILE_BULL": "High volatility, bullish lean. Expect wide swings.",
+    "VOLATILE_BEAR": "High volatility, bearish lean. Expect wide swings.",
+    "SQUEEZE":       "Low volatility compression. Breakout building — direction unclear.",
 }
 
 
 # ============================================================
-# Signal Weights (v2: fast signals boosted, slow reduced)
+# Signal Weights — Macro (structural, hours) + Micro (real-time, minutes)
 # ============================================================
 
-_W = {
-    "ema":        0.25,   # EMA alignment + slope (fast, 1h candles)
-    "btc_4h":     0.15,   # BTC 4h change (fast, candles or snapshot)
-    "funding":    0.15,   # Funding rate (medium, Coinglass)
-    "oi_div":     0.15,   # OI divergence (medium, Coinglass)
-    "liqs":       0.10,   # Liquidations (fast, Coinglass)
-    "orderbook":  0.10,   # Orderbook imbalance (fast, DataCache)
-    "fear_greed": 0.05,   # Fear & Greed (slow)
-    "btc_7d":     0.05,   # BTC 7d trend (slow)
+_W_MACRO = {
+    "ema":      0.25,   # EMA alignment + slope
+    "btc_4h":   0.25,   # BTC 4h change
+    "funding":  0.20,   # Funding rate (contrarian)
+    "oi_div":   0.20,   # OI divergence
+    "liqs":     0.10,   # Liquidations
+}
+
+_W_MICRO = {
+    "cvd":   0.50,   # CVD trend (sub-second)
+    "whale": 0.30,   # Whale net bias (30s-10min)
+    "hlp":   0.20,   # HLP vault side (60s)
 }
 
 
@@ -344,12 +349,13 @@ class RegimeClassifier:
         # Hysteresis state
         self._last_combined_label: str = ""
         self._last_label_change: float = 0.0
-        self._prev_direction_score: float = 0.0
+        self._prev_macro_score: float = 0.0
 
         # Reversal tracking (last 2 cycles)
         self._prev_funding_sign: float | None = None
         self._prev_ema_bull: bool | None = None
         self._prev_oi_diverging: bool = False
+        self._prev_cvd_sign: float | None = None  # CVD 15m sign for flip detection
         self._prev_flip_buffer: list[str] = []  # Flips from previous cycle
 
         # Liq cascade detection
@@ -357,14 +363,16 @@ class RegimeClassifier:
         self._last_liq_ts: float = 0.0  # Dedup by snapshot timestamp
 
     def classify(self, snapshot, data_cache, scanner,
-                 candles_1h: list[dict] | None = None) -> RegimeState:
+                 candles_1h: list[dict] | None = None,
+                 fast_signals: dict | None = None) -> RegimeState:
         """Compute current 2-axis regime from data sources + candle indicators.
 
         Args:
             snapshot: DaemonSnapshot with prices, funding, F&G, etc.
-            data_cache: DataCache with deep asset data.
+            data_cache: Unused (kept for caller compat).
             scanner: MarketScanner with derivative/liq buffers.
             candles_1h: Optional list of 1h BTC candles [{t,o,h,l,c,v}].
+            fast_signals: Optional dict from data layer (CVD, whales, HLP).
 
         Returns:
             RegimeState with full 2-axis classification.
@@ -376,36 +384,49 @@ class RegimeClassifier:
         # Compute technical indicators from candles
         indicators = _compute_indicators(candles_1h) if candles_1h else None
 
-        # === Direction scoring ===
-        weighted_score = 0.0
-        total_weight = 0.0
         raw_signals: dict = {}
 
+        # === Macro scoring (5 structural signals, hours timescale) ===
+        macro_weighted = 0.0
+        macro_total_w = 0.0
         for name, weight, scorer_args in [
-            ("ema",        _W["ema"],        (indicators,)),
-            ("btc_4h",     _W["btc_4h"],     (snapshot, candles_1h)),
-            ("funding",    _W["funding"],     (snapshot,)),
-            ("oi_div",     _W["oi_div"],      (scanner,)),
-            ("liqs",       _W["liqs"],        (scanner,)),
-            ("orderbook",  _W["orderbook"],   (data_cache,)),
-            ("fear_greed", _W["fear_greed"],  (snapshot,)),
-            ("btc_7d",     _W["btc_7d"],      (data_cache,)),
+            ("ema",     _W_MACRO["ema"],     (indicators,)),
+            ("btc_4h",  _W_MACRO["btc_4h"],  (snapshot, candles_1h)),
+            ("funding", _W_MACRO["funding"],  (snapshot,)),
+            ("oi_div",  _W_MACRO["oi_div"],   (scanner,)),
+            ("liqs",    _W_MACRO["liqs"],     (scanner,)),
         ]:
             method = getattr(self, f"_signal_{name}")
             score, detail = method(*scorer_args)
-
             if score is None:
-                continue  # No data — skip weight
-
-            weighted_score += score * weight
-            total_weight += weight
+                continue
+            macro_weighted += score * weight
+            macro_total_w += weight
             raw_signals[name] = {"score": round(score, 3), "detail": detail or ""}
 
-        if total_weight > 0:
-            direction_score = weighted_score / total_weight
-        else:
-            direction_score = 0.0
-        direction_score = max(-1.0, min(1.0, direction_score))
+        macro_score = max(-1.0, min(1.0, macro_weighted / macro_total_w)) if macro_total_w > 0 else 0.0
+
+        # === Micro scoring (3 real-time signals, minutes timescale) ===
+        micro_weighted = 0.0
+        micro_total_w = 0.0
+        for name, weight, scorer_args in [
+            ("cvd",   _W_MICRO["cvd"],   (fast_signals,)),
+            ("whale", _W_MICRO["whale"], (fast_signals,)),
+            ("hlp",   _W_MICRO["hlp"],   (fast_signals,)),
+        ]:
+            method = getattr(self, f"_signal_{name}")
+            score, detail = method(*scorer_args)
+            if score is None:
+                continue
+            micro_weighted += score * weight
+            micro_total_w += weight
+            raw_signals[name] = {"score": round(score, 3), "detail": detail or ""}
+
+        micro_available = micro_total_w > 0
+        micro_score = max(-1.0, min(1.0, micro_weighted / micro_total_w)) if micro_available else 0.0
+
+        # Track micro data availability for consumers
+        raw_signals["_micro_available"] = micro_available
 
         # Store indicator summary in signals for formatting
         if indicators:
@@ -422,26 +443,27 @@ class RegimeClassifier:
 
         # === Reversal detection ===
         reversal_flag, reversal_detail = self._check_reversal(
-            snapshot, scanner, indicators, direction_score, liq_cascade,
+            snapshot, scanner, indicators, liq_cascade,
+            fast_signals=fast_signals,
         )
 
-        # Nudge direction if reversal detected — amplify the direction signals
+        # Nudge macro_score if reversal detected — amplify the direction signals
         # already point toward. Use delta from previous score to break ties at 0.
         if reversal_flag:
-            delta = direction_score - self._prev_direction_score
-            if direction_score > 0 or (direction_score == 0 and delta > 0):
+            delta = macro_score - self._prev_macro_score
+            if macro_score > 0 or (macro_score == 0 and delta > 0):
                 nudge = 0.15
-            elif direction_score < 0 or (direction_score == 0 and delta < 0):
+            elif macro_score < 0 or (macro_score == 0 and delta < 0):
                 nudge = -0.15
             else:
                 nudge = 0.0  # Truly ambiguous — don't nudge
-            direction_score = max(-1.0, min(1.0, direction_score + nudge))
+            macro_score = max(-1.0, min(1.0, macro_score + nudge))
 
-        # === Direction label ===
-        if direction_score > 0.15:
+        # === Direction label (driven by macro_score) ===
+        if macro_score > 0.15:
             direction_label = "BULL"
             bias = "long"
-        elif direction_score < -0.15:
+        elif macro_score < -0.15:
             direction_label = "BEAR"
             bias = "short"
         else:
@@ -474,9 +496,9 @@ class RegimeClassifier:
         # === Combined label ===
         combined = self._combine_labels(direction_label, structure)
 
-        # === Hysteresis ===
+        # === Hysteresis (uses macro_score for buffer checks) ===
         combined = self._apply_hysteresis(
-            combined, direction_score, session, reversal_flag, now,
+            combined, macro_score, session, reversal_flag, now,
         )
 
         # === Micro safety gate ===
@@ -490,8 +512,11 @@ class RegimeClassifier:
         # === Guidance ===
         guidance = _GUIDANCE.get(combined, "No directional bias. Trade on merit.")
 
+        rounded_macro = round(macro_score, 3)
         state = RegimeState(
-            direction_score=round(direction_score, 3),
+            direction_score=rounded_macro,
+            macro_score=rounded_macro,
+            micro_score=round(micro_score, 3) if micro_available else 0.0,
             direction_label=direction_label,
             structure_label=structure,
             combined_label=combined,
@@ -505,11 +530,11 @@ class RegimeClassifier:
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
 
-        self._prev_direction_score = direction_score
+        self._prev_macro_score = macro_score
 
         logger.debug(
-            "Regime: %s (dir %.2f, struct %s) | micro_safe=%s session=%s reversal=%s",
-            combined, direction_score, structure, micro_safe, session, reversal_flag,
+            "Regime: %s (macro %.2f, micro %.2f, struct %s) | micro_safe=%s session=%s reversal=%s",
+            combined, macro_score, micro_score, structure, micro_safe, session, reversal_flag,
         )
         return state
 
@@ -592,12 +617,13 @@ class RegimeClassifier:
     # ============================================================
 
     def _check_reversal(self, snapshot, scanner, indicators,
-                        direction_score: float,
-                        liq_cascade: bool = False) -> tuple[bool, str]:
+                        liq_cascade: bool = False,
+                        fast_signals: dict | None = None) -> tuple[bool, str]:
         """Check for reversal signals. Fire if >= 2 flip within last 2 cycles.
 
         Args:
             liq_cascade: Pre-computed liq cascade flag (to avoid double-counting).
+            fast_signals: Data-layer signals dict (CVD for flip detection).
         """
         flips: list[str] = []
 
@@ -646,6 +672,15 @@ class RegimeClassifier:
         # 4. Liq cascade (pre-computed, passed in to avoid double-counting)
         if liq_cascade:
             flips.append("liq_cascade")
+
+        # 5. CVD flip — 15m CVD sign reversal with magnitude
+        if fast_signals and "cvd_15m" in fast_signals:
+            cvd_now = fast_signals["cvd_15m"]
+            if self._prev_cvd_sign is not None:
+                # Only count if magnitude is meaningful (> $50k) and sign flipped
+                if abs(cvd_now) > 50_000 and (cvd_now > 0) != (self._prev_cvd_sign > 0):
+                    flips.append("cvd_flip")
+            self._prev_cvd_sign = cvd_now
 
         # Combine with previous cycle's flips (2-cycle window)
         all_flips = list(set(flips + self._prev_flip_buffer))
@@ -842,66 +877,80 @@ class RegimeClassifier:
         return score, f"Short liqs dominating ({1 - long_ratio:.0%})"
 
     @staticmethod
-    def _signal_orderbook(data_cache) -> tuple[float | None, str | None]:
-        """BTC orderbook imbalance."""
-        if data_cache is None:
+    def _signal_cvd(fast_signals: dict | None) -> tuple[float | None, str | None]:
+        """CVD trend across multiple windows. Weighted: 1m=0.5, 5m=0.3, 15m=0.2."""
+        if not fast_signals:
             return None, None
 
-        btc = data_cache.get("BTC")
-        if not btc or not btc.imbalance:
+        weights = {"cvd_1m": 0.5, "cvd_5m": 0.3, "cvd_15m": 0.2}
+        total_w = 0.0
+        weighted = 0.0
+        parts = []
+
+        for key, w in weights.items():
+            cvd = fast_signals.get(key)
+            if cvd is None:
+                continue
+            # Normalize: $500k CVD maps to +-1.0
+            normalized = max(-1.0, min(1.0, cvd / 500_000))
+            weighted += normalized * w
+            total_w += w
+            label = key.replace("cvd_", "")
+            parts.append(f"{label} ${cvd:+,.0f}")
+
+        if total_w == 0:
             return None, None
 
-        imb = btc.imbalance.lower()
-        if "bid-heavy" in imb:
-            return 0.5, f"BTC book: {btc.imbalance}"
-        elif "ask-heavy" in imb:
-            return -0.5, f"BTC book: {btc.imbalance}"
-        return 0.0, f"BTC book: {btc.imbalance}"
+        score = max(-1.0, min(1.0, weighted / total_w))
+
+        direction = "buy pressure" if score > 0.1 else "sell pressure" if score < -0.1 else "balanced"
+        return score, f"CVD {' / '.join(parts)} -> {direction}"
 
     @staticmethod
-    def _signal_fear_greed(snapshot) -> tuple[float | None, str | None]:
-        """Fear & Greed index."""
-        if not snapshot or snapshot.fear_greed == 0:
+    def _signal_whale(fast_signals: dict | None) -> tuple[float | None, str | None]:
+        """Whale net bias. >65% long = bullish, >65% short = bearish."""
+        if not fast_signals:
             return None, None
 
-        fg = snapshot.fear_greed
-        score = (fg - 50) / 50.0
-        score = max(-1.0, min(1.0, score))
+        long_pct = fast_signals.get("whale_long_pct")
+        net_usd = fast_signals.get("whale_net_usd")
+        if long_pct is None:
+            return None, None
 
-        if 30 <= fg <= 70:
+        # Map: 50% = 0, 65% = +-0.6, 80%+ = +-1.0
+        deviation = (long_pct - 50) / 50  # -1 to +1
+        if abs(deviation) < 0.15:  # Within 42.5-57.5% — balanced
+            score = deviation * 2  # Small score, proportional
+        else:
+            score = max(-1.0, min(1.0, deviation * 2))
+
+        if abs(long_pct - 50) < 10:
             return score, None
 
-        if fg <= 20:
-            label = "Extreme Fear"
-        elif fg <= 40:
-            label = "Fear"
-        elif fg >= 80:
-            label = "Extreme Greed"
-        else:
-            label = "Greed"
-        return score, f"F&G {fg} ({label})"
+        side = "long" if long_pct > 50 else "short"
+        net_str = f" (${abs(net_usd or 0):,.0f} net {side})" if net_usd else ""
+        return score, f"Whales: {long_pct:.0f}% long{net_str}"
 
     @staticmethod
-    def _signal_btc_7d(data_cache) -> tuple[float | None, str | None]:
-        """BTC 7d trend."""
-        if data_cache is None:
+    def _signal_hlp(fast_signals: dict | None) -> tuple[float | None, str | None]:
+        """HLP vault BTC side. Long = bullish, short = bearish."""
+        if not fast_signals:
             return None, None
 
-        btc = data_cache.get("BTC")
-        if not btc or not btc.trend_7d:
+        side = fast_signals.get("hlp_btc_side", "")
+        size_usd = fast_signals.get("hlp_btc_size_usd", 0)
+        if not side:
             return None, None
 
-        trend = btc.trend_7d.lower()
-        if "bullish" in trend:
-            score = 0.7
-        elif "bearish" in trend:
-            score = -0.7
+        side_lower = side.lower()
+        if "long" in side_lower:
+            score = 0.5
+        elif "short" in side_lower:
+            score = -0.5
         else:
-            score = 0.0
+            return 0.0, None
 
-        if btc.change_7d:
-            return score, f"BTC 7d: {btc.trend_7d} ({btc.change_7d:+.1f}%)"
-        return score, f"BTC 7d: {btc.trend_7d}"
+        return score, f"HLP: BTC {side} ${abs(size_usd):,.0f}"
 
 
 # ============================================================
@@ -916,7 +965,9 @@ def format_regime_line(regime: RegimeState, compact: bool = False) -> str:
         compact: If True, single line for context_snapshot.
                  If False, full block with signals + guidance for briefing.
     """
-    micro_str = "OK" if regime.micro_safe else "BLOCKED"
+    micro_trade_str = "OK" if regime.micro_safe else "BLOCKED"
+    micro_avail = regime.signals.get("_micro_available", False)
+    micro_str = f"{regime.micro_score:+.2f}" if micro_avail else "N/A"
 
     # Extract indicator values if available
     ind = regime.signals.get("_indicators", {})
@@ -931,11 +982,13 @@ def format_regime_line(regime: RegimeState, compact: bool = False) -> str:
 
     if compact:
         parts = [f"Regime: {regime.combined_label}"]
+        parts.append(f"Macro: {regime.macro_score:+.2f}")
+        parts.append(f"Micro: {micro_str}")
         if atr_str:
             parts.append(atr_str)
         if adx_str:
             parts.append(adx_str)
-        parts.append(f"Micro: {micro_str}")
+        parts.append(f"MicroTrade: {micro_trade_str}")
         parts.append(f"Session: {regime.session}")
         if regime.reversal_flag:
             parts.append(f"REVERSAL: {regime.reversal_detail}")
@@ -943,16 +996,24 @@ def format_regime_line(regime: RegimeState, compact: bool = False) -> str:
 
     # Full format for briefing
     lines = [
-        f"Regime: {regime.combined_label} (score: {regime.direction_score:+.2f}) — "
-        f"direction: {regime.direction_label}, structure: {regime.structure_label}, "
-        f"bias: {regime.bias}",
+        f"Regime: {regime.combined_label} (macro: {regime.macro_score:+.2f}, "
+        f"micro: {micro_str}) — direction: {regime.direction_label}, "
+        f"structure: {regime.structure_label}, bias: {regime.bias}",
     ]
-    detail_parts = [f"Micro: {micro_str}", f"Session: {regime.session}"]
+    detail_parts = [f"MicroTrade: {micro_trade_str}", f"Session: {regime.session}"]
     if atr_str:
         detail_parts.insert(0, atr_str)
     if adx_str:
         detail_parts.insert(1, adx_str)
     lines.append("  " + " | ".join(detail_parts))
+
+    # Data-layer signal details (CVD, whales, HLP)
+    for key in ("cvd", "whale", "hlp"):
+        sig = regime.signals.get(key, {})
+        detail = sig.get("detail") if isinstance(sig, dict) else None
+        if detail:
+            lines.append(f"  {detail}")
+
     if regime.reversal_flag:
         lines.append(f"  \u26a0 REVERSAL: {regime.reversal_detail}")
     if regime.guidance:

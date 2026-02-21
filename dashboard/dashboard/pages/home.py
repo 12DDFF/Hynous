@@ -1540,12 +1540,29 @@ def _regime_banner() -> rx.Component:
                         spacing="2",
                         align="center",
                     ),
-                    # Direction score
+                    # Macro + Micro scores
                     rx.text(
-                        AppState.regime_score,
+                        rx.cond(
+                            AppState.regime_macro_score != "",
+                            "M:" + AppState.regime_macro_score,
+                            AppState.regime_score,
+                        ),
                         font_size="0.75rem",
                         color="#525252",
                         font_family="JetBrains Mono, monospace",
+                    ),
+                    # Micro score + separators (only when micro data available)
+                    rx.cond(
+                        AppState.regime_micro_score != "",
+                        rx.fragment(
+                            rx.text("\u00b7", color="#333"),
+                            rx.text(
+                                "\u00b5:" + AppState.regime_micro_score,
+                                font_size="0.75rem",
+                                color="#525252",
+                                font_family="JetBrains Mono, monospace",
+                            ),
+                        ),
                     ),
                     rx.text("\u00b7", color="#333"),
                     # Session badge

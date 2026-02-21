@@ -291,7 +291,8 @@ class MarketScanner:
             self._seen_news_ids = {a.get("id", "") for a in self._news}
 
     def regime_shifted(self, from_label: str, to_label: str, score: float,
-                       micro_safe: bool = True, reversal_detail: str = ""):
+                       micro_safe: bool = True, reversal_detail: str = "",
+                       micro_score: float = 0.0):
         """Called by daemon when regime label changes. Queues for detection."""
         self._pending_regime_shift = {
             "from": from_label,
@@ -299,6 +300,7 @@ class MarketScanner:
             "score": score,
             "micro_safe": micro_safe,
             "reversal_detail": reversal_detail,
+            "micro_score": micro_score,
         }
 
     # -----------------------------------------------------------------
@@ -1274,7 +1276,8 @@ class MarketScanner:
 
         from_label = shift["from"]
         to_label = shift["to"]
-        score = shift["score"]
+        macro_score = shift["score"]
+        micro_score = shift.get("micro_score", 0.0)
         micro_safe = shift.get("micro_safe", True)
         reversal_detail = shift.get("reversal_detail", "")
 
@@ -1286,9 +1289,9 @@ class MarketScanner:
         else:
             severity = 0.7
 
-        micro_str = "OK" if micro_safe else "BLOCKED"
+        micro_trade_str = "OK" if micro_safe else "BLOCKED"
         headline = f"Regime shift: {from_label} -> {to_label}"
-        detail = f"Regime score {score:+.2f} | Micro: {micro_str}"
+        detail = f"Macro {macro_score:+.2f} | Micro {micro_score:+.2f} | MicroTrade: {micro_trade_str}"
         if reversal_detail:
             detail += f" | Reversal: {reversal_detail}"
         detail += " — reassess open positions and thesis bias."

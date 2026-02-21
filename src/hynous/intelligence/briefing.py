@@ -82,6 +82,8 @@ class InjectedState:
     memory_counts: tuple[int, int, int] = (0, 0, 0)
     regime_label: str = ""
     regime_score: float = 0.0
+    regime_macro_score: float = 0.0
+    regime_micro_score: float = 0.0
 
 
 # ====================================================================
@@ -928,6 +930,8 @@ def _capture_state(daemon, now: float, user_state: dict | None = None) -> Inject
     if regime:
         state.regime_label = regime.label
         state.regime_score = regime.score
+        state.regime_macro_score = regime.macro_score
+        state.regime_micro_score = regime.micro_score
 
     return state
 
@@ -1092,9 +1096,21 @@ def _build_delta(daemon, now: float) -> str | None:
         if parts:
             changes.append("Memory: " + ", ".join(parts))
 
-    # Regime label change
-    if current.regime_label and current.regime_label != old.regime_label and old.regime_label:
-        changes.append(f"Regime: {old.regime_label} -> {current.regime_label} ({current.regime_score:+.2f})")
+    # Regime changes — label shift OR significant score movement
+    if current.regime_label and old.regime_label:
+        if current.regime_label != old.regime_label:
+            changes.append(f"Regime: {old.regime_label} -> {current.regime_label} (macro {current.regime_macro_score:+.2f}, micro {current.regime_micro_score:+.2f})")
+        else:
+            # Detect significant score drift without label change (>0.2 swing)
+            macro_delta = abs(current.regime_macro_score - old.regime_macro_score)
+            micro_delta = abs(current.regime_micro_score - old.regime_micro_score)
+            if macro_delta >= 0.2 or micro_delta >= 0.3:
+                parts = []
+                if macro_delta >= 0.2:
+                    parts.append(f"macro {old.regime_macro_score:+.2f}->{current.regime_macro_score:+.2f}")
+                if micro_delta >= 0.3:
+                    parts.append(f"micro {old.regime_micro_score:+.2f}->{current.regime_micro_score:+.2f}")
+                changes.append(f"Regime scores shifted ({current.regime_label}): {', '.join(parts)}")
 
     # Circuit breaker
     if current.trading_paused != old.trading_paused:

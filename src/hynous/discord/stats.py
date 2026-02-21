@@ -112,8 +112,11 @@ def build_stats_embed(provider, daemon, config) -> discord.Embed:
     if regime:
         emoji = _REGIME_EMOJI.get(regime.combined_label, "\u2754")
         micro = "\u2705 Micros OK" if regime.micro_safe else "\u274c Micros Blocked"
+        micro_avail = regime.signals.get("_micro_available", False)
+        micro_str = f"{regime.micro_score:+.2f}" if micro_avail else "N/A"
         regime_text = (
-            f"{emoji} **{regime.combined_label}**  ({regime.direction_score:+.2f})\n"
+            f"{emoji} **{regime.combined_label}**\n"
+            f"Macro: {regime.macro_score:+.2f}  |  Micro: {micro_str}\n"
             f"{micro}  \u2502  Session: {regime.session}"
         )
         if regime.reversal_flag:
