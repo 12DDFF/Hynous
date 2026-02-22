@@ -36,6 +36,15 @@ logger = logging.getLogger(__name__)
 # Module-level reference so trading tools can check circuit breaker
 _active_daemon: "Daemon | None" = None
 
+# Memory subtypes worth alerting on when they fade ACTIVE → WEAK.
+# Signals/watchpoints/episodes decay by design — only hard-won knowledge
+# (lessons, theses, playbooks) is worth waking the agent to reinforce.
+_FADING_ALERT_SUBTYPES: frozenset[str] = frozenset({
+    "custom:lesson",
+    "custom:thesis",
+    "custom:playbook",
+})
+
 # Queue for daemon wake conversations → consumed by the dashboard to show in chat.
 # Each item: {"type": str, "title": str, "response": str}
 _daemon_chat_queue: _queue_module.Queue = _queue_module.Queue()
@@ -180,6 +189,18 @@ class Daemon:
         self._running = False
         self._thread: threading.Thread | None = None
 
+        # Background threads for long-running Nous maintenance tasks.
+        # These run off the main daemon loop so they cannot block
+        # _fast_trigger_check() (SL/TP guard that must fire every 10 s).
+        self._decay_thread: threading.Thread | None = None
+        self._conflict_thread: threading.Thread | None = None
+        self._backfill_thread: threading.Thread | None = None
+        self._consolidation_thread: threading.Thread | None = None
+
+        # Per-node cooldown for fading memory alerts (node_id → last alert timestamp).
+        # Prevents the same WEAK node from triggering a wake on every 6h decay cycle.
+        self._fading_alerted: dict[str, float] = {}
+
         # Cached provider references (avoid re-importing in every method)
         self._hl_provider = None
         self._nous_client = None
@@ -196,6 +217,7 @@ class Daemon:
         self._last_conflict_check: float = 0
         self._last_health_check: float = 0
         self._last_embedding_backfill: float = 0
+        self._last_consolidation: float = 0
 
         # Nous health state
         self._nous_healthy: bool = True
@@ -265,11 +287,18 @@ class Daemon:
 
         # Market scanner (anomaly detection across all pairs)
         self._scanner = None
+        self._playbook_matcher = None
+        self._last_matched_playbooks: list = []  # For auto-linking after trade
         if config.scanner.enabled:
             from .scanner import MarketScanner
             self._scanner = MarketScanner(config.scanner)
             self._scanner.execution_symbols = set(config.execution.symbols)
             self._scanner._data_layer_enabled = config.data_layer.enabled
+            # Playbook matcher (Issue 5: proactive procedural memory)
+            from .playbook_matcher import PlaybookMatcher
+            self._playbook_matcher = PlaybookMatcher(
+                cache_ttl=config.daemon.playbook_cache_ttl,
+            )
 
         # Stats
         self.wake_count: int = 0
@@ -514,6 +543,7 @@ class Daemon:
         self._last_conflict_check = time.time()
         self._last_health_check = time.time()
         self._last_embedding_backfill = time.time()
+        self._last_consolidation = time.time()
         self._last_fill_check = time.time()
         self._last_phantom_check = time.time()
         self._load_phantoms()
@@ -582,14 +612,34 @@ class Daemon:
                     self._wake_for_review()
 
                 # 6. FSRS batch decay (default every 6 hours)
+                # Runs in a background thread — can take seconds with thousands of
+                # nodes, cannot block _fast_trigger_check().
                 if now - self._last_decay_cycle >= self.config.daemon.decay_interval:
                     self._last_decay_cycle = now
-                    self._run_decay_cycle()
+                    if self._decay_thread is None or not self._decay_thread.is_alive():
+                        self._decay_thread = threading.Thread(
+                            target=self._run_decay_cycle,
+                            daemon=True,
+                            name="hynous-decay",
+                        )
+                        self._decay_thread.start()
+                    else:
+                        logger.debug("Decay cycle still running — skipping interval")
 
                 # 7. Contradiction queue check (default every 30 min)
+                # Runs in a background thread — may wake the agent, which involves
+                # a full LLM call. Cannot block _fast_trigger_check().
                 if now - self._last_conflict_check >= self.config.daemon.conflict_check_interval:
                     self._last_conflict_check = now
-                    self._check_conflicts()
+                    if self._conflict_thread is None or not self._conflict_thread.is_alive():
+                        self._conflict_thread = threading.Thread(
+                            target=self._check_conflicts,
+                            daemon=True,
+                            name="hynous-conflicts",
+                        )
+                        self._conflict_thread.start()
+                    else:
+                        logger.debug("Conflict check still running — skipping interval")
 
                 # 7b. Phantom evaluation (default every 30 min)
                 if self._phantoms and now - self._last_phantom_check >= self.config.daemon.phantom_check_interval:
@@ -602,9 +652,33 @@ class Daemon:
                     self._check_health()
 
                 # 9. Embedding backfill (default every 12 hours)
+                # Runs in a background thread — OpenAI calls per-node, slow at scale.
                 if now - self._last_embedding_backfill >= self.config.daemon.embedding_backfill_interval:
                     self._last_embedding_backfill = now
-                    self._run_embedding_backfill()
+                    if self._backfill_thread is None or not self._backfill_thread.is_alive():
+                        self._backfill_thread = threading.Thread(
+                            target=self._run_embedding_backfill,
+                            daemon=True,
+                            name="hynous-backfill",
+                        )
+                        self._backfill_thread.start()
+                    else:
+                        logger.debug("Embedding backfill still running — skipping interval")
+
+                # 10. Consolidation — cross-episode generalization (default every 24 hours)
+                # Runs in a background thread — includes LLM calls (Haiku),
+                # cannot block _fast_trigger_check().
+                if now - self._last_consolidation >= self.config.daemon.consolidation_interval:
+                    self._last_consolidation = now
+                    if self._consolidation_thread is None or not self._consolidation_thread.is_alive():
+                        self._consolidation_thread = threading.Thread(
+                            target=self._run_consolidation,
+                            daemon=True,
+                            name="hynous-consolidation",
+                        )
+                        self._consolidation_thread.start()
+                    else:
+                        logger.debug("Consolidation still running — skipping interval")
 
             except Exception as e:
                 log_event(DaemonEvent("error", "Loop error", str(e)))
@@ -1781,6 +1855,22 @@ class Daemon:
         regime_label = self._regime.label if self._regime else "RANGING"
         message = format_scanner_wake(top, position_types=self._position_types, regime_label=regime_label)
 
+        # Issue 5: Playbook matching — inject matching playbook context
+        matched_playbooks: list = []
+        if self._playbook_matcher:
+            try:
+                from .playbook_matcher import PlaybookMatcher
+                matched_playbooks = self._playbook_matcher.find_matching(top)
+                if matched_playbooks:
+                    playbook_section = PlaybookMatcher.format_matches(matched_playbooks)
+                    message += "\n\n" + playbook_section
+                    logger.debug(
+                        "Playbook matcher: %d matches for %d anomalies",
+                        len(matched_playbooks), len(top),
+                    )
+            except Exception as e:
+                logger.debug("Playbook matching failed: %s", e)
+
         # Inject regime context above the scanner message
         if self._regime and self._regime.label != "RANGING":
             from .regime import format_regime_line
@@ -1805,6 +1895,9 @@ class Daemon:
             # Track pass streak + phantom creation
             if self.agent.last_chat_had_trade_tool():
                 self._scanner_pass_streak = 0
+                # Issue 5: auto-link matched playbooks to the trade entry
+                if matched_playbooks:
+                    self._link_playbooks_to_trade(matched_playbooks, top)
             else:
                 self._scanner_pass_streak += 1
                 # Phantom tracking: record what would have happened on this pass
@@ -1818,6 +1911,53 @@ class Daemon:
             _notify_discord("Scanner", title, response)
             logger.info("Scanner wake: %d anomalies, agent responded (%d chars)",
                         len(top), len(response))
+
+    def _link_playbooks_to_trade(self, matches: list, anomalies: list):
+        """Background: link matched playbooks to the most recent trade entry.
+
+        After the agent trades following a playbook match, create an
+        `applied_to` edge from each matched playbook to the trade entry.
+        This enables the feedback loop: on trade close, the system finds
+        these edges and updates playbook success metrics.
+
+        Runs in a background thread — cannot block the main daemon loop.
+        """
+        def _do_link():
+            try:
+                from ..nous.client import get_client
+                client = get_client()
+                # Collect symbols from anomalies (for matching entries)
+                symbols = set(
+                    a.symbol.upper() for a in anomalies if a.symbol != "MARKET"
+                )
+                # Fetch recent trade entries (newest first)
+                entries = client.list_nodes(
+                    subtype="custom:trade_entry", limit=5,
+                )
+                for match in matches:
+                    sym = match.matched_symbol.upper()
+                    for entry in entries:
+                        title = entry.get("content_title", "").upper()
+                        if sym in title:
+                            try:
+                                client.create_edge(
+                                    source_id=match.playbook_id,
+                                    target_id=entry["id"],
+                                    type="applied_to",
+                                )
+                                logger.info(
+                                    "Linked playbook %s → trade entry %s (%s)",
+                                    match.playbook_id, entry["id"], sym,
+                                )
+                            except Exception as e:
+                                logger.debug(
+                                    "Playbook-trade edge failed: %s", e,
+                                )
+                            break  # Found the entry for this symbol
+            except Exception as e:
+                logger.debug("Playbook-trade linking failed: %s", e)
+
+        threading.Thread(target=_do_link, daemon=True, name="hynous-pb-link").start()
 
     def _wake_for_fill(
         self,
@@ -2403,7 +2543,9 @@ class Daemon:
         """Run FSRS batch decay across all Nous nodes.
 
         Recomputes retrievability and transitions lifecycle states
-        (ACTIVE → WEAK → DORMANT). Logs transition stats.
+        (ACTIVE → WEAK → DORMANT). Logs transition stats. If important
+        memories (lessons, theses, playbooks) just crossed ACTIVE → WEAK,
+        wakes the agent to review and reinforce them.
         """
         try:
             nous = self._get_nous()
@@ -2425,11 +2567,183 @@ class Daemon:
                     "decay", "FSRS decay cycle",
                     f"{processed} nodes, {transitions_count} transitions",
                 ))
+
+                # Surface important ACTIVE → WEAK transitions to the agent
+                self._check_fading_transitions(transitions, nous)
             else:
                 logger.debug("Decay cycle: %d nodes processed, no transitions", processed)
 
         except Exception as e:
-            logger.debug("Decay cycle failed: %s", e)
+            logger.warning("Decay cycle failed: %s", e)
+
+    def _run_consolidation(self):
+        """Run cross-episode generalization cycle.
+
+        Reviews clusters of episodic memories and extracts cross-episode
+        patterns into knowledge-tier nodes. Uses Haiku for analysis.
+        Runs in a background thread (hynous-consolidation).
+
+        See: revisions/memory-sections/issue-3-generalization.md
+        """
+        try:
+            from .consolidation import ConsolidationEngine
+
+            engine = ConsolidationEngine(self.config)
+            stats = engine.run_cycle()
+
+            reviewed = stats.get("episodes_reviewed", 0)
+            analyzed = stats.get("groups_analyzed", 0)
+            created = stats.get("patterns_created", 0)
+            strengthened = stats.get("patterns_strengthened", 0)
+            errors = stats.get("errors", 0)
+
+            if created > 0 or strengthened > 0:
+                log_event(DaemonEvent(
+                    "consolidation",
+                    "Cross-episode generalization",
+                    f"{reviewed} episodes → {analyzed} groups → "
+                    f"{created} new patterns, {strengthened} strengthened",
+                ))
+                logger.info(
+                    "Consolidation: %d episodes, %d groups, "
+                    "%d patterns created, %d strengthened",
+                    reviewed, analyzed, created, strengthened,
+                )
+            else:
+                logger.debug(
+                    "Consolidation: %d episodes, %d groups — no new patterns",
+                    reviewed, analyzed,
+                )
+
+            if errors > 0:
+                logger.warning("Consolidation: %d error(s) during cycle", errors)
+
+        except Exception as e:
+            logger.warning("Consolidation cycle failed: %s", e)
+
+    def _check_fading_transitions(self, transitions: list[dict], nous) -> None:
+        """Filter ACTIVE→WEAK transitions for important memory types.
+
+        Fetches each transitioning node to check its subtype. Only lessons,
+        theses, and playbooks are worth waking the agent to reinforce — signals
+        and episodes decay by design and need no action.
+
+        A 24-hour per-node cooldown prevents the same WEAK node from
+        triggering a repeated wake on every 6-hour decay cycle.
+        """
+        now = time.time()
+        _24H = 86_400
+
+        # Only ACTIVE → WEAK, and only nodes not recently alerted
+        candidates = [
+            t for t in transitions
+            if t.get("from") == "ACTIVE" and t.get("to") == "WEAK"
+            and now - self._fading_alerted.get(t.get("id", ""), 0) > _24H
+        ]
+
+        if not candidates:
+            return
+
+        # Fetch each candidate to inspect its subtype
+        fading: list[dict] = []
+        for t in candidates:
+            nid = t.get("id")
+            if not nid:
+                continue
+            try:
+                node = nous.get_node(nid)
+                if node and node.get("subtype") in _FADING_ALERT_SUBTYPES:
+                    fading.append(node)
+            except Exception as e:
+                logger.debug("Could not fetch fading node %s: %s", nid, e)
+
+        if not fading:
+            return
+
+        # Record alert timestamps; prune stale entries (> 48h) to bound dict size
+        for node in fading:
+            self._fading_alerted[node["id"]] = now
+        cutoff = now - 172_800
+        self._fading_alerted = {k: v for k, v in self._fading_alerted.items() if v > cutoff}
+
+        logger.info("Fading memories: %d important node(s) crossed ACTIVE→WEAK", len(fading))
+        self._wake_for_fading_memories(fading)
+
+    def _wake_for_fading_memories(self, nodes: list[dict]) -> None:
+        """Wake the agent with fading important memories for reinforcement.
+
+        Runs in the hynous-decay background thread — same thread safety
+        as _check_conflicts() which also calls _wake_agent() from a thread.
+        """
+        _labels = {
+            "custom:lesson": "lesson",
+            "custom:thesis": "thesis",
+            "custom:playbook": "playbook",
+        }
+
+        count = len(nodes)
+        lines = [
+            "[DAEMON WAKE — Fading Memories]",
+            f"{count} important {'memory' if count == 1 else 'memories'} just crossed ACTIVE → WEAK.",
+            "Accessing a memory reinforces its FSRS stability — recalling it here counts.",
+            "Archive anything no longer relevant: delete_memory(action=\"archive\").",
+            "",
+        ]
+
+        for node in nodes[:5]:
+            nid = node.get("id", "?")
+            title = node.get("content_title", "Untitled")
+            subtype = node.get("subtype", "")
+            label = _labels.get(subtype, subtype)
+            body = node.get("content_body", "") or ""
+
+            # Parse JSON-wrapped bodies (trade-style nodes store text in a JSON envelope)
+            if body.startswith("{"):
+                try:
+                    parsed = json.loads(body)
+                    body = parsed.get("text", body)
+                except Exception:
+                    pass
+
+            preview = body[:400].strip()
+            if len(body) > 400:
+                preview += "..."
+
+            retrievability = node.get("neural_retrievability", 0)
+            lines.append(
+                f"[{label}] \"{title}\" ({nid}) — {retrievability:.0%} retrievability"
+            )
+            if preview:
+                lines.append(f"  {preview}")
+            lines.append("")
+
+        if count > 5:
+            lines.append(f"... and {count - 5} more. Use recall_memory(mode=\"browse\") to see all WEAK nodes.")
+            lines.append("")
+
+        lines.extend([
+            "Options per memory:",
+            "- Recall and reflect on it (natural reinforcement — FSRS stability grows on access)",
+            "- update_memory to revise stale content before it fades to DORMANT",
+            "- delete_memory(action=\"archive\") if the memory is no longer relevant",
+        ])
+
+        message = "\n".join(lines)
+        response = self._wake_agent(message, max_tokens=1024, source="daemon:memory_fading")
+        if response:
+            titles_preview = ", ".join(
+                f"\"{n.get('content_title', '?')[:30]}\""
+                for n in nodes[:3]
+            )
+            log_event(DaemonEvent(
+                "memory_fading", "Fading memory review",
+                f"{count} node(s): {titles_preview}",
+            ))
+            _queue_and_persist("Memory Fading", "Fading Memories", response)
+            logger.info(
+                "Fading memory wake: %d node(s), agent responded (%d chars)",
+                count, len(response),
+            )
 
     def _run_embedding_backfill(self):
         """Backfill embeddings for any nodes missing them.
@@ -2457,7 +2771,7 @@ class Daemon:
                 logger.debug("Embedding backfill: all nodes have embeddings")
 
         except Exception as e:
-            logger.debug("Embedding backfill failed: %s", e)
+            logger.warning("Embedding backfill failed: %s", e)
 
     def _check_conflicts(self):
         """Poll the Nous contradiction queue for pending conflicts.
@@ -2512,7 +2826,7 @@ class Daemon:
             self._wake_for_conflicts(remaining, nous)
 
         except Exception as e:
-            logger.debug("Conflict check failed: %s", e)
+            logger.warning("Conflict check failed: %s", e)
 
     def _auto_resolve_conflict(self, conflict: dict, nous) -> str | None:
         """Apply Tier 1 auto-resolve rules. Returns resolution string or None.

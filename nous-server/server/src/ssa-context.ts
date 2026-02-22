@@ -211,7 +211,7 @@ export function createSSAContext(options?: {
       const [nodeR, edgeR] = await Promise.all([
         db.execute({
           sql: `SELECT id, neural_last_accessed, provenance_created_at,
-                       created_at, neural_access_count
+                       created_at, neural_access_count, subtype
                 FROM nodes WHERE id = ?`,
           args: [id],
         }),
@@ -232,6 +232,7 @@ export function createSSAContext(options?: {
         created_at: new Date(row.created_at as string),
         access_count: Number(row.neural_access_count ?? 0),
         inbound_edge_count: Number(edgeR.rows[0]?.cnt ?? 0),
+        subtype: (row.subtype as string) ?? undefined,
       };
     },
   };

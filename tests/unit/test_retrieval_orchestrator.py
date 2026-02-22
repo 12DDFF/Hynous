@@ -438,15 +438,15 @@ class TestOrchestratorConfig:
         assert orch.enabled is True
         assert orch.quality_threshold == 0.20
         assert orch.relevance_ratio == 0.4
-        assert orch.max_results == 8
+        assert orch.max_results == 20
         assert orch.max_sub_queries == 4
         assert orch.max_retries == 1
         assert orch.timeout_seconds == 3.0
-        assert orch.search_limit_per_query == 10
+        assert orch.search_limit_per_query == 25
 
     def test_loads_from_yaml(self):
         config = load_config()
         orch = config.orchestrator
         assert orch.enabled is True
         assert orch.quality_threshold == 0.20
-        assert orch.max_results == 8
+        assert orch.max_results == 20

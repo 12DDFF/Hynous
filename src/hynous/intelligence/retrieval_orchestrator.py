@@ -23,6 +23,7 @@ from typing import Optional
 
 from ..core.config import Config, OrchestratorConfig
 from ..nous.client import NousClient
+from ..nous.sections import classify_intent, get_section_for_subtype
 
 logger = logging.getLogger(__name__)
 
@@ -123,8 +124,8 @@ def orchestrate_retrieval(
             client, sub_queries, orch, qcs_result, search_kwargs,
         )
 
-    # ---- Step 5: MERGE & SELECT ----
-    merged = _merge_and_select(sub_results, orch)
+    # ---- Step 5: MERGE & SELECT (with section-aware intent boost) ----
+    merged = _merge_and_select(sub_results, orch, query, config)
 
     _elapsed = int((time.monotonic() - _start) * 1000)
     logger.info(
@@ -391,18 +392,29 @@ def _reformulate(query: str, qcs_result: dict) -> Optional[str]:
 def _merge_and_select(
     sub_results: dict[str, list[dict]],
     orch: OrchestratorConfig,
+    query: str = "",
+    config: Config | None = None,
 ) -> list[dict]:
     """Combine results from all sub-queries into one ranked list with dynamic sizing.
 
     1. Deduplicate by node ID (keep highest score)
     2. Tag origin sub-query
-    3. Sort by score descending
-    4. Dynamic cutoff: score >= top_score * relevance_ratio
-    5. Coverage guarantee: at least 1 result per sub-query that had results
-    6. Hard cap at max_results
+    3. Apply section-aware intent boost (Issue 6)
+    4. Sort by boosted score descending
+    5. Dynamic cutoff: score >= top_score * relevance_ratio
+    6. Coverage guarantee: at least 1 result per sub-query that had results
+    7. Hard cap at max_results
     """
     if not sub_results:
         return []
+
+    # ---- Intent classification (Issue 6) ----
+    intent_sections = classify_intent(query) if query else []
+    intent_boost = 1.0
+    if config and config.sections.enabled and intent_sections:
+        intent_boost = config.sections.intent_boost  # Default 1.3
+    else:
+        intent_sections = []  # No boost if sections disabled
 
     # Deduplicate by node_id — keep the highest-scoring instance
     best_by_id: dict[str, dict] = {}
@@ -428,7 +440,21 @@ def _merge_and_select(
     if not best_by_id:
         return []
 
-    # Sort by score descending
+    # ---- Apply intent boost (Issue 6) ----
+    # Boost scores for nodes whose section matches the query intent.
+    # A signal-intent query boosts custom:signal and custom:watchpoint nodes.
+    # The original score is preserved in _original_score for debugging.
+    if intent_sections and intent_boost > 1.0:
+        for node in best_by_id.values():
+            subtype = node.get("subtype") or ""
+            node_section = get_section_for_subtype(subtype if subtype else None)
+            if node_section in intent_sections:
+                original_score = _to_float(node.get("score", 0))
+                node["_original_score"] = original_score
+                node["score"] = original_score * intent_boost
+                node["_intent_boosted"] = True
+
+    # Sort by (potentially boosted) score descending
     ranked = sorted(
         best_by_id.values(),
         key=lambda n: _to_float(n.get("score", 0)),
@@ -474,5 +500,15 @@ def _merge_and_select(
     # Ensure at least 1 result if we have any
     if not selected and ranked:
         selected.append(ranked[0])
+
+    # Log intent boost if applied
+    if intent_sections:
+        boosted_count = sum(1 for n in selected if n.get("_intent_boosted"))
+        if boosted_count > 0:
+            logger.debug(
+                "Intent boost: %d/%d results boosted for sections=%s (×%.1f)",
+                boosted_count, len(selected),
+                [s.value for s in intent_sections], intent_boost,
+            )
 
     return selected

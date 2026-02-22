@@ -1020,6 +1020,9 @@ def _store_to_nous(
     node. Uses specific subtypes (trade_entry, trade_close, trade_modify)
     and 'part_of' edges (SSA weight 0.85) to build the trade lifecycle graph.
 
+    Stakes weighting (Issue 4): calculates salience from the signals dict
+    and passes a stability override to Nous when the event is non-routine.
+
     Returns node_id or None.
     """
     from ...nous.client import get_client
@@ -1038,6 +1041,20 @@ def _store_to_nous(
         from datetime import datetime, timezone
         event_time = datetime.now(timezone.utc).isoformat()
 
+    # Stakes weighting: calculate salience-modulated stability
+    _neural_stability = None
+    try:
+        from ...nous.sections import calculate_salience, modulate_stability
+        salience = calculate_salience(subtype, signals)
+        _neural_stability = modulate_stability(subtype, salience)
+        if _neural_stability is not None:
+            logger.debug(
+                "Stakes weighting: %s salience=%.2f → stability=%.1f days",
+                subtype, salience, _neural_stability,
+            )
+    except Exception as e:
+        logger.debug("Stakes weighting skipped: %s", e)
+
     try:
         client = get_client()
         node = client.create_node(
@@ -1049,6 +1066,7 @@ def _store_to_nous(
             event_time=event_time,
             event_confidence=1.0,
             event_source="inferred",
+            neural_stability=_neural_stability,
         )
         node_id = node.get("id")
 
@@ -1517,6 +1535,8 @@ def handle_close_position(
     # Hebbian: strengthen the trade lifecycle edge (MF-1)
     if close_node_id and entry_node_id:
         _strengthen_trade_edge(entry_node_id, close_node_id)
+        # Issue 5: update playbook metrics if this trade followed a playbook
+        _update_playbook_metrics(entry_node_id, pnl_pct > 0)
 
     _record_trade_span(
         "close_position", "memory_store",
@@ -1905,6 +1925,65 @@ def _strengthen_trade_edge(entry_node_id: str, close_node_id: str) -> None:
             logger.debug("Trade edge strengthening failed: %s", e)
 
     threading.Thread(target=_do_strengthen, daemon=True).start()
+
+
+def _update_playbook_metrics(entry_node_id: str, was_profitable: bool) -> None:
+    """Update playbook success metrics after a trade close.
+
+    Checks if the trade entry has incoming `applied_to` edges from
+    playbook nodes (created by daemon._link_playbooks_to_trade when
+    the agent trades following a playbook match). For each linked
+    playbook, increments sample_size and optionally success_count.
+
+    Runs in background thread to avoid blocking the tool response.
+    """
+    def _do_update():
+        try:
+            from ...nous.client import get_client
+            client = get_client()
+            edges = client.get_edges(entry_node_id, direction="in")
+            for edge in edges:
+                # Edge route returns raw DB rows: field is "type" not "edge_type"
+                if edge.get("type") != "applied_to":
+                    continue
+                pb_id = edge.get("source_id")
+                if not pb_id:
+                    continue
+                pb_node = client.get_node(pb_id)
+                # Node route returns raw DB rows: field is "subtype" not "content_subtype"
+                if not pb_node or pb_node.get("subtype") != "custom:playbook":
+                    continue
+
+                # Parse body and update metrics
+                body = pb_node.get("content_body", "")
+                try:
+                    data = json.loads(body)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                data["sample_size"] = data.get("sample_size", 0) + 1
+                if was_profitable:
+                    data["success_count"] = data.get("success_count", 0) + 1
+
+                from datetime import datetime, timezone
+                data["last_applied"] = datetime.now(timezone.utc).isoformat()
+
+                client.update_node(pb_id, content_body=json.dumps(data))
+
+                # Hebbian: strengthen the applied_to edge on profitable trade
+                edge_id = edge.get("id")
+                if edge_id and was_profitable:
+                    client.strengthen_edge(edge_id, amount=0.10)
+
+                logger.info(
+                    "Playbook %s metrics updated: %d/%d (profitable: %s)",
+                    pb_id, data.get("success_count", 0),
+                    data["sample_size"], was_profitable,
+                )
+        except Exception as e:
+            logger.debug("Playbook metrics update failed: %s", e)
+
+    threading.Thread(target=_do_update, daemon=True, name="hynous-pb-metrics").start()
 
 
 # =============================================================================

@@ -2,7 +2,7 @@
 
 > Truncate stale tool results based on what tool produced them. Confirmations need 100 chars, not 800.
 
-**Status:** READY FOR IMPLEMENTATION
+**Status:** IMPLEMENTED
 **Priority:** P1
 **Estimated effort:** Small — modify one constant and one method in `agent.py`
 

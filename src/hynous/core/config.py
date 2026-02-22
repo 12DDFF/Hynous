@@ -78,6 +78,19 @@ class OrchestratorConfig:
 
 
 @dataclass
+class SectionsConfig:
+    """Memory sections — brain-inspired bias layer on retrieval and decay.
+
+    Sections are determined by subtype → section mapping (static lookup).
+    These settings control the behavior overlay.
+    See: revisions/memory-sections/executive-summary.md
+    """
+    enabled: bool = True                    # Master switch for section-aware behavior
+    intent_boost: float = 1.3              # Score multiplier for query-relevant sections
+    default_section: str = "KNOWLEDGE"     # Fallback section for unknown subtypes
+
+
+@dataclass
 class DaemonConfig:
     """Background daemon settings — watchdog + curiosity + periodic review."""
     enabled: bool = False                 # Master switch
@@ -94,6 +107,8 @@ class DaemonConfig:
     health_check_interval: int = 3600     # Seconds between Nous health checks (1 hour)
     # Embedding backfill
     embedding_backfill_interval: int = 43200  # Seconds between embedding backfill runs (12 hours)
+    # Consolidation (cross-episode generalization — Issue 3)
+    consolidation_interval: int = 86400  # Seconds between consolidation cycles (24 hours)
     # Risk guardrails
     max_daily_loss_usd: float = 100       # Pause trading after this daily loss
     max_open_positions: int = 3           # Max simultaneous positions
@@ -103,6 +118,8 @@ class DaemonConfig:
     # Phantom tracker (inaction cost)
     phantom_check_interval: int = 1800          # Seconds between phantom evaluations (30 min)
     phantom_max_age_seconds: int = 14400        # Max phantom lifetime (4h, macro default)
+    # Playbook matcher (Issue 5: procedural memory)
+    playbook_cache_ttl: int = 1800              # Seconds between playbook cache refreshes (30 min)
 
 
 @dataclass
@@ -172,6 +189,7 @@ class Config:
     discord: DiscordConfig = field(default_factory=DiscordConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
     data_layer: DataLayerConfig = field(default_factory=DataLayerConfig)
+    sections: SectionsConfig = field(default_factory=SectionsConfig)
 
     # Paths
     project_root: Path = field(default_factory=_find_project_root)
@@ -209,6 +227,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
     discord_raw = raw.get("discord", {})
     orch_raw = raw.get("orchestrator", {})
     dl_raw = raw.get("data_layer", {})
+    sections_raw = raw.get("sections", {})
 
     return Config(
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
@@ -255,12 +274,14 @@ def load_config(config_path: Optional[str] = None) -> Config:
             conflict_check_interval=daemon_raw.get("conflict_check_interval", 1800),
             health_check_interval=daemon_raw.get("health_check_interval", 3600),
             embedding_backfill_interval=daemon_raw.get("embedding_backfill_interval", 43200),
+            consolidation_interval=daemon_raw.get("consolidation_interval", 86400),
             max_daily_loss_usd=daemon_raw.get("max_daily_loss_usd", 100),
             max_open_positions=daemon_raw.get("max_open_positions", 3),
             max_wakes_per_hour=daemon_raw.get("max_wakes_per_hour", 6),
             wake_cooldown_seconds=daemon_raw.get("wake_cooldown_seconds", 120),
             phantom_check_interval=daemon_raw.get("phantom_check_interval", 1800),
             phantom_max_age_seconds=daemon_raw.get("phantom_max_age_seconds", 14400),
+            playbook_cache_ttl=daemon_raw.get("playbook_cache_ttl", 1800),
         ),
         scanner=ScannerConfig(
             enabled=scanner_raw.get("enabled", True),
@@ -304,6 +325,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
             url=dl_raw.get("url", "http://127.0.0.1:8100"),
             enabled=dl_raw.get("enabled", True),
             timeout=dl_raw.get("timeout", 5),
+        ),
+        sections=SectionsConfig(
+            enabled=sections_raw.get("enabled", True),
+            intent_boost=sections_raw.get("intent_boost", 1.3),
+            default_section=sections_raw.get("default_section", "KNOWLEDGE"),
         ),
         project_root=root,
     )

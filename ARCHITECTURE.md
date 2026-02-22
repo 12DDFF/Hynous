@@ -92,6 +92,8 @@ The LLM agent that thinks, reasons, and acts.
 | `retrieval_orchestrator.py` | Intelligent multi-pass retrieval: classify → decompose → parallel search → quality gate → merge |
 | `gate_filter.py` | Pre-storage quality gate (rejects gibberish, filler, etc.) |
 | `memory_tracker.py` | In-process audit log of all Nous writes per chat cycle (creates, archives, deletes) |
+| `consolidation.py` | Cross-episode generalization: clusters related episodes, extracts patterns via LLM, creates knowledge/playbook nodes |
+| `playbook_matcher.py` | Procedural memory: loads playbook nodes, evaluates structured trigger conditions against scanner anomalies |
 
 ### `src/hynous/nous/` — The Memory Client
 
@@ -101,6 +103,7 @@ Python client for the Nous TypeScript API.
 |--------|----------------|
 | `client.py` | HTTP client for Nous API |
 | `types.py` | Python types matching Nous schemas |
+| `sections.py` | Memory section definitions: 4 sections (Episodic, Signals, Knowledge, Procedural), subtype→section mapping, per-section weight/decay/encoding profiles |
 
 **Note:** Nous itself is a TypeScript service. We call it via HTTP API.
 See `storm-013-nous-http-api.md` in the brainstorm for the full API spec.
@@ -265,7 +268,8 @@ Large content (LLM messages, responses, injected context) is stored via SHA256 c
 
 1. Create handler in `src/hynous/intelligence/tools/`
 2. Register in `tools/registry.py`
-3. Tool is automatically available to agent
+3. Add to `prompts/builder.py` `TOOL_STRATEGY` section — registering alone is not enough; the agent won't know to use the tool without system prompt guidance
+4. Tool is now available to agent
 
 ### Adding a New Page
 
@@ -379,12 +383,29 @@ Token cost reduction measures. Start with `executive-summary.md`:
 
 ---
 
+### `revisions/memory-sections/` — IMPLEMENTED (2026-02-21)
+
+Brain-inspired memory sectioning — 4 sections (Episodic, Signals, Knowledge, Procedural) with per-section retrieval weights, decay curves, encoding modulation, consolidation, and procedural pattern-matching. Sections are a **bias layer** on top of existing SSA search, not hard partitions.
+
+All 7 issues implemented:
+- **Issue 0** — Section foundation (shared types, mapping, config) — DONE
+- **Issue 1** — Per-section SSA reranking weights — DONE
+- **Issue 2** — Per-section FSRS decay curves — DONE
+- **Issue 3** — Cross-episode consolidation pipeline — DONE
+- **Issue 4** — Stakes-weighted encoding (salience modulation) — DONE
+- **Issue 5** — Procedural memory (playbook matcher + scanner integration) — DONE
+- **Issue 6** — Section-aware retrieval bias (intent classification + boost) — DONE
+
+New modules added: `consolidation.py`, `playbook_matcher.py` (Python), `sections/` (TypeScript). See `revisions/memory-sections/executive-summary.md` for theory and implementation notes.
+
+---
+
 ## For Future Agents
 
 When working on this codebase:
 
 1. **Check revisions first** — `revisions/` has documented issues and their resolutions
-2. **All revisions complete** — Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning all resolved
+2. **All revisions complete** — Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning, and memory sections are all fully implemented
 3. **Check existing patterns** — Don't reinvent, extend
 4. **Keep modules focused** — One responsibility per file
 5. **Update this doc** — If you change architecture, document it

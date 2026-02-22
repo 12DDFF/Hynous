@@ -2,7 +2,7 @@
 
 > Remove bloat from the two largest tool schemas. These schemas are sent on every API call (~2,819 tokens combined). Cached after the first call, but trimming reduces cache-write cost, cache size, and Claude's processing overhead.
 
-**Status:** READY FOR IMPLEMENTATION
+**Status:** IMPLEMENTED
 **Priority:** P1
 **Estimated effort:** Small — text edits only, no logic changes
 **Scope:** ONLY `store_memory` and `recall_memory`. All other tools remain unchanged.

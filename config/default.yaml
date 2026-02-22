@@ -43,10 +43,12 @@ daemon:
   conflict_check_interval: 1800      # Contradiction queue polling interval (seconds, 30 min)
   health_check_interval: 3600        # Nous health check interval (seconds, 1 hour)
   embedding_backfill_interval: 43200 # Embedding backfill interval (seconds, 12 hours)
+  consolidation_interval: 86400      # Cross-episode generalization (seconds, 24 hours)
   max_daily_loss_usd: 100            # Circuit breaker: pause trading after this daily loss
   max_open_positions: 3              # Max simultaneous open positions
   max_wakes_per_hour: 6              # Rate limit on agent wakes per hour
   wake_cooldown_seconds: 120         # Min seconds between non-priority wakes
+  playbook_cache_ttl: 1800           # Playbook matcher cache refresh interval (seconds, 30 min)
 
 # Market scanner (anomaly detection across ALL Hyperliquid pairs)
 scanner:
@@ -111,6 +113,15 @@ memory:
   retrieve_limit: 20             # Max memories to retrieve per query (token budget is the real limiter)
   compression_model: "openrouter/anthropic/claude-haiku-4-5-20251001"  # OpenRouter
   compress_enabled: true         # Enable/disable automatic compression
+
+# Memory sections — brain-inspired bias layer
+# Sections give different memory types different retrieval weights, decay curves,
+# and encoding rules. All nodes stay in one table; sections are a reranking bias.
+# See: revisions/memory-sections/executive-summary.md
+sections:
+  enabled: true                    # Master switch for section-aware behavior
+  intent_boost: 1.3               # Score multiplier for query-relevant sections (Issue 6)
+  default_section: "KNOWLEDGE"    # Fallback section for unknown subtypes
 
 # Event detection thresholds
 events:

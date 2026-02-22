@@ -2,7 +2,7 @@
 
 > Fewer exchanges in the working window = fewer uncached tokens resent on every API call.
 
-**Status:** READY FOR IMPLEMENTATION
+**Status:** IMPLEMENTED
 **Priority:** P1
 **Estimated effort:** Minimal — two config values changed
 **Backup plan:** Option D (dynamic window) documented below if quality degrades

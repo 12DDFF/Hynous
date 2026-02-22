@@ -210,7 +210,7 @@ class TestTO2SchemaTrimming:
 
         # memory_type enum must be unchanged
         assert props["memory_type"]["enum"] == [
-            "watchpoint", "curiosity", "lesson", "thesis", "episode", "trade", "signal",
+            "watchpoint", "curiosity", "lesson", "thesis", "episode", "trade", "signal", "playbook",
         ]
         assert props["memory_type"]["type"] == "string"
 
@@ -349,7 +349,7 @@ class TestTO3TieredTruncation:
         """_STALE_TRUNCATION dict must exist with tiered limits."""
         from src.hynous.intelligence.agent import _STALE_TRUNCATION
         assert isinstance(_STALE_TRUNCATION, dict)
-        assert len(_STALE_TRUNCATION) == 25
+        assert len(_STALE_TRUNCATION) == 26
 
     def test_default_stale_limit_is_800(self):
         """_DEFAULT_STALE_LIMIT must be 800 (backward compat for unknown tools)."""
@@ -561,14 +561,14 @@ class TestCrossCutting:
         assert config.agent.temperature == 0.7
 
     def test_max_context_tokens_dataclass_vs_yaml(self):
-        """Note: max_context_tokens dataclass default (800) differs from YAML (4000).
+        """max_context_tokens dataclass default and YAML must both be 4000.
 
-        This is a pre-existing inconsistency, NOT introduced by the TOs.
-        The YAML value (4000) takes precedence at runtime.
+        Previously the dataclass defaulted to 800 while YAML set 4000.
+        That inconsistency was fixed — both sources now agree on 4000.
         """
         from src.hynous.core.config import MemoryConfig, load_config
         # Dataclass default
-        assert MemoryConfig().max_context_tokens == 800
+        assert MemoryConfig().max_context_tokens == 4000
         # YAML-loaded value
         config = load_config()
         assert config.memory.max_context_tokens == 4000

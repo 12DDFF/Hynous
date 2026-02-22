@@ -93,6 +93,10 @@
     "./agent": {
       "types": "./dist/agent/index.d.ts",
       "import": "./dist/agent/index.js"
+    },
+    "./sections": {
+      "types": "./dist/sections/index.d.ts",
+      "import": "./dist/sections/index.js"
     }
   },
   "scripts": {

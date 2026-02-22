@@ -1,6 +1,148 @@
 import { z } from 'zod';
 
 // src/qcs/index.ts
+var SECTION_PROFILES = {
+  EPISODIC: {
+    name: "Episodic",
+    section: "EPISODIC",
+    reranking_weights: {
+      semantic: 0.2,
+      keyword: 0.15,
+      graph: 0.15,
+      recency: 0.3,
+      authority: 0.1,
+      affinity: 0.1
+    },
+    decay: {
+      initial_stability_days: 14,
+      growth_rate: 2,
+      active_threshold: 0.5,
+      weak_threshold: 0.1,
+      max_stability_days: 180
+    },
+    encoding: {
+      base_difficulty: 0.3,
+      salience_enabled: true,
+      max_salience_multiplier: 2
+    },
+    consolidation_role: "source",
+    intent_boost: 1.3
+  },
+  SIGNALS: {
+    name: "Signals",
+    section: "SIGNALS",
+    reranking_weights: {
+      semantic: 0.15,
+      keyword: 0.1,
+      graph: 0.1,
+      recency: 0.45,
+      authority: 0.1,
+      affinity: 0.1
+    },
+    decay: {
+      initial_stability_days: 2,
+      growth_rate: 1.5,
+      active_threshold: 0.5,
+      weak_threshold: 0.15,
+      max_stability_days: 30
+    },
+    encoding: {
+      base_difficulty: 0.2,
+      salience_enabled: false,
+      max_salience_multiplier: 1
+    },
+    consolidation_role: "source",
+    intent_boost: 1.3
+  },
+  KNOWLEDGE: {
+    name: "Knowledge",
+    section: "KNOWLEDGE",
+    reranking_weights: {
+      semantic: 0.35,
+      keyword: 0.15,
+      graph: 0.2,
+      recency: 0.05,
+      authority: 0.2,
+      affinity: 0.05
+    },
+    decay: {
+      initial_stability_days: 60,
+      growth_rate: 3,
+      active_threshold: 0.4,
+      weak_threshold: 0.05,
+      max_stability_days: 365
+    },
+    encoding: {
+      base_difficulty: 0.4,
+      salience_enabled: true,
+      max_salience_multiplier: 2
+    },
+    consolidation_role: "target",
+    intent_boost: 1.3
+  },
+  PROCEDURAL: {
+    name: "Procedural",
+    section: "PROCEDURAL",
+    reranking_weights: {
+      semantic: 0.25,
+      keyword: 0.25,
+      graph: 0.2,
+      recency: 0.05,
+      authority: 0.15,
+      affinity: 0.1
+    },
+    decay: {
+      initial_stability_days: 120,
+      growth_rate: 3.5,
+      active_threshold: 0.3,
+      weak_threshold: 0.03,
+      max_stability_days: 365
+    },
+    encoding: {
+      base_difficulty: 0.5,
+      salience_enabled: true,
+      max_salience_multiplier: 3
+    },
+    consolidation_role: "target",
+    intent_boost: 1.3
+  }
+};
+var SectionDecayConfigSchema = z.object({
+  initial_stability_days: z.number().positive(),
+  growth_rate: z.number().positive(),
+  active_threshold: z.number().min(0).max(1),
+  weak_threshold: z.number().min(0).max(1),
+  max_stability_days: z.number().positive()
+});
+var SectionEncodingConfigSchema = z.object({
+  base_difficulty: z.number().min(0).max(1),
+  salience_enabled: z.boolean(),
+  max_salience_multiplier: z.number().min(1)
+});
+var SectionRerankingWeightsSchema = z.object({
+  semantic: z.number().min(0).max(1),
+  keyword: z.number().min(0).max(1),
+  graph: z.number().min(0).max(1),
+  recency: z.number().min(0).max(1),
+  authority: z.number().min(0).max(1),
+  affinity: z.number().min(0).max(1)
+}).refine(
+  (w) => Math.abs(w.semantic + w.keyword + w.graph + w.recency + w.authority + w.affinity - 1) < 0.01,
+  { message: "Reranking weights must sum to 1.0" }
+);
+function validateSectionProfiles() {
+  for (const [section, profile] of Object.entries(SECTION_PROFILES)) {
+    SectionDecayConfigSchema.parse(profile.decay);
+    SectionEncodingConfigSchema.parse(profile.encoding);
+    SectionRerankingWeightsSchema.parse(profile.reranking_weights);
+    if (profile.decay.weak_threshold >= profile.decay.active_threshold) {
+      throw new Error(`Section ${section}: weak_threshold must be < active_threshold`);
+    }
+  }
+}
+validateSectionProfiles();
+
+// src/params/index.ts
 z.object({
   semantic: z.number().min(0).max(1),
   keyword: z.number().min(0).max(1),
@@ -35,7 +177,8 @@ z.object({
   last_accessed: z.date(),
   created_at: z.date(),
   access_count: z.number().int().nonnegative(),
-  inbound_edge_count: z.number().int().nonnegative()
+  inbound_edge_count: z.number().int().nonnegative(),
+  subtype: z.string().optional()
 });
 z.object({
   total_nodes: z.number().int().nonnegative(),
@@ -71,7 +214,9 @@ z.object({
   related_to: z.number().min(0).max(1),
   similar_to: z.number().min(0).max(1),
   user_linked: z.number().min(0).max(1),
-  temporal_adjacent: z.number().min(0).max(1)
+  temporal_adjacent: z.number().min(0).max(1),
+  generalizes: z.number().min(0).max(1),
+  applied_to: z.number().min(0).max(1)
 });
 z.object({
   id: z.string(),

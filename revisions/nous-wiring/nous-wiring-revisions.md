@@ -155,12 +155,17 @@ Three integration points implemented:
 
 2. **Daemon periodic check** — Added `_check_conflicts()` to `daemon.py`:
    - Polls `nous.get_conflicts(status="pending")` every 30 minutes (configurable via `conflict_check_interval`).
-   - If conflicts exist, wakes the agent with a formatted message listing up to 5 conflicts with old node titles, new content previews, confidence scores.
-   - Wake message instructs the agent to use `manage_conflicts` tool for resolution.
+   - **Tier 1 auto-resolve triage (5 rules, zero agent cost, updated 2026-02-21):**
+     1. Expired (>14 days) → `keep_both`
+     2. Low confidence (<0.40) → `keep_both`
+     3. Explicit self-correction markers ("i was wrong", "correction:") + conf>0.50 → `new_is_current`
+     4. Explicit update markers ("update:", "revised:") + conf>0.50 → `new_is_current`
+     5. Same subtype + same entity (fetches both nodes) → `new_is_current`
+   - Auto-decisions batched into single `batch_resolve_conflicts()` call (max 50 per HTTP call, auto-chunked).
+   - **Tier 2:** Remaining conflicts → agent woken with up to 5 summaries. Wake message instructs use of `manage_conflicts` tool.
    - Config: `conflict_check_interval: int = 1800` in `DaemonConfig` + `config/default.yaml`.
    - Timing tracker `_last_conflict_check` + stats counter `conflict_checks`.
-   - Added as step 7 in main loop, after FSRS decay (step 6).
-   - Start log updated to include conflict interval.
+   - Added as step 7 in main loop, after FSRS decay (step 6). Runs in background thread (`hynous-conflicts`).
 
 3. **Inline detection feedback** — Modified `_store_memory_impl()` in `memory.py`:
    - After `client.create_node()`, checks `node.get("_contradiction_detected")` flag.
@@ -172,6 +177,7 @@ Three integration points implemented:
 **Previously dead client methods now called:**
 - `get_conflicts()` — called by `manage_conflicts` tool (list action) and daemon `_check_conflicts()`
 - `resolve_conflict()` — called by `manage_conflicts` tool (resolve action)
+- `batch_resolve_conflicts()` — called by daemon auto-resolve triage (was previously dead code, now active)
 - `detect_contradiction()` — still not called from Python (Nous runs Tier 2 automatically on node creation; manual detection is available but not needed)
 
 ---
@@ -258,7 +264,7 @@ Watchpoint list now correctly shows `[ACTIVE]` or `[DORMANT]` instead of `[?]`.
    - Initialized with `time.time()` at loop start (no immediate run on startup)
    - Start log message updated to include decay interval
 
-**Note:** The daemon does NOT wake the agent when memories transition — this is a lightweight maintenance task that runs silently. Waking the agent for fading memories is a future enhancement (documented in MF-2 as optional).
+**Update (2026-02-21):** Fading memory alerts now implemented (see MF-2). The daemon DOES wake the agent when important memories (lessons, theses, playbooks) cross ACTIVE→WEAK. Signals and episodes decay silently. `_run_decay_cycle()` runs in a named background thread (`hynous-decay`) — non-blocking.
 
 ---
 

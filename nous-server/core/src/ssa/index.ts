@@ -21,6 +21,7 @@ import {
   SSA_PARAMS,
   SSA_EDGE_WEIGHTS,
   rerankCandidates,
+  rerankWithSectionWeights,
   type ScoredNode,
   type RankedNode,
   type GraphMetrics,
@@ -531,6 +532,7 @@ export interface RerankingNodeData {
   created_at: Date;
   access_count: number;
   inbound_edge_count: number;
+  subtype?: string;  // e.g. 'custom:lesson' — for per-section reranking (Issue 1)
 }
 
 /**
@@ -945,6 +947,7 @@ export async function buildScoredNodes(
         created_at: rerankData.created_at,
         access_count: rerankData.access_count,
         inbound_edge_count: rerankData.inbound_edge_count,
+        subtype: rerankData.subtype,  // For per-section reranking (Issue 1)
       });
     }
   }
@@ -1257,11 +1260,13 @@ export async function executeSSA(options: ExecuteSSAOptions): Promise<SSAResult>
     }
   }
 
-  // Step 4: Reranking using storm-028's function
+  // Step 4: Per-section reranking — each node scored with its section's weight profile
+  // Signals: recency-dominant. Episodic: recency-favoring. Knowledge: authority-dominant.
+  // Procedural: keyword+graph-dominant. See: revisions/memory-sections/issue-1-retrieval-weights.md
   const rerankingStart = performance.now();
   const graphMetrics = await context.getGraphMetrics();
   const scoredNodes = await buildScoredNodes(relevantActivated, context);
-  const rankedNodes = rerankCandidates(scoredNodes, graphMetrics);
+  const rankedNodes = rerankWithSectionWeights(scoredNodes, graphMetrics);
   metrics.reranking_ms = performance.now() - rerankingStart;
 
   // Apply limit

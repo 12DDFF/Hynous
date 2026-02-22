@@ -56,10 +56,11 @@ The Python `NousClient` class has 13 methods wrapping Nous endpoints. Roughly ha
 - `detect_contradiction()` — exists but not called from Python (Nous runs Tier 2 automatically; manual detection available but not needed)
 - ~~`get_conflicts()` — exists but never called~~ → **FIXED: called by `manage_conflicts` tool + daemon `_check_conflicts()`**
 - ~~`resolve_conflict()` — exists but never called~~ → **FIXED: called by `manage_conflicts` tool (resolve action)**
+- ~~`batch_resolve_conflicts()` — exists but never called~~ → **FIXED: called by daemon auto-resolve triage in `_check_conflicts()` to batch-commit Tier 1 auto-decisions**
 - ~~`classify_query()` — exists but never called~~ → **FIXED: called by Intelligent Retrieval Orchestrator (`retrieval_orchestrator.py`) for compound query detection (D4/D1)**
 - ~~`health()` — exists but never called~~ → **FIXED: daemon `_check_health()` on startup + periodic (MF-8 DONE)**
 
-Most formerly-dead methods are now active. Only `detect_contradiction()` (not needed — Tier 2 runs automatically) remains unused. `classify_query()` is now used by the Intelligent Retrieval Orchestrator for compound query detection. `search_full()` was added for the orchestrator's quality gating.
+All formerly-dead methods are now active. Only `detect_contradiction()` (not needed — Tier 2 runs automatically on node creation) remains unused from Python. `classify_query()` is now used by the Intelligent Retrieval Orchestrator for compound query detection. `search_full()` was added for the orchestrator's quality gating.
 
 **See:** `nous-wiring-revisions.md` → NW-4 (FIXED), NW-5 (FIXED), NW-8 (FIXED); `more-functionality.md` → MF-4 (DONE), MF-8 (DONE), MF-10 (DONE)
 
@@ -94,14 +95,12 @@ The agent has zero feedback mechanism for storage failures. It can't retry, can'
 
 ---
 
-### ~~6. Misleading System Prompt~~ MOSTLY RESOLVED
+### ~~6. Misleading System Prompt~~ RESOLVED (2026-02-21)
 
-The agent's system prompt (in `prompts/builder.py`) claims are now mostly true:
+All system prompt claims are now true:
 
-- ~~*"When I store something contradicting existing knowledge, the system warns me."* — False.~~ → **NOW TRUE.** The `_contradiction_detected` flag is checked on store and surfaces a warning. The daemon polls the conflict queue every 30 min and wakes the agent. The `manage_conflicts` tool lets the agent list and resolve conflicts.
-- *"Memories decay: ACTIVE → WEAK → DORMANT."* — **Now partially true.** FSRS batch decay runs every 6 hours via `_run_decay_cycle()`. Lifecycle transitions are computed proactively. However, the agent still has no visibility into which specific memories are fading (no fading alerts yet).
-
-**Remaining:** The "fading memory alerts" enhancement (surfacing ACTIVE→WEAK transitions to the agent for review/reinforcement) is still TODO.
+- ~~*"When I store something contradicting existing knowledge, the system warns me."* — False.~~ → **TRUE.** The `_contradiction_detected` flag is checked on store. Daemon polls every 30 min, auto-resolves obvious cases (5 rules), wakes the agent with the rest. `manage_conflicts` tool handles list + resolve.
+- ~~*"Memories decay: ACTIVE → WEAK → DORMANT."* — Partially true.~~ → **TRUE.** FSRS batch decay runs every 6 hours. When lessons, theses, or playbooks cross ACTIVE→WEAK, the daemon wakes the agent (`_wake_for_fading_memories`). Signals/episodes decay silently. The spaced repetition loop is complete.
 
 **See:** `revision-exploration.md` → #14
 

@@ -112,42 +112,48 @@ Files modified: `pruning.py` (new), `registry.py`, `builder.py`, `agent.py`, `me
 
 ---
 
-### 9. Memory Sections — NEXT UP (Active Development)
+### 9. Memory Sections — IMPLEMENTED (2026-02-21)
 
 | File | Contents |
 |------|----------|
-| `memory-sections/executive-summary.md` | **START HERE.** Theory, 6 issues, proposed section model, design constraints |
+| `memory-sections/executive-summary.md` | Theory, 6 issues, section model, design constraints — **IMPLEMENTED** |
+| `memory-sections/issue-0-section-foundation.md` | Shared infrastructure: section types, subtype→section mapping, profiles, config — **DONE** |
+| `memory-sections/issue-1-retrieval-weights.md` | Per-section SSA reranking weights (TS: `rerankWithSections()`) — **DONE** |
+| `memory-sections/issue-2-decay-curves.md` | Per-section FSRS decay curves (TS: section-aware initial stability + thresholds) — **DONE** |
+| `memory-sections/issue-3-generalization.md` | Cross-episode consolidation pipeline (Python: `ConsolidationEngine`) — **DONE** |
+| `memory-sections/issue-4-stakes-weighting.md` | Salience-modulated encoding strength (Python: `calculate_salience()`) — **DONE** |
+| `memory-sections/issue-5-procedural-memory.md` | Procedural memory + playbook matcher (Python: `PlaybookMatcher`) — **DONE** |
+| `memory-sections/issue-6-retrieval-bias.md` | Section-aware retrieval bias in orchestrator (Python: intent classification + boost) — **DONE** |
 
 Brain-inspired memory sectioning: giving different memory types (signals, episodes, lessons, playbooks) fundamentally different retrieval weights, decay curves, encoding strength, and consolidation rules. Sections are a **bias layer on top of existing SSA search**, not hard partitions — all nodes stay in one table, all queries still search everything, but results are reranked per-section and boosted by query intent.
 
-Six issues to address:
-1. **Uniform SSA retrieval weights** — same 6-signal weights for all memory types
-2. **Uniform FSRS decay curves** — same decay rate for signals and lessons
-3. **No cross-episode generalization** — no background process to extract patterns across trades
-4. **No stakes weighting** — catastrophic losses encode identically to routine scans
-5. **No procedural memory** — playbooks are text blobs, not structured pattern→action pairs
-6. **Flat retrieval** — no section-aware reranking or intent-based priority boost
+Six issues implemented across 7 guides (Issue 0 is shared foundation):
+1. **Uniform SSA retrieval weights** → per-section reranking weight profiles — **DONE**
+2. **Uniform FSRS decay curves** → per-section/per-subtype decay parameters — **DONE**
+3. **No cross-episode generalization** → background consolidation pipeline (episodic → knowledge → procedural) — **DONE**
+4. **No stakes weighting** → salience-modulated initial stability based on PnL magnitude — **DONE**
+5. **No procedural memory** → structured playbook nodes with trigger-condition matching — **DONE**
+6. **Flat retrieval** → intent classification with section-aware priority boost — **DONE**
 
-Implementation guides for each issue will be added as companion files. The executive summary contains the full theory and problem statement.
+New modules added: `src/hynous/intelligence/consolidation.py`, `src/hynous/intelligence/playbook_matcher.py` (Python); `nous-server/core/src/sections/` (TypeScript).
 
 ---
 
 ## For Agents
 
-**What to work on next:** Memory Sections. Read `memory-sections/executive-summary.md` first. All prior revisions are complete — memory sections is the active development frontier.
+**All revisions complete** — every issue across all 9 revision tracks is fully implemented. There is no pending implementation work.
 
-If you're fixing a specific issue from a prior revision:
+If you're fixing a specific issue or verifying implementation:
 
-1. Check if it's already resolved in `nous-wiring/`, `memory-search/`, `trade-debug-interface/`, or `token-optimization/`
-2. Each issue has exact file paths, line numbers, and implementation instructions
-3. Check `revision-exploration.md` for related issues that may compound with yours
+1. Check the relevant revision directory — all have notes on what was done and how
+2. `revision-exploration.md` has the full 21-issue landscape (all resolved)
+3. `memory-sections/` guides contain exact code blocks and test specs for reference
 
-If you're doing a general review or planning work:
+If you're doing a general review or planning new work:
 
-1. **Read `memory-sections/executive-summary.md`** — this is the current focus
-2. Read `nous-wiring/executive-summary.md` for Nous integration status (all resolved)
-3. Read `memory-search/design-plan.md` for retrieval orchestrator design
+1. Read `nous-wiring/executive-summary.md` for Nous integration status (all resolved)
+2. Read `memory-search/design-plan.md` for retrieval orchestrator design
+3. Read `memory-sections/executive-summary.md` for memory sections theory + implementation notes
 4. Read `trade-debug-interface/analysis.md` for trade execution telemetry design
 5. Read `token-optimization/executive-summary.md` for cost optimization status
 6. Read `../debugging/brief-planning.md` for debug dashboard architecture
-7. Check `revision-exploration.md` for the full issue landscape (all 21 resolved)

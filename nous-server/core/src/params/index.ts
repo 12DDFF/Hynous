@@ -15,6 +15,7 @@
  */
 
 import { z } from 'zod';
+import { getSectionForSubtype, SECTION_PROFILES, type SectionDecayConfig } from '../sections/index.js';
 
 // ============================================================
 // ALGORITHM NODE TYPES
@@ -138,6 +139,7 @@ export interface ScoredNode {
   created_at: Date;
   access_count: number;
   inbound_edge_count: number;
+  subtype?: string;  // e.g. 'custom:lesson' — used for per-section reranking (Issue 1)
 }
 
 export const ScoredNodeSchema = z.object({
@@ -149,6 +151,7 @@ export const ScoredNodeSchema = z.object({
   created_at: z.date(),
   access_count: z.number().int().nonnegative(),
   inbound_edge_count: z.number().int().nonnegative(),
+  subtype: z.string().optional(),
 });
 
 /**
@@ -310,6 +313,8 @@ export interface SSAEdgeWeights {
   similar_to: number;
   user_linked: number;
   temporal_adjacent: number;
+  generalizes: number;  // Knowledge generalized from episodes (consolidation — Issue 3)
+  applied_to: number;   // Playbook applied to trade entry (procedural — Issue 5)
 }
 
 export const SSAEdgeWeightsSchema = z.object({
@@ -321,12 +326,16 @@ export const SSAEdgeWeightsSchema = z.object({
   similar_to: z.number().min(0).max(1),
   user_linked: z.number().min(0).max(1),
   temporal_adjacent: z.number().min(0).max(1),
+  generalizes: z.number().min(0).max(1),
+  applied_to: z.number().min(0).max(1),
 });
 
 export const SSA_EDGE_WEIGHTS: SSAEdgeWeights = {
   same_entity: 0.95,
   part_of: 0.85,
   caused_by: 0.80,
+  applied_to: 0.75,     // Playbook applied to trade entry (procedural — Issue 5)
+  generalizes: 0.70,    // Knowledge generalized from episodes (consolidation — Issue 3)
   mentioned_together: 0.60,
   related_to: 0.50,
   similar_to: 0.45,
@@ -910,6 +919,71 @@ export function rerankCandidates(
   }).sort((a, b) => b.score - a.score);
 }
 
+/**
+ * Reranks candidates using per-section weights.
+ *
+ * Each candidate's subtype is mapped to a memory section, and that section's
+ * weight profile is used for scoring. This gives different memory types
+ * fundamentally different retrieval behavior:
+ *   - Signals: recency-dominant (0.45 recency)
+ *   - Episodic: recency-favoring (0.30 recency)
+ *   - Knowledge: authority-dominant (0.20 authority, 0.35 semantic)
+ *   - Procedural: keyword+graph-dominant (0.25 keyword, 0.20 graph)
+ *
+ * Critical design choice: maxBM25 is computed across ALL candidates (not per
+ * section) so keyword scores are normalized against the full candidate set.
+ * This prevents a section with one low-BM25 node from inflating that node's
+ * keyword score to 1.0.
+ *
+ * Falls back to global RERANKING_WEIGHTS for nodes without a subtype.
+ *
+ * @see revisions/memory-sections/executive-summary.md — Issue 1
+ * @see revisions/memory-sections/issue-0-section-foundation.md — SECTION_PROFILES
+ */
+export function rerankWithSectionWeights(
+  candidates: ScoredNode[],
+  metrics: GraphMetrics,
+  now: Date = new Date()
+): RankedNode[] {
+  if (candidates.length === 0) return [];
+
+  // maxBM25 is computed across ALL candidates — shared normalization base
+  const maxBM25 = Math.max(...candidates.map(c => c.bm25_score ?? 0));
+
+  return candidates.map(node => {
+    // Look up section-specific weights for this node's subtype
+    const section = getSectionForSubtype(node.subtype);
+    const weights = SECTION_PROFILES[section].reranking_weights;
+
+    const breakdown: ScoreBreakdown = {
+      semantic: semanticScore(node),
+      keyword: keywordScore(node, maxBM25, candidates.length),
+      graph: graphScore(node),
+      recency: recencyScore(node.last_accessed, now),
+      authority: authorityScore(node.inbound_edge_count, metrics.avg_inbound_edges),
+      affinity: affinityScore(node.access_count, node.created_at, node.last_accessed, now),
+    };
+
+    const score =
+      weights.semantic * breakdown.semantic +
+      weights.keyword * breakdown.keyword +
+      weights.graph * breakdown.graph +
+      weights.recency * breakdown.recency +
+      weights.authority * breakdown.authority +
+      weights.affinity * breakdown.affinity;
+
+    const contributions = Object.entries(breakdown).map(([key, value]) => ({
+      key: key as keyof ScoreBreakdown,
+      contribution: weights[key as keyof RerankingWeights] * value
+    }));
+    const primary = contributions.reduce((a, b) =>
+      b.contribution > a.contribution ? b : a
+    ).key;
+
+    return { node, score, breakdown, primary_signal: primary };
+  }).sort((a, b) => b.score - a.score);
+}
+
 // ============================================================
 // DECAY FUNCTIONS
 // ============================================================
@@ -986,6 +1060,64 @@ export function getInitialStability(type: AlgorithmNodeType): number {
  */
 export function getInitialDifficulty(type: AlgorithmNodeType): number {
   return INITIAL_DIFFICULTY[type] ?? 0.3;
+}
+
+/**
+ * Gets decay lifecycle state using per-section thresholds.
+ *
+ * Unlike getDecayLifecycleState() which uses global DECAY_CONFIG,
+ * this variant accepts a SectionDecayConfig so each memory section
+ * can have different active/weak thresholds and lifecycle timing.
+ *
+ * Also fixes the dead branch bug in the original function where
+ * COMPRESS was unreachable (line 1030 returned 'DORMANT' instead of 'COMPRESS').
+ *
+ * @param retrievability Current R value (0-1)
+ * @param daysDormant Days the node has been below weak_threshold
+ * @param decay Section-specific decay configuration
+ * @returns Lifecycle state: ACTIVE | WEAK | DORMANT | COMPRESS | ARCHIVE
+ *
+ * @see revisions/memory-sections/issue-2-decay-curves.md
+ */
+export function getDecayLifecycleStateForSection(
+  retrievability: number,
+  daysDormant: number,
+  decay: SectionDecayConfig,
+): DecayLifecycleState {
+  if (retrievability > decay.active_threshold) return 'ACTIVE';
+  if (retrievability > decay.weak_threshold) return 'WEAK';
+  // Below weak_threshold — use dormant/compress/archive timing from global DECAY_CONFIG
+  // (These day-based thresholds are uniform across sections — only R-based thresholds differ)
+  if (daysDormant < DECAY_CONFIG.dormant_days) return 'DORMANT';
+  if (daysDormant < DECAY_CONFIG.compress_days) return 'COMPRESS';  // Fixed: was 'DORMANT' (dead branch)
+  if (daysDormant < DECAY_CONFIG.archive_days) return 'ARCHIVE';
+  return 'ARCHIVE';
+}
+
+/**
+ * Updates stability on access using per-section growth rate and max stability.
+ *
+ * Unlike updateStabilityOnAccess() which uses global DECAY_CONFIG,
+ * this variant accepts a SectionDecayConfig so each memory section
+ * can have different reinforcement strength and stability caps.
+ *
+ * @param stability Current stability in days
+ * @param difficulty Node difficulty (0-1)
+ * @param decay Section-specific decay configuration
+ * @returns New stability in days (capped at section's max_stability_days)
+ *
+ * @see revisions/memory-sections/issue-2-decay-curves.md
+ */
+export function updateStabilityOnAccessForSection(
+  stability: number,
+  difficulty: number,
+  decay: SectionDecayConfig,
+): number {
+  const difficultyFactor = 1 - (difficulty * 0.5);
+  return Math.min(
+    stability * decay.growth_rate * difficultyFactor,
+    decay.max_stability_days,
+  );
 }
 
 // ============================================================

@@ -26,6 +26,7 @@ nodes.post('/nodes', async (c) => {
   const {
     type, subtype, content_title, content_summary, content_body,
     temporal_event_time, temporal_event_confidence, temporal_event_source,
+    neural_stability: stability_override,
   } = body;
 
   if (!type || !content_title) {
@@ -39,6 +40,13 @@ nodes.post('/nodes', async (c) => {
   // Get FSRS-appropriate neural defaults from @nous/core
   const neural = getNeuralDefaults(type, subtype);
 
+  // Stakes weighting (Issue 4): Python-side salience calculation may override
+  // the default stability with a salience-modulated value. When provided,
+  // it takes precedence over the section-aware default from getNeuralDefaults().
+  const finalStability = (typeof stability_override === 'number' && stability_override > 0)
+    ? stability_override
+    : neural.neural_stability;
+
   const db = getDb();
   await db.execute({
     sql: `INSERT INTO nodes
@@ -49,7 +57,7 @@ nodes.post('/nodes', async (c) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id, type, subtype ?? null, content_title, content_summary ?? null, content_body ?? null,
-      neural.neural_stability, neural.neural_retrievability, neural.neural_difficulty,
+      finalStability, neural.neural_retrievability, neural.neural_difficulty,
       ts, ts, layer, ts,
       temporal_event_time ?? null, temporal_event_confidence ?? null, temporal_event_source ?? null,
     ],
@@ -139,10 +147,11 @@ nodes.get('/nodes/:id', async (c) => {
   // Apply FSRS decay to compute current retrievability + lifecycle
   const decayed = applyDecay(row);
 
-  // Strengthen stability on access (recall event)
+  // Strengthen stability on access (recall event) — per-section growth rate (Issue 2)
   const newStability = computeStabilityGrowth(
     row.neural_stability,
     row.neural_difficulty,
+    row.subtype,
   );
 
   const ts = now();

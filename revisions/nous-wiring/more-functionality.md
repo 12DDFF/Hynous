@@ -126,7 +126,17 @@ All 4 integration points from the spec are wired:
 4. **Main loop step 6** — checks `decay_interval` timer, calls `_run_decay_cycle()`
 5. Start log updated to include decay interval
 
-**Remaining optional enhancement:** Surface fading memories to agent. When the decay cycle finds transitions from ACTIVE→WEAK for high-value subtypes (`custom:lesson`, `custom:thesis`, `custom:trade_entry`), wake the agent with context about what's fading. The agent can then choose to recall those memories (which strengthens them via `computeStabilityGrowth()` on access) or let them decay. This is lower priority — the core lifecycle maintenance is now active.
+**Fading memory alerts — IMPLEMENTED (2026-02-21):**
+
+The optional enhancement has been built. When the decay cycle detects transitions from ACTIVE→WEAK for important memory subtypes (`custom:lesson`, `custom:thesis`, `custom:playbook`), the daemon wakes the agent to review and reinforce them. Signals and episodes decay silently — by design.
+
+5. **`_FADING_ALERT_SUBTYPES`** — module-level constant: `frozenset({"custom:lesson", "custom:thesis", "custom:playbook"})`
+6. **`_fading_alerted: dict[str, float]`** — in-memory 24h per-node cooldown dict (prevents re-alerting same WEAK node every 6h cycle). 48h GC to bound size.
+7. **`_check_fading_transitions(transitions, nous)`** — filters ACTIVE→WEAK transitions, fetches full node for each candidate, checks subtype against `_FADING_ALERT_SUBTYPES`, calls `_wake_for_fading_memories()` if any qualify.
+8. **`_wake_for_fading_memories(nodes)`** — formats wake message with node title, subtype label, retrievability %, and 400-char body preview. Calls `_wake_agent(message, max_tokens=1024, source="daemon:memory_fading")`.
+9. **`builder.py` updated** — TOOL_STRATEGY memory section and "How My Memory Works" paragraph both reference fading alerts so the agent understands why it's being woken and what to do (recall to reinforce, update to revise, archive if stale).
+
+**`_run_decay_cycle()` runs in a background thread** (`hynous-decay`) — non-blocking, does not stall `_fast_trigger_check()` (SL/TP guard runs every 10s).
 
 ---
 
@@ -143,7 +153,15 @@ All 4 integration points from the spec are wired:
 
 2. **Daemon cron task** — `_check_conflicts()` in `daemon.py`:
    - Polls `nous.get_conflicts(status="pending")` every `conflict_check_interval` seconds (default 1800 = 30 min).
-   - Wakes agent with up to 5 conflict summaries + instructions to use `manage_conflicts` tool.
+   - **Tier 1 auto-resolve triage (5 rules, zero agent cost):**
+     1. Expired (>14 days) → `keep_both`
+     2. Low confidence (<0.40) → `keep_both`
+     3. Explicit self-correction markers ("i was wrong", "correction:") + conf>0.50 → `new_is_current`
+     4. Explicit update markers ("update:", "revised:") + conf>0.50 → `new_is_current`
+     5. Same subtype + same entity → `new_is_current`
+   - All auto-decisions are batched into a single `batch_resolve_conflicts()` call.
+   - **Tier 2:** Remaining conflicts (no rule fired) → agent woken with up to 5 summaries + `manage_conflicts` instruction.
+   - Runs in background thread (`hynous-conflicts`) — non-blocking.
    - Config: `DaemonConfig.conflict_check_interval`, `config/default.yaml`, step 7 in main loop.
 
 3. **Inline flag check** — In `_store_memory_impl()` in `memory.py`:
@@ -153,7 +171,7 @@ All 4 integration points from the spec are wired:
 
 4. **System prompt** — No changes needed. The claim in `prompts/builder.py` about contradiction detection is now true.
 
-**Previously dead client methods now called:** `get_conflicts()`, `resolve_conflict()`. `detect_contradiction()` is still not called from Python (Nous runs Tier 2 automatically on node creation).
+**Previously dead client methods now called:** `get_conflicts()`, `resolve_conflict()`, `batch_resolve_conflicts()`. `detect_contradiction()` is still not called from Python (Nous runs Tier 2 automatically on node creation).
 
 ---
 

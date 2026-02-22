@@ -9,9 +9,14 @@ const decay = new Hono();
  *
  * For each node, recomputes retrievability based on FSRS formula and
  * transitions lifecycle state (ACTIVE → WEAK → DORMANT → etc.).
- * Updates DB in batch. Returns stats.
+ * Updates DB via a single batch transaction. Returns stats.
  *
- * Intended for the future daemon to call periodically.
+ * Called by the daemon every 6 hours.
+ *
+ * Performance note: previously used individual await db.execute() per node
+ * (N+1 queries). With thousands of nodes this caused 60+ second response
+ * times, blocking the Python daemon loop. Now uses db.batch() to send all
+ * UPDATEs in one transaction, reducing time to <1s regardless of node count.
  */
 decay.post('/decay', async (c) => {
   const db = getDb();
@@ -22,19 +27,22 @@ decay.post('/decay', async (c) => {
   );
 
   let processed = 0;
-  const transitions: { id: string; from: string; to: string }[] = [];
+  const transitions: { id: string; from: string; to: string; subtype: string }[] = [];
+
+  // Accumulate all UPDATE statements — send as one batch transaction
+  const updates: { sql: string; args: (string | number)[] }[] = [];
 
   for (const row of result.rows) {
     const nodeRow = row as unknown as NodeRow;
     const { retrievability, lifecycle_state } = computeDecay(nodeRow);
     const currentLifecycle = nodeRow.state_lifecycle;
 
-    // Only update if something changed
+    // Only update if something meaningfully changed
     if (
       Math.abs(retrievability - nodeRow.neural_retrievability) > 0.001 ||
       lifecycle_state !== currentLifecycle
     ) {
-      await db.execute({
+      updates.push({
         sql: 'UPDATE nodes SET neural_retrievability = ?, state_lifecycle = ? WHERE id = ?',
         args: [Math.round(retrievability * 10000) / 10000, lifecycle_state, nodeRow.id],
       });
@@ -44,11 +52,17 @@ decay.post('/decay', async (c) => {
           id: nodeRow.id,
           from: currentLifecycle,
           to: lifecycle_state,
+          subtype: nodeRow.subtype ?? 'unknown',
         });
       }
     }
 
     processed++;
+  }
+
+  // Execute all updates in a single batch transaction
+  if (updates.length > 0) {
+    await db.batch(updates);
   }
 
   return c.json({

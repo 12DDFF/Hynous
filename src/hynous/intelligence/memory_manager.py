@@ -26,6 +26,7 @@ from litellm.exceptions import APIError as LitellmAPIError
 from ..core.config import Config
 from ..core.costs import record_llm_usage
 from ..core.request_tracer import get_tracer, SPAN_RETRIEVAL, SPAN_COMPRESSION, SPAN_QUEUE_FLUSH
+from ..nous.sections import get_section_for_subtype
 
 logger = logging.getLogger(__name__)
 
@@ -461,10 +462,14 @@ def _format_context(results: list[dict], max_tokens: int) -> Optional[str]:
 
     for node in results:
         title = node.get("content_title", "Untitled")
-        subtype = node.get("subtype", node.get("type", ""))
-        if subtype.startswith("custom:"):
-            subtype = subtype[7:]
+        raw_subtype = node.get("subtype", node.get("type", ""))
+        subtype_label = raw_subtype
+        if subtype_label.startswith("custom:"):
+            subtype_label = subtype_label[7:]
         date = node.get("provenance_created_at", "")[:10]
+
+        # Section tag from Nous response or computed from subtype
+        section = node.get("memory_section") or get_section_for_subtype(raw_subtype or None).value
 
         # Get preview text — prefer full body over summary
         body = node.get("content_body", "") or ""
@@ -483,7 +488,7 @@ def _format_context(results: list[dict], max_tokens: int) -> Optional[str]:
         if not preview:
             preview = body or summary
 
-        entry = f"- [{subtype}] {title} ({date}): {preview}"
+        entry = f"- [{subtype_label} · {section}] {title} ({date}): {preview}"
         entry_chars = len(entry)
 
         if total_chars + entry_chars > char_limit:

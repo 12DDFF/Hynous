@@ -34,6 +34,11 @@ def get_client() -> "NousClient":
 class NousClient:
     """HTTP client for the Nous memory server."""
 
+    # Default timeout for all Nous HTTP calls (seconds).
+    # Decay overrides this with _DECAY_TIMEOUT since it processes all nodes.
+    _DEFAULT_TIMEOUT = 30
+    _DECAY_TIMEOUT = 180  # 3 min ceiling — if decay takes longer, something is wrong
+
     def __init__(self, base_url: str = "http://localhost:3100"):
         self.base_url = base_url.rstrip("/")
         self._session = requests.Session()
@@ -47,7 +52,7 @@ class NousClient:
 
     def health(self) -> dict:
         """Check server health."""
-        resp = self._session.get(self._url("/health"))
+        resp = self._session.get(self._url("/health"), timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -63,8 +68,16 @@ class NousClient:
         event_time: Optional[str] = None,
         event_confidence: Optional[float] = None,
         event_source: Optional[str] = None,
+        neural_stability: Optional[float] = None,
     ) -> dict:
-        """Create a new node. Returns the full node dict with generated ID."""
+        """Create a new node. Returns the full node dict with generated ID.
+
+        Args:
+            neural_stability: Optional FSRS stability override in days.
+                When provided, overrides the default from getNeuralDefaults().
+                Used by stakes weighting (Issue 4) to encode high-salience
+                events with stronger initial stability.
+        """
         payload = {
             "type": type,
             "subtype": subtype,
@@ -78,13 +91,15 @@ class NousClient:
             payload["temporal_event_confidence"] = event_confidence
         if event_source:
             payload["temporal_event_source"] = event_source
-        resp = self._session.post(self._url("/nodes"), json=payload)
+        if neural_stability is not None:
+            payload["neural_stability"] = neural_stability
+        resp = self._session.post(self._url("/nodes"), json=payload, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
     def get_node(self, node_id: str) -> Optional[dict]:
         """Get a node by ID. Returns None if not found."""
-        resp = self._session.get(self._url(f"/nodes/{node_id}"))
+        resp = self._session.get(self._url(f"/nodes/{node_id}"), timeout=self._DEFAULT_TIMEOUT)
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
@@ -111,19 +126,19 @@ class NousClient:
             params["created_after"] = created_after
         if created_before:
             params["created_before"] = created_before
-        resp = self._session.get(self._url("/nodes"), params=params)
+        resp = self._session.get(self._url("/nodes"), params=params, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json().get("data", [])
 
     def update_node(self, node_id: str, **updates) -> dict:
         """Partial update a node. Pass fields as kwargs."""
-        resp = self._session.patch(self._url(f"/nodes/{node_id}"), json=updates)
+        resp = self._session.patch(self._url(f"/nodes/{node_id}"), json=updates, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
     def delete_node(self, node_id: str) -> bool:
         """Delete a node. Raises on HTTP errors."""
-        resp = self._session.delete(self._url(f"/nodes/{node_id}"))
+        resp = self._session.delete(self._url(f"/nodes/{node_id}"), timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.status_code == 200
 
@@ -148,7 +163,7 @@ class NousClient:
         }
         if strength is not None:
             payload["strength"] = strength
-        resp = self._session.post(self._url("/edges"), json=payload)
+        resp = self._session.post(self._url("/edges"), json=payload, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -159,7 +174,7 @@ class NousClient:
     ) -> list[dict]:
         """Get edges for a node. Direction: 'in', 'out', or 'both'."""
         params = {"node_id": node_id, "direction": direction}
-        resp = self._session.get(self._url("/edges"), params=params)
+        resp = self._session.get(self._url("/edges"), params=params, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json().get("data", [])
 
@@ -173,13 +188,14 @@ class NousClient:
         resp = self._session.post(
             self._url(f"/edges/{edge_id}/strengthen"),
             json={"amount": amount},
+            timeout=self._DEFAULT_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
 
     def delete_edge(self, edge_id: str) -> bool:
         """Delete an edge. Raises on HTTP errors."""
-        resp = self._session.delete(self._url(f"/edges/{edge_id}"))
+        resp = self._session.delete(self._url(f"/edges/{edge_id}"), timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.status_code == 200
 
@@ -187,7 +203,7 @@ class NousClient:
 
     def get_graph(self) -> dict:
         """Get full graph data (all nodes + edges) for visualization."""
-        resp = self._session.get(self._url("/graph"))
+        resp = self._session.get(self._url("/graph"), timeout=self._DECAY_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -200,13 +216,13 @@ class NousClient:
             payload["title"] = title
         if node_id:
             payload["node_id"] = node_id
-        resp = self._session.post(self._url("/contradiction/detect"), json=payload)
+        resp = self._session.post(self._url("/contradiction/detect"), json=payload, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
     def get_conflicts(self, status: str = "pending") -> list[dict]:
         """Get conflict queue items."""
-        resp = self._session.get(self._url("/contradiction/queue"), params={"status": status})
+        resp = self._session.get(self._url("/contradiction/queue"), params={"status": status}, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json().get("data", [])
 
@@ -215,21 +231,43 @@ class NousClient:
         resp = self._session.post(
             self._url("/contradiction/resolve"),
             json={"conflict_id": conflict_id, "resolution": resolution},
+            timeout=self._DEFAULT_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
+
+    # TypeScript enforces max 50 items per batch-resolve call.
+    _MAX_BATCH_RESOLVE = 50
 
     def batch_resolve_conflicts(self, items: list[dict]) -> dict:
         """Batch resolve conflicts. items: [{conflict_id, resolution}, ...]
 
-        Returns: {ok, resolved, failed, total, results}
+        Splits into chunks of 50 to respect the TypeScript server limit.
+        Returns merged: {ok, resolved, failed, total, results}
         """
-        resp = self._session.post(
-            self._url("/contradiction/batch-resolve"),
-            json={"items": items},
-        )
-        resp.raise_for_status()
-        return resp.json()
+        if not items:
+            return {"ok": True, "resolved": 0, "failed": 0, "total": 0, "results": []}
+
+        # Split into chunks if needed — TypeScript enforces max 50 per call
+        chunks = [items[i:i + self._MAX_BATCH_RESOLVE] for i in range(0, len(items), self._MAX_BATCH_RESOLVE)]
+        merged: dict = {"ok": True, "resolved": 0, "failed": 0, "total": 0, "results": []}
+
+        for chunk in chunks:
+            resp = self._session.post(
+                self._url("/contradiction/batch-resolve"),
+                json={"items": chunk},
+                timeout=self._DEFAULT_TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            merged["resolved"] += data.get("resolved", 0)
+            merged["failed"] += data.get("failed", 0)
+            merged["total"] += data.get("total", 0)
+            merged["results"].extend(data.get("results", []))
+            if not data.get("ok", True):
+                merged["ok"] = False
+
+        return merged
 
     # ---- Decay ----
 
@@ -238,8 +276,12 @@ class NousClient:
 
         Recomputes retrievability and transitions lifecycle states
         (ACTIVE → WEAK → DORMANT). Returns stats with transition details.
+
+        Uses _DECAY_TIMEOUT (3 min) — longer than default because it processes
+        every node in the database. If it exceeds this, something is wrong with
+        the server-side implementation (see decay.ts N+1 query issue).
         """
-        resp = self._session.post(self._url("/decay"))
+        resp = self._session.post(self._url("/decay"), timeout=self._DECAY_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -251,7 +293,7 @@ class NousClient:
         Finds all nodes with no vector embedding and generates one.
         Returns {ok, embedded, total}.
         """
-        resp = self._session.post(self._url("/nodes/backfill-embeddings"))
+        resp = self._session.post(self._url("/nodes/backfill-embeddings"), timeout=self._DECAY_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -279,7 +321,7 @@ class NousClient:
             payload["time_range"] = time_range
         if cluster_ids:
             payload["cluster_ids"] = cluster_ids
-        resp = self._session.post(self._url("/search"), json=payload)
+        resp = self._session.post(self._url("/search"), json=payload, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
 
@@ -344,7 +386,7 @@ class NousClient:
             payload["time_range"] = time_range
         if cluster_ids:
             payload["cluster_ids"] = cluster_ids
-        resp = self._session.post(self._url("/search"), json=payload)
+        resp = self._session.post(self._url("/search"), json=payload, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -374,6 +416,7 @@ class NousClient:
                 "subtype": subtype,
                 "limit": limit,
             },
+            timeout=self._DEFAULT_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -382,7 +425,7 @@ class NousClient:
 
     def classify_query(self, query: str) -> dict:
         """Classify a query for SSA optimization (QCS pre-classification)."""
-        resp = self._session.post(self._url("/classify-query"), json={"query": query})
+        resp = self._session.post(self._url("/classify-query"), json={"query": query}, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -408,34 +451,34 @@ class NousClient:
             payload["pinned"] = True
         if auto_subtypes:
             payload["auto_subtypes"] = auto_subtypes
-        resp = self._session.post(self._url("/clusters"), json=payload)
+        resp = self._session.post(self._url("/clusters"), json=payload, timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
     def list_clusters(self) -> list[dict]:
         """List all clusters with node counts."""
-        resp = self._session.get(self._url("/clusters"))
+        resp = self._session.get(self._url("/clusters"), timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
         return data.get("data", data) if isinstance(data, dict) else data
 
     def get_cluster(self, cluster_id: str) -> dict:
         """Get cluster details."""
-        resp = self._session.get(self._url(f"/clusters/{cluster_id}"))
+        resp = self._session.get(self._url(f"/clusters/{cluster_id}"), timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
     def update_cluster(self, cluster_id: str, **kwargs) -> dict:
         """Update cluster fields (name, description, icon, pinned, auto_subtypes)."""
         resp = self._session.patch(
-            self._url(f"/clusters/{cluster_id}"), json=kwargs,
+            self._url(f"/clusters/{cluster_id}"), json=kwargs, timeout=self._DEFAULT_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
 
     def delete_cluster(self, cluster_id: str) -> dict:
         """Delete a cluster. Memberships are removed automatically."""
-        resp = self._session.delete(self._url(f"/clusters/{cluster_id}"))
+        resp = self._session.delete(self._url(f"/clusters/{cluster_id}"), timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -452,7 +495,7 @@ class NousClient:
         if node_ids:
             payload["node_ids"] = node_ids
         resp = self._session.post(
-            self._url(f"/clusters/{cluster_id}/members"), json=payload,
+            self._url(f"/clusters/{cluster_id}/members"), json=payload, timeout=self._DEFAULT_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -461,6 +504,7 @@ class NousClient:
         """Remove a node from a cluster."""
         resp = self._session.delete(
             self._url(f"/clusters/{cluster_id}/members/{node_id}"),
+            timeout=self._DEFAULT_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -470,6 +514,7 @@ class NousClient:
         resp = self._session.get(
             self._url(f"/clusters/{cluster_id}/members"),
             params={"limit": limit},
+            timeout=self._DEFAULT_TIMEOUT,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -479,6 +524,7 @@ class NousClient:
         """Get health stats for a cluster."""
         resp = self._session.get(
             self._url(f"/clusters/{cluster_id}/health"),
+            timeout=self._DEFAULT_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()

@@ -1,6 +1,174 @@
 import { z } from 'zod';
 
 // src/ssa/index.ts
+var SUBTYPE_TO_SECTION = {
+  // EPISODIC — What happened
+  "custom:trade_entry": "EPISODIC",
+  "custom:trade_close": "EPISODIC",
+  "custom:trade_modify": "EPISODIC",
+  "custom:trade": "EPISODIC",
+  // Legacy subtype, rarely used
+  "custom:turn_summary": "EPISODIC",
+  "custom:session_summary": "EPISODIC",
+  "custom:market_event": "EPISODIC",
+  // SIGNALS — What to watch
+  "custom:signal": "SIGNALS",
+  "custom:watchpoint": "SIGNALS",
+  // KNOWLEDGE — What I've learned
+  "custom:lesson": "KNOWLEDGE",
+  "custom:thesis": "KNOWLEDGE",
+  "custom:curiosity": "KNOWLEDGE",
+  // PROCEDURAL — How to act
+  "custom:playbook": "PROCEDURAL",
+  "custom:missed_opportunity": "PROCEDURAL",
+  "custom:good_pass": "PROCEDURAL"
+};
+function getSectionForSubtype(subtype) {
+  if (!subtype) return "KNOWLEDGE";
+  return SUBTYPE_TO_SECTION[subtype] ?? "KNOWLEDGE";
+}
+var SECTION_PROFILES = {
+  EPISODIC: {
+    name: "Episodic",
+    section: "EPISODIC",
+    reranking_weights: {
+      semantic: 0.2,
+      keyword: 0.15,
+      graph: 0.15,
+      recency: 0.3,
+      authority: 0.1,
+      affinity: 0.1
+    },
+    decay: {
+      initial_stability_days: 14,
+      growth_rate: 2,
+      active_threshold: 0.5,
+      weak_threshold: 0.1,
+      max_stability_days: 180
+    },
+    encoding: {
+      base_difficulty: 0.3,
+      salience_enabled: true,
+      max_salience_multiplier: 2
+    },
+    consolidation_role: "source",
+    intent_boost: 1.3
+  },
+  SIGNALS: {
+    name: "Signals",
+    section: "SIGNALS",
+    reranking_weights: {
+      semantic: 0.15,
+      keyword: 0.1,
+      graph: 0.1,
+      recency: 0.45,
+      authority: 0.1,
+      affinity: 0.1
+    },
+    decay: {
+      initial_stability_days: 2,
+      growth_rate: 1.5,
+      active_threshold: 0.5,
+      weak_threshold: 0.15,
+      max_stability_days: 30
+    },
+    encoding: {
+      base_difficulty: 0.2,
+      salience_enabled: false,
+      max_salience_multiplier: 1
+    },
+    consolidation_role: "source",
+    intent_boost: 1.3
+  },
+  KNOWLEDGE: {
+    name: "Knowledge",
+    section: "KNOWLEDGE",
+    reranking_weights: {
+      semantic: 0.35,
+      keyword: 0.15,
+      graph: 0.2,
+      recency: 0.05,
+      authority: 0.2,
+      affinity: 0.05
+    },
+    decay: {
+      initial_stability_days: 60,
+      growth_rate: 3,
+      active_threshold: 0.4,
+      weak_threshold: 0.05,
+      max_stability_days: 365
+    },
+    encoding: {
+      base_difficulty: 0.4,
+      salience_enabled: true,
+      max_salience_multiplier: 2
+    },
+    consolidation_role: "target",
+    intent_boost: 1.3
+  },
+  PROCEDURAL: {
+    name: "Procedural",
+    section: "PROCEDURAL",
+    reranking_weights: {
+      semantic: 0.25,
+      keyword: 0.25,
+      graph: 0.2,
+      recency: 0.05,
+      authority: 0.15,
+      affinity: 0.1
+    },
+    decay: {
+      initial_stability_days: 120,
+      growth_rate: 3.5,
+      active_threshold: 0.3,
+      weak_threshold: 0.03,
+      max_stability_days: 365
+    },
+    encoding: {
+      base_difficulty: 0.5,
+      salience_enabled: true,
+      max_salience_multiplier: 3
+    },
+    consolidation_role: "target",
+    intent_boost: 1.3
+  }
+};
+var SectionDecayConfigSchema = z.object({
+  initial_stability_days: z.number().positive(),
+  growth_rate: z.number().positive(),
+  active_threshold: z.number().min(0).max(1),
+  weak_threshold: z.number().min(0).max(1),
+  max_stability_days: z.number().positive()
+});
+var SectionEncodingConfigSchema = z.object({
+  base_difficulty: z.number().min(0).max(1),
+  salience_enabled: z.boolean(),
+  max_salience_multiplier: z.number().min(1)
+});
+var SectionRerankingWeightsSchema = z.object({
+  semantic: z.number().min(0).max(1),
+  keyword: z.number().min(0).max(1),
+  graph: z.number().min(0).max(1),
+  recency: z.number().min(0).max(1),
+  authority: z.number().min(0).max(1),
+  affinity: z.number().min(0).max(1)
+}).refine(
+  (w) => Math.abs(w.semantic + w.keyword + w.graph + w.recency + w.authority + w.affinity - 1) < 0.01,
+  { message: "Reranking weights must sum to 1.0" }
+);
+function validateSectionProfiles() {
+  for (const [section, profile] of Object.entries(SECTION_PROFILES)) {
+    SectionDecayConfigSchema.parse(profile.decay);
+    SectionEncodingConfigSchema.parse(profile.encoding);
+    SectionRerankingWeightsSchema.parse(profile.reranking_weights);
+    if (profile.decay.weak_threshold >= profile.decay.active_threshold) {
+      throw new Error(`Section ${section}: weak_threshold must be < active_threshold`);
+    }
+  }
+}
+validateSectionProfiles();
+
+// src/params/index.ts
 z.object({
   semantic: z.number().min(0).max(1),
   keyword: z.number().min(0).max(1),
@@ -12,14 +180,6 @@ z.object({
   (w) => Math.abs(w.semantic + w.keyword + w.graph + w.recency + w.authority + w.affinity - 1) < 1e-3,
   { message: "Reranking weights must sum to 1.0" }
 );
-var RERANKING_WEIGHTS = {
-  semantic: 0.3,
-  keyword: 0.15,
-  graph: 0.2,
-  recency: 0.15,
-  authority: 0.1,
-  affinity: 0.1
-};
 z.object({
   recency_half_life_days: z.number().positive(),
   authority_cap_multiple: z.number().positive(),
@@ -50,7 +210,8 @@ z.object({
   last_accessed: z.date(),
   created_at: z.date(),
   access_count: z.number().int().nonnegative(),
-  inbound_edge_count: z.number().int().nonnegative()
+  inbound_edge_count: z.number().int().nonnegative(),
+  subtype: z.string().optional()
 });
 z.object({
   total_nodes: z.number().int().nonnegative(),
@@ -80,8 +241,8 @@ z.object({
 });
 var SSA_PARAMS = {
   initial_activation: 1,
-  hop_decay: 0.5,
-  min_threshold: 0.05,
+  hop_decay: 0.8,
+  min_threshold: 0.01,
   max_hops: 3,
   max_nodes: 500,
   aggregation: "sum"
@@ -94,12 +255,18 @@ z.object({
   related_to: z.number().min(0).max(1),
   similar_to: z.number().min(0).max(1),
   user_linked: z.number().min(0).max(1),
-  temporal_adjacent: z.number().min(0).max(1)
+  temporal_adjacent: z.number().min(0).max(1),
+  generalizes: z.number().min(0).max(1),
+  applied_to: z.number().min(0).max(1)
 });
 var SSA_EDGE_WEIGHTS = {
   same_entity: 0.95,
   part_of: 0.85,
   caused_by: 0.8,
+  applied_to: 0.75,
+  // Playbook applied to trade entry (procedural — Issue 5)
+  generalizes: 0.7,
+  // Knowledge generalized from episodes (consolidation — Issue 3)
   mentioned_together: 0.6,
   related_to: 0.5,
   similar_to: 0.45,
@@ -226,10 +393,12 @@ function affinityScore(accessCount, createdAt, lastAccessed, now = /* @__PURE__ 
   const newContentBoost = ageDays < RERANKING_CONFIG.new_content_boost_days ? RERANKING_CONFIG.new_content_boost_value : 0;
   return Math.min(interactionScore + newContentBoost, 1);
 }
-function rerankCandidates(candidates, metrics, weights = RERANKING_WEIGHTS, now = /* @__PURE__ */ new Date()) {
+function rerankWithSectionWeights(candidates, metrics, now = /* @__PURE__ */ new Date()) {
   if (candidates.length === 0) return [];
   const maxBM25 = Math.max(...candidates.map((c) => c.bm25_score ?? 0));
   return candidates.map((node) => {
+    const section = getSectionForSubtype(node.subtype);
+    const weights = SECTION_PROFILES[section].reranking_weights;
     const breakdown = {
       semantic: semanticScore(node),
       keyword: keywordScore(node, maxBM25, candidates.length),
@@ -422,6 +591,7 @@ var ExecutionMetricsSchema = z.object({
   reranking_ms: z.number().nonnegative(),
   seeds_found: z.number().int().nonnegative(),
   nodes_activated: z.number().int().nonnegative(),
+  nodes_filtered: z.number().int().nonnegative(),
   nodes_returned: z.number().int().nonnegative()
 });
 var SearchResponseSchema = z.object({
@@ -720,9 +890,6 @@ async function spreadActivation(seeds, context, predicate, config) {
     toProcess.push(...nextRound);
   }
   const activated = Array.from(activations.values());
-  for (const node of activated) {
-    node.activation = Math.min(node.activation, 1);
-  }
   return {
     activated,
     hops_completed: hopsCompleted,
@@ -745,7 +912,9 @@ async function buildScoredNodes(activated, context) {
         last_accessed: rerankData.last_accessed,
         created_at: rerankData.created_at,
         access_count: rerankData.access_count,
-        inbound_edge_count: rerankData.inbound_edge_count
+        inbound_edge_count: rerankData.inbound_edge_count,
+        subtype: rerankData.subtype
+        // For per-section reranking (Issue 1)
       });
     }
   }
@@ -837,6 +1006,7 @@ function createEmptyMetrics() {
     reranking_ms: 0,
     seeds_found: 0,
     nodes_activated: 0,
+    nodes_filtered: 0,
     nodes_returned: 0
   };
 }
@@ -921,10 +1091,22 @@ async function executeSSA(options) {
   const spreadingResult = await spreadActivation(seedingResult.seeds, context, predicate, config);
   metrics.spreading_ms = performance.now() - spreadingStart;
   metrics.nodes_activated = spreadingResult.activated.length;
+  const relevantActivated = spreadingResult.activated.filter(
+    (node) => node.is_seed || node.bm25_score > 0 || node.vector_score > 0
+  );
+  metrics.nodes_filtered = spreadingResult.activated.length - relevantActivated.length;
+  if (relevantActivated.length > 0) {
+    const maxActivation = Math.max(...relevantActivated.map((n) => n.activation));
+    if (maxActivation > 0) {
+      for (const node of relevantActivated) {
+        node.activation = node.activation / maxActivation;
+      }
+    }
+  }
   const rerankingStart = performance.now();
   const graphMetrics = await context.getGraphMetrics();
-  const scoredNodes = await buildScoredNodes(spreadingResult.activated, context);
-  const rankedNodes = rerankCandidates(scoredNodes, graphMetrics);
+  const scoredNodes = await buildScoredNodes(relevantActivated, context);
+  const rankedNodes = rerankWithSectionWeights(scoredNodes, graphMetrics);
   metrics.reranking_ms = performance.now() - rerankingStart;
   const limit = request.limit ?? config.default_limit;
   const limitedRanked = rankedNodes.slice(0, limit);

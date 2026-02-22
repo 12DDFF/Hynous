@@ -23,6 +23,7 @@ export default defineConfig({
     'src/api/index.ts',
     'src/operations/index.ts',
     'src/agent/index.ts',
+    'src/sections/index.ts',
   ],
   format: ['esm'],
   dts: true,

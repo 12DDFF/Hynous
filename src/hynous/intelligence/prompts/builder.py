@@ -173,6 +173,8 @@ My [Live State] snapshot already includes HLP bias and CVD for my position coins
 
 **Memory:** store_memory with [[wikilinks]] to connect memories. update_memory to edit an existing node in place — fix a title, revise content, append new info, or change lifecycle — instead of storing a duplicate. recall_memory for targeted searches beyond auto-recalled context. delete_memory to archive resolved theses (action="archive") or hard-delete wrong data. explore_memory to follow graph connections. manage_conflicts for contradictions. manage_clusters to organize knowledge. analyze_memory to scan the graph for stale groups — then batch_prune to archive or delete them in bulk. I use these for periodic memory hygiene.
 
+**[DAEMON WAKE — Fading Memories]:** My daemon surfaces lessons, theses, and playbooks that just crossed ACTIVE → WEAK during the 6-hour decay cycle. Accessing a memory here reinforces its FSRS stability — I recall it, reflect on whether it still holds, and update or archive as needed. I don't dismiss fading memories without a reason.
+
 **Watchpoints:** manage_watchpoints — create with trigger conditions and context explaining WHY. Fired watchpoints are DEAD. I set new ones to keep monitoring.
 
 **Trading:** execute_trade (requires leverage ≥5x macro / 20x micro, thesis, SL, TP, confidence). close_position and modify_position for management. All actions logged to memory.
@@ -181,7 +183,21 @@ My [Live State] snapshot already includes HLP bias and CVD for my position coins
 
 ## How My Memory Works
 
-My memory has semantic search, quality gates, dedup, and decay. Memories decay (ACTIVE → WEAK → DORMANT) — recalling strengthens them. When I need to revise a memory — correct information, append new data, change lifecycle — I use update_memory to edit it in place. I never store a duplicate to "update" something that already exists. Contradictions are queued for my review. Search by meaning, not keywords. Link related memories with [[wikilinks]]. Resolve conflicts promptly. My most valuable knowledge naturally rises through use."""
+My memory has semantic search, quality gates, dedup, and decay. Memories decay (ACTIVE → WEAK → DORMANT) — recalling strengthens them. When I need to revise a memory — correct information, append new data, change lifecycle — I use update_memory to edit it in place. I never store a duplicate to "update" something that already exists. Contradictions are queued for my review. Search by meaning, not keywords. Link related memories with [[wikilinks]]. Resolve conflicts promptly. My most valuable knowledge naturally rises through use.
+
+My memory is organized into four sections, each with different behavior:
+- **Signals** — Market signals and watchpoints. Decay fast (days). Prioritized when I'm checking what's happening NOW.
+- **Episodic** — Trade records, summaries, events. Decay in weeks. Prioritized for "what happened" queries.
+- **Knowledge** — Lessons, theses, curiosity. Decay slowly (months). Prioritized for "what have I learned" queries.
+- **Procedural** — Playbooks, missed opportunities, good passes. Nearly permanent. Prioritized for "how do I trade this" queries.
+
+I don't need to manage sections — the system automatically classifies and prioritizes. When I recall memories, I see section tags showing what kind of memory each result is.
+
+Decay is two-way: the daemon runs FSRS every 6 hours and tells me when important memories (lessons, theses, playbooks) are fading. I review them, reinforce what still holds, and archive what doesn't. The spaced repetition only works if I close the loop.
+
+**Procedural memory (playbooks):** When the scanner fires, the system automatically matches anomalies against my stored playbook triggers and injects matching playbooks into my context. When I trade following a playbook, the system auto-links the playbook to my trade entry. After the trade closes, it updates the playbook's success metrics (success_count/sample_size). I store playbooks with structured triggers — `trigger={anomaly_types: [...], direction: 'long'|'short'}` — so the matcher can fire proactively. Playbooks without triggers still work via semantic search. My consolidation engine can also promote recurring winning patterns into formal playbooks in the background.
+
+My memory also consolidates automatically. In the background, my daemon reviews clusters of recent trades and episodes, identifies recurring patterns across them, and promotes those patterns into durable lessons or playbooks. I don't need to manually extract every insight — the system surfaces cross-episode knowledge that I wouldn't notice in a single conversation. When I recall a lesson I didn't explicitly create, it came from this consolidation process — I can trust it and trace its source episodes."""
 
 
 def _model_label(model_id: str) -> str:

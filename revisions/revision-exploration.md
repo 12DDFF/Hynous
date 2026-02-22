@@ -25,9 +25,9 @@ The agent talks to Nous via HTTP through a Python client at `src/hynous/nous/cli
 
 ---
 
-## Active Work: Memory Sections
+## Memory Sections — IMPLEMENTED (2026-02-21)
 
-> **All 21 issues below are resolved.** The next development focus is **Memory Sections** — brain-inspired sectioned memory that gives different memory types (signals, episodes, lessons, playbooks) fundamentally different retrieval weights, decay curves, encoding strength, and consolidation rules. See `memory-sections/executive-summary.md` for the full theory, 6 issues, and design constraints.
+> **All 21 issues below are resolved. Memory Sections (Issues 0–6) are also fully implemented.** Brain-inspired sectioned memory gives different memory types (signals, episodes, lessons, playbooks) fundamentally different retrieval weights, decay curves, encoding strength, and consolidation rules. All 7 issues were implemented in order (0 → 1/2 → 6 → 4 → 3 → 5). See `memory-sections/executive-summary.md` for full theory and implementation notes.
 
 ---
 
@@ -311,7 +311,7 @@ This is fully functional — the Nous server's PATCH endpoint (`nous-server/serv
 
 ---
 
-### ~~5. [P2] FSRS decay runs passively — no proactive review cycle~~ PARTIALLY FIXED
+### ~~5. [P2] FSRS decay runs passively — no proactive review cycle~~ FIXED
 
 **Files involved:**
 - `nous-server/server/src/core-bridge.ts` — `computeDecay()` (line ~106), `applyDecay()` (line ~129), `computeStabilityGrowth()` (line ~147)
@@ -330,9 +330,7 @@ This is fully functional — the Nous server's PATCH endpoint (`nous-server/serv
 4. Lifecycle transitions happen automatically: ACTIVE → WEAK → FADING → DORMANT based on retrievability thresholds
 5. On access (search result returned or GET by ID), stability grows via `updateStabilityOnAccess()` — the memory gets stronger
 
-**Status:** Partially fixed. The daemon now calls `POST /v1/decay` every 6 hours via `_run_decay_cycle()`, which recomputes retrievability and transitions lifecycle states for all nodes. Lifecycle-filtered queries now return accurate results.
-
-**Remaining:** The daemon does not yet surface fading memories to the agent for review/reinforcement. The "repetition" half of spaced repetition (proactively recalling fading memories) is still missing — the daemon runs decay silently. This is a future enhancement.
+**Status:** Fully resolved (2026-02-21). The daemon calls `POST /v1/decay` every 6 hours via `_run_decay_cycle()` in a background thread (`hynous-decay`). Lifecycle transitions are computed and written to DB. When important memories (lessons, theses, playbooks) cross ACTIVE→WEAK, `_check_fading_transitions()` fetches each candidate node, checks its subtype, and calls `_wake_for_fading_memories()` to alert the agent. A 24h per-node cooldown (`_fading_alerted` dict) prevents repeated alerts. Signals and episodes decay silently — by design. The "repetition" half of spaced repetition is now complete.
 
 ---
 
@@ -654,12 +652,10 @@ Untouched memories weaken: ACTIVE → WEAK → DORMANT. The important things sur
 because I keep using them.
 ```
 
-**Status: Mostly resolved.**
+**Status: Fully resolved (2026-02-21).**
 
-- **Contradiction detection** — **NOW TRUE.** Issue #6 is FIXED. The `_contradiction_detected` flag is checked on store and surfaces a warning. The daemon polls the conflict queue every 30 min via `_check_conflicts()` and wakes the agent. The `manage_conflicts` tool lets the agent list and resolve conflicts with 4 strategies.
-- **Memory decay** — **NOW PARTIALLY TRUE.** Issue #5 is PARTIALLY FIXED. FSRS batch decay runs every 6 hours via `_run_decay_cycle()`. Lifecycle transitions (ACTIVE → WEAK → DORMANT) are computed proactively. However, the agent still has no visibility into which specific memories are fading (no fading alerts yet).
-
-**Remaining:** The "fading memory alerts" enhancement — surfacing ACTIVE→WEAK transitions to the agent for review/reinforcement — is still TODO. This is the only system prompt claim that's not yet fully true.
+- **Contradiction detection** — **TRUE.** The `_contradiction_detected` flag is checked on store. Daemon polls the conflict queue every 30 min via `_check_conflicts()`, auto-resolves what it can (5 rules, zero agent cost), wakes the agent with the remainder. `manage_conflicts` tool handles list + resolve.
+- **Memory decay** — **TRUE.** FSRS batch decay runs every 6 hours. Lifecycle transitions are computed. Fading alerts wake the agent when lessons, theses, or playbooks cross ACTIVE→WEAK. Signals and episodes decay silently. The spaced repetition loop is complete.
 
 ---
 

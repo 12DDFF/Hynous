@@ -2,7 +2,7 @@
 
 > Cap output tokens based on what the agent is actually doing. Output tokens are $15/M — 5x input cost.
 
-**Status:** READY FOR IMPLEMENTATION
+**Status:** IMPLEMENTED
 **Priority:** P0
 **Estimated effort:** Small — config change + one parameter threaded through
 

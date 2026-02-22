@@ -291,7 +291,12 @@ STORE_TOOL_DEF = {
         "  signal — Raw data snapshot. Numbers, not narrative.\n"
         "  watchpoint — An alert with trigger conditions. Include trigger object.\n"
         "  curiosity — A question to research later.\n"
-        "  trade — Manual trade record.\n\n"
+        "  trade — Manual trade record.\n"
+        "  playbook — A validated trading pattern. Include trigger object for "
+        "automatic matching when scanner detects similar conditions. Format: "
+        "trigger={anomaly_types: [...], symbols: [...], min_severity: N, "
+        "direction: 'long'|'short'|'either'}. Put conditions and action in content. "
+        "Include success_count and sample_size in signals if known.\n\n"
         "Use [[wikilinks]] in content to link to related memories: "
         "\"This confirms my [[funding rate thesis]].\" "
         "The system searches for matches and creates edges automatically.\n\n"
@@ -319,9 +324,12 @@ STORE_TOOL_DEF = {
             "trigger": {
                 "type": "object",
                 "description": (
-                    "Watchpoints only. Conditions: price_below, price_above, funding_above, "
+                    "Watchpoints: price_below, price_above, funding_above, "
                     "funding_below, fear_greed_extreme. Requires symbol and value. "
-                    "Optional expiry (ISO date, default 7 days)."
+                    "Optional expiry (ISO date, default 7 days).\n"
+                    "Playbooks: {anomaly_types: [...], symbols: [...], "
+                    "min_severity: float, direction: 'long'|'short'|'either'}. "
+                    "Enables automatic matching when scanner detects matching conditions."
                 ),
                 "properties": {
                     "condition": {"type": "string"},
@@ -454,13 +462,30 @@ def _store_memory_impl(
         _event_confidence = 1.0
         _event_source = "explicit" if event_time else "inferred"
 
-    # Build content_body — plain text for simple memories, JSON for watchpoints
-    if trigger or signals:
+    # Build content_body — plain text for simple memories, JSON for structured types
+    if trigger or signals or memory_type == "playbook":
         body_data: dict = {"text": content}
         if trigger:
             body_data["trigger"] = trigger
         if signals:
             body_data["signals_at_creation"] = signals
+        # Playbook: initialize tracking fields for the matcher feedback loop
+        if memory_type == "playbook":
+            body_data.setdefault("success_count", 0)
+            body_data.setdefault("sample_size", 0)
+            body_data.setdefault("direction", "either")
+            # Extract action and conditions from content if provided in signals
+            if signals:
+                if "action" in signals:
+                    body_data["action"] = signals.pop("action")
+                if "conditions" in signals:
+                    body_data["conditions"] = signals.pop("conditions")
+                if "direction" in signals:
+                    body_data["direction"] = signals.pop("direction")
+                if "success_count" in signals:
+                    body_data["success_count"] = signals.pop("success_count")
+                if "sample_size" in signals:
+                    body_data["sample_size"] = signals.pop("sample_size")
         body = json.dumps(body_data)
     else:
         body = content
@@ -542,6 +567,15 @@ def _store_memory_impl(
         from ...core.memory_tracker import get_tracker
         tracker = get_tracker()
 
+        # Stakes weighting (Issue 4): calculate salience from signals if available
+        _neural_stability = None
+        try:
+            from ...nous.sections import calculate_salience, modulate_stability
+            salience = calculate_salience(subtype, signals)
+            _neural_stability = modulate_stability(subtype, salience)
+        except Exception:
+            pass
+
         client = get_client()
         node = client.create_node(
             type=node_type,
@@ -552,6 +586,7 @@ def _store_memory_impl(
             event_time=_event_time,
             event_confidence=_event_confidence,
             event_source=_event_source,
+            neural_stability=_neural_stability,
         )
 
         node_id = node.get("id", "?")

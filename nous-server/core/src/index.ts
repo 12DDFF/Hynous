@@ -33,7 +33,6 @@ export * from './temporal';
 export * from './editing';
 
 // Re-export storm-004 modules
-export * from './storage';
 export * from './tps';
 export * from './episodes';
 
@@ -187,6 +186,9 @@ export * from './agent-tools';
 
 // Re-export storm-029 modules (Context Window & Chunking Strategy)
 export * from './context-window';
+
+// Re-export memory sections module (memory-sections revision)
+export * from './sections';
 
 // storm-019 Embedded AI Agent (NEAS) is available via '@nous/core/agent' subpath
 // Not re-exported here due to naming conflict with security module (getOfflineCapabilities)

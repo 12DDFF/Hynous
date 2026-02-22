@@ -64,8 +64,17 @@ hynous/
     │   ├── TO-2-schema-trimming.md
     │   ├── TO-3-stale-tool-truncation.md
     │   └── TO-4-window-size.md
-    └── memory-pruning/             # Memory pruning tools — IMPLEMENTED
-        └── implementation-guide.md # Two-phase pruning (analyze + batch_prune)
+    ├── memory-pruning/             # Memory pruning tools — IMPLEMENTED
+    │   └── implementation-guide.md # Two-phase pruning (analyze + batch_prune)
+    └── memory-sections/            # Brain-inspired memory sectioning — GUIDES COMPLETE
+        ├── executive-summary.md    # Theory, 6 issues, section model, design constraints
+        ├── issue-0-section-foundation.md  # Shared types, mapping, config
+        ├── issue-1-retrieval-weights.md   # Per-section SSA reranking
+        ├── issue-2-decay-curves.md        # Per-section FSRS decay
+        ├── issue-3-generalization.md      # Cross-episode consolidation
+        ├── issue-4-stakes-weighting.md    # Salience-modulated encoding
+        ├── issue-5-procedural-memory.md   # Playbook matcher + scanner integration
+        └── issue-6-retrieval-bias.md      # Intent classification + section boost
 ```
 
 See `ARCHITECTURE.md` for detailed component documentation.
@@ -78,7 +87,7 @@ If you're an AI agent working on this project:
 
 1. **Read first:** `ARCHITECTURE.md` explains how everything connects
 2. **Check revisions:** `revisions/` has known issues and planned improvements — start with `revisions/nous-wiring/executive-summary.md` for the Nous integration status
-3. **All revisions complete** — Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning all resolved. See `revisions/README.md` for details
+3. **All revisions complete** — Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning, and memory sections all fully implemented. See `revisions/README.md` for details
 4. **Check brainstorms:** `../hynous-brainstorm/` has all design decisions
 5. **Follow patterns:** Each directory has a README explaining conventions
 6. **Stay modular:** One feature = one module. Don't mix concerns.

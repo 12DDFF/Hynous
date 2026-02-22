@@ -9,7 +9,9 @@
 import {
   calculateRetrievability,
   getDecayLifecycleState,
+  getDecayLifecycleStateForSection,
   updateStabilityOnAccess,
+  updateStabilityOnAccessForSection,
   getInitialStability,
   getInitialDifficulty,
   DECAY_CONFIG,
@@ -18,6 +20,13 @@ import {
   type AlgorithmNodeType,
   type DecayLifecycleState,
 } from '@nous/core/params';
+
+import {
+  getSectionForSubtype,
+  getInitialStabilityForSubtype,
+  SECTION_PROFILES,
+  type MemorySection,
+} from '@nous/core/sections';
 
 // ---- Type mappings ----
 
@@ -102,6 +111,11 @@ export interface EdgeRow {
 /**
  * Compute current retrievability and lifecycle state from a node row.
  * Pure function — does not modify the row or write to DB.
+ *
+ * Uses per-section lifecycle thresholds (Issue 2: per-section decay curves).
+ * Each section has its own active_threshold and weak_threshold, so a KNOWLEDGE
+ * node (active_threshold: 0.4) stays ACTIVE longer than a SIGNALS node
+ * (active_threshold: 0.5) at the same retrievability.
  */
 export function computeDecay(row: NodeRow): {
   retrievability: number;
@@ -115,9 +129,13 @@ export function computeDecay(row: NodeRow): {
 
   const retrievability = calculateRetrievability(daysSinceAccess, row.neural_stability);
 
-  // Days dormant = days below weak threshold
-  const daysDormant = retrievability < DECAY_CONFIG.weak_threshold ? daysSinceAccess : 0;
-  const lifecycle_state = getDecayLifecycleState(retrievability, daysDormant);
+  // Look up per-section decay thresholds
+  const section = getSectionForSubtype(row.subtype);
+  const sectionDecay = SECTION_PROFILES[section].decay;
+
+  // Days dormant = days below this section's weak threshold
+  const daysDormant = retrievability < sectionDecay.weak_threshold ? daysSinceAccess : 0;
+  const lifecycle_state = getDecayLifecycleStateForSection(retrievability, daysDormant, sectionDecay);
 
   return { retrievability, lifecycle_state, days_since_access: daysSinceAccess };
 }
@@ -129,12 +147,14 @@ export function computeDecay(row: NodeRow): {
 export function applyDecay<T extends NodeRow>(row: T): T & {
   neural_retrievability: number;
   state_lifecycle: string;
+  memory_section: MemorySection;
 } {
   const { retrievability, lifecycle_state } = computeDecay(row);
   return {
     ...row,
     neural_retrievability: Math.round(retrievability * 10000) / 10000,
     state_lifecycle: lifecycle_state,
+    memory_section: getSectionForSubtype(row.subtype),
   };
 }
 
@@ -143,18 +163,32 @@ export function applyDecay<T extends NodeRow>(row: T): T & {
 /**
  * Calculate new stability after a recall event (FSRS growth).
  * Returns the new stability value (in days).
+ *
+ * Uses per-section growth rate and max stability (Issue 2: per-section decay curves).
+ * KNOWLEDGE nodes grow stability faster (3.0) and can reach 365 days,
+ * while SIGNALS nodes grow slowly (1.5) and cap at 30 days.
  */
 export function computeStabilityGrowth(
   currentStability: number,
   difficulty: number,
+  subtype?: string | null,
 ): number {
-  return updateStabilityOnAccess(currentStability, difficulty);
+  const section = getSectionForSubtype(subtype);
+  const sectionDecay = SECTION_PROFILES[section].decay;
+  return updateStabilityOnAccessForSection(currentStability, difficulty, sectionDecay);
 }
 
 // ---- Neural Defaults for New Nodes ----
 
 /**
  * Get FSRS-appropriate neural defaults for a new node.
+ *
+ * Uses per-subtype initial stability from @nous/core/sections
+ * (Issue 2: per-section decay curves) instead of the coarse
+ * AlgorithmNodeType → INITIAL_STABILITY chain.
+ *
+ * Initial difficulty still uses AlgorithmNodeType — less critical
+ * to differentiate per-subtype.
  */
 export function getNeuralDefaults(type: string, subtype?: string | null): {
   neural_stability: number;
@@ -163,7 +197,7 @@ export function getNeuralDefaults(type: string, subtype?: string | null): {
 } {
   const algoType = getAlgoType(type, subtype);
   return {
-    neural_stability: getInitialStability(algoType),
+    neural_stability: getInitialStabilityForSubtype(subtype),  // Section-aware (Issue 2)
     neural_retrievability: 1.0, // just created = perfect recall
     neural_difficulty: getInitialDifficulty(algoType),
   };
@@ -183,6 +217,8 @@ const EDGE_TYPE_WEIGHTS: Record<string, number> = {
   contradicts: SSA_EDGE_WEIGHTS.related_to,
   supersedes: SSA_EDGE_WEIGHTS.related_to,
   user_linked: SSA_EDGE_WEIGHTS.user_linked ?? 0.90,
+  generalizes: SSA_EDGE_WEIGHTS.generalizes ?? 0.70,  // Consolidation edges (Issue 3)
+  applied_to: SSA_EDGE_WEIGHTS.applied_to ?? 0.75,    // Playbook applied to trade (Issue 5)
 };
 
 export function getDefaultEdgeWeight(edgeType: string): number {
