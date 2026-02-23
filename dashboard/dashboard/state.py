@@ -3004,6 +3004,12 @@ class AppState(rx.State):
     def set_journal_tab(self, tab: str):
         self.journal_tab = tab
 
+    # Memory page tab
+    memory_tab: str = "graph"       # "graph" | "sections"
+
+    def set_memory_tab(self, tab: str):
+        self.memory_tab = tab
+
     def toggle_trade_detail(self, trade_id: str):
         """Toggle expand/collapse for a trade row."""
         if trade_id in self.journal_expanded_trades:

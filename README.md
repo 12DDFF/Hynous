@@ -30,7 +30,7 @@ hynous/
 │   └── core/            # Shared utilities
 │
 ├── dashboard/           # Reflex UI (Python → React)
-│   ├── assets/          # Static files (graph.html force-graph viz)
+│   ├── assets/          # Static files (graph.html full graph viz, brain.html section viz)
 │   ├── components/      # Reusable UI parts
 │   ├── pages/           # Dashboard pages (home, chat, memory, graph, debug)
 │   └── state/           # Session management
@@ -66,15 +66,16 @@ hynous/
     │   └── TO-4-window-size.md
     ├── memory-pruning/             # Memory pruning tools — IMPLEMENTED
     │   └── implementation-guide.md # Two-phase pruning (analyze + batch_prune)
-    └── memory-sections/            # Brain-inspired memory sectioning — GUIDES COMPLETE
-        ├── executive-summary.md    # Theory, 6 issues, section model, design constraints
+    └── memory-sections/            # Brain-inspired memory sectioning — FULLY IMPLEMENTED
+        ├── executive-summary.md    # Theory, 6 issues, section model, design constraints, frontend notes
         ├── issue-0-section-foundation.md  # Shared types, mapping, config
         ├── issue-1-retrieval-weights.md   # Per-section SSA reranking
         ├── issue-2-decay-curves.md        # Per-section FSRS decay
         ├── issue-3-generalization.md      # Cross-episode consolidation
         ├── issue-4-stakes-weighting.md    # Salience-modulated encoding
         ├── issue-5-procedural-memory.md   # Playbook matcher + scanner integration
-        └── issue-6-retrieval-bias.md      # Intent classification + section boost
+        ├── issue-6-retrieval-bias.md      # Intent classification + section boost
+        └── brain-visualization-guide.md   # Frontend: brain SVG + per-section force graphs (DONE)
 ```
 
 See `ARCHITECTURE.md` for detailed component documentation.

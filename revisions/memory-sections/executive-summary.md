@@ -1,6 +1,6 @@
 # Memory Sections — Executive Summary
 
-> **STATUS: FULLY IMPLEMENTED (2026-02-21)** — All 6 issues (0–5 foundation + 6 retrieval bias) are complete. New modules: `consolidation.py`, `playbook_matcher.py` (Python); `sections/` (TypeScript). All 443 Python + 4272/4273 TypeScript tests passing.
+> **STATUS: FULLY IMPLEMENTED (2026-02-21) + FRONTEND VISUALIZATION (2026-02-22)** — All 6 issues (0–5 foundation + 6 retrieval bias) are complete. New modules: `consolidation.py`, `playbook_matcher.py` (Python); `sections/` (TypeScript). All 443 Python + 4272/4273 TypeScript tests passing. Frontend visualization (`brain.html` + Memory page Sections tab) implemented 2026-02-22 — see `brain-visualization-guide.md`.
 
 ---
 
@@ -442,8 +442,49 @@ This executive summary defines the **theory and problem statement**. The followi
 | Issue 4 | `issue-4-stakes-weighting.md` | Salience-modulated encoding (`calculate_salience()` in Python) |
 | Issue 5 | `issue-5-procedural-memory.md` | Procedural memory + playbook matcher (`PlaybookMatcher` in Python) |
 | Issue 6 | `issue-6-retrieval-bias.md` | Intent classification + section-aware boost in retrieval orchestrator |
+| Frontend | `brain-visualization-guide.md` | Brain SVG overview + per-section force graph (`dashboard/assets/brain.html`) |
 
-**Implementation order:** 0 → 1 & 2 (parallel) → 6 → 4 → 3 → 5
+**Implementation order:** 0 → 1 & 2 (parallel) → 6 → 4 → 3 → 5 → Frontend
+
+---
+
+## Frontend Visualization (2026-02-22)
+
+The backend (Issues 0–6) gives every node a section membership and applies per-section retrieval weights, decay curves, and encoding strength — but had zero visual representation. The frontend adds a **"Sections" tab** to the Memory page that exposes this layer directly.
+
+### What Was Built
+
+**Files changed:**
+- `dashboard/dashboard/state.py` — `memory_tab: str = "graph"` state var + `set_memory_tab()` handler
+- `dashboard/dashboard/pages/memory.py` — `_memory_tab_pill()`, `_memory_tab_bar()`, updated `_main_area()` with tab bar and conditional iframe
+- `dashboard/assets/brain.html` — New 1373-line self-contained visualization (no Reflex state interaction)
+
+**Brain Overview** (default view):
+- Sagittal SVG brain (`viewBox="0 0 520 420"`) with 4 clickable anatomically-positioned regions: KNOWLEDGE (Neocortex, top dome), EPISODIC (Hippocampus, center), SIGNALS (Sensory Cortex, posterior upper), PROCEDURAL (Cerebellum, bottom-back bump)
+- Pathway lines between regions: dashed, `stroke-width` scaled by `Math.log2(count+1)`, count label at midpoint when count > 5
+- Stat chips per region: section name (colored), brain region name, node counts (active / weak / dormant breakdown)
+- Click any region → animated zoom+fade transition into Section Detail view
+
+**Section Detail view** (per-section):
+- Force-directed graph (`force-graph@1.47.4` + `d3-force@3`) of primary nodes + up to 50 ghost nodes (top cross-connected neighbors from other sections)
+- Primary nodes: retrievability-based opacity, section glow color on hover/select
+- Ghost nodes: `colorGhost` fill at 0.18 alpha, dashed ring border in their own section's color at 0.3 alpha
+- Batched edge rendering in 3 passes: primary↔primary (0.35α), primary↔ghost (0.18α), ghost↔ghost (0.06α)
+- Section legend: primary subtypes present + ghost section indicators with dashed ring
+- Search, settings panel (localStorage key `hynous-brain-settings`, separate from graph.html), detail panel with "Section" row
+- Back button → smooth fade back to brain overview
+
+**Data layer:**
+- Fetches from `/v1/graph` via same URL fallback chain as `graph.html` (proxy → localhost:3100 → 127.0.0.1:3100)
+- Client-side classification only — `SUBTYPE_TO_SECTION` map in JS matches `sections.py:42-65` exactly (all 16 entries verified)
+- No backend changes required
+
+**Live test results (26 nodes / 27 edges):**
+- EPISODIC: 14 primary, 5 ghosts, 21 cross-edges
+- SIGNALS: 2 primary, 5 ghosts, 5 cross-edges
+- KNOWLEDGE: 8 primary, 13 ghosts, 24 cross-edges
+- PROCEDURAL: 2 primary, 2 ghosts, 2 cross-edges
+- Pathway lines: EPISODIC↔KNOWLEDGE (20), KNOWLEDGE↔SIGNALS (4), EPISODIC↔PROCEDURAL (1), PROCEDURAL↔SIGNALS (1)
 
 Each guide follows the established revision format with Required Reading tables, Architecture Decisions, step-by-step Implementation Steps with exact find/replace code, Testing (unit + integration + live local + live VPS), Verification Checklists, and File Summaries.
 

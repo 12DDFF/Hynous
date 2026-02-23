@@ -4,6 +4,54 @@ import reflex as rx
 from ..state import AppState, ClusterDisplay, ConflictItem
 
 
+# --- Tab Bar ---
+
+def _memory_tab_pill(label: str, tab_value: str) -> rx.Component:
+    """Single pill in the memory page tab bar."""
+    return rx.box(
+        rx.text(
+            label,
+            font_size="0.8rem",
+            font_weight="500",
+            color=rx.cond(
+                AppState.memory_tab == tab_value,
+                "#fafafa",
+                "#525252",
+            ),
+            transition="color 0.15s ease",
+        ),
+        on_click=AppState.set_memory_tab(tab_value),
+        background=rx.cond(
+            AppState.memory_tab == tab_value,
+            "#262626",
+            "transparent",
+        ),
+        padding_x="14px",
+        padding_y="6px",
+        border_radius="8px",
+        cursor="pointer",
+        transition="background 0.15s ease",
+        _hover={"background": rx.cond(
+            AppState.memory_tab == tab_value,
+            "#262626",
+            "#1a1a1a",
+        )},
+    )
+
+
+def _memory_tab_bar() -> rx.Component:
+    """Segmented tab bar — Graph / Sections."""
+    return rx.hstack(
+        _memory_tab_pill("Graph", "graph"),
+        _memory_tab_pill("Sections", "sections"),
+        spacing="1",
+        background="#111111",
+        border="1px solid #1a1a1a",
+        border_radius="10px",
+        padding="3px",
+    )
+
+
 # --- Sidebar Components ---
 
 def _section_header(label: str, icon_name: str, icon_color: str = "#737373") -> rx.Component:
@@ -285,14 +333,43 @@ def _sidebar() -> rx.Component:
 # --- Main Area ---
 
 def _main_area() -> rx.Component:
-    """Right side: graph only (stats are in the graph's built-in overlay)."""
-    return rx.box(
-        rx.el.iframe(
-            src="/graph.html",
+    """Right side: tab bar + graph or brain iframe."""
+    return rx.vstack(
+        # Tab bar row
+        rx.hstack(
+            rx.spacer(),
+            _memory_tab_bar(),
+            rx.spacer(),
+            width="100%",
+            align="center",
+            padding_y="8px",
+            padding_x="16px",
+            border_bottom="1px solid #1a1a1a",
+            background="#0a0a0a",
+            flex_shrink="0",
+        ),
+        # Content area — conditional iframe
+        rx.box(
+            rx.cond(
+                AppState.memory_tab == "graph",
+                rx.el.iframe(
+                    src="/graph.html",
+                    width="100%",
+                    height="100%",
+                    border="none",
+                ),
+                rx.el.iframe(
+                    src="/brain.html",
+                    width="100%",
+                    height="100%",
+                    border="none",
+                ),
+            ),
+            flex="1",
             width="100%",
             height="100%",
-            border="none",
         ),
+        spacing="0",
         flex="1",
         width="100%",
         height="100%",

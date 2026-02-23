@@ -25,9 +25,9 @@ The agent talks to Nous via HTTP through a Python client at `src/hynous/nous/cli
 
 ---
 
-## Memory Sections — IMPLEMENTED (2026-02-21)
+## Memory Sections — FULLY IMPLEMENTED (2026-02-21) + BRAIN VISUALIZATION (2026-02-22)
 
-> **All 21 issues below are resolved. Memory Sections (Issues 0–6) are also fully implemented.** Brain-inspired sectioned memory gives different memory types (signals, episodes, lessons, playbooks) fundamentally different retrieval weights, decay curves, encoding strength, and consolidation rules. All 7 issues were implemented in order (0 → 1/2 → 6 → 4 → 3 → 5). See `memory-sections/executive-summary.md` for full theory and implementation notes.
+> **All 21 issues below are resolved. Memory Sections (Issues 0–6) are fully implemented, and the brain visualization frontend is live.** Brain-inspired sectioned memory gives different memory types (signals, episodes, lessons, playbooks) fundamentally different retrieval weights, decay curves, encoding strength, and consolidation rules. All 7 issues were implemented in order (0 → 1/2 → 6 → 4 → 3 → 5). The Memory page "Sections" tab (`brain.html`) visualizes all 4 sections as an interactive sagittal brain SVG with per-section force-directed graphs, ghost nodes, pathway lines, and stat chips. See `memory-sections/executive-summary.md` for full theory, implementation notes, and frontend details.
 
 ---
 
