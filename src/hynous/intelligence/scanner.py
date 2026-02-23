@@ -367,9 +367,11 @@ class MarketScanner:
         if self._deriv_polls >= _WARMUP_DIVERGENCE:
             anomalies.extend(self._detect_oi_price_divergence())
 
-        # Tier 4: News alerts (no warmup needed)
-        if self._news:
-            anomalies.extend(self._detect_news_alert())
+        # Tier 4: News alerts — DISABLED as wake source (53% of wakes, <1% trade
+        # conversion). News is still ingested and available via get_recent_news()
+        # for briefings and agent tools — it just doesn't wake the agent.
+        # if self._news:
+        #     anomalies.extend(self._detect_news_alert())
 
         # Tier 3: Liquidations (absolute thresholds, no warmup)
         if len(self._liqs) >= 1:
