@@ -250,6 +250,25 @@ app = rx.App(
 app.add_page(index, route="/", title="Hynous", on_load=AppState.load_page)
 
 
+# ── Cache-control middleware ──────────────────────────────────────────
+# Prevents Cloudflare / browser from serving stale HTML after deploys.
+# Static assets (JS/CSS) have hashed filenames so they're safe to cache.
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+class _NoCacheHTMLMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        ct = response.headers.get("content-type", "")
+        if "text/html" in ct:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
+
+app._api.add_middleware(_NoCacheHTMLMiddleware)
+
+
 # Proxy Nous API through the Reflex backend so the browser doesn't need
 # direct access to port 3100 (blocked by UFW).
 async def _nous_proxy(request):

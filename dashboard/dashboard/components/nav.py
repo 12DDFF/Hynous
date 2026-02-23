@@ -10,12 +10,17 @@ def nav_item(
     on_click: callable,
     has_unread: rx.Var[bool] | None = None,
 ) -> rx.Component:
-    """Navigation tab item - text only, clean design, optional unread dot."""
+    """Navigation tab item - text only, clean design, optional unread dot.
+
+    Uses rx.box instead of rx.button to avoid Radix button's persistent
+    focus/hover styles that cause tabs to appear hovered when they're not.
+    """
     children = [
         rx.text(
             label,
             font_size="0.875rem",
             font_weight=rx.cond(is_active, "500", "400"),
+            line_height="1",
         ),
     ]
     if has_unread is not None:
@@ -36,18 +41,21 @@ def nav_item(
                 rx.fragment(),
             )
         )
-    return rx.button(
+    return rx.box(
         *children,
         on_click=on_click,
         position="relative",
+        display="flex",
+        align_items="center",
+        justify_content="center",
         background=rx.cond(is_active, "#1a1a1a", "transparent"),
         color=rx.cond(is_active, "#fafafa", "#737373"),
         padding="0.5rem 1rem",
         border_radius="6px",
-        border="none",
         cursor="pointer",
-        transition="all 0.15s ease",
+        transition="background 0.15s ease, color 0.15s ease",
         _hover={"background": "#1a1a1a", "color": "#e5e5e5"},
+        user_select="none",
     )
 
 
@@ -117,17 +125,17 @@ def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_j
                 ),
                 rx.text("Online", font_size="0.8rem", color="#525252"),
                 # Logout button
-                rx.button(
+                rx.box(
                     rx.text("\u23FB", font_size="0.85rem"),
                     on_click=on_logout,
+                    display="flex",
+                    align_items="center",
+                    justify_content="center",
                     background="transparent",
                     color="#525252",
-                    border="none",
                     cursor="pointer",
                     padding="4px 6px",
                     border_radius="4px",
-                    min_width="auto",
-                    height="auto",
                     _hover={"color": "#ef4444", "background": "rgba(239,68,68,0.1)"},
                     title="Logout",
                 ),
