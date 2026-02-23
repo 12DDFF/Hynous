@@ -1396,8 +1396,10 @@ def handle_close_position(
     else:
         pnl_per_unit = entry_px - exit_px
     realized_pnl = pnl_per_unit * closed_sz
-    # Fee estimate (taker 0.035% per side)
-    fee_estimate = closed_sz * exit_px * 0.00035
+    # Fee estimate (taker 0.035% per side — entry + exit)
+    entry_fee = closed_sz * entry_px * 0.00035
+    exit_fee = closed_sz * exit_px * 0.00035
+    fee_estimate = entry_fee + exit_fee
     realized_pnl_net = realized_pnl - fee_estimate
     pnl_pct = (pnl_per_unit / entry_px * 100) if entry_px > 0 else 0
     # Leveraged return on margin for consistency with position display
