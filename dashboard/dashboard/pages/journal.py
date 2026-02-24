@@ -269,15 +269,24 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
             rx.hstack(
                 rx.cond(
                     AppState.journal_pnl_mode == "pct",
-                    rx.text(
-                        trade.lev_return_pct.to(str) + "%",
-                        font_size="0.8rem",
-                        font_weight="500",
-                        color=pnl_color,
-                        font_family="JetBrains Mono",
+                    rx.cond(
+                        (trade.lev_return_pct == 0.0) & (trade.pnl_usd != 0.0),
+                        rx.text(
+                            "—",
+                            font_size="0.8rem",
+                            color="#525252",
+                            font_family="JetBrains Mono",
+                        ),
+                        rx.text(
+                            trade.lev_return_pct.to(str) + "%",
+                            font_size="0.8rem",
+                            font_weight="500",
+                            color=pnl_color,
+                            font_family="JetBrains Mono",
+                        ),
                     ),
                     rx.text(
-                        "$" + trade.pnl_usd.to(str),
+                        rx.cond(trade.pnl_usd < 0, "-$", "+$") + trade.pnl_usd.abs().to(str),
                         font_size="0.8rem",
                         font_weight="500",
                         color=pnl_color,
@@ -318,22 +327,32 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                 spacing="1",
                 align="center",
             ),
-            # Peak ROE — always % (gross peak, same basis as lev_return_pct)
+            # Peak — toggles between ROE % and dollar amount
             rx.cond(
-                trade.mfe_pct > 0,
-                rx.text(
-                    "+" + trade.mfe_pct.to(str) + "%",
-                    font_size="0.8rem",
-                    font_weight="500",
-                    color="#4ade80",
-                    min_width="70px",
-                    font_family="JetBrains Mono",
+                AppState.journal_pnl_mode == "pct",
+                rx.cond(
+                    trade.mfe_pct > 0,
+                    rx.text(
+                        "+" + trade.mfe_pct.to(str) + "%",
+                        font_size="0.8rem",
+                        font_weight="500",
+                        color="#4ade80",
+                        min_width="70px",
+                        font_family="JetBrains Mono",
+                    ),
+                    rx.text("—", font_size="0.8rem", color="#525252", min_width="70px"),
                 ),
-                rx.text(
-                    "—",
-                    font_size="0.8rem",
-                    color="#525252",
-                    min_width="70px",
+                rx.cond(
+                    trade.mfe_usd > 0,
+                    rx.text(
+                        "+$" + trade.mfe_usd.to(str),
+                        font_size="0.8rem",
+                        font_weight="500",
+                        color="#4ade80",
+                        min_width="70px",
+                        font_family="JetBrains Mono",
+                    ),
+                    rx.text("—", font_size="0.8rem", color="#525252", min_width="70px"),
                 ),
             ),
             # Duration
@@ -404,7 +423,11 @@ def _trade_table() -> rx.Component:
                     rx.text("ROE %", font_size="0.7rem", color="#525252", min_width="85px"),
                     rx.text("PnL $", font_size="0.7rem", color="#525252", min_width="85px"),
                 ),
-                rx.text("Peak ROE", font_size="0.7rem", color="#525252", min_width="70px"),
+                rx.cond(
+                    AppState.journal_pnl_mode == "pct",
+                    rx.text("Peak ROE", font_size="0.7rem", color="#525252", min_width="70px"),
+                    rx.text("Peak $", font_size="0.7rem", color="#525252", min_width="70px"),
+                ),
                 rx.text("Duration", font_size="0.7rem", color="#525252", min_width="50px"),
                 width="100%",
                 padding_y="0.5rem",

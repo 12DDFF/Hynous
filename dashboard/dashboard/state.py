@@ -269,6 +269,7 @@ class ClosedTrade(BaseModel):
     rr_ratio: float = 0.0
     trade_type: str = ""  # "micro" or "macro"
     mfe_pct: float = 0.0         # max favorable excursion ROE % (peak, gross)
+    mfe_usd: float = 0.0         # peak dollar value (mfe_pct / 100 * margin)
     lev_return_pct: float = 0.0  # net leveraged ROE % (same basis as mfe_pct)
     fee_loss: bool = False  # directionally correct but fees ate profit
     fee_heavy:    bool  = False   # fees took >50% of gross profit
@@ -392,6 +393,7 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         "rr_ratio": 0.0,
         "trade_type": "",
         "mfe_pct": 0.0,
+        "mfe_usd": 0.0,
         "lev_return_pct": 0.0,
         "fee_loss": False,
         "fee_heavy": False,
@@ -404,7 +406,15 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         close_body = json.loads(close_node.get("content_body", "{}"))
         close_signals = close_body.get("signals", {})
         result["mfe_pct"]        = float(close_signals.get("mfe_pct", 0))
-        result["lev_return_pct"] = float(close_signals.get("lev_return_pct", 0.0))
+        result["mfe_usd"]        = float(close_signals.get("mfe_usd", 0.0))
+        lev_return_pct           = float(close_signals.get("lev_return_pct", 0.0))
+        # Fallback: derive from margin_used if lev_return_pct missing (pre-overhaul trades)
+        if lev_return_pct == 0.0:
+            margin_used = float(close_signals.get("margin_used", 0.0))
+            pnl_usd_sig = float(close_signals.get("pnl_usd", 0.0))
+            if margin_used > 0 and pnl_usd_sig != 0.0:
+                lev_return_pct = round(pnl_usd_sig / margin_used * 100, 2)
+        result["lev_return_pct"] = lev_return_pct
         result["fee_loss"]       = bool(close_signals.get("fee_loss", False))
         result["fee_heavy"]      = bool(close_signals.get("fee_heavy", False))
         result["fee_estimate"]   = float(close_signals.get("fee_estimate", 0.0))
@@ -3631,6 +3641,7 @@ class AppState(rx.State):
                     rr_ratio=enrichment.get("rr_ratio", 0.0),
                     trade_type=enrichment.get("trade_type", ""),
                     mfe_pct=enrichment.get("mfe_pct", 0.0),
+                    mfe_usd=enrichment.get("mfe_usd") or t.mfe_usd,
                     lev_return_pct=enrichment.get("lev_return_pct") or t.lev_return_pct,
                     fee_loss=enrichment.get("fee_loss", False) or t.fee_loss,
                     fee_heavy=enrichment.get("fee_heavy", False) or t.fee_heavy,

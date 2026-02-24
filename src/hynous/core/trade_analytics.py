@@ -41,6 +41,7 @@ class TradeRecord:
     fee_estimate:  float = 0.0    # estimated round-trip fees in USD
     pnl_gross:     float = 0.0    # raw PnL before fees
     lev_return_pct: float = 0.0   # net leveraged ROE % (pnl_net / margin * 100)
+    mfe_usd:        float = 0.0   # peak dollar value (mfe_pct / 100 * margin)
 
 
 @dataclass
@@ -126,6 +127,11 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
     pnl_usd        = float(signals.get("pnl_usd", 0))
     pnl_pct        = float(signals.get("pnl_pct", 0))
     lev_return_pct = float(signals.get("lev_return_pct", 0.0))
+    margin_used    = float(signals.get("margin_used", 0.0))
+    mfe_usd        = float(signals.get("mfe_usd", 0.0))
+    # Fallback: compute lev_return_pct from margin if signal predates fee overhaul
+    if lev_return_pct == 0.0 and margin_used > 0 and pnl_usd != 0.0:
+        lev_return_pct = round(pnl_usd / margin_used * 100, 2)
     close_type = signals.get("close_type", "full")
     size_usd = float(signals.get("size_usd", 0))
     trade_type = signals.get("trade_type", "macro")
@@ -171,6 +177,7 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
         fee_estimate=fee_estimate,
         pnl_gross=pnl_gross,
         lev_return_pct=lev_return_pct,
+        mfe_usd=mfe_usd,
     )
 
 
@@ -281,7 +288,7 @@ def _merge_partial_trades(trades: list[TradeRecord]) -> list[TradeRecord]:
                 thesis=t.thesis, trade_type=t.trade_type,
                 fee_loss=t.fee_loss, fee_heavy=t.fee_heavy,
                 fee_estimate=t.fee_estimate, pnl_gross=t.pnl_gross,
-                lev_return_pct=t.lev_return_pct,
+                lev_return_pct=t.lev_return_pct, mfe_usd=t.mfe_usd,
             )
         else:
             m = merged[key]
@@ -302,9 +309,10 @@ def _merge_partial_trades(trades: list[TradeRecord]) -> list[TradeRecord]:
             m.closed_at = max(m.closed_at, t.closed_at)
             m.close_type = "merged"
             m.duration_hours = max(m.duration_hours, t.duration_hours)
-            # Aggregate fee fields across partial closes
+            # Aggregate fee fields across partial closes; peak is the max
             m.fee_estimate = round(m.fee_estimate + t.fee_estimate, 2)
             m.pnl_gross    = round(m.pnl_gross    + t.pnl_gross,    2)
+            m.mfe_usd      = max(m.mfe_usd, t.mfe_usd)
             # Recompute flags on merged totals
             m.fee_loss  = m.pnl_gross > 0 and m.pnl_usd < 0
             m.fee_heavy = (not m.fee_loss) and m.pnl_gross > 0 and m.fee_estimate > m.pnl_gross * 0.5
