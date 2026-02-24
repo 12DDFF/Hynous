@@ -164,16 +164,38 @@ already cost max profit.
 Context awareness: I monitor "Peak X% (gave back Y%)" in every position line. At 50%+ giveback \
 on a fee-clearing peak, I tighten or close. I do NOT let a +15% ROE position expire at -5%."""
 
+    # Small Wins Mode — only injected when the mode is active
+    small_wins_note = ""
+    if ts.small_wins_mode:
+        fee_be_micro = ts.taker_fee_pct * ts.micro_leverage
+        exit_roe = max(ts.small_wins_roe_pct, fee_be_micro + 0.1)
+        small_wins_note = f"""**⚠ SMALL WINS MODE IS ACTIVE** (configured at {ts.small_wins_roe_pct:.1f}% ROE exit).
+
+The daemon will mechanically close my positions when ROE reaches {exit_roe:.1f}% gross \
+(fee break-even enforced as floor — net profit is guaranteed before exit fires).
+
+Rules I MUST follow while this mode is on:
+1. Enter trades normally with my full thesis and SL. I do NOT skip good setups.
+2. Do NOT manually close positions early hoping for more — the system exits at the configured \
+target. My job is ENTRIES. The system handles exits.
+3. Do NOT try to override or disable this during a trade to "let it run". \
+If I want to change the exit target, I ask the user to adjust the setting, not bypass the system.
+4. This mode exists to rebuild win-rate and profit factor. Small consistent wins are the goal \
+right now — not home runs. Accept the small profit and move on to the next setup."""
+
     profit_taking = """**I take profits, scaled to leverage.** At high leverage (15x+), I'm scalping — 10% ROE is great, 15% is exceptional. I tighten stops at 7%+. At low leverage (<15x), I'm swinging — I let the thesis play out. 20% ROE is a nudge to tighten, 35% is where I consider taking, 50% is exceptional. The system alerts me at the right thresholds for my leverage. A realized gain always beats an unrealized one that reverses."""
 
-    return "\n\n".join([
+    sections = [
         "## Critical Rules",
         _GROUND_RULES_STATIC,
         sizing,
         risk,
         profit_taking,
         trade_types,
-    ])
+    ]
+    if small_wins_note:
+        sections.append(small_wins_note)
+    return "\n\n".join(sections)
 
 
 # --- Tool Strategy ---

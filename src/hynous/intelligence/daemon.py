@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 
 from ..core.config import Config
 from ..core.daemon_log import log_event, DaemonEvent, flush as flush_daemon_log
+from ..core.trading_settings import get_trading_settings
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +239,7 @@ class Daemon:
         self._peak_roe: dict[str, float] = {}     # coin → max ROE % seen during hold
         self._current_roe: dict[str, float] = {}   # coin → latest computed ROE % (updated every 10s)
         self._breakeven_set: dict[str, bool] = {}  # coin → True once breakeven SL placed this hold
+        self._small_wins_exited: dict[str, bool] = {}  # coin → True once small-wins exit fired
 
         # Position type registry: {coin: {"type": "micro"|"macro", "entry_time": float}}
         # Populated by trading tool via register_position_type(), inferred on restart
@@ -1252,6 +1254,40 @@ class Daemon:
                             except Exception as be_err:
                                 logger.warning("Breakeven stop failed for %s: %s", sym, be_err)
 
+                # Small Wins Mode: mechanical exit at configured ROE target (no agent decision)
+                ts = get_trading_settings()
+                if ts.small_wins_mode and not self._small_wins_exited.get(sym):
+                    fee_be_roe = self.config.daemon.taker_fee_pct * leverage
+                    # Floor: always require at least fee BE + 0.1% so we actually net a profit
+                    exit_roe = max(ts.small_wins_roe_pct, fee_be_roe + 0.1)
+                    if roe_pct >= exit_roe:
+                        try:
+                            self._provider.market_close(sym)
+                            self._small_wins_exited[sym] = True
+                            net_roe = roe_pct - fee_be_roe
+                            type_info = self.get_position_type(sym)
+                            trade_type = type_info["type"]
+                            type_label = f"{trade_type} {leverage}x"
+                            sw_msg = (
+                                f"[SMALL WINS] {sym} {side.upper()} closed at {roe_pct:+.1f}% ROE "
+                                f"({type_label}). Fee break-even: {fee_be_roe:.1f}% → "
+                                f"net after fees: ~{net_roe:+.1f}% ROE. "
+                                f"Small Wins Mode locked in profit automatically."
+                            )
+                            _queue_and_persist("System", f"Small Wins Exit: {sym}", sw_msg)
+                            log_event(DaemonEvent(
+                                "profit", f"small_wins_exit: {sym} {side}",
+                                f"Exit @ ROE {roe_pct:+.1f}% | fee BE {fee_be_roe:.1f}% "
+                                f"| net ~{net_roe:+.1f}% | {type_label}",
+                            ))
+                            # Cancel any remaining orders so TP/SL don't linger on closed position
+                            try:
+                                self._provider.cancel_all_orders(sym)
+                            except Exception:
+                                pass
+                        except Exception as sw_err:
+                            logger.warning("Small wins exit failed for %s: %s", sym, sw_err)
+
         except Exception as e:
             logger.debug("Fast trigger check failed: %s", e)
 
@@ -1569,8 +1605,9 @@ class Daemon:
                 prev_side = self._profit_sides.get(coin)
                 if prev_side and prev_side != side:
                     self._profit_alerts.pop(coin, None)
-                    self._breakeven_set.pop(coin, None)  # New position — re-evaluate breakeven
-                    self._peak_roe.pop(coin, None)       # New hold — reset peak tracking
+                    self._breakeven_set.pop(coin, None)      # New position — re-evaluate breakeven
+                    self._small_wins_exited.pop(coin, None)  # New hold — re-arm small wins
+                    self._peak_roe.pop(coin, None)           # New hold — reset peak tracking
                 self._profit_sides[coin] = side
 
                 if coin not in self._profit_alerts:
@@ -1628,6 +1665,9 @@ class Daemon:
             for coin in list(self._breakeven_set):
                 if coin not in open_coins:
                     del self._breakeven_set[coin]
+            for coin in list(self._small_wins_exited):
+                if coin not in open_coins:
+                    del self._small_wins_exited[coin]
 
         except Exception as e:
             logger.debug("Profit level check failed: %s", e)

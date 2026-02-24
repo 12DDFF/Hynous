@@ -85,6 +85,14 @@ class TradingSettings:
     sm_auto_min_pf: float = 1.5
     sm_auto_max_wallets: int = 20
 
+    # --- Small Wins Mode ---
+    # When enabled: daemon mechanically exits positions at small_wins_roe_pct gross ROE.
+    # The fee break-even for the position's leverage is always enforced as a floor,
+    # so exits always net a profit after fees. No agent involvement in the exit.
+    # Use this to build win-rate and profit factor; disable once metrics recover.
+    small_wins_mode: bool = False
+    small_wins_roe_pct: float = 3.0  # Gross ROE % to exit at (fee BE enforced as floor)
+
 
 _lock = threading.Lock()
 _cached: TradingSettings | None = None
