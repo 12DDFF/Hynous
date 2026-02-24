@@ -1588,18 +1588,25 @@ class Daemon:
                                 )
                                 self._breakeven_set[coin] = True
                                 type_label = f"{trade_type} {leverage}x"
-                                be_msg = (
-                                    f"[DAEMON] Breakeven stop set: {coin} {side.upper()} ({type_label})\n"
-                                    f"Cleared fee break-even (ROE: {roe_pct:+.1f}% ≥ {fee_be_roe:.1f}%). "
-                                    f"SL placed at ${be_price:,.2f} "
-                                    f"({buffer_pct * 100:.1f}% buffer from entry ${entry_px:,.2f}). "
-                                    f"Trade is now risk-free."
+                                be_wake = (
+                                    f"[DAEMON — Breakeven Stop Set: {coin} {side.upper()} ({type_label})]\n\n"
+                                    f"{coin} {side.upper()} cleared fee break-even "
+                                    f"(ROE: {roe_pct:+.1f}% ≥ {fee_be_roe:.1f}% at {leverage}x). "
+                                    f"I placed a stop-loss at ${be_price:,.2f} "
+                                    f"({buffer_pct * 100:.2f}% buffer from entry ${entry_px:,.2f}).\n\n"
+                                    f"This trade is now risk-free. The SL is mechanical — do not remove it "
+                                    f"without a specific reason. Acknowledge and share your current plan for this position."
                                 )
-                                _queue_and_persist("System", f"Breakeven stop: {coin}", be_msg)
+                                response = self._wake_agent(
+                                    be_wake, priority=False, max_coach_cycles=0,
+                                    max_tokens=512, source="daemon:breakeven",
+                                )
                                 log_event(DaemonEvent(
                                     "profit", f"breakeven_stop: {coin} {side}",
                                     f"BE SL @ ${be_price:,.2f} | ROE {roe_pct:+.1f}%",
                                 ))
+                                if response:
+                                    _queue_and_persist("System", f"Breakeven stop: {coin}", response)
                             except Exception as e:
                                 logger.warning("Breakeven stop failed for %s: %s", coin, e)
 

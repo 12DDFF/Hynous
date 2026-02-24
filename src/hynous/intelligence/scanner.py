@@ -1780,21 +1780,25 @@ def format_scanner_wake(
         position_types: {coin: {"type": "micro"|"macro", ...}} from daemon.
         regime_label: Current regime label for directional guidance.
     """
-    # Separate by category
+    # Separate by category and type
     risk = [a for a in anomalies if a.type == "position_adverse_book"]
+    peak_fade = [a for a in anomalies if a.type == "peak_reversion"]
     news = [a for a in anomalies if a.category == "news"]
-    micro = [a for a in anomalies if a.category == "micro" and a.type != "position_adverse_book"]
-    macro = [a for a in anomalies if a.category == "macro"]
+    micro = [a for a in anomalies if a.category == "micro" and a.type not in ("position_adverse_book", "peak_reversion")]
+    macro = [a for a in anomalies if a.category == "macro" and a.type != "peak_reversion"]
 
     # Determine wake type and header
     top = anomalies[0]
     has_risk = bool(risk)
+    has_peak_fade = bool(peak_fade)
     has_news = bool(news)
     has_micro = bool(micro)
     has_macro = bool(macro)
 
     if has_risk:
         header = f"[DAEMON WAKE — POSITION RISK: {risk[0].headline}]"
+    elif has_peak_fade and not has_micro and not has_macro and not has_news:
+        header = f"[DAEMON WAKE — PEAK FADE: {peak_fade[0].headline}]"
     elif has_news and not has_micro and not has_macro:
         header = f"[DAEMON WAKE — Breaking News: {news[0].headline}]"
     elif has_micro and not has_macro and not has_news:
@@ -1811,8 +1815,8 @@ def format_scanner_wake(
         "",
     ]
 
-    # List risk signals first, then news, then micro, then macro
-    ordered = risk + news + micro + macro
+    # List risk signals first, then peak fade, then news, then micro, then macro
+    ordered = risk + peak_fade + news + micro + macro
     for i, a in enumerate(ordered, 1):
         label = _severity_label(a.severity)
         lines.append(f"{i}. [{a.type.upper()}] {a.headline} ({label})")
@@ -1839,6 +1843,20 @@ def format_scanner_wake(
             lines.append("This is a scalp — book flipped against you. Close or tighten SL now. Don't hold a micro against the flow. 1-2 sentences.")
         else:
             lines.append("Swing position — book pressure building. Check if your thesis still holds. Tighten stop or hold if conviction is strong. 1-2 sentences.")
+    elif has_peak_fade and not has_micro and not has_macro and not has_news:
+        fade_coin = peak_fade[0].symbol
+        ptype = (position_types or {}).get(fade_coin, {}).get("type", "macro")
+        if ptype == "micro":
+            lines.append(
+                "Scalp is giving back a significant chunk of peak profit. You had it, now it's eroding. "
+                "CLOSE or tighten SL to current mark. 'Waiting for recovery' is not a plan on a micro. 1-2 sentences."
+            )
+        else:
+            lines.append(
+                "Swing position is fading from its peak. Three options: close and lock in what's left, "
+                "tighten SL to current mark, or state clearly why your thesis still points higher. "
+                "No answer is not an answer. 1-2 sentences."
+            )
     elif has_news and not has_micro and not has_macro:
         lines.append(f"Signal or noise? If it matters for your positions or thesis, act on it.{direction_hint} 1-2 sentences.")
     elif has_micro and not has_macro:
