@@ -286,7 +286,8 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                         ),
                     ),
                     rx.text(
-                        rx.cond(trade.pnl_usd < 0, "-$", "+$") + trade.pnl_usd.abs().to(str),
+                        rx.cond(trade.pnl_usd < 0, "-$", "+$")
+                        + rx.cond(trade.pnl_usd < 0, (-trade.pnl_usd).to(str), trade.pnl_usd.to(str)),
                         font_size="0.8rem",
                         font_weight="500",
                         color=pnl_color,
