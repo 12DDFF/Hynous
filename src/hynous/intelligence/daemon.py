@@ -236,6 +236,7 @@ class Daemon:
         self._profit_alerts: dict[str, dict[str, float]] = {}
         self._profit_sides: dict[str, str] = {}  # coin → side (detect flips)
         self._peak_roe: dict[str, float] = {}  # coin → max ROE % seen during hold
+        self._breakeven_set: dict[str, bool] = {}  # coin → True once breakeven SL placed this hold
 
         # Position type registry: {coin: {"type": "micro"|"macro", "entry_time": float}}
         # Populated by trading tool via register_position_type(), inferred on restart
@@ -423,7 +424,7 @@ class Daemon:
 
     def get_peak_roe(self, coin: str) -> float:
         """Get max favorable excursion (peak ROE %) tracked during hold."""
-        return self._peak_roe.get(coin.upper(), 0.0)
+        return self._peak_roe.get(coin, 0.0)
 
     @property
     def last_trade_ago(self) -> str:
@@ -591,6 +592,17 @@ class Daemon:
                         self._scanner.position_directions = {
                             sym: pos.get("side", "long")
                             for sym, pos in self._prev_positions.items()
+                        }
+                        self._scanner.peak_roe_data = {
+                            coin: {
+                                "peak_roe":    self._peak_roe.get(coin, 0.0),
+                                "current_roe": pos.get("return_pct", 0.0),
+                                "leverage":    pos.get("leverage", 20),
+                                "trade_type":  self.get_position_type(coin)["type"],
+                                "side":        pos.get("side", "long"),
+                                "entry_px":    pos.get("entry_px", 0.0),
+                            }
+                            for coin, pos in self._prev_positions.items()
                         }
                         anomalies = self._scanner.detect()
                         if anomalies:
@@ -1491,6 +1503,8 @@ class Daemon:
                 prev_side = self._profit_sides.get(coin)
                 if prev_side and prev_side != side:
                     self._profit_alerts.pop(coin, None)
+                    self._breakeven_set.pop(coin, None)  # New position — re-evaluate breakeven
+                    self._peak_roe.pop(coin, None)       # New hold — reset peak tracking
                 self._profit_sides[coin] = side
 
                 if coin not in self._profit_alerts:
@@ -1514,7 +1528,11 @@ class Daemon:
 
                 # Check profit fading: peak was strong but profit is dying
                 peak = self._peak_roe.get(coin, 0)
-                if peak >= nudge and roe_pct < peak * 0.4:
+                reversion_threshold = (
+                    self.config.daemon.peak_reversion_threshold_micro if trade_type == "micro"
+                    else self.config.daemon.peak_reversion_threshold_macro
+                )
+                if peak >= nudge and roe_pct < peak * (1.0 - reversion_threshold):
                     self._maybe_alert(coin, "profit_fading", roe_pct, side, entry_px, mark_px, now, alerts, trade_type)
 
                 # Check risk: significant loss with no stop loss
@@ -1529,6 +1547,62 @@ class Daemon:
                     if now - type_info["entry_time"] > 3600:
                         self._maybe_alert(coin, "micro_overstay", roe_pct, side, entry_px, mark_px, now, alerts, "micro")
 
+                # --- Breakeven stop auto-move (mechanical, no agent) ---
+                if self.config.daemon.breakeven_stop_enabled:
+                    fee_be_roe = self.config.daemon.taker_fee_pct * leverage  # fee break-even ROE% for this leverage
+                    buffer_pct = (
+                        self.config.daemon.breakeven_buffer_micro_pct
+                        if trade_type == "micro"
+                        else self.config.daemon.breakeven_buffer_macro_pct
+                    ) / 100.0
+
+                    if roe_pct >= fee_be_roe and not self._breakeven_set.get(coin):
+                        is_long = (side == "long")
+                        # Breakeven price with buffer (slightly inside entry for conservative stop)
+                        be_price = (
+                            entry_px * (1 - buffer_pct) if is_long
+                            else entry_px * (1 + buffer_pct)
+                        )
+
+                        # Skip if existing SL is already at or better than breakeven
+                        triggers = self._tracked_triggers.get(coin, [])
+                        has_good_sl = any(
+                            t.get("order_type") == "stop_loss" and (
+                                (is_long and t.get("trigger_px", 0) >= be_price) or
+                                (not is_long and 0 < t.get("trigger_px", 0) <= be_price)
+                            )
+                            for t in triggers
+                        )
+
+                        if has_good_sl:
+                            self._breakeven_set[coin] = True  # Already protected — no retry
+                        else:
+                            try:
+                                sz = p.get("size", 0)
+                                self._provider.place_trigger_order(
+                                    symbol=coin,
+                                    is_buy=(side != "long"),  # long → SELL stop; short → BUY stop
+                                    sz=sz,
+                                    trigger_px=be_price,
+                                    tpsl="sl",
+                                )
+                                self._breakeven_set[coin] = True
+                                type_label = f"{trade_type} {leverage}x"
+                                be_msg = (
+                                    f"[DAEMON] Breakeven stop set: {coin} {side.upper()} ({type_label})\n"
+                                    f"Cleared fee break-even (ROE: {roe_pct:+.1f}% ≥ {fee_be_roe:.1f}%). "
+                                    f"SL placed at ${be_price:,.2f} "
+                                    f"({buffer_pct * 100:.1f}% buffer from entry ${entry_px:,.2f}). "
+                                    f"Trade is now risk-free."
+                                )
+                                _queue_and_persist("System", f"Breakeven stop: {coin}", be_msg)
+                                log_event(DaemonEvent(
+                                    "profit", f"breakeven_stop: {coin} {side}",
+                                    f"BE SL @ ${be_price:,.2f} | ROE {roe_pct:+.1f}%",
+                                ))
+                            except Exception as e:
+                                logger.warning("Breakeven stop failed for %s: %s", coin, e)
+
             # Clean up alerts + sides + peak ROE for closed positions
             open_coins = {p["coin"] for p in positions}
             for coin in list(self._profit_alerts.keys()):
@@ -1538,6 +1612,9 @@ class Daemon:
             for coin in list(self._peak_roe):
                 if coin not in open_coins:
                     del self._peak_roe[coin]
+            for coin in list(self._breakeven_set):
+                if coin not in open_coins:
+                    del self._breakeven_set[coin]
 
         except Exception as e:
             logger.debug("Profit level check failed: %s", e)

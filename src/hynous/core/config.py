@@ -120,6 +120,13 @@ class DaemonConfig:
     phantom_max_age_seconds: int = 14400        # Max phantom lifetime (4h, macro default)
     # Playbook matcher (Issue 5: procedural memory)
     playbook_cache_ttl: int = 1800              # Seconds between playbook cache refreshes (30 min)
+    # Peak profit protection
+    peak_reversion_threshold_micro: float = 0.40  # Giveback fraction to alert on micro (40% = tight, fast trades)
+    peak_reversion_threshold_macro: float = 0.50  # Giveback fraction to alert on macro (50% = swings breathe)
+    breakeven_stop_enabled: bool = True            # Auto-move SL to entry buffer once fees are cleared
+    breakeven_buffer_micro_pct: float = 0.10       # Price % buffer below entry (long) / above (short) — micro
+    breakeven_buffer_macro_pct: float = 0.30       # Same buffer for macro (wider — swing noise tolerance)
+    taker_fee_pct: float = 0.07                    # Round-trip taker fee as % of notional (drives fee BE calc)
 
 
 @dataclass
@@ -150,6 +157,10 @@ class ScannerConfig:
     # News integration (CryptoCompare)
     news_poll_enabled: bool = True             # Poll CryptoCompare for news (every deriv cycle)
     news_wake_max_age_minutes: int = 30        # Only alert on news < 30min old
+    # Peak reversion detector (mirrors DaemonConfig thresholds — scanner has its own ScannerConfig)
+    peak_reversion_threshold_micro: float = 0.40  # Giveback fraction to fire peak_reversion for micro
+    peak_reversion_threshold_macro: float = 0.50  # Giveback fraction to fire peak_reversion for macro
+    taker_fee_pct: float = 0.07                    # Round-trip taker fee % (for fee break-even gating)
 
 
 @dataclass

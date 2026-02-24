@@ -128,6 +128,7 @@ class MarketScanner:
         self._books = RollingBuffer(maxlen=10)       # L2 every 60s = 10min window
         self._candles_5m: dict[str, deque] = {}      # sym → deque(maxlen=12) = 1h of 5m candles
         self.position_directions: dict[str, str] = {}  # sym → "long"/"short" (set by daemon)
+        self.peak_roe_data: dict[str, dict] = {}  # coin → {peak_roe, current_roe, leverage, trade_type, side}
 
         # News buffer
         self._news: list[dict] = []           # Recent articles (last 50)
@@ -359,6 +360,9 @@ class MarketScanner:
         if any(len(c) >= 3 for c in self._candles_5m.values()):
             anomalies.extend(self._detect_momentum_burst())
 
+        # Peak reversion (all open positions with fee-clearing peaks)
+        anomalies.extend(self._detect_peak_reversion())
+
         # Tier 2: Derivatives (every 300s)
         if self._deriv_polls >= _WARMUP_DERIVS:
             anomalies.extend(self._detect_funding_extremes())
@@ -415,6 +419,8 @@ class MarketScanner:
                     ttl = 1800   # 30min — per-wallet custom alerts
                 elif a.type in ("sm_entry", "sm_exit"):
                     ttl = 3600   # 1h — one alert per address+coin combo
+                elif a.type == "peak_reversion":
+                    ttl = 900 if a.category == "micro" else 1800
                 elif a.category == "news":
                     ttl = 3600   # 1h — news doesn't repeat
                 elif a.category == "micro":
@@ -1190,6 +1196,84 @@ class MarketScanner:
                 fingerprint=f"position_adverse:{sym}",
                 detected_at=now,
                 category="micro",
+            ))
+
+        return results
+
+    def _detect_peak_reversion(self) -> list[AnomalyEvent]:
+        """Detect when a position gives back >N% of its fee-clearing peak profit.
+
+        Only fires when peak cleared fee break-even (taker_fee_pct × leverage %).
+        Differentiated by trade type (config-driven):
+        - Micro: peak_reversion_threshold_micro (default 40%) — tight, fast trades
+        - Macro: peak_reversion_threshold_macro (default 50%) — swings breathe more
+
+        Normal entry-zone dips (peak never cleared fees) are silently ignored.
+        """
+        results = []
+        now = time.time()
+
+        if not self.peak_roe_data:
+            return results
+
+        for coin, d in self.peak_roe_data.items():
+            peak       = d.get("peak_roe", 0.0)
+            current    = d.get("current_roe", 0.0)
+            leverage   = d.get("leverage", 20)
+            trade_type = d.get("trade_type", "macro")
+            side       = d.get("side", "long")
+
+            fee_be_roe = self.config.taker_fee_pct * leverage
+
+            # Ignore peaks that never cleared fees — not a missed profit scenario
+            if peak < fee_be_roe:
+                continue
+
+            # Threshold: config-driven, micro is tighter
+            threshold = (
+                self.config.peak_reversion_threshold_micro if trade_type == "micro"
+                else self.config.peak_reversion_threshold_macro
+            )
+            if current >= peak * (1 - threshold):
+                continue  # Giveback not large enough yet
+
+            giveback_pct = (peak - current) / peak * 100 if peak > 0 else 0
+
+            # Severity and context by current profit state
+            if current > fee_be_roe:
+                profit_ctx = f"still above fees ({current:+.1f}%)"
+                severity   = 0.65
+            elif current > 0:
+                profit_ctx = f"fee-trap zone ({current:+.1f}% gross, close = fee loss)"
+                severity   = 0.78
+            elif current > -5.0:
+                profit_ctx = f"just underwater ({current:+.1f}%)"
+                severity   = 0.85
+            else:
+                profit_ctx = f"significant loss ({current:+.1f}%)"
+                severity   = 0.92
+
+            type_label = f"{trade_type} {leverage}x"
+            headline = (
+                f"[PEAK FADE] {coin} {side.upper()} ({type_label}) — "
+                f"gave back {giveback_pct:.0f}% of peak profit"
+            )
+            detail = (
+                f"Peak: {peak:+.1f}% ROE → Now: {current:+.1f}% ROE | "
+                f"Giveback: {giveback_pct:.0f}% | {profit_ctx} | "
+                f"Fee break-even at {leverage}x: {fee_be_roe:.1f}%"
+            )
+
+            category = trade_type if trade_type in ("micro", "macro") else "macro"
+            results.append(AnomalyEvent(
+                type="peak_reversion",
+                symbol=coin,
+                severity=min(severity, 1.0),
+                headline=headline,
+                detail=detail,
+                fingerprint=f"peak_reversion:{coin}:{trade_type}",
+                detected_at=now,
+                category=category,  # "micro" or "macro" — drives wake format
             ))
 
         return results

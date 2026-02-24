@@ -182,6 +182,16 @@ def _build_portfolio(provider, daemon, config) -> tuple[str, list[str]]:
                 parts.append(f"TP ${tp:,.0f}")
             pos_str += f" | {' '.join(parts)}"
 
+        # Inject peak ROE from daemon (zero cost — in-memory dict)
+        if daemon is not None and hasattr(daemon, "get_peak_roe"):
+            peak_roe = daemon.get_peak_roe(coin)
+            if peak_roe > 0 and peak_roe > pnl_pct + 1.0:  # Only show if meaningfully above current
+                giveback = (peak_roe - pnl_pct) / peak_roe * 100 if peak_roe > 0 else 0
+                if giveback >= 15:  # Skip trivial giveback noise (< 15%)
+                    pos_str += f" | Peak {peak_roe:+.1f}% (gave back {giveback:.0f}%)"
+                else:
+                    pos_str += f" | Peak {peak_roe:+.1f}%"
+
         lines.append(pos_str)
 
     coins = [p["coin"] for p in positions]

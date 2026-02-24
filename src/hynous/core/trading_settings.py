@@ -58,6 +58,9 @@ class TradingSettings:
     tier_speculative_margin_pct: int = 10
     tier_pass_threshold: float = 0.6
 
+    # --- Fee structure ---
+    taker_fee_pct: float = 0.07  # Round-trip taker fee as % of notional (0.07% = 7bps/side)
+
     # --- General limits ---
     max_position_usd: float = 10000
     max_open_positions: int = 3
