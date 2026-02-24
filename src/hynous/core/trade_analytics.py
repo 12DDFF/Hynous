@@ -128,10 +128,21 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
     pnl_pct        = float(signals.get("pnl_pct", 0))
     lev_return_pct = float(signals.get("lev_return_pct", 0.0))
     margin_used    = float(signals.get("margin_used", 0.0))
+    leverage_stored = int(signals.get("leverage", 0))
+    mfe_pct_raw    = float(signals.get("mfe_pct", 0.0))
     mfe_usd        = float(signals.get("mfe_usd", 0.0))
-    # Fallback: compute lev_return_pct from margin if signal predates fee overhaul
+
+    # Fallback 1: derive lev_return_pct from stored margin_used
     if lev_return_pct == 0.0 and margin_used > 0 and pnl_usd != 0.0:
         lev_return_pct = round(pnl_usd / margin_used * 100, 2)
+    # Fallback 2: derive from stored leverage + size_usd (older signals)
+    if lev_return_pct == 0.0 and leverage_stored > 0 and size_usd > 0 and pnl_usd != 0.0:
+        lev_return_pct = round(pnl_usd / (size_usd / leverage_stored) * 100, 2)
+
+    # Derive mfe_usd from mfe_pct * implied_margin when not stored directly
+    # mfe_usd = mfe_pct/100 * margin = mfe_pct * pnl_usd / lev_return_pct (same margin base)
+    if mfe_usd == 0.0 and mfe_pct_raw > 0 and lev_return_pct != 0.0 and pnl_usd != 0.0:
+        mfe_usd = round(mfe_pct_raw * pnl_usd / lev_return_pct, 2)
     close_type = signals.get("close_type", "full")
     size_usd = float(signals.get("size_usd", 0))
     trade_type = signals.get("trade_type", "macro")

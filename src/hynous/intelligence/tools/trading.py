@@ -1565,6 +1565,7 @@ def handle_close_position(
             "pnl_gross":   round(realized_pnl, 2),
             "fee_estimate": round(fee_estimate, 2),
             "margin_used": round(margin_used, 2),
+            "leverage":    int(position.get("leverage", 0)),
             "mfe_usd":     round(mfe_pct / 100 * margin_used, 2) if margin_used > 0 else 0.0,
         },
         link_to=entry_node_id,  # Edge: entry --part_of--> close (SSA 0.85)
