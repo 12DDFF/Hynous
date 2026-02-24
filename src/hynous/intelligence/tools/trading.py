@@ -742,13 +742,13 @@ def handle_execute_trade(
         "execute_trade", "validation", True,
         f"{side.upper()} {symbol} | {leverage}x | R:R {pre_rr:.1f}:1 | "
         f"Confidence {confidence:.0%} ({tier}) | Portfolio risk {portfolio_risk_pct:.1f}%"
-        if confidence is not None and 'pre_rr' in dir() and 'portfolio_risk_pct' in dir()
+        if confidence is not None and 'pre_rr' in locals() and 'portfolio_risk_pct' in locals()
         else f"{side.upper()} {symbol} | {leverage}x | Confidence {confidence:.0%}" if confidence is not None
         else f"{side.upper()} {symbol} | {leverage}x",
         symbol=symbol, side=side, leverage=leverage,
         confidence=confidence, tier=tier,
-        rr_ratio=pre_rr if 'pre_rr' in dir() else None,
-        portfolio_risk_pct=portfolio_risk_pct if 'portfolio_risk_pct' in dir() else None,
+        rr_ratio=pre_rr if 'pre_rr' in locals() else None,
+        portfolio_risk_pct=portfolio_risk_pct if 'portfolio_risk_pct' in locals() else None,
         oversized=oversized,
         warnings=_warnings if _warnings else None,
     )
@@ -1264,6 +1264,15 @@ CLOSE_TOOL_DEF = {
                 "minimum": 1,
                 "maximum": 100,
             },
+            "force": {
+                "type": "boolean",
+                "description": (
+                    "Override fee-loss pre-flight check. Default false. "
+                    "Pass true ONLY when closing for risk management (broken thesis, "
+                    "stop management) — not to harvest a tiny green. "
+                    "Fee losses are directionally correct exits that still cost money."
+                ),
+            },
             "reasoning": {
                 "type": "string",
                 "description": "Why you're closing — always stored in memory for learning.",
@@ -1280,6 +1289,7 @@ def handle_close_position(
     order_type: str = "market",
     limit_price: float | None = None,
     partial_pct: float = 100,
+    force: bool = False,
 ) -> str:
     """Handle the close_position tool call."""
     provider, config = _get_trading_provider()
@@ -1314,6 +1324,29 @@ def handle_close_position(
         symbol=symbol, side=position["side"],
         entry_px=position.get("entry_px", 0), size=position["size"],
     )
+
+    # --- Pre-flight fee check ---
+    # If closing would be a fee loss (direction correct but net < 0), block unless force=True
+    if not force:
+        mark_px = float(position.get("mark_px", 0))
+        unrealized_pnl = float(position.get("unrealized_pnl", 0))
+        full_size_pre = float(position.get("size", 0))
+        entry_px_pre = float(position.get("entry_px", 0))
+        if mark_px > 0 and full_size_pre > 0 and entry_px_pre > 0:
+            proj_size = full_size_pre * (partial_pct / 100.0)
+            proj_gross = unrealized_pnl * (partial_pct / 100.0)
+            proj_fees = proj_size * (entry_px_pre + mark_px) * 0.00035
+            proj_net = proj_gross - proj_fees
+            if proj_gross > 0 and proj_net < 0:
+                return (
+                    f"⚠ FEE BLOCK — closing {symbol} now would be a fee loss.\n"
+                    f"  Projected gross: {_fmt_price(proj_gross)}  |  "
+                    f"  Est. fees: ~{_fmt_price(proj_fees)}  |  "
+                    f"  Net: {_fmt_price(proj_net)}\n"
+                    f"Direction is correct. If you are closing for risk management "
+                    f"(thesis broken, stop management), pass force=True. "
+                    f"Otherwise, let TP work."
+                )
 
     # --- Validate limit close ---
     if order_type == "limit" and limit_price is None:
@@ -1492,7 +1525,8 @@ def handle_close_position(
     )
 
     # Detect fee-loss: directionally correct but fees ate the profit
-    is_fee_loss = realized_pnl > 0 and realized_pnl_net < 0
+    is_fee_loss  = realized_pnl > 0 and realized_pnl_net < 0
+    is_fee_heavy = (not is_fee_loss) and realized_pnl > 0 and fee_estimate > realized_pnl * 0.5
 
     # Get peak ROE (MFE) and trade_type from daemon before position cleanup
     mfe_pct = 0.0
@@ -1526,7 +1560,8 @@ def handle_close_position(
             "opened_at": opened_at,
             "mfe_pct": round(mfe_pct, 2),
             "trade_type": close_trade_type,
-            "fee_loss": is_fee_loss,
+            "fee_loss":  is_fee_loss,
+            "fee_heavy": is_fee_heavy,
             "pnl_gross": round(realized_pnl, 2),
             "fee_estimate": round(fee_estimate, 2),
         },
@@ -1571,6 +1606,12 @@ def handle_close_position(
             f"but fees ({_fmt_price(fee_estimate)}) ate the profit. "
             f"This does NOT count as a bad trade — the direction was right, the exit was too early. "
             f"Let TP work or need wider targets to clear fees."
+        )
+    if is_fee_heavy:
+        lines.append(
+            f"Note: Fees ({_fmt_price(fee_estimate)}) took "
+            f"{fee_estimate/realized_pnl*100:.0f}% of gross profit "
+            f"({_fmt_price(realized_pnl)}). Exit was early — let TP work next time."
         )
     if cancelled > 0:
         lines.append(f"Cancelled {cancelled} associated order(s)")

@@ -10,7 +10,7 @@ from ..components import card, stat_card
 # ================================================================
 
 def _stats_row() -> rx.Component:
-    """Top row — 7 stat cards in a grid."""
+    """Top row — 9 stat cards in a 3-column grid."""
     return rx.grid(
         stat_card("Win Rate", AppState.journal_win_rate, "closed trades"),
         stat_card(
@@ -32,8 +32,14 @@ def _stats_row() -> rx.Component:
         stat_card(
             "Fee Losses",
             AppState.journal_fee_losses,
-            "direction correct, fees ate profit",
+            "correct direction · " + AppState.journal_fee_heavy_count + " heavy",
             value_color="#fbbf24",
+        ),
+        stat_card(
+            "Total Fees",
+            AppState.journal_total_fees,
+            "estimated round-trip paid",
+            value_color="#f87171",
         ),
         stat_card(
             "Current Streak",
@@ -55,7 +61,7 @@ def _stats_row() -> rx.Component:
             "win / loss",
         ),
         stat_card("Avg Duration", AppState.journal_avg_duration, "per trade"),
-        columns="4",
+        columns="3",
         spacing="4",
         width="100%",
     )
@@ -142,6 +148,49 @@ def _equity_chart() -> rx.Component:
     )
 
 
+def _pnl_mode_toggle() -> rx.Component:
+    """Small % / $ pill toggle — switches PnL column between ROE % and dollar amount."""
+    return rx.hstack(
+        rx.box(
+            rx.text(
+                "%",
+                font_size="0.7rem",
+                font_weight="600",
+                color=rx.cond(AppState.journal_pnl_mode == "pct", "#fafafa", "#525252"),
+                line_height="1",
+            ),
+            on_click=AppState.set_journal_pnl_mode("pct"),
+            padding_x="7px",
+            padding_y="3px",
+            cursor="pointer",
+            background=rx.cond(AppState.journal_pnl_mode == "pct", "#262626", "transparent"),
+            border_radius="4px",
+            transition="background 0.15s ease",
+        ),
+        rx.box(
+            rx.text(
+                "$",
+                font_size="0.7rem",
+                font_weight="600",
+                color=rx.cond(AppState.journal_pnl_mode == "usd", "#fafafa", "#525252"),
+                line_height="1",
+            ),
+            on_click=AppState.set_journal_pnl_mode("usd"),
+            padding_x="7px",
+            padding_y="3px",
+            cursor="pointer",
+            background=rx.cond(AppState.journal_pnl_mode == "usd", "#262626", "transparent"),
+            border_radius="4px",
+            transition="background 0.15s ease",
+        ),
+        spacing="0",
+        background="#111111",
+        border="1px solid #1a1a1a",
+        border_radius="6px",
+        padding="2px",
+    )
+
+
 def _trade_row(trade: ClosedTrade) -> rx.Component:
     """Single trade row — clickable to expand details."""
     # Fee losses get amber — directionally correct but fees ate profit
@@ -216,23 +265,24 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                 min_width="80px",
                 font_family="JetBrains Mono",
             ),
-            # PnL %
-            rx.text(
-                trade.pnl_pct.to(str) + "%",
-                font_size="0.8rem",
-                font_weight="500",
-                color=pnl_color,
-                min_width="60px",
-                font_family="JetBrains Mono",
-            ),
-            # PnL $
+            # PnL — toggles between ROE % and dollar amount
             rx.hstack(
-                rx.text(
-                    "$" + trade.pnl_usd.to(str),
-                    font_size="0.8rem",
-                    font_weight="500",
-                    color=pnl_color,
-                    font_family="JetBrains Mono",
+                rx.cond(
+                    AppState.journal_pnl_mode == "pct",
+                    rx.text(
+                        trade.lev_return_pct.to(str) + "%",
+                        font_size="0.8rem",
+                        font_weight="500",
+                        color=pnl_color,
+                        font_family="JetBrains Mono",
+                    ),
+                    rx.text(
+                        "$" + trade.pnl_usd.to(str),
+                        font_size="0.8rem",
+                        font_weight="500",
+                        color=pnl_color,
+                        font_family="JetBrains Mono",
+                    ),
                 ),
                 rx.cond(
                     trade.fee_loss,
@@ -249,11 +299,26 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                     ),
                     rx.fragment(),
                 ),
-                min_width="70px",
+                rx.cond(
+                    trade.fee_heavy,
+                    rx.text(
+                        "FEES",
+                        font_size="0.55rem",
+                        font_weight="600",
+                        color="#f97316",
+                        padding_x="3px",
+                        padding_y="1px",
+                        border="1px solid #f97316",
+                        border_radius="3px",
+                        line_height="1",
+                    ),
+                    rx.fragment(),
+                ),
+                min_width="85px",
                 spacing="1",
                 align="center",
             ),
-            # Peak ROE
+            # Peak ROE — always % (gross peak, same basis as lev_return_pct)
             rx.cond(
                 trade.mfe_pct > 0,
                 rx.text(
@@ -261,14 +326,14 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                     font_size="0.8rem",
                     font_weight="500",
                     color="#4ade80",
-                    min_width="60px",
+                    min_width="70px",
                     font_family="JetBrains Mono",
                 ),
                 rx.text(
                     "—",
                     font_size="0.8rem",
                     color="#525252",
-                    min_width="60px",
+                    min_width="70px",
                 ),
             ),
             # Duration
@@ -311,13 +376,19 @@ def _trade_table() -> rx.Component:
     """Scrollable trade history table."""
     return card(
         rx.vstack(
-            rx.text(
-                "Trade History",
-                font_size="0.8rem",
-                font_weight="600",
-                color="#525252",
-                text_transform="uppercase",
-                letter_spacing="0.05em",
+            rx.hstack(
+                rx.text(
+                    "Trade History",
+                    font_size="0.8rem",
+                    font_weight="600",
+                    color="#525252",
+                    text_transform="uppercase",
+                    letter_spacing="0.05em",
+                ),
+                rx.spacer(),
+                _pnl_mode_toggle(),
+                width="100%",
+                align="center",
             ),
             # Header
             rx.hstack(
@@ -328,9 +399,12 @@ def _trade_table() -> rx.Component:
                 rx.text("Side", font_size="0.7rem", color="#525252", min_width="55px"),
                 rx.text("Entry", font_size="0.7rem", color="#525252", min_width="80px"),
                 rx.text("Exit", font_size="0.7rem", color="#525252", min_width="80px"),
-                rx.text("PnL %", font_size="0.7rem", color="#525252", min_width="60px"),
-                rx.text("PnL $", font_size="0.7rem", color="#525252", min_width="70px"),
-                rx.text("Peak", font_size="0.7rem", color="#525252", min_width="60px"),
+                rx.cond(
+                    AppState.journal_pnl_mode == "pct",
+                    rx.text("ROE %", font_size="0.7rem", color="#525252", min_width="85px"),
+                    rx.text("PnL $", font_size="0.7rem", color="#525252", min_width="85px"),
+                ),
+                rx.text("Peak ROE", font_size="0.7rem", color="#525252", min_width="70px"),
                 rx.text("Duration", font_size="0.7rem", color="#525252", min_width="50px"),
                 width="100%",
                 padding_y="0.5rem",

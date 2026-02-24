@@ -36,7 +36,11 @@ class TradeRecord:
     duration_hours: float = 0.0
     thesis: str = ""    # entry thesis from linked trade_entry node
     trade_type: str = "macro"  # "micro" or "macro"
-    fee_loss: bool = False  # directionally correct but fees ate profit
+    fee_loss:      bool  = False   # directionally correct but fees ate profit
+    fee_heavy:     bool  = False   # fees took >50% of gross profit
+    fee_estimate:  float = 0.0    # estimated round-trip fees in USD
+    pnl_gross:     float = 0.0    # raw PnL before fees
+    lev_return_pct: float = 0.0   # net leveraged ROE % (pnl_net / margin * 100)
 
 
 @dataclass
@@ -45,7 +49,9 @@ class TradeStats:
     total_trades: int = 0
     wins: int = 0
     losses: int = 0
-    fee_losses: int = 0  # directionally correct but net negative from fees
+    fee_losses: int = 0       # directionally correct but net negative from fees
+    fee_heavy_count: int = 0  # fees took >50% of gross profit
+    total_fees: float = 0.0   # sum of estimated round-trip fees in USD
     win_rate: float = 0.0
     total_pnl: float = 0.0
     avg_win: float = 0.0
@@ -117,8 +123,9 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
     side = signals.get("side", "")
     entry_px = float(signals.get("entry", 0))
     exit_px = float(signals.get("exit", 0))
-    pnl_usd = float(signals.get("pnl_usd", 0))
-    pnl_pct = float(signals.get("pnl_pct", 0))
+    pnl_usd        = float(signals.get("pnl_usd", 0))
+    pnl_pct        = float(signals.get("pnl_pct", 0))
+    lev_return_pct = float(signals.get("lev_return_pct", 0.0))
     close_type = signals.get("close_type", "full")
     size_usd = float(signals.get("size_usd", 0))
     trade_type = signals.get("trade_type", "macro")
@@ -135,10 +142,14 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
     if trade_type == "macro" and enrichment.get("trade_type"):
         trade_type = enrichment["trade_type"]
 
+    # Fee fields: stored flags + estimates
+    fee_heavy    = bool(signals.get("fee_heavy", False))
+    fee_estimate = float(signals.get("fee_estimate", 0.0))
+    pnl_gross    = float(signals.get("pnl_gross", 0.0))
+
     # Fee loss: either from stored flag or inferred (gross > 0 but net < 0)
     fee_loss = bool(signals.get("fee_loss", False))
     if not fee_loss:
-        pnl_gross = float(signals.get("pnl_gross", 0))
         if pnl_gross > 0 and pnl_usd < 0:
             fee_loss = True
 
@@ -156,6 +167,10 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
         thesis=enrichment["thesis"],
         trade_type=trade_type,
         fee_loss=fee_loss,
+        fee_heavy=fee_heavy,
+        fee_estimate=fee_estimate,
+        pnl_gross=pnl_gross,
+        lev_return_pct=lev_return_pct,
     )
 
 
@@ -263,21 +278,36 @@ def _merge_partial_trades(trades: list[TradeRecord]) -> list[TradeRecord]:
                 exit_px=t.exit_px, pnl_usd=t.pnl_usd, pnl_pct=t.pnl_pct,
                 close_type=t.close_type, closed_at=t.closed_at,
                 size_usd=t.size_usd, duration_hours=t.duration_hours,
-                thesis=t.thesis,
+                thesis=t.thesis, trade_type=t.trade_type,
+                fee_loss=t.fee_loss, fee_heavy=t.fee_heavy,
+                fee_estimate=t.fee_estimate, pnl_gross=t.pnl_gross,
+                lev_return_pct=t.lev_return_pct,
             )
         else:
             m = merged[key]
-            total_size = m.size_usd + t.size_usd
+            old_size = m.size_usd
+            total_size = old_size + t.size_usd
             if total_size > 0:
-                m.exit_px = round((m.exit_px * m.size_usd + t.exit_px * t.size_usd) / total_size, 6)
+                m.exit_px = round((m.exit_px * old_size + t.exit_px * t.size_usd) / total_size, 6)
+                # pnl_pct = price move %, computed from entry/exit (no leverage needed)
+                if m.entry_px > 0:
+                    direction = 1.0 if m.side == "long" else -1.0
+                    m.pnl_pct = round(direction * (m.exit_px - m.entry_px) / m.entry_px * 100, 2)
+                # lev_return_pct: weighted average by notional size
+                m.lev_return_pct = round(
+                    (m.lev_return_pct * old_size + t.lev_return_pct * t.size_usd) / total_size, 2
+                )
             m.pnl_usd = round(m.pnl_usd + t.pnl_usd, 2)
             m.size_usd = round(total_size, 2)
-            if m.entry_px > 0 and m.size_usd > 0:
-                margin = m.size_usd / 10
-                m.pnl_pct = round((m.pnl_usd / margin) * 100, 2) if margin > 0 else 0
             m.closed_at = max(m.closed_at, t.closed_at)
             m.close_type = "merged"
             m.duration_hours = max(m.duration_hours, t.duration_hours)
+            # Aggregate fee fields across partial closes
+            m.fee_estimate = round(m.fee_estimate + t.fee_estimate, 2)
+            m.pnl_gross    = round(m.pnl_gross    + t.pnl_gross,    2)
+            # Recompute flags on merged totals
+            m.fee_loss  = m.pnl_gross > 0 and m.pnl_usd < 0
+            m.fee_heavy = (not m.fee_loss) and m.pnl_gross > 0 and m.fee_estimate > m.pnl_gross * 0.5
     return sorted(merged.values(), key=lambda t: t.closed_at, reverse=True)
 
 
@@ -294,7 +324,9 @@ def compute_stats(trades: list[TradeRecord]) -> TradeStats:
     losses = [t for t in trades if t.pnl_usd <= 0]
     stats.wins = len(wins)
     stats.losses = len(losses)
-    stats.fee_losses = sum(1 for t in trades if t.fee_loss)
+    stats.fee_losses      = sum(1 for t in trades if t.fee_loss)
+    stats.fee_heavy_count = sum(1 for t in trades if t.fee_heavy)
+    stats.total_fees      = round(sum(t.fee_estimate for t in trades), 2)
     stats.win_rate = (stats.wins / stats.total_trades * 100) if stats.total_trades > 0 else 0
 
     stats.total_pnl = sum(t.pnl_usd for t in trades)

@@ -285,10 +285,11 @@ class MarketScanner:
             self._seen_news_ids.add(aid)
             self._news.append(a)
 
-        # Cap buffers — rebuild seen IDs from the kept articles (deterministic)
+        # Cap display buffer — intentionally do NOT rebuild _seen_news_ids from kept
+        # articles. Discarding old IDs would allow the same articles to re-alert the
+        # next time they appear in the API response.
         if len(self._news) > 50:
             self._news = self._news[-50:]
-            self._seen_news_ids = {a.get("id", "") for a in self._news}
 
     def regime_shifted(self, from_label: str, to_label: str, score: float,
                        micro_safe: bool = True, reversal_detail: str = "",

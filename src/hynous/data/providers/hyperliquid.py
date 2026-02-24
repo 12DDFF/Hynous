@@ -19,6 +19,7 @@ We're building a simpler sync wrapper for the intelligence layer.
 
 import logging
 import os
+import threading
 from typing import Optional
 
 from hyperliquid.info import Info
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 _provider: Optional["HyperliquidProvider"] = None
+_provider_lock = threading.Lock()
 
 
 def get_provider(config=None) -> "HyperliquidProvider":
@@ -41,39 +43,42 @@ def get_provider(config=None) -> "HyperliquidProvider":
         config: Optional Config object controlling mode and credentials.
     """
     global _provider
-    if _provider is None:
-        mode = config.execution.mode if config else "testnet"
+    if _provider is not None:
+        return _provider
+    with _provider_lock:
+        if _provider is None:
+            mode = config.execution.mode if config else "testnet"
 
-        # Always create real provider for mainnet data
-        real = HyperliquidProvider()
+            # Always create real provider for mainnet data
+            real = HyperliquidProvider()
 
-        if mode == "paper":
-            # Paper mode: simulate trades internally using mainnet prices
-            from .paper import PaperProvider
-            balance = config.execution.paper_balance if config else 1000.0
-            _provider = PaperProvider(real, initial_balance=balance)
-        elif mode == "testnet":
-            # Testnet: real provider with testnet for account/trading
-            trade_url = config.hyperliquid.testnet_url if config else "https://api.hyperliquid-testnet.xyz"
-            real._trade_url = trade_url
-            real._trade_info = Info(base_url=trade_url, skip_ws=True)
-            _provider = real
-            # Init exchange on testnet
-            key = (config.hyperliquid_private_key if config else "") or os.environ.get("HYPERLIQUID_PRIVATE_KEY", "")
-            if key:
-                try:
-                    real.init_exchange(key)
-                except Exception as e:
-                    logger.error("Failed to initialize Exchange: %s", e)
-        else:
-            # Live modes: real provider, mainnet everything
-            _provider = real
-            key = (config.hyperliquid_private_key if config else "") or os.environ.get("HYPERLIQUID_PRIVATE_KEY", "")
-            if key:
-                try:
-                    real.init_exchange(key)
-                except Exception as e:
-                    logger.error("Failed to initialize Exchange: %s", e)
+            if mode == "paper":
+                # Paper mode: simulate trades internally using mainnet prices
+                from .paper import PaperProvider
+                balance = config.execution.paper_balance if config else 1000.0
+                _provider = PaperProvider(real, initial_balance=balance)
+            elif mode == "testnet":
+                # Testnet: real provider with testnet for account/trading
+                trade_url = config.hyperliquid.testnet_url if config else "https://api.hyperliquid-testnet.xyz"
+                real._trade_url = trade_url
+                real._trade_info = Info(base_url=trade_url, skip_ws=True)
+                _provider = real
+                # Init exchange on testnet
+                key = (config.hyperliquid_private_key if config else "") or os.environ.get("HYPERLIQUID_PRIVATE_KEY", "")
+                if key:
+                    try:
+                        real.init_exchange(key)
+                    except Exception as e:
+                        logger.error("Failed to initialize Exchange: %s", e)
+            else:
+                # Live modes: real provider, mainnet everything
+                _provider = real
+                key = (config.hyperliquid_private_key if config else "") or os.environ.get("HYPERLIQUID_PRIVATE_KEY", "")
+                if key:
+                    try:
+                        real.init_exchange(key)
+                    except Exception as e:
+                        logger.error("Failed to initialize Exchange: %s", e)
 
     return _provider
 

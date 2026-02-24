@@ -460,7 +460,8 @@ class NousClient:
         resp = self._session.get(self._url("/clusters"), timeout=self._DEFAULT_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
-        return data.get("data", data) if isinstance(data, dict) else data
+        result = data.get("data", data) if isinstance(data, dict) else data
+        return result if isinstance(result, list) else []
 
     def get_cluster(self, cluster_id: str) -> dict:
         """Get cluster details."""
@@ -518,7 +519,8 @@ class NousClient:
         )
         resp.raise_for_status()
         data = resp.json()
-        return data.get("data", data) if isinstance(data, dict) else data
+        result = data.get("data", data) if isinstance(data, dict) else data
+        return result if isinstance(result, list) else []
 
     def get_cluster_health(self, cluster_id: str) -> dict:
         """Get health stats for a cluster."""

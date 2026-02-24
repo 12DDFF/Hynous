@@ -1413,7 +1413,7 @@ class Daemon:
         if fill_oid:
             for t in triggers:
                 if t.get("oid") == fill_oid:
-                    return t.get("order_type", "manual").replace("_", "_")
+                    return t.get("order_type", "manual").replace("_", " ")
 
         # 2. Price proximity match (1.5% tolerance for slippage)
         if fill_px > 0:
@@ -2205,7 +2205,9 @@ class Daemon:
                 continue
 
             # Compute phantom PnL (leveraged ROE %)
-            if p["side"] == "long":
+            if p["entry_price"] <= 0:
+                pnl_pct = 0.0  # entry price missing — can't compute ROE
+            elif p["side"] == "long":
                 pnl_pct = ((price - p["entry_price"]) / p["entry_price"]) * p["leverage"] * 100
             else:
                 pnl_pct = ((p["entry_price"] - price) / p["entry_price"]) * p["leverage"] * 100

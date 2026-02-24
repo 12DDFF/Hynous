@@ -12,6 +12,7 @@ import time
 import threading
 import reflex as rx
 import logging
+from collections import deque
 from pathlib import Path
 from pydantic import BaseModel
 from datetime import datetime
@@ -53,8 +54,8 @@ def _highlight(text: str) -> str:
     text = _NEG_RE.sub(f'{_RED}\\1{_END}', text)
     return text
 
-# Portfolio value history for sparkline
-_portfolio_history: list[float] = []
+# Portfolio value history for sparkline (capped automatically)
+_portfolio_history: deque[float] = deque(maxlen=20)
 
 
 def _build_sparkline_svg(values: list[float], width: int = 80, height: int = 24, color: str = "#22c55e") -> str:
@@ -267,8 +268,12 @@ class ClosedTrade(BaseModel):
     confidence: float = 0.0  # 0-1
     rr_ratio: float = 0.0
     trade_type: str = ""  # "micro" or "macro"
-    mfe_pct: float = 0.0  # max favorable excursion ROE %
+    mfe_pct: float = 0.0         # max favorable excursion ROE % (peak, gross)
+    lev_return_pct: float = 0.0  # net leveraged ROE % (same basis as mfe_pct)
     fee_loss: bool = False  # directionally correct but fees ate profit
+    fee_heavy:    bool  = False   # fees took >50% of gross profit
+    fee_estimate: float = 0.0    # estimated round-trip fees in USD
+    pnl_gross:    float = 0.0    # raw PnL before fees
     detail_html: str = ""  # pre-rendered HTML for expanded view
 
 
@@ -327,6 +332,11 @@ def _build_trade_detail_html(d: dict) -> str:
     mfe = d.get("mfe_pct", 0)
     if mfe > 0:
         metrics.append(("Peak Profit", f"+{mfe:.1f}% ROE"))
+    if d.get("fee_estimate", 0) > 0:
+        gross = d.get("pnl_gross", 0)
+        fee   = d.get("fee_estimate", 0)
+        metrics.append(("Gross PnL", f"${gross:+.2f}"))
+        metrics.append(("Est. Fees", f'-${fee:.2f}'))
 
     if metrics:
         cells = "".join(
@@ -382,15 +392,23 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         "rr_ratio": 0.0,
         "trade_type": "",
         "mfe_pct": 0.0,
+        "lev_return_pct": 0.0,
         "fee_loss": False,
+        "fee_heavy": False,
+        "fee_estimate": 0.0,
+        "pnl_gross": 0.0,
     }
 
-    # Get MFE + trade_type + fee_loss from close node's signals
+    # Get MFE + lev_return_pct + trade_type + fee fields from close node's signals
     try:
         close_body = json.loads(close_node.get("content_body", "{}"))
         close_signals = close_body.get("signals", {})
-        result["mfe_pct"] = float(close_signals.get("mfe_pct", 0))
-        result["fee_loss"] = bool(close_signals.get("fee_loss", False))
+        result["mfe_pct"]        = float(close_signals.get("mfe_pct", 0))
+        result["lev_return_pct"] = float(close_signals.get("lev_return_pct", 0.0))
+        result["fee_loss"]       = bool(close_signals.get("fee_loss", False))
+        result["fee_heavy"]      = bool(close_signals.get("fee_heavy", False))
+        result["fee_estimate"]   = float(close_signals.get("fee_estimate", 0.0))
+        result["pnl_gross"]      = float(close_signals.get("pnl_gross", 0.0))
         if close_signals.get("trade_type"):
             result["trade_type"] = close_signals["trade_type"]
     except Exception:
@@ -1305,6 +1323,7 @@ class AppState(rx.State):
                 result["models_html"] = "".join(rows)
             try:
                 result["sonnet_calls"] = str(s['claude']['sonnet']['calls'])
+                result["sonnet_cost"]  = f"${s['claude']['sonnet']['cost_usd']:.2f}"
             except Exception:
                 pass
             try:
@@ -1496,8 +1515,6 @@ class AppState(rx.State):
                     value, positions, initial = state_data
                     # Track sparkline history
                     _portfolio_history.append(round(value, 2))
-                    if len(_portfolio_history) > 20:
-                        _portfolio_history.pop(0)
                     async with self:
                         self.portfolio_value = round(value, 2)
                         if initial > 0:
@@ -1591,7 +1608,7 @@ class AppState(rx.State):
                 pass
 
             # Refresh memory + scanner data every ~60s (4 polls)
-            _cluster_tick += 1
+            _cluster_tick = (_cluster_tick + 1) % 1200  # wraps every ~5h, stays bounded
             if _cluster_tick % 4 == 0:
                 try:
                     # Grab current equity_days for equity fetch
@@ -2980,6 +2997,9 @@ class AppState(rx.State):
     journal_profit_factor: str = "—"
     journal_total_trades: str = "0"
     journal_fee_losses: str = "0"
+    journal_fee_heavy_count:  str = "0"
+    journal_total_fees:       str = "—"
+    journal_pnl_mode:         str = "pct"   # "pct" = ROE %, "usd" = dollar amount
     journal_current_streak: str = "—"
     journal_max_win_streak: str = "0"
     journal_max_loss_streak: str = "0"
@@ -3030,10 +3050,14 @@ class AppState(rx.State):
     def toggle_show_all_phantoms(self):
         self.journal_show_all_phantoms = not self.journal_show_all_phantoms
 
-    def set_equity_days(self, days: str):
-        """Update equity chart timeframe and refresh data."""
-        self.equity_days = int(days)
-        self.journal_equity_data = AppState._fetch_equity_data(self.equity_days)
+    @_background
+    async def set_equity_days(self, days: str):
+        """Update equity chart timeframe — fetch in background to avoid blocking UI."""
+        async with self:
+            self.equity_days = int(days)
+        equity_data = await asyncio.to_thread(AppState._fetch_equity_data, int(days))
+        async with self:
+            self.journal_equity_data = equity_data
 
     def go_to_journal(self):
         """Navigate to journal page and load data."""
@@ -3432,7 +3456,10 @@ class AppState(rx.State):
                 pf = stats['profit_factor']
                 self.journal_profit_factor = f"{pf:.2f}" if pf != float('inf') else "∞" if stats['total_trades'] > 0 else "—"
                 self.journal_total_trades = str(stats['total_trades'])
-                self.journal_fee_losses = str(stats.get('fee_losses', 0))
+                self.journal_fee_losses       = str(stats.get('fee_losses', 0))
+                self.journal_fee_heavy_count  = str(stats.get('fee_heavy_count', 0))
+                total_fees = stats.get('total_fees', 0.0)
+                self.journal_total_fees = f"-${total_fees:.2f}" if total_fees > 0 else "—"
                 # Streaks
                 streak = stats['current_streak']
                 if streak > 0:
@@ -3453,6 +3480,12 @@ class AppState(rx.State):
                     self.journal_avg_duration = "—"
                 self.closed_trades = trades
                 self.symbol_breakdown = breakdown
+
+        # Equity data — fetch immediately so chart isn't blank until poll loop fires
+        eq_days = self.equity_days
+        equity_data = await asyncio.to_thread(AppState._fetch_equity_data, eq_days)
+        async with self:
+            self.journal_equity_data = equity_data
 
         # Regret data (phantom tracker + playbooks from Nous)
         regret = await asyncio.to_thread(self._fetch_regret_data)
@@ -3598,7 +3631,11 @@ class AppState(rx.State):
                     rr_ratio=enrichment.get("rr_ratio", 0.0),
                     trade_type=enrichment.get("trade_type", ""),
                     mfe_pct=enrichment.get("mfe_pct", 0.0),
+                    lev_return_pct=enrichment.get("lev_return_pct") or t.lev_return_pct,
                     fee_loss=enrichment.get("fee_loss", False) or t.fee_loss,
+                    fee_heavy=enrichment.get("fee_heavy", False) or t.fee_heavy,
+                    fee_estimate=enrichment.get("fee_estimate") or t.fee_estimate,
+                    pnl_gross=enrichment.get("pnl_gross") or t.pnl_gross,
                     detail_html=detail_html,
                 ))
             breakdown = [
@@ -3622,6 +3659,8 @@ class AppState(rx.State):
                     "max_loss_streak": stats.max_loss_streak,
                     "avg_duration_hours": stats.avg_duration_hours,
                     "fee_losses": stats.fee_losses,
+                    "fee_heavy_count": stats.fee_heavy_count,
+                    "total_fees": stats.total_fees,
                 },
                 trades,
                 breakdown,
