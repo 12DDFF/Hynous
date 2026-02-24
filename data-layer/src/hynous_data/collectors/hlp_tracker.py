@@ -27,7 +27,7 @@ class HlpTracker:
         self._db = db
         self._rl = rate_limiter
         self._cfg = config
-        self._info = Info(base_url=base_url, skip_ws=True)
+        self._info = Info(base_url=base_url, skip_ws=True, timeout=10)
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         # In-memory cache for latest HLP positions (for fast API reads)

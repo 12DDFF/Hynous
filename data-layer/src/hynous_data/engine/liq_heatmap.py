@@ -22,7 +22,7 @@ class LiqHeatmapEngine:
         self._db = db
         self._cfg = config
         self._rl = rate_limiter
-        self._info = Info(base_url=base_url, skip_ws=True)
+        self._info = Info(base_url=base_url, skip_ws=True, timeout=10)
         # Cache: coin → heatmap dict
         self._cache: dict[str, dict] = {}
         self._cache_lock = threading.Lock()

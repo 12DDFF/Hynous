@@ -27,7 +27,7 @@ class WalletProfiler:
         self._db = db
         self._rl = rate_limiter
         self._cfg = config
-        self._info = Info(base_url=base_url, skip_ws=True)
+        self._info = Info(base_url=base_url, skip_ws=True, timeout=10)
 
     # ------------------------------------------------------------------
     # Fill fetching

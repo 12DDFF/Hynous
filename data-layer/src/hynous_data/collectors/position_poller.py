@@ -33,7 +33,7 @@ class PositionPoller:
         self._db = db
         self._rl = rate_limiter
         self._cfg = config
-        self._info = Info(base_url=base_url, skip_ws=True)
+        self._info = Info(base_url=base_url, skip_ws=True, timeout=10)
         self._smart_money: SmartMoneyEngine | None = None
         self._position_tracker: PositionChangeTracker | None = None
         self._watched_addresses: set[str] = set()
