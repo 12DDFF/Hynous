@@ -3034,6 +3034,9 @@ class AppState(rx.State):
     def set_journal_tab(self, tab: str):
         self.journal_tab = tab
 
+    def set_journal_pnl_mode(self, mode: str):
+        self.journal_pnl_mode = mode
+
     # Memory page tab
     memory_tab: str = "graph"       # "graph" | "sections"
 
