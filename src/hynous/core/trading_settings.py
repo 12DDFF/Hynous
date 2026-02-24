@@ -59,7 +59,9 @@ class TradingSettings:
     tier_pass_threshold: float = 0.6
 
     # --- Fee structure ---
-    taker_fee_pct: float = 0.07  # Round-trip taker fee as % of notional (0.07% = 7bps/side)
+    taker_fee_pct: float = 0.07  # ROUND-TRIP fee as % of notional — covers BOTH entry AND exit
+                                  # 0.07% total = ~0.035% per side (3.5bps/side)
+                                  # Hyperliquid mid-tier: ~0.025-0.05% per side depending on volume
 
     # --- General limits ---
     max_position_usd: float = 10000

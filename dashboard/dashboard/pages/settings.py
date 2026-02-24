@@ -285,6 +285,153 @@ def _smart_money_card() -> rx.Component:
     )
 
 
+def _preview_row(label: str, value, color: str = "#a3a3a3") -> rx.Component:
+    """Single row in the Small Wins preview table."""
+    return rx.hstack(
+        rx.text(label, font_size="0.72rem", color="#525252", flex="1"),
+        rx.text(value, font_size="0.72rem", color=color,
+                font_family="JetBrains Mono, monospace", font_weight="500"),
+        width="100%",
+        justify="between",
+        padding_y="0.2rem",
+    )
+
+
+def _small_wins_card() -> rx.Component:
+    p = AppState.small_wins_preview
+    return _card(
+        "Small Wins Mode", "trending-up",
+        "Daemon auto-exits at a small profit target. Agent handles entries; system handles exits.",
+        _toggle(
+            "Enable Small Wins Mode",
+            "When ON: daemon market-closes positions at the ROE target below. Toggle off to restore normal TP exits.",
+            AppState.settings_small_wins_mode,
+            AppState.set_settings_small_wins_mode,
+        ),
+        _divider(),
+        _field(
+            "Exit ROE Target",
+            "Gross ROE % to trigger mechanical exit. Fee break-even is enforced as minimum floor.",
+            AppState.settings_small_wins_roe_pct,
+            AppState.set_settings_small_wins_roe_pct,
+            "%",
+        ),
+        _field(
+            "Taker Fee (round-trip)",
+            "TOTAL fee for entry + exit both sides (e.g. 0.07% = 3.5bps per side). Adjust to match your Hyperliquid tier.",
+            AppState.settings_taker_fee_pct,
+            AppState.set_settings_taker_fee_pct,
+            "%",
+        ),
+        _divider(),
+        # Live preview box
+        rx.box(
+            rx.vstack(
+                rx.hstack(
+                    rx.icon(tag="calculator", size=12, color="#6366f1"),
+                    rx.text(
+                        "Live Preview — what you earn per trade",
+                        font_size="0.68rem",
+                        font_weight="600",
+                        color="#6366f1",
+                        text_transform="uppercase",
+                        letter_spacing="0.05em",
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+                # Fee breakdown
+                _preview_row(
+                    "Round-trip fees (entry + exit):",
+                    p["fee_be_roe"].to(str) + "% ROE  ←  " + p["fee_pct"].to(str) + "% × " + p["leverage"].to(str) + "x leverage",
+                    "#737373",
+                ),
+                _preview_row(
+                    "Gross exit ROE:",
+                    p["exit_roe"].to(str) + "%",
+                    "#d4d4d4",
+                ),
+                _preview_row(
+                    "Net ROE after fees:",
+                    "+" + p["net_roe"].to(str) + "%",
+                    "#22c55e",
+                ),
+                rx.box(height="0.3rem"),
+                # Per-conviction dollar breakdown
+                rx.text(
+                    rx.cond(
+                        AppState.portfolio_value > 0,
+                        "Portfolio: " + AppState.portfolio_value_str,
+                        "Portfolio: —  (connect wallet to see $ amounts)",
+                    ),
+                    font_size="0.68rem",
+                    color="#404040",
+                    padding_bottom="0.2rem",
+                ),
+                _preview_row(
+                    "High conviction (" + AppState.settings_tier_high.to(str) + "% margin = $" + p["high_margin"].to(str) + "):",
+                    "+$" + p["high_net_usd"].to(str) + " net",
+                    rx.cond(AppState.portfolio_value > 0, "#4ade80", "#404040"),
+                ),
+                _preview_row(
+                    "Medium conviction (" + AppState.settings_tier_medium.to(str) + "% margin = $" + p["med_margin"].to(str) + "):",
+                    "+$" + p["med_net_usd"].to(str) + " net",
+                    rx.cond(AppState.portfolio_value > 0, "#4ade80", "#404040"),
+                ),
+                _preview_row(
+                    "Speculative (" + AppState.settings_tier_speculative.to(str) + "% margin = $" + p["spec_margin"].to(str) + "):",
+                    "+$" + p["spec_net_usd"].to(str) + " net",
+                    rx.cond(AppState.portfolio_value > 0, "#4ade80", "#404040"),
+                ),
+                spacing="0",
+                width="100%",
+            ),
+            background="#0a0a0a",
+            border="1px solid #1e1e2e",
+            border_radius="8px",
+            padding="0.75rem",
+            margin_top="0.25rem",
+            width="100%",
+        ),
+        # Status badge
+        rx.cond(
+            AppState.settings_small_wins_mode,
+            rx.box(
+                rx.hstack(
+                    rx.icon(tag="zap", size=12, color="#eab308"),
+                    rx.text(
+                        "Mode is ON — daemon will override exits. Save settings to apply.",
+                        font_size="0.7rem",
+                        color="#eab308",
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+                background="rgba(234, 179, 8, 0.06)",
+                border="1px solid rgba(234, 179, 8, 0.2)",
+                border_radius="6px",
+                padding="0.5rem 0.75rem",
+                margin_top="0.5rem",
+                width="100%",
+            ),
+            rx.box(
+                rx.hstack(
+                    rx.icon(tag="circle", size=12, color="#404040"),
+                    rx.text(
+                        "Mode is OFF — normal TP/SL exits apply.",
+                        font_size="0.7rem",
+                        color="#404040",
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+                margin_top="0.5rem",
+                width="100%",
+            ),
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
@@ -362,6 +509,7 @@ def settings_page() -> rx.Component:
                         _macro_card(),
                         _micro_card(),
                         _sizing_card(),
+                        _small_wins_card(),
                         spacing="5",
                         width="100%",
                     ),

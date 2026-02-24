@@ -854,6 +854,10 @@ class AppState(rx.State):
     settings_sm_auto_min_trades: int = 10
     settings_sm_auto_min_pf: float = 1.5
     settings_sm_auto_max_wallets: int = 20
+    # Small Wins Mode
+    settings_small_wins_mode: bool = False
+    settings_small_wins_roe_pct: float = 3.0
+    settings_taker_fee_pct: float = 0.07
 
     # === Collapsible Toggles ===
 
@@ -1843,6 +1847,38 @@ class AppState(rx.State):
         if self.portfolio_value > 0:
             return f"${self.portfolio_value:,.2f}"
         return "Connecting..."
+
+    @rx.var
+    def small_wins_preview(self) -> dict:
+        """Live preview: what Small Wins Mode earns per trade at current settings."""
+        fee_pct = self.settings_taker_fee_pct
+        leverage = self.settings_micro_leverage
+        roe_target = self.settings_small_wins_roe_pct
+        fee_be_roe = fee_pct * leverage
+        exit_roe = max(roe_target, fee_be_roe + 0.1)
+        net_roe = exit_roe - fee_be_roe
+        pv = self.portfolio_value if self.portfolio_value > 0 else 0.0
+        # Conviction tier margin %
+        high_pct = self.settings_tier_high
+        med_pct = self.settings_tier_medium
+        spec_pct = self.settings_tier_speculative
+        high_margin = pv * high_pct / 100
+        med_margin = pv * med_pct / 100
+        spec_margin = pv * spec_pct / 100
+        return {
+            "fee_be_roe": round(fee_be_roe, 2),
+            "exit_roe": round(exit_roe, 2),
+            "net_roe": round(net_roe, 2),
+            "fee_pct": fee_pct,
+            "leverage": leverage,
+            "portfolio": round(pv, 2),
+            "high_margin": round(high_margin, 2),
+            "high_net_usd": round(high_margin * net_roe / 100, 2),
+            "med_margin": round(med_margin, 2),
+            "med_net_usd": round(med_margin * net_roe / 100, 2),
+            "spec_margin": round(spec_margin, 2),
+            "spec_net_usd": round(spec_margin * net_roe / 100, 2),
+        }
 
     @rx.var
     def portfolio_change_str(self) -> str:
@@ -3144,6 +3180,9 @@ class AppState(rx.State):
         self.settings_sm_auto_min_trades = ts.sm_auto_min_trades
         self.settings_sm_auto_min_pf = ts.sm_auto_min_pf
         self.settings_sm_auto_max_wallets = ts.sm_auto_max_wallets
+        self.settings_small_wins_mode = ts.small_wins_mode
+        self.settings_small_wins_roe_pct = ts.small_wins_roe_pct
+        self.settings_taker_fee_pct = ts.taker_fee_pct
         self.settings_dirty = False
 
     def save_settings(self):
@@ -3189,6 +3228,9 @@ class AppState(rx.State):
             sm_auto_min_trades=self.settings_sm_auto_min_trades,
             sm_auto_min_pf=self.settings_sm_auto_min_pf,
             sm_auto_max_wallets=self.settings_sm_auto_max_wallets,
+            small_wins_mode=self.settings_small_wins_mode,
+            small_wins_roe_pct=self.settings_small_wins_roe_pct,
+            taker_fee_pct=self.settings_taker_fee_pct,
         )
         save_trading_settings(ts)
         _apply_trading_settings(ts)
@@ -3280,6 +3322,12 @@ class AppState(rx.State):
         self.settings_sm_auto_min_pf = float(v); self.settings_dirty = True
     def set_settings_sm_auto_max_wallets(self, v: str):
         self.settings_sm_auto_max_wallets = int(float(v)); self.settings_dirty = True
+    def set_settings_small_wins_mode(self, v: bool):
+        self.settings_small_wins_mode = v; self.settings_dirty = True
+    def set_settings_small_wins_roe_pct(self, v: str):
+        self.settings_small_wins_roe_pct = float(v); self.settings_dirty = True
+    def set_settings_taker_fee_pct(self, v: str):
+        self.settings_taker_fee_pct = float(v); self.settings_dirty = True
 
     def load_debug_traces(self):
         """Load recent traces for the debug sidebar."""
