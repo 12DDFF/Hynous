@@ -407,24 +407,25 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         close_body = json.loads(close_node.get("content_body", "{}"))
         close_signals = close_body.get("signals", {})
         mfe_pct_raw              = float(close_signals.get("mfe_pct", 0))
-        result["mfe_pct"]        = mfe_pct_raw
-        result["mfe_usd"]        = float(close_signals.get("mfe_usd", 0.0))
-        result["leverage"]       = int(close_signals.get("leverage", 0))
-        lev_return_pct           = float(close_signals.get("lev_return_pct", 0.0))
-        pnl_usd_sig              = float(close_signals.get("pnl_usd", 0.0))
-        # Fallback 1: derive from stored margin_used
+        result["mfe_pct"]  = mfe_pct_raw
+        result["mfe_usd"]  = float(close_signals.get("mfe_usd", 0.0))
+        lev_stored         = int(close_signals.get("leverage", 0))
+        sz_usd             = float(close_signals.get("size_usd", 0.0))
+        pnl_usd_sig        = float(close_signals.get("pnl_usd", 0.0))
+        lev_return_pct     = float(close_signals.get("lev_return_pct", 0.0))
+        # Derive lev_return_pct when missing
         if lev_return_pct == 0.0:
             margin_used = float(close_signals.get("margin_used", 0.0))
             if margin_used > 0 and pnl_usd_sig != 0.0:
                 lev_return_pct = round(pnl_usd_sig / margin_used * 100, 2)
-        # Fallback 2: derive from stored leverage + size_usd
-        if lev_return_pct == 0.0:
-            lev_stored = int(close_signals.get("leverage", 0))
-            sz_usd     = float(close_signals.get("size_usd", 0.0))
-            if lev_stored > 0 and sz_usd > 0 and pnl_usd_sig != 0.0:
-                lev_return_pct = round(pnl_usd_sig / (sz_usd / lev_stored) * 100, 2)
+        if lev_return_pct == 0.0 and lev_stored > 0 and sz_usd > 0 and pnl_usd_sig != 0.0:
+            lev_return_pct = round(pnl_usd_sig / (sz_usd / lev_stored) * 100, 2)
         result["lev_return_pct"] = lev_return_pct
-        # Derive mfe_usd from mfe_pct * implied_margin when not stored directly
+        # Derive leverage when not stored
+        if lev_stored == 0 and lev_return_pct != 0.0 and sz_usd > 0 and pnl_usd_sig != 0.0:
+            lev_stored = max(1, round(abs(lev_return_pct * sz_usd / (pnl_usd_sig * 100))))
+        result["leverage"] = lev_stored
+        # Derive mfe_usd from mfe_pct × implied_margin when not stored directly
         if result["mfe_usd"] == 0.0 and mfe_pct_raw > 0 and lev_return_pct != 0.0 and pnl_usd_sig != 0.0:
             result["mfe_usd"] = round(mfe_pct_raw * pnl_usd_sig / lev_return_pct, 2)
         result["fee_loss"]       = bool(close_signals.get("fee_loss", False))

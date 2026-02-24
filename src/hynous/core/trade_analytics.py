@@ -125,28 +125,31 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
     side = signals.get("side", "")
     entry_px = float(signals.get("entry", 0))
     exit_px = float(signals.get("exit", 0))
-    pnl_usd        = float(signals.get("pnl_usd", 0))
-    pnl_pct        = float(signals.get("pnl_pct", 0))
-    lev_return_pct = float(signals.get("lev_return_pct", 0.0))
-    margin_used    = float(signals.get("margin_used", 0.0))
+    pnl_usd         = float(signals.get("pnl_usd", 0))
+    pnl_pct         = float(signals.get("pnl_pct", 0))
+    size_usd        = float(signals.get("size_usd", 0))
+    close_type      = signals.get("close_type", "full")
+    trade_type      = signals.get("trade_type", "macro")
+    lev_return_pct  = float(signals.get("lev_return_pct", 0.0))
+    margin_used     = float(signals.get("margin_used", 0.0))
     leverage_stored = int(signals.get("leverage", 0))
-    mfe_pct_raw    = float(signals.get("mfe_pct", 0.0))
-    mfe_usd        = float(signals.get("mfe_usd", 0.0))
+    mfe_pct_raw     = float(signals.get("mfe_pct", 0.0))
+    mfe_usd         = float(signals.get("mfe_usd", 0.0))
 
-    # Fallback 1: derive lev_return_pct from stored margin_used
+    # Derive lev_return_pct when missing (pre-overhaul signals)
     if lev_return_pct == 0.0 and margin_used > 0 and pnl_usd != 0.0:
         lev_return_pct = round(pnl_usd / margin_used * 100, 2)
-    # Fallback 2: derive from stored leverage + size_usd (older signals)
     if lev_return_pct == 0.0 and leverage_stored > 0 and size_usd > 0 and pnl_usd != 0.0:
         lev_return_pct = round(pnl_usd / (size_usd / leverage_stored) * 100, 2)
 
-    # Derive mfe_usd from mfe_pct * implied_margin when not stored directly
-    # mfe_usd = mfe_pct/100 * margin = mfe_pct * pnl_usd / lev_return_pct (same margin base)
+    # Derive leverage when not stored — lev = lev_return_pct × size_usd / (pnl_usd × 100)
+    # (same margin algebra in reverse; abs() handles short/loss sign)
+    if leverage_stored == 0 and lev_return_pct != 0.0 and size_usd > 0 and pnl_usd != 0.0:
+        leverage_stored = max(1, round(abs(lev_return_pct * size_usd / (pnl_usd * 100))))
+
+    # Derive mfe_usd from mfe_pct × implied_margin when not stored directly
     if mfe_usd == 0.0 and mfe_pct_raw > 0 and lev_return_pct != 0.0 and pnl_usd != 0.0:
         mfe_usd = round(mfe_pct_raw * pnl_usd / lev_return_pct, 2)
-    close_type = signals.get("close_type", "full")
-    size_usd = float(signals.get("size_usd", 0))
-    trade_type = signals.get("trade_type", "macro")
 
     if not symbol or not entry_px:
         return None
