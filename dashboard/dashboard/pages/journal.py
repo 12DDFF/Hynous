@@ -329,6 +329,9 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                 align="center",
             ),
             # Peak — toggles between ROE % and dollar amount
+            # Green  = peak cleared fee break-even (mfe_pct > 0.07 × leverage)
+            # Amber  = peaked in profit but never enough to cover fees (fee trap)
+            # Gray   = leverage unknown (old trade) or no favorable excursion
             rx.cond(
                 AppState.journal_pnl_mode == "pct",
                 rx.cond(
@@ -337,7 +340,15 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                         "+" + trade.mfe_pct.to(str) + "%",
                         font_size="0.8rem",
                         font_weight="500",
-                        color="#4ade80",
+                        color=rx.cond(
+                            trade.leverage == 0,
+                            "#525252",  # unknown leverage — don't mislead
+                            rx.cond(
+                                trade.mfe_pct > (trade.leverage * 0.07),
+                                "#4ade80",   # fee-profitable at peak
+                                "#fbbf24",   # fee trap — peaked but below break-even
+                            ),
+                        ),
                         min_width="70px",
                         font_family="JetBrains Mono",
                     ),
@@ -349,7 +360,15 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                         "+$" + trade.mfe_usd.to(str),
                         font_size="0.8rem",
                         font_weight="500",
-                        color="#4ade80",
+                        color=rx.cond(
+                            trade.leverage == 0,
+                            "#525252",
+                            rx.cond(
+                                trade.mfe_pct > (trade.leverage * 0.07),
+                                "#4ade80",
+                                "#fbbf24",
+                            ),
+                        ),
                         min_width="70px",
                         font_family="JetBrains Mono",
                     ),

@@ -42,6 +42,7 @@ class TradeRecord:
     pnl_gross:     float = 0.0    # raw PnL before fees
     lev_return_pct: float = 0.0   # net leveraged ROE % (pnl_net / margin * 100)
     mfe_usd:        float = 0.0   # peak dollar value (mfe_pct / 100 * margin)
+    leverage:       int   = 0     # position leverage; 0 = unknown
 
 
 @dataclass
@@ -189,6 +190,7 @@ def _parse_trade_node(node: dict, nous_client) -> TradeRecord | None:
         pnl_gross=pnl_gross,
         lev_return_pct=lev_return_pct,
         mfe_usd=mfe_usd,
+        leverage=leverage_stored,
     )
 
 
@@ -300,6 +302,7 @@ def _merge_partial_trades(trades: list[TradeRecord]) -> list[TradeRecord]:
                 fee_loss=t.fee_loss, fee_heavy=t.fee_heavy,
                 fee_estimate=t.fee_estimate, pnl_gross=t.pnl_gross,
                 lev_return_pct=t.lev_return_pct, mfe_usd=t.mfe_usd,
+                leverage=t.leverage,
             )
         else:
             m = merged[key]
@@ -324,6 +327,9 @@ def _merge_partial_trades(trades: list[TradeRecord]) -> list[TradeRecord]:
             m.fee_estimate = round(m.fee_estimate + t.fee_estimate, 2)
             m.pnl_gross    = round(m.pnl_gross    + t.pnl_gross,    2)
             m.mfe_usd      = max(m.mfe_usd, t.mfe_usd)
+            # Leverage is constant per position — keep first non-zero value
+            if m.leverage == 0 and t.leverage > 0:
+                m.leverage = t.leverage
             # Recompute flags on merged totals
             m.fee_loss  = m.pnl_gross > 0 and m.pnl_usd < 0
             m.fee_heavy = (not m.fee_loss) and m.pnl_gross > 0 and m.fee_estimate > m.pnl_gross * 0.5

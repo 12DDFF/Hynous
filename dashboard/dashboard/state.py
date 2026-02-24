@@ -271,6 +271,7 @@ class ClosedTrade(BaseModel):
     mfe_pct: float = 0.0         # max favorable excursion ROE % (peak, gross)
     mfe_usd: float = 0.0         # peak dollar value (mfe_pct / 100 * margin)
     lev_return_pct: float = 0.0  # net leveraged ROE % (same basis as mfe_pct)
+    leverage: int = 0            # position leverage; 0 = unknown (pre-signal)
     fee_loss: bool = False  # directionally correct but fees ate profit
     fee_heavy:    bool  = False   # fees took >50% of gross profit
     fee_estimate: float = 0.0    # estimated round-trip fees in USD
@@ -408,6 +409,7 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         mfe_pct_raw              = float(close_signals.get("mfe_pct", 0))
         result["mfe_pct"]        = mfe_pct_raw
         result["mfe_usd"]        = float(close_signals.get("mfe_usd", 0.0))
+        result["leverage"]       = int(close_signals.get("leverage", 0))
         lev_return_pct           = float(close_signals.get("lev_return_pct", 0.0))
         pnl_usd_sig              = float(close_signals.get("pnl_usd", 0.0))
         # Fallback 1: derive from stored margin_used
@@ -3660,6 +3662,7 @@ class AppState(rx.State):
                     fee_heavy=enrichment.get("fee_heavy", False) or t.fee_heavy,
                     fee_estimate=enrichment.get("fee_estimate") or t.fee_estimate,
                     pnl_gross=enrichment.get("pnl_gross") or t.pnl_gross,
+                    leverage=enrichment.get("leverage") or t.leverage,
                     detail_html=detail_html,
                 ))
             breakdown = [
