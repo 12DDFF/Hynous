@@ -425,9 +425,19 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         if lev_stored == 0 and lev_return_pct != 0.0 and sz_usd > 0 and pnl_usd_sig != 0.0:
             lev_stored = max(1, round(abs(lev_return_pct * sz_usd / (pnl_usd_sig * 100))))
         result["leverage"] = lev_stored
-        # Derive mfe_usd from mfe_pct × implied_margin when not stored directly
-        if result["mfe_usd"] == 0.0 and mfe_pct_raw > 0 and lev_return_pct != 0.0 and pnl_usd_sig != 0.0:
-            result["mfe_usd"] = round(mfe_pct_raw * pnl_usd_sig / lev_return_pct, 2)
+        # Derive mfe_usd — try each available data path in order
+        if result["mfe_usd"] == 0.0 and mfe_pct_raw > 0:
+            # Path 1: from lev_return_pct + pnl (pre-existing)
+            if lev_return_pct != 0.0 and pnl_usd_sig != 0.0:
+                result["mfe_usd"] = round(mfe_pct_raw * pnl_usd_sig / lev_return_pct, 2)
+            # Path 2: from margin_used directly (new nodes from trigger close fix)
+            if result["mfe_usd"] == 0.0:
+                margin_sig = float(close_signals.get("margin_used", 0.0))
+                if margin_sig > 0:
+                    result["mfe_usd"] = round(mfe_pct_raw / 100 * margin_sig, 2)
+            # Path 3: derive margin from size_usd / leverage
+            if result["mfe_usd"] == 0.0 and sz_usd > 0 and lev_stored > 0:
+                result["mfe_usd"] = round(mfe_pct_raw / 100 * sz_usd / lev_stored, 2)
         result["fee_loss"]       = bool(close_signals.get("fee_loss", False))
         result["fee_heavy"]      = bool(close_signals.get("fee_heavy", False))
         result["fee_estimate"]   = float(close_signals.get("fee_estimate", 0.0))

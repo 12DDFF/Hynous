@@ -372,7 +372,18 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                         min_width="70px",
                         font_family="JetBrains Mono",
                     ),
-                    rx.text("—", font_size="0.8rem", color="#525252", min_width="70px"),
+                    rx.cond(
+                        trade.mfe_pct > 0,
+                        rx.text(
+                            "+" + trade.mfe_pct.to(str) + "%",
+                            font_size="0.8rem",
+                            font_weight="500",
+                            color="#525252",
+                            min_width="70px",
+                            font_family="JetBrains Mono",
+                        ),
+                        rx.text("—", font_size="0.8rem", color="#525252", min_width="70px"),
+                    ),
                 ),
             ),
             # Duration
