@@ -1223,7 +1223,7 @@ class Daemon:
                         else:
                             try:
                                 sz = pos.get("size", 0)
-                                self._provider.place_trigger_order(
+                                self._get_provider().place_trigger_order(
                                     symbol=sym,
                                     is_buy=(side != "long"),  # long → SELL stop; short → BUY stop
                                     sz=sz,
@@ -1262,7 +1262,7 @@ class Daemon:
                     exit_roe = max(ts.small_wins_roe_pct, fee_be_roe + 0.1)
                     if roe_pct >= exit_roe:
                         try:
-                            result = self._provider.market_close(sym)
+                            result = self._get_provider().market_close(sym)
                             self._small_wins_exited[sym] = True
                             exit_px_sw = result.get("avg_px", px)
                             realized_pnl_sw = result.get("closed_pnl", 0.0)
@@ -1294,7 +1294,7 @@ class Daemon:
                             self._persist_position_types()
                             # Cancel any remaining orders so TP/SL don't linger on closed position
                             try:
-                                self._provider.cancel_all_orders(sym)
+                                self._get_provider().cancel_all_orders(sym)
                             except Exception:
                                 pass
                         except Exception as sw_err:
