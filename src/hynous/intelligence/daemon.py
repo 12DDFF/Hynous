@@ -266,6 +266,10 @@ class Daemon:
         self._last_entry_time: float = 0
         self._last_close_time: float = 0
 
+        # Pending follow-up watches: sym → {fire_at, thesis, side, scheduled_at}
+        # Ephemeral — lost on restart. Use manage_watchpoints for persistent alerts.
+        self._pending_watches: dict[str, dict] = {}
+
         # Wake rate limiting
         self._wake_timestamps: list[float] = []
         self._last_wake_time: float = 0
@@ -1317,6 +1321,72 @@ class Daemon:
         except Exception as e:
             logger.debug("Fast trigger check failed: %s", e)
 
+        self._check_pending_watches()
+
+    def _check_pending_watches(self) -> None:
+        """Fire any monitor_signal follow-ups whose delay has elapsed.
+
+        Each follow-up is launched in a background thread so the 10s fast-path
+        loop (SL/TP guard) is never blocked by an LLM call.
+        """
+        if not self._pending_watches:
+            return
+        now = time.time()
+        for sym in list(self._pending_watches):
+            w = self._pending_watches[sym]
+            if now >= w["fire_at"]:
+                del self._pending_watches[sym]
+                threading.Thread(
+                    target=self._fire_watch_followup,
+                    args=(sym, w),
+                    daemon=True,
+                    name=f"hynous-watch-{sym.lower()}",
+                ).start()
+
+    def _fire_watch_followup(self, sym: str, watch: dict) -> None:
+        """Wake agent with fresh data for a scheduled monitor_signal follow-up."""
+        elapsed = int(time.time() - watch["scheduled_at"])
+        thesis = watch["thesis"]
+        side_hint = f" (watching for {watch['side']} entry)" if watch.get("side") else ""
+
+        price = self.snapshot.prices.get(sym, 0)
+        price_str = f"${price:,.2f}" if price else "unknown"
+
+        book_str = ""
+        if self._scanner and len(self._scanner._books) > 0:
+            snap = self._scanner._books.latest()
+            if snap and sym in snap.books:
+                b = snap.books[sym]
+                bias = "bid-heavy" if b["imbalance"] > 0.55 else "ask-heavy" if b["imbalance"] < 0.45 else "balanced"
+                book_str = (
+                    f"Book now: bids ${b['bid_depth_usd']:,.0f} · "
+                    f"asks ${b['ask_depth_usd']:,.0f} · imb {b['imbalance']:.2f} ({bias})\n"
+                )
+
+        msg = (
+            f"[MONITOR FOLLOW-UP — {sym}{side_hint} — {elapsed}s elapsed]\n"
+            f"Original thesis: {thesis}\n\n"
+            f"Current price: {price_str}\n"
+            f"{book_str}\n"
+            f"VALIDATION — call in parallel: "
+            f"[get_book_history {sym} n=5] + [get_market_data {sym} 1m]\n\n"
+            f"Has your thesis developed as expected?\n"
+            f"• If YES → call execute_trade (state conviction)\n"
+            f"• If NO → state specifically what invalidated it and skip\n"
+            f"• If STILL UNCERTAIN → call monitor_signal again (max 1 more watch)"
+        )
+
+        response = self._wake_agent(
+            msg,
+            source="daemon:monitor_followup",
+            max_tokens=1024,
+            max_coach_cycles=0,
+            skip_memory=True,
+        )
+        if response:
+            logger.info("Monitor follow-up completed for %s", sym)
+            _queue_and_persist("Monitor", f"Follow-up: {sym}", response, event_type="scanner")
+
     def _check_positions(self) -> list[dict] | None:
         """Compare current positions to cached snapshot. Detect closes.
 
@@ -2039,14 +2109,200 @@ class Daemon:
             return ""
         return "[Track Record]\n" + "\n".join(lines)
 
+    # Validation specs per signal type — injected into scanner wake prompts.
+    # Each spec teaches the agent WHAT to fetch and HOW to assess it for this
+    # specific signal. Only covers the primary (first) anomaly in a multi-anomaly
+    # wake — subsequent anomalies are visible in the signal block itself.
+    # Tool names must match the registered names in registry.py exactly.
+    _VALIDATION_SPECS: dict = {
+        "book_flip": {
+            "parallel": ["get_book_history {sym} n=5", "get_market_data {sym} 1m"],
+            "checks": [
+                "Persistence: imbalance consistent in ≥3 of 5 snapshots (not a single spike)?",
+                "Price: 1m candle moving in direction of the imbalance?",
+            ],
+            "rule": "Both must confirm. Book recovered OR price contradicts → skip or monitor_signal.",
+        },
+        "momentum_burst": {
+            "parallel": ["get_market_data {sym} 5m", "get_orderbook {sym}"],
+            "checks": [
+                "Sustained: next 5m candle continuing momentum or already stalling?",
+                "Book: orderbook supporting direction (not adverse flip)?",
+            ],
+            "rule": "Both must confirm. Momentum + adverse book = fade trade, not entry.",
+        },
+        "funding_extreme": {
+            "parallel": ["get_funding_history {sym}", "get_market_data {sym} 4h"],
+            "checks": [
+                "Trend: funding elevated/negative across multiple periods (not a single spike)?",
+                "Price: 4h candle aligned with funding signal (not already reversing)?",
+            ],
+            "rule": "Funding spike alone = weak. Funding trend + price alignment = consider.",
+        },
+        "funding_flip": {
+            "parallel": ["get_funding_history {sym}", "get_market_data {sym} 1h"],
+            "checks": [
+                "Flip sustained or reverting in latest data?",
+                "Price responding to the funding shift?",
+            ],
+            "rule": "Flip + price move = real signal. Flip alone = monitor.",
+        },
+        "oi_surge": {
+            "parallel": ["get_market_data {sym} 1h", "get_orderbook {sym}"],
+            "checks": [
+                "OI direction vs price: OI up + price down = distribution (bearish). OI up + price up = accumulation.",
+                "Book supporting intended entry direction?",
+            ],
+            "rule": "OI/price divergence = skip. Aligned = consider with regime filter.",
+        },
+        "oi_price_divergence": {
+            "parallel": ["get_market_data {sym} 4h", "get_funding_history {sym}"],
+            "checks": [
+                "Divergence confirmed across 2+ timeframes?",
+                "Funding direction consistent with expected squeeze direction?",
+            ],
+            "rule": "Divergence + funding alignment = high-conviction. Divergence alone = wait.",
+        },
+        "price_spike": {
+            "parallel": ["get_market_data {sym} 5m", "get_orderbook {sym}"],
+            "checks": [
+                "Candle structure: clean breakout (strong close) or wick rejection (reversal risk)?",
+                "Book: bids stacking under spike (continuation) or walls capping it (exhaustion)?",
+            ],
+            "rule": "Long wick + capping walls = fade/skip. Clean candle + stacked bids = momentum entry.",
+        },
+        "liq_cascade": {
+            "parallel": ["get_liquidations {sym}", "get_market_data {sym} 1m"],
+            "checks": [
+                "More liq clusters ahead in the cascade direction (fuel for continuation)?",
+                "Price still moving or stalling (cascade losing steam)?",
+            ],
+            "rule": "More cascades ahead + moving price = momentum play. Liq exhausted = snap-back risk, skip.",
+        },
+        "liq_cluster": {
+            "parallel": ["get_liquidations {sym}", "get_orderbook {sym}"],
+            "checks": [
+                "How close is the liq cluster to current price (% distance)?",
+                "Book showing momentum toward the cluster (magnetic pull forming)?",
+            ],
+            "rule": "Cluster within 2% + directional momentum = consider. Further = wait for confirmation.",
+        },
+        "market_liq_wave": {
+            "parallel": ["get_liquidations BTC", "get_market_data BTC 1h"],
+            "checks": [
+                "Are BTC liq cascades driving or following altcoin moves?",
+                "Is the liq wave peaked or still accelerating (price still in trend direction)?",
+            ],
+            "rule": "Early wave + accelerating = ride BTC direction. Late wave = reversal risk.",
+        },
+        "hlp_flip": {
+            "parallel": ["get_funding_history {sym}", "get_market_data {sym} 1h"],
+            "checks": [
+                "Funding aligned with HLP's new direction (both pointing same way = strong signal)?",
+                "Price already moving with HLP or lagging (entry timing)?",
+            ],
+            "rule": "HLP flip + aligned funding + confirming price = high-conviction. HLP alone = soft signal.",
+        },
+        "whale_surge": {
+            "parallel": ["get_market_data {sym} 1h", "get_orderbook {sym}"],
+            "checks": [
+                "Is the whale move reflected in price (whale buying/selling showing up)?",
+                "Book supporting the whale's direction (not getting absorbed)?",
+            ],
+            "rule": "Whale accumulation + price holding + book support = consider their direction. Whale exit = stay out.",
+        },
+        "peak_reversion": {
+            "parallel": ["get_book_history {sym} n=5", "get_account"],
+            "checks": [
+                "Adverse book pressure: persistent across ≥3 snapshots or brief spike?",
+                "Current SL: how much more can I lose before it's hit? Is it adequate?",
+            ],
+            "rule": "Persistent adverse + heavy giveback → tighten SL to current mark or close. Temporary spike → hold.",
+        },
+        "position_adverse_book": {
+            "parallel": ["get_book_history {sym} n=5", "get_account"],
+            "checks": [
+                "Persistent adverse pressure across ≥3 snapshots (not a brief spike)?",
+                "Is current SL close enough to limit damage if book pressure continues?",
+            ],
+            "rule": "Persistent adverse → tighten SL or close. Single-snapshot spike → hold and watch.",
+        },
+        "news_alert": {
+            "parallel": ["get_market_data {sym} 1m", "get_orderbook {sym}"],
+            "checks": [
+                "Price reacting (>0.3% move in 1m)?",
+                "Spread normal or widening (widening = already priced in, dangerous to chase)?",
+            ],
+            "rule": "No price reaction = already priced in, skip. Reaction + normal spread = consider.",
+        },
+        "regime_shift": {
+            "parallel": ["get_funding_history {sym}", "get_market_data {sym} 4h"],
+            "checks": [
+                "Funding and 4h structure consistent with the new regime label?",
+                "Any open positions: does my entry thesis still hold under the new regime?",
+            ],
+            "rule": "Regime shift doesn't mandate a close — it mandates reassessment. Close only if thesis is broken.",
+        },
+        "sm_entry": {
+            "parallel": ["get_market_data {sym} 1h", "get_orderbook {sym}"],
+            "checks": [
+                "Price responding to the smart money entry (move already started or still early)?",
+                "Book supporting their direction (not getting absorbed by opposing flow)?",
+            ],
+            "rule": "Smart money entry alone = soft signal. Entry + price + book = consider following.",
+        },
+        "sm_exit": {
+            "parallel": ["get_market_data {sym} 1h", "get_orderbook {sym}"],
+            "checks": [
+                "Price breaking down after smart money exit (confirming their read)?",
+                "Do I have an open position in the same direction they exited?",
+            ],
+            "rule": "Smart money exit + price weakness = tighten SL or close matching position.",
+        },
+    }
+    _DEFAULT_VALIDATION_SPEC: dict = {
+        "parallel": ["get_market_data {sym} 1m", "get_orderbook {sym}"],
+        "checks": ["Price confirming signal direction?", "Book supporting direction?"],
+        "rule": "Both must align before entering.",
+    }
+
+    def _build_validation_prompt(self, anomalies: list, regime_label: str) -> str:
+        """Build a scanner wake message with signal-specific validation instructions."""
+        from .scanner import format_scanner_wake
+
+        signal_block = format_scanner_wake(anomalies, self._position_types, regime_label)
+
+        top = anomalies[0]
+        sym = top.symbol
+        spec = self._VALIDATION_SPECS.get(top.type, self._DEFAULT_VALIDATION_SPEC)
+
+        parallel_str = " + ".join(
+            f"[{t.replace('{sym}', sym)}]" for t in spec["parallel"]
+        )
+        checks_str = "\n".join(f"  • {c}" for c in spec["checks"])
+
+        validation_block = (
+            f"\nVALIDATION — call in parallel BEFORE deciding:\n"
+            f"  {parallel_str}\n\n"
+            f"Then assess:\n{checks_str}\n\n"
+            f"Decision rule: {spec['rule']}\n"
+            f"If signal unclear after validation → monitor_signal({sym}, delay_s=60, "
+            f"thesis='<your specific thesis>') — you'll get fresh data in 60s.\n"
+        )
+
+        # Insert validation block just before the "IMPORTANT: If you decide to trade" footer
+        split_marker = "IMPORTANT: If you decide to trade"
+        if split_marker in signal_block:
+            pre, post = signal_block.split(split_marker, 1)
+            return pre.rstrip() + "\n" + validation_block + "\n" + split_marker + post
+        return signal_block + "\n" + validation_block
+
     def _wake_for_scanner(self, anomalies: list):
         """Wake the agent when the market scanner detects anomalies.
 
         Filters by wake threshold, formats message, respects rate limits.
         Non-priority wake (shares cooldown with other wakes).
         """
-        from .scanner import format_scanner_wake
-
         cfg = self.config.scanner
         # Filter to anomalies above wake threshold
         wake_worthy = [a for a in anomalies if a.severity >= cfg.wake_threshold]
@@ -2056,9 +2312,9 @@ class Daemon:
         # Cap to max anomalies per wake
         top = wake_worthy[:cfg.max_anomalies_per_wake]
 
-        # Format the wake message (pass position types + regime for directional context)
+        # Format the wake message with signal-specific validation instructions
         regime_label = self._regime.label if self._regime else "RANGING"
-        message = format_scanner_wake(top, position_types=self._position_types, regime_label=regime_label)
+        message = self._build_validation_prompt(top, regime_label)
 
         # Issue 5: Playbook matching — inject matching playbook context
         matched_playbooks: list = []
@@ -2088,7 +2344,7 @@ class Daemon:
             message = track_record + "\n\n" + message
 
         response = self._wake_agent(
-            message, max_coach_cycles=0, max_tokens=768,
+            message, max_coach_cycles=0, max_tokens=1200,
             source="daemon:scanner",
         )
         if response:

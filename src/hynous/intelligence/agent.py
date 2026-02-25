@@ -56,6 +56,8 @@ _STALE_TRUNCATION = {
     "manage_conflicts": 300,
     "batch_prune": 300,
     # Data tools — market numbers the agent already analyzed
+    "get_book_history": 400,
+    "monitor_signal": 150,
     "get_market_data": 400,
     "get_multi_timeframe": 400,
     "get_orderbook": 400,

@@ -152,4 +152,7 @@ def get_registry() -> ToolRegistry:
     from . import data_layer
     data_layer.register(registry)
 
+    from . import market_watch
+    market_watch.register(registry)
+
     return registry
