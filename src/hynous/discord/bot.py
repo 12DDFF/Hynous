@@ -312,6 +312,21 @@ def notify(title: str, wake_type: str, response: str):
         logger.debug("Discord notify failed: %s", e)
 
 
+def notify_simple(message: str):
+    """Send a plain-text message to Discord (no header/formatting)."""
+    if _bot is None or _loop is None:
+        return
+
+    async def _send():
+        if _bot._channel:
+            await _bot._send_chunked(_bot._channel, message)
+
+    try:
+        asyncio.run_coroutine_threadsafe(_send(), _loop)
+    except Exception as e:
+        logger.debug("Discord notify_simple failed: %s", e)
+
+
 def get_bot() -> HynousDiscordBot | None:
     """Get the running bot instance."""
     return _bot

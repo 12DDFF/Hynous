@@ -65,6 +65,15 @@ def _notify_discord(wake_type: str, title: str, response: str):
         pass
 
 
+def _notify_discord_simple(message: str):
+    """Send a plain-text trade notification to Discord (no header, no agent response)."""
+    try:
+        from ..discord.bot import notify_simple
+        notify_simple(message)
+    except Exception:
+        pass
+
+
 def _queue_and_persist(wake_type: str, title: str, response: str, event_type: str = ""):
     """Put wake message in dashboard queue AND persistent wake log.
 
@@ -1277,6 +1286,11 @@ class Daemon:
                                 f"Small Wins Mode locked in profit automatically."
                             )
                             _queue_and_persist("System", f"Small Wins Exit: {sym}", sw_msg)
+                            _notify_discord_simple(
+                                f"Exited {sym} {side} [Small Wins] — "
+                                f"+${abs(realized_pnl_sw):.2f} · ROE {roe_pct:+.1f}% "
+                                f"(net ~{net_roe:+.1f}%)"
+                            )
                             log_event(DaemonEvent(
                                 "profit", f"small_wins_exit: {sym} {side}",
                                 f"Exit @ ROE {roe_pct:+.1f}% | fee BE {fee_be_roe:.1f}% "
@@ -1364,6 +1378,16 @@ class Daemon:
                 self._position_types.pop(coin, None)
             if closed_coins:
                 self._persist_position_types()
+
+            # Detect new positions (entries) and send clean Discord notification
+            for coin, curr_data in current.items():
+                if coin not in self._prev_positions:
+                    c_side = curr_data.get("side", "long")
+                    c_lev = int(curr_data.get("leverage", 0))
+                    msg = f"Entered {coin} {c_side}"
+                    if c_lev:
+                        msg += f" ({c_lev}x)"
+                    _notify_discord_simple(msg)
 
             # Update snapshot
             self._prev_positions = current
@@ -2073,7 +2097,6 @@ class Daemon:
                 f"{len(top)} anomalies (top: {top_event.type} {top_event.symbol} sev={top_event.severity:.2f})",
             ))
             _queue_and_persist("Scanner", title, response, event_type="scanner")
-            _notify_discord("Scanner", title, response)
             logger.info("Scanner wake: %d anomalies, agent responded (%d chars)",
                         len(top), len(response))
 
@@ -2226,7 +2249,17 @@ class Daemon:
                 f"PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
             ))
             _queue_and_persist("Fill", fill_title, response, event_type="fill")
-            _notify_discord("Fill", fill_title, response)
+            # Clean Discord exit notification (no agent response blob)
+            close_label = {
+                "stop_loss": "SL", "take_profit": "TP", "liquidation": "Liquidation",
+            }.get(classification, "Closed")
+            leverage_dc = self._prev_positions.get(coin, {}).get("leverage", type_info.get("leverage", 0))
+            roe_dc = round(pnl_pct * leverage_dc, 1) if leverage_dc else 0.0
+            _notify_discord_simple(
+                f"Exited {coin} {side} [{close_label}] — "
+                f"{pnl_sign}${abs(realized_pnl):.2f} ({pnl_pct:+.1f}%)"
+                + (f" · ROE {roe_dc:+.1f}%" if roe_dc else "")
+            )
             logger.info("Fill wake complete: %s %s %s %s (PnL: %s%.2f)",
                          classification, trade_type, coin, side, pnl_sign, abs(realized_pnl))
 
