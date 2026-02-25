@@ -124,12 +124,19 @@ def _format_tool_trace_text(tool_calls: list[dict]) -> str:
         if "action" in inp:
             parts.append(str(inp["action"]))
         full_name = f"{display} · {' · '.join(parts)}" if parts else display
+        # Skip header lines (end with ":") and separators — pick first prose line
         raw_line = next(
-            (l.strip() for l in result.split("\n") if l.strip() and len(l.strip()) > 3), ""
+            (
+                l.strip() for l in result.split("\n")
+                if l.strip() and len(l.strip()) > 5
+                and not l.strip().endswith(":")
+                and not all(c in "-=| \t" for c in l.strip())
+            ),
+            "",
         )
         if raw_line:
-            truncated = raw_line[:120]
-            suffix = "..." if len(raw_line) > 120 else ""
+            truncated = raw_line[:80]
+            suffix = "..." if len(raw_line) > 80 else ""
             lines.append(f"⚡ {full_name}  →  {truncated}{suffix}")
         else:
             lines.append(f"⚡ {full_name}")

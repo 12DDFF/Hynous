@@ -645,14 +645,15 @@ def _wake_detail_dialog() -> rx.Component:
                     ),
                     rx.fragment(),
                 ),
-                # 3. Response as markdown, scrollable
+                # 3. Response as plain pre-wrap text (rx.markdown breaks on >> and > in agent text)
                 rx.box(
                     rx.box(height="1px", background="#1f1f1f", width="100%", margin_bottom="0.5rem"),
-                    rx.markdown(
+                    rx.text(
                         AppState.wake_detail_content,
                         font_size="0.82rem",
                         color="#d4d4d4",
                         line_height="1.6",
+                        white_space="pre-wrap",
                         style={"word_break": "break-word"},
                     ),
                     max_height="52vh",
