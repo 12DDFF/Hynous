@@ -97,12 +97,19 @@ def fetch_trade_history(
         from ..nous.client import get_client
         nous_client = get_client()
 
+    # Normalize timestamps to Nous storage format: "YYYY-MM-DD HH:MM:SS"
+    # Nous stores without T-separator or timezone; ISO strings with T/+00:00 break string comparison
+    def _norm(ts: str | None) -> str | None:
+        if not ts:
+            return ts
+        return ts.replace("T", " ").split("+")[0].split("Z")[0].strip()
+
     try:
         nodes = nous_client.list_nodes(
             subtype="custom:trade_close",
             limit=limit,
-            created_after=created_after,
-            created_before=created_before,
+            created_after=_norm(created_after),
+            created_before=_norm(created_before),
         )
     except Exception as e:
         logger.debug("Failed to fetch trade_close nodes: %s", e)
