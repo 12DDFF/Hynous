@@ -1347,10 +1347,23 @@ class Daemon:
                     self._persist_position_types()
                     state = provider.get_user_state()
                     positions = state.get("positions", [])
-                    self._prev_positions = {
+                    new_positions = {
                         p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"], "leverage": p.get("leverage", 20)}
                         for p in positions
                     }
+                    # Entry detection in paper path — fires even when a close happened in the same cycle
+                    for coin, curr_data in new_positions.items():
+                        if coin not in self._prev_positions:
+                            c_side = curr_data.get("side", "long")
+                            c_lev = int(curr_data.get("leverage", 0))
+                            c_entry = curr_data.get("entry_px", 0)
+                            msg = f"Entered {coin} {c_side}"
+                            if c_lev:
+                                msg += f" ({c_lev}x)"
+                            if c_entry:
+                                msg += f" @ ${c_entry:,.0f}"
+                            _notify_discord_simple(msg)
+                    self._prev_positions = new_positions
                     return positions
 
             # Testnet/live flow: detect closes by comparing snapshots
@@ -1384,9 +1397,12 @@ class Daemon:
                 if coin not in self._prev_positions:
                     c_side = curr_data.get("side", "long")
                     c_lev = int(curr_data.get("leverage", 0))
+                    c_entry = curr_data.get("entry_px", 0)
                     msg = f"Entered {coin} {c_side}"
                     if c_lev:
                         msg += f" ({c_lev}x)"
+                    if c_entry:
+                        msg += f" @ ${c_entry:,.0f}"
                     _notify_discord_simple(msg)
 
             # Update snapshot
@@ -2163,7 +2179,7 @@ class Daemon:
         is_scalp = trade_type == "micro"
         type_label = "Scalp" if is_scalp else "Swing"
 
-        pnl_sign = "+" if realized_pnl >= 0 else ""
+        pnl_sign = "+" if realized_pnl >= 0 else "-"
         pnl_pct = ((exit_px - entry_px) / entry_px * 100) if entry_px > 0 else 0
         if side == "short":
             pnl_pct = -pnl_pct
@@ -2255,8 +2271,9 @@ class Daemon:
             }.get(classification, "Closed")
             leverage_dc = self._prev_positions.get(coin, {}).get("leverage", type_info.get("leverage", 0))
             roe_dc = round(pnl_pct * leverage_dc, 1) if leverage_dc else 0.0
+            win_loss = "WIN" if realized_pnl >= 0 else "LOSS"
             _notify_discord_simple(
-                f"Exited {coin} {side} [{close_label}] — "
+                f"{win_loss} · Exited {coin} {side} [{close_label}] — "
                 f"{pnl_sign}${abs(realized_pnl):.2f} ({pnl_pct:+.1f}%)"
                 + (f" · ROE {roe_dc:+.1f}%" if roe_dc else "")
             )
