@@ -340,28 +340,41 @@ def _small_wins_card() -> rx.Component:
                     spacing="2",
                     align="center",
                 ),
-                # Fee breakdown
+                # Micro scenario (20x fixed)
+                rx.text(
+                    "Micro / Scalp  (" + p["leverage"].to(str) + "x)",
+                    font_size="0.63rem", font_weight="600",
+                    color="#6366f1", padding_bottom="0.15rem",
+                    text_transform="uppercase", letter_spacing="0.04em",
+                ),
                 _preview_row(
-                    "Round-trip fees (entry + exit):",
-                    p["fee_be_roe"].to(str) + "% ROE  ←  " + p["fee_pct"].to(str) + "% × " + p["leverage"].to(str) + "x leverage",
+                    "Round-trip fees:",
+                    p["fee_be_roe"].to(str) + "% ROE  ←  " + p["fee_pct"].to(str) + "% × " + p["leverage"].to(str) + "x",
                     "#737373",
                 ),
-                _preview_row(
-                    "Gross exit ROE:",
-                    p["exit_roe"].to(str) + "%",
-                    "#d4d4d4",
+                _preview_row("Gross exit ROE:", p["exit_roe"].to(str) + "%", "#d4d4d4"),
+                _preview_row("Net ROE after fees:", "+" + p["net_roe"].to(str) + "%", "#22c55e"),
+                rx.box(height="0.4rem"),
+                # Macro scenario (avg of configured macro leverage range)
+                rx.text(
+                    "Macro / Swing  (~" + p["macro_lev"].to(str) + "x avg)",
+                    font_size="0.63rem", font_weight="600",
+                    color="#a78bfa", padding_bottom="0.15rem",
+                    text_transform="uppercase", letter_spacing="0.04em",
                 ),
                 _preview_row(
-                    "Net ROE after fees:",
-                    "+" + p["net_roe"].to(str) + "%",
-                    "#22c55e",
+                    "Round-trip fees:",
+                    p["macro_fee_be_roe"].to(str) + "% ROE  ←  " + p["fee_pct"].to(str) + "% × " + p["macro_lev"].to(str) + "x",
+                    "#737373",
                 ),
-                rx.box(height="0.3rem"),
-                # Per-conviction dollar breakdown
+                _preview_row("Gross exit ROE:", p["macro_exit_roe"].to(str) + "%", "#d4d4d4"),
+                _preview_row("Net ROE after fees:", "+" + p["macro_net_roe"].to(str) + "%", "#22c55e"),
+                rx.box(height="0.4rem"),
+                # Per-conviction dollar breakdown (macro — more representative for swing trades)
                 rx.text(
                     rx.cond(
                         AppState.portfolio_value > 0,
-                        "Portfolio: " + AppState.portfolio_value_str,
+                        "Portfolio: " + AppState.portfolio_value_str + "  (macro scenario)",
                         "Portfolio: —  (connect wallet to see $ amounts)",
                     ),
                     font_size="0.68rem",
@@ -370,17 +383,17 @@ def _small_wins_card() -> rx.Component:
                 ),
                 _preview_row(
                     "High conviction (" + AppState.settings_tier_high.to(str) + "% margin = $" + p["high_margin"].to(str) + "):",
-                    "+$" + p["high_net_usd"].to(str) + " net",
+                    "+$" + p["macro_high_net_usd"].to(str) + " net",
                     rx.cond(AppState.portfolio_value > 0, "#4ade80", "#404040"),
                 ),
                 _preview_row(
                     "Medium conviction (" + AppState.settings_tier_medium.to(str) + "% margin = $" + p["med_margin"].to(str) + "):",
-                    "+$" + p["med_net_usd"].to(str) + " net",
+                    "+$" + p["macro_med_net_usd"].to(str) + " net",
                     rx.cond(AppState.portfolio_value > 0, "#4ade80", "#404040"),
                 ),
                 _preview_row(
                     "Speculative (" + AppState.settings_tier_speculative.to(str) + "% margin = $" + p["spec_margin"].to(str) + "):",
-                    "+$" + p["spec_net_usd"].to(str) + " net",
+                    "+$" + p["macro_spec_net_usd"].to(str) + " net",
                     rx.cond(AppState.portfolio_value > 0, "#4ade80", "#404040"),
                 ),
                 spacing="0",

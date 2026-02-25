@@ -1860,34 +1860,52 @@ class AppState(rx.State):
 
     @rx.var
     def small_wins_preview(self) -> dict:
-        """Live preview: what Small Wins Mode earns per trade at current settings."""
+        """Live preview: what Small Wins Mode earns per trade at current settings.
+
+        Shows two scenarios — micro (fixed 20x) and macro (average of configured
+        macro leverage range) — since fee cost as % of ROE scales with leverage.
+        """
         fee_pct = self.settings_taker_fee_pct
-        leverage = self.settings_micro_leverage
+        micro_lev = self.settings_micro_leverage
+        # Macro leverage: midpoint of the configured macro range
+        macro_lev = round((self.settings_macro_lev_min + self.settings_macro_lev_max) / 2)
         roe_target = self.settings_small_wins_roe_pct
-        fee_be_roe = fee_pct * leverage
-        exit_roe = max(roe_target, fee_be_roe + 0.1)
-        net_roe = exit_roe - fee_be_roe
         pv = self.portfolio_value if self.portfolio_value > 0 else 0.0
-        # Conviction tier margin %
-        high_pct = self.settings_tier_high
-        med_pct = self.settings_tier_medium
-        spec_pct = self.settings_tier_speculative
-        high_margin = pv * high_pct / 100
-        med_margin = pv * med_pct / 100
-        spec_margin = pv * spec_pct / 100
+
+        def _scenario(lev: int) -> dict:
+            fee_be = fee_pct * lev
+            exit_roe = max(roe_target, fee_be + 0.1)
+            net_roe = exit_roe - fee_be
+            high_m = pv * self.settings_tier_high / 100
+            med_m  = pv * self.settings_tier_medium / 100
+            spec_m = pv * self.settings_tier_speculative / 100
+            return {
+                "fee_be_roe":    round(fee_be, 2),
+                "exit_roe":      round(exit_roe, 2),
+                "net_roe":       round(net_roe, 2),
+                "leverage":      lev,
+                "high_margin":   round(high_m, 2),
+                "high_net_usd":  round(high_m * net_roe / 100, 2),
+                "med_margin":    round(med_m, 2),
+                "med_net_usd":   round(med_m * net_roe / 100, 2),
+                "spec_margin":   round(spec_m, 2),
+                "spec_net_usd":  round(spec_m * net_roe / 100, 2),
+            }
+
+        micro = _scenario(micro_lev)
+        macro = _scenario(macro_lev)
+        # Expose top-level fields using micro scenario (settings card shows micro by default)
         return {
-            "fee_be_roe": round(fee_be_roe, 2),
-            "exit_roe": round(exit_roe, 2),
-            "net_roe": round(net_roe, 2),
-            "fee_pct": fee_pct,
-            "leverage": leverage,
-            "portfolio": round(pv, 2),
-            "high_margin": round(high_margin, 2),
-            "high_net_usd": round(high_margin * net_roe / 100, 2),
-            "med_margin": round(med_margin, 2),
-            "med_net_usd": round(med_margin * net_roe / 100, 2),
-            "spec_margin": round(spec_margin, 2),
-            "spec_net_usd": round(spec_margin * net_roe / 100, 2),
+            **micro,
+            "fee_pct":     fee_pct,
+            "portfolio":   round(pv, 2),
+            "macro_lev":   macro_lev,
+            "macro_fee_be_roe":   macro["fee_be_roe"],
+            "macro_exit_roe":     macro["exit_roe"],
+            "macro_net_roe":      macro["net_roe"],
+            "macro_high_net_usd": macro["high_net_usd"],
+            "macro_med_net_usd":  macro["med_net_usd"],
+            "macro_spec_net_usd": macro["spec_net_usd"],
         }
 
     @rx.var
