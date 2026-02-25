@@ -159,6 +159,10 @@ class WalletProfiler:
         Uses closedPnl from Hyperliquid — each fill that closes a position
         reports its realized PnL directly. We group consecutive fills into
         trades based on position flips (startPosition crossing zero).
+
+        Entry/exit prices are computed as weighted averages of actual fill
+        prices, never derived from PnL — deriving from PnL causes overflow
+        when entry_size is only the first fill (not total position size).
         """
         trades = []
         current_trade: dict | None = None
@@ -166,6 +170,8 @@ class WalletProfiler:
         for f in fills:
             px = float(f.get("px", 0))
             sz = float(f.get("sz", 0))
+            if px <= 0 or sz <= 0:
+                continue
             closed_pnl = float(f.get("closedPnl", 0))
             ts = f.get("time", 0)
             # Hyperliquid time is in ms
@@ -178,30 +184,34 @@ class WalletProfiler:
             side = "long" if "Long" in direction or "Buy" in direction else "short"
 
             if is_open and current_trade is None:
-                # Start new trade
+                # Start new trade — use accumulated cost/size for avg entry price
                 current_trade = {
                     "coin": coin,
                     "side": side,
-                    "entry_px": px,
-                    "entry_size": sz,
+                    "entry_cost": px * sz,  # weighted sum for avg entry
+                    "entry_size": sz,        # accumulated across scale-ins
                     "entry_time": ts,
+                    "exit_cost": 0.0,        # weighted sum for avg exit
+                    "exit_size": 0.0,        # accumulated exit fills
                     "pnl_usd": 0.0,
                     "exit_time": ts,
                 }
-            elif current_trade is not None:
+            elif is_open and current_trade is not None:
+                # Scale-in: accumulate entry cost/size for correct avg entry
+                current_trade["entry_cost"] += px * sz
+                current_trade["entry_size"] += sz
+            elif not is_open and current_trade is not None:
                 current_trade["pnl_usd"] += closed_pnl
                 current_trade["exit_time"] = ts
+                # Accumulate actual exit fill prices — no derivation needed
+                current_trade["exit_cost"] += px * sz
+                current_trade["exit_size"] += sz
 
                 # Check if position is fully closed
-                # startPosition tells us position BEFORE this fill
-                # If closedPnl != 0, some portion was closed
-                if not is_open and closed_pnl != 0:
-                    # Position closed (partially or fully)
-                    # Check if we're flat after this fill
-                    remaining = abs(start_pos) - sz
-                    if remaining <= sz * 0.01:  # effectively flat
-                        self._finalize_trade(current_trade, trades)
-                        current_trade = None
+                remaining = abs(start_pos) - sz
+                if remaining <= sz * 0.01:  # effectively flat
+                    self._finalize_trade(current_trade, trades)
+                    current_trade = None
 
         # Finalize any open trade
         if current_trade is not None and current_trade["pnl_usd"] != 0:
@@ -213,16 +223,23 @@ class WalletProfiler:
         """Compute derived fields and append to trades list."""
         hold_s = trade["exit_time"] - trade["entry_time"]
         trade["hold_hours"] = max(hold_s / 3600, 0.001)
-        entry_val = trade["entry_px"] * trade["entry_size"]
+
+        # Weighted average prices from actual fill data — no PnL-based derivation
+        entry_size = trade["entry_size"]
+        exit_size = trade["exit_size"]
+        trade["entry_px"] = trade["entry_cost"] / entry_size if entry_size > 0 else 0
+        trade["exit_px"] = (
+            trade["exit_cost"] / exit_size if exit_size > 0 else trade["entry_px"]
+        )
+
+        entry_val = trade["entry_px"] * entry_size
         trade["pnl_pct"] = (trade["pnl_usd"] / entry_val) if entry_val > 0 else 0
-        # Derive exit_px from PnL: pnl = (exit - entry) * size for long, inverse for short
-        if trade["entry_size"] > 0 and trade["entry_px"] > 0:
-            if trade["side"] == "long":
-                trade["exit_px"] = trade["entry_px"] + trade["pnl_usd"] / trade["entry_size"]
-            else:
-                trade["exit_px"] = trade["entry_px"] - trade["pnl_usd"] / trade["entry_size"]
-        else:
-            trade["exit_px"] = trade["entry_px"]
+
+        # Sanity check: discard trades with impossible returns (>1000%)
+        # These indicate a FIFO mismatch or corrupted fill data
+        if trade["entry_px"] <= 0 or abs(trade["pnl_pct"]) > 10.0:
+            return
+
         trades.append(trade)
 
     # ------------------------------------------------------------------
