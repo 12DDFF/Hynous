@@ -74,7 +74,81 @@ def _notify_discord_simple(message: str):
         pass
 
 
-def _queue_and_persist(wake_type: str, title: str, response: str, event_type: str = ""):
+_TOOL_DISPLAY = {
+    "get_market_data": "market data",
+    "get_orderbook": "orderbook",
+    "get_book_history": "book history",
+    "get_funding_history": "funding",
+    "get_liquidations": "liquidations",
+    "get_multi_timeframe": "multi-TF",
+    "get_global_sentiment": "sentiment",
+    "get_options_flow": "options",
+    "get_institutional_flow": "institutional",
+    "get_account": "account",
+    "get_my_costs": "costs",
+    "get_trade_stats": "stats",
+    "execute_trade": "trade",
+    "close_position": "close",
+    "modify_position": "modify",
+    "monitor_signal": "monitor",
+    "recall_memory": "memory",
+    "store_memory": "memory",
+    "update_memory": "memory",
+    "delete_memory": "memory",
+    "explore_memory": "explore",
+    "manage_conflicts": "conflicts",
+    "manage_clusters": "clusters",
+    "manage_watchpoints": "watchpoints",
+    "batch_prune": "memory",
+    "analyze_memory": "memory",
+    "search_web": "web search",
+    "data_layer": "data layer",
+}
+
+
+def _format_tool_trace_text(tool_calls: list[dict]) -> str:
+    """Format agent tool calls into a readable trace string for the dashboard."""
+    lines = []
+    for tc in tool_calls:
+        name = tc.get("name", "")
+        inp = tc.get("input", {}) or {}
+        result = tc.get("result", "") or ""
+        display = _TOOL_DISPLAY.get(name, name.replace("_", " "))
+        parts = []
+        if "symbol" in inp:
+            parts.append(str(inp["symbol"]).upper())
+        if "period" in inp:
+            parts.append(str(inp["period"]))
+        if "n" in inp:
+            parts.append(f"n={inp['n']}")
+        if "action" in inp:
+            parts.append(str(inp["action"]))
+        full_name = f"{display} · {' · '.join(parts)}" if parts else display
+        raw_line = next(
+            (l.strip() for l in result.split("\n") if l.strip() and len(l.strip()) > 3), ""
+        )
+        if raw_line:
+            truncated = raw_line[:120]
+            suffix = "..." if len(raw_line) > 120 else ""
+            lines.append(f"⚡ {full_name}  →  {truncated}{suffix}")
+        else:
+            lines.append(f"⚡ {full_name}")
+    return "\n".join(lines)
+
+
+def _extract_decision(tool_calls: list[dict]) -> str:
+    """Infer agent decision from which tools were called."""
+    names = {tc.get("name") for tc in tool_calls}
+    if "execute_trade" in names:
+        return "trade"
+    if "close_position" in names or "modify_position" in names:
+        return "manage"
+    if "monitor_signal" in names:
+        return "monitor"
+    return "pass"
+
+
+def _queue_and_persist(wake_type: str, title: str, response: str, event_type: str = "", meta: dict | None = None):
     """Put wake message in dashboard queue AND persistent wake log.
 
     The in-memory queue gives instant UI updates when the dashboard is open.
@@ -84,10 +158,12 @@ def _queue_and_persist(wake_type: str, title: str, response: str, event_type: st
     item = {"type": wake_type, "title": title, "response": response}
     if event_type:
         item["event_type"] = event_type
+    if meta:
+        item.update(meta)
     _daemon_chat_queue.put(item)
     try:
         from ..core.persistence import append_wake
-        append_wake(wake_type, title, response)
+        append_wake(wake_type, title, response, extra=meta or {})
     except Exception:
         pass
 
@@ -1383,9 +1459,16 @@ class Daemon:
             max_coach_cycles=0,
             skip_memory=True,
         )
+        # Snapshot immediately — another chat() call would reset _last_tool_calls
+        last_tool_calls = list(self.agent._last_tool_calls)
         if response:
             logger.info("Monitor follow-up completed for %s", sym)
-            _queue_and_persist("Monitor", f"Follow-up: {sym}", response, event_type="scanner")
+            monitor_meta = {
+                "tool_trace_text": _format_tool_trace_text(last_tool_calls),
+                "decision": _extract_decision(last_tool_calls),
+                "signal_header": f"monitor · {sym}",
+            }
+            _queue_and_persist("Monitor", f"Follow-up: {sym}", response, event_type="scanner", meta=monitor_meta)
 
     def _check_positions(self) -> list[dict] | None:
         """Compare current positions to cached snapshot. Detect closes.
@@ -2347,6 +2430,8 @@ class Daemon:
             message, max_coach_cycles=0, max_tokens=1200,
             source="daemon:scanner",
         )
+        # Snapshot immediately — another chat() call would reset _last_tool_calls
+        last_tool_calls = list(self.agent._last_tool_calls)
         if response:
             self.scanner_wakes += 1
             self._scanner.wakes_triggered += 1
@@ -2368,7 +2453,12 @@ class Daemon:
                 "scanner", title,
                 f"{len(top)} anomalies (top: {top_event.type} {top_event.symbol} sev={top_event.severity:.2f})",
             ))
-            _queue_and_persist("Scanner", title, response, event_type="scanner")
+            scanner_meta = {
+                "tool_trace_text": _format_tool_trace_text(last_tool_calls),
+                "decision": _extract_decision(last_tool_calls),
+                "signal_header": f"{top_event.type} · {top_event.symbol} · {top_event.severity:.2f}",
+            }
+            _queue_and_persist("Scanner", title, response, event_type="scanner", meta=scanner_meta)
             logger.info("Scanner wake: %d anomalies, agent responded (%d chars)",
                         len(top), len(response))
 

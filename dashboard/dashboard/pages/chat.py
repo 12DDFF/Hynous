@@ -352,6 +352,37 @@ def _dot_color(category):
     )
 
 
+def _decision_chip(decision: rx.Var[str]) -> rx.Component:
+    """Colored chip showing agent decision (TRADE/MONITOR/MANAGE/PASS)."""
+    color = rx.match(
+        decision,
+        ("trade", "#22c55e"),
+        ("monitor", "#f59e0b"),
+        ("manage", "#a78bfa"),
+        "#525252",
+    )
+    bg = rx.match(
+        decision,
+        ("trade", "rgba(34,197,94,0.12)"),
+        ("monitor", "rgba(245,158,11,0.12)"),
+        ("manage", "rgba(167,139,250,0.12)"),
+        "rgba(64,64,64,0.12)",
+    )
+    label = rx.match(
+        decision,
+        ("trade", "TRADE"),
+        ("monitor", "MONITOR"),
+        ("manage", "MANAGE"),
+        "PASS",
+    )
+    return rx.box(
+        rx.text(label, font_size="0.55rem", font_weight="700", color=color, letter_spacing="0.06em"),
+        padding="1px 5px",
+        border_radius="3px",
+        background=bg,
+    )
+
+
 def _wake_row(item: WakeItem) -> rx.Component:
     """Single wake event — click to view full details."""
     color = _dot_color(item.category)
@@ -384,6 +415,7 @@ def _wake_row(item: WakeItem) -> rx.Component:
             flex="1",
             min_width="0",
         ),
+        rx.cond(item.decision != "", _decision_chip(item.decision), rx.fragment()),
         spacing="2",
         width="100%",
         align="start",
@@ -391,7 +423,44 @@ def _wake_row(item: WakeItem) -> rx.Component:
         cursor="pointer",
         border_radius="4px",
         _hover={"background": "#141414"},
-        on_click=AppState.view_wake_detail(item.full_content, item.category, item.timestamp),
+        on_click=AppState.view_wake_detail(
+            item.full_content, item.category, item.timestamp,
+            item.tool_trace_text, item.signal_header, item.decision,
+        ),
+    )
+
+
+def _watches_section() -> rx.Component:
+    """Pulsing indicator when monitor_signal watches are active."""
+    return rx.cond(
+        AppState.active_watches.length() > 0,
+        rx.vstack(
+            rx.hstack(
+                rx.box(
+                    width="6px",
+                    height="6px",
+                    border_radius="50%",
+                    background="#f59e0b",
+                    style={"animation": "pulse 2s cubic-bezier(0.4,0,0.6,1) infinite"},
+                ),
+                _label("Watching"),
+                spacing="2",
+                align="center",
+            ),
+            rx.foreach(
+                AppState.active_watches,
+                lambda w: rx.text(
+                    w,
+                    font_size="0.7rem",
+                    color="#a3a3a3",
+                    font_family="JetBrains Mono, monospace",
+                ),
+            ),
+            spacing="1",
+            width="100%",
+            padding_bottom="0.5rem",
+        ),
+        rx.fragment(),
     )
 
 
@@ -465,6 +534,8 @@ def _sidebar() -> rx.Component:
             width="100%",
             flex_shrink="0",
         ),
+        # Active watches indicator (only when monitor_signal is ticking)
+        _watches_section(),
         # Middle — scrollable activity feed
         _activity_section(),
         # Bottom — pinned stats
@@ -492,12 +563,12 @@ def _sidebar() -> rx.Component:
 # ---------------------------------------------------------------------------
 
 def _wake_detail_dialog() -> rx.Component:
-    """Dialog showing full wake response content."""
+    """Dialog showing full wake response with tool trace and decision."""
     color = _dot_color(AppState.wake_detail_category)
     return rx.dialog.root(
         rx.dialog.content(
             rx.vstack(
-                # Header
+                # 1. Header row
                 rx.hstack(
                     rx.box(
                         width="8px",
@@ -513,13 +584,28 @@ def _wake_detail_dialog() -> rx.Component:
                         color=color,
                         letter_spacing="0.04em",
                     ),
-                    rx.text(
-                        AppState.wake_detail_time,
-                        font_size="0.7rem",
-                        color="#525252",
-                        font_family="JetBrains Mono, monospace",
+                    rx.cond(
+                        AppState.wake_detail_signal_header != "",
+                        rx.text(
+                            AppState.wake_detail_signal_header,
+                            font_size="0.68rem",
+                            color="#525252",
+                            font_family="JetBrains Mono, monospace",
+                        ),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        AppState.wake_detail_decision != "",
+                        _decision_chip(AppState.wake_detail_decision),
+                        rx.fragment(),
                     ),
                     rx.spacer(),
+                    rx.text(
+                        AppState.wake_detail_time,
+                        font_size="0.65rem",
+                        color="#404040",
+                        font_family="JetBrains Mono, monospace",
+                    ),
                     rx.dialog.close(
                         rx.icon(
                             "x",
@@ -533,20 +619,45 @@ def _wake_detail_dialog() -> rx.Component:
                     align="center",
                     width="100%",
                 ),
-                # Body
+                # 2. Validation trace (only when present)
+                rx.cond(
+                    AppState.wake_detail_tool_trace_text != "",
+                    rx.vstack(
+                        rx.box(height="1px", background="#1f1f1f", width="100%"),
+                        rx.text(
+                            "VALIDATION TRACE",
+                            font_size="0.6rem",
+                            font_weight="600",
+                            color="#3f3f3f",
+                            letter_spacing="0.08em",
+                        ),
+                        rx.text(
+                            AppState.wake_detail_tool_trace_text,
+                            font_size="0.72rem",
+                            color="#6b7280",
+                            white_space="pre-wrap",
+                            font_family="JetBrains Mono, monospace",
+                            line_height="1.7",
+                        ),
+                        spacing="2",
+                        width="100%",
+                        align_items="start",
+                    ),
+                    rx.fragment(),
+                ),
+                # 3. Response as markdown, scrollable
                 rx.box(
-                    rx.text(
+                    rx.box(height="1px", background="#1f1f1f", width="100%", margin_bottom="0.5rem"),
+                    rx.markdown(
                         AppState.wake_detail_content,
                         font_size="0.82rem",
                         color="#d4d4d4",
                         line_height="1.6",
-                        white_space="pre-wrap",
-                        word_break="break-word",
+                        style={"word_break": "break-word"},
                     ),
-                    max_height="60vh",
+                    max_height="52vh",
                     overflow_y="auto",
                     width="100%",
-                    padding="0.5rem 0",
                     style={
                         "scrollbar_width": "thin",
                         "scrollbar_color": "#262626 transparent",
@@ -556,10 +667,16 @@ def _wake_detail_dialog() -> rx.Component:
                 width="100%",
             ),
             max_width="560px",
+            max_height="90vh",
+            overflow_y="auto",
             background="#111111",
             border="1px solid #1a1a1a",
             border_radius="12px",
             padding="1.25rem",
+            style={
+                "scrollbar_width": "thin",
+                "scrollbar_color": "#262626 transparent",
+            },
         ),
         open=AppState.wake_detail_open,
         on_open_change=lambda _: AppState.close_wake_detail(),

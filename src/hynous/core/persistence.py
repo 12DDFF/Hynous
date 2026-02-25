@@ -173,7 +173,7 @@ def _atomic_write(path: Path, data: str) -> None:
         raise
 
 
-def append_wake(wake_type: str, title: str, response: str) -> None:
+def append_wake(wake_type: str, title: str, response: str, extra: dict | None = None) -> None:
     """Append a daemon wake message to the persistent log (atomic write)."""
     _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     try:
@@ -184,12 +184,15 @@ def append_wake(wake_type: str, title: str, response: str) -> None:
     t = pacific_now()
     tz = t.strftime("%Z").lower()
     ts = t.strftime("%I:%M %p").lstrip("0").lower() + f" {tz}"
-    entries.append({
+    entry = {
         "type": wake_type,
         "title": title,
         "response": response,
         "timestamp": ts,
-    })
+    }
+    if extra:
+        entry.update(extra)
+    entries.append(entry)
     entries = entries[-_MAX_WAKE_LOG:]
     try:
         _atomic_write(_WAKE_LOG, json.dumps(entries, default=str))

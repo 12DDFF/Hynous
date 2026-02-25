@@ -416,32 +416,6 @@ def tool_indicator(tool_name: rx.Var[str], tool_color: rx.Var[str] = "#a5b4fc") 
 
 
 # Per-tool colors for tags and indicators
-_TOOL_COLOR = {
-    "market data": "#60a5fa",   # blue
-    "orderbook": "#22d3ee",     # cyan
-    "funding": "#fbbf24",       # amber
-    "multi-TF": "#a78bfa",      # purple
-    "liquidations": "#fb923c",  # orange
-    "sentiment": "#2dd4bf",     # teal
-    "options": "#f472b6",       # pink
-    "institutional": "#34d399", # emerald
-    "web search": "#e879f9",   # fuchsia
-    "costs": "#94a3b8",         # slate
-    "memory": "#a3e635",        # lime
-}
-_TOOL_BG = {
-    "market data": "rgba(96,165,250,0.1)",
-    "orderbook": "rgba(34,211,238,0.1)",
-    "funding": "rgba(251,191,36,0.1)",
-    "multi-TF": "rgba(167,139,250,0.1)",
-    "liquidations": "rgba(251,146,60,0.1)",
-    "sentiment": "rgba(45,212,191,0.1)",
-    "options": "rgba(244,114,182,0.1)",
-    "institutional": "rgba(52,211,153,0.1)",
-    "web search": "rgba(232,121,249,0.1)",
-    "costs": "rgba(148,163,184,0.1)",
-    "memory": "rgba(163,230,53,0.1)",
-}
 
 def _tag_color(name: rx.Var[str]) -> rx.Var[str]:
     """Resolve tool tag name to its accent color."""
@@ -469,6 +443,9 @@ def _tag_color(name: rx.Var[str]) -> rx.Var[str]:
         ("explore", "#a3e635"),
         ("conflicts", "#f87171"),
         ("clusters", "#a5b4fc"),
+        ("book history", "#22d3ee"),
+        ("monitor", "#f59e0b"),
+        ("data layer", "#818cf8"),
         "#737373",  # fallback
     )
 
@@ -498,6 +475,9 @@ def _tag_bg(name: rx.Var[str]) -> rx.Var[str]:
         ("explore", "rgba(163,230,53,0.1)"),
         ("conflicts", "rgba(248,113,113,0.1)"),
         ("clusters", "rgba(165,180,252,0.1)"),
+        ("book history", "rgba(34,211,238,0.1)"),
+        ("monitor", "rgba(245,158,11,0.1)"),
+        ("data layer", "rgba(129,140,248,0.1)"),
         "#1a1a1e",  # fallback
     )
 

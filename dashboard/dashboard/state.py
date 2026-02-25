@@ -189,6 +189,9 @@ _TOOL_TAG = {
     "get_my_costs": "costs",
     "store_memory": "memory",
     "recall_memory": "memory",
+    "update_memory": "memory",
+    "batch_prune": "memory",
+    "analyze_memory": "memory",
     "get_account": "account",
     "execute_trade": "trade",
     "close_position": "close",
@@ -199,6 +202,9 @@ _TOOL_TAG = {
     "explore_memory": "explore",
     "manage_conflicts": "conflicts",
     "manage_clusters": "clusters",
+    "get_book_history": "book history",
+    "monitor_signal": "monitor",
+    "data_layer": "data layer",
 }
 
 
@@ -217,6 +223,9 @@ class WakeItem(BaseModel):
     content: str = ""  # first line (truncated for sidebar display)
     full_content: str = ""  # complete response text
     timestamp: str = ""
+    tool_trace_text: str = ""   # formatted tool call trace (scanner/monitor wakes)
+    signal_header: str = ""     # e.g. "book_flip · ETH · 0.74"
+    decision: str = ""          # "trade"|"pass"|"monitor"|"manage"|""
 
 
 class Activity(BaseModel):
@@ -814,6 +823,10 @@ class AppState(rx.State):
     wake_detail_category: str = ""
     wake_detail_time: str = ""
     wake_detail_open: bool = False
+    wake_detail_tool_trace_text: str = ""
+    wake_detail_signal_header: str = ""
+    wake_detail_decision: str = ""
+    active_watches: List[str] = []
 
     # === Trading Settings ===
     settings_dirty: bool = False
@@ -877,11 +890,15 @@ class AppState(rx.State):
     def toggle_clusters_sidebar(self):
         self.clusters_sidebar_expanded = not self.clusters_sidebar_expanded
 
-    def view_wake_detail(self, content: str, category: str, timestamp: str):
+    def view_wake_detail(self, content: str, category: str, timestamp: str,
+                         tool_trace_text: str = "", signal_header: str = "", decision: str = ""):
         """Open wake detail dialog with full content."""
         self.wake_detail_content = content
         self.wake_detail_category = category
         self.wake_detail_time = timestamp
+        self.wake_detail_tool_trace_text = tool_trace_text
+        self.wake_detail_signal_header = signal_header
+        self.wake_detail_decision = decision
         self.wake_detail_open = True
 
     def close_wake_detail(self):
@@ -1173,6 +1190,7 @@ class AppState(rx.State):
             self.scanner_status_text = "Scanner Offline"
             self.scanner_status_color = "#525252"
             self.scanner_subtitle = ""
+            self.active_watches = []
             return
 
         self.daemon_running = True
@@ -1254,6 +1272,16 @@ class AppState(rx.State):
             if self.scanner_wakes_total > 0:
                 parts.append(f"{self.scanner_wakes_total} wakes")
             self.scanner_subtitle = " \u00b7 ".join(parts) if parts else "No anomalies yet"
+
+        # Active monitor_signal watches
+        if _daemon._pending_watches:
+            now = _time.time()
+            self.active_watches = [
+                f"{sym}{' [' + w['side'] + ']' if w.get('side') else ''} — {max(0, int(w['fire_at'] - now))}s"
+                for sym, w in list(_daemon._pending_watches.items())
+            ]
+        else:
+            self.active_watches = []
 
     def _snapshot_regime(self):
         """Update all regime-related state fields."""
@@ -1633,6 +1661,9 @@ class AppState(rx.State):
                                     content=first_line,
                                     full_content=raw,
                                     timestamp=item.get('timestamp', self._format_time()),
+                                    tool_trace_text=item.get('tool_trace_text', ''),
+                                    signal_header=item.get('signal_header', ''),
+                                    decision=item.get('decision', ''),
                                 )
                             ] + self.wake_feed)[:100]
                         # Journal unread for fills
