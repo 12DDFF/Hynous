@@ -550,11 +550,13 @@ class RegimeClassifier:
         # A clean trend has low BBW but high ADX — that's a trend, not a squeeze.
         if bbw < 0.03 and atr_percentile < 40 and adx < 20:
             return "SQUEEZE"
-        # VOLATILE: either ATR spiking relative to history (percentile >= 75)
-        # OR absolute ATR% is very high (>= 3% per 1h candle = extreme).
-        # The absolute check catches uniformly high volatility where percentile
-        # doesn't show a spike because every candle is equally wild.
-        if atr_percentile >= 75 or atr_pct >= 3.0:
+        # VOLATILE: ATR must be spiking relative to history AND above a minimum
+        # absolute floor to prevent false VOLATILE reads in low-ATR environments
+        # (e.g. BTC in a tight range where even a 0.4% candle ranks at P80).
+        # 1.0% per 1h candle ≈ 24% annualised — a reasonable "actually volatile" floor.
+        # The second clause catches uniformly extreme volatility where every candle
+        # is wild and percentile stays moderate.
+        if (atr_percentile >= 75 and atr_pct >= 1.0) or atr_pct >= 3.0:
             return "VOLATILE"
         if adx >= 25 and ema_trending:
             return "TRENDING"
