@@ -21,6 +21,23 @@ _cache_time: float = 0
 _CACHE_TTL = 30  # seconds
 
 
+def _get_stats_reset_at() -> str | None:
+    """Read stats_reset_at from paper-state.json (walk up from this file)."""
+    import os
+    import json as _json
+    d = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(8):
+        candidate = os.path.join(d, "storage", "paper-state.json")
+        if os.path.exists(candidate):
+            try:
+                with open(candidate) as f:
+                    return _json.load(f).get("stats_reset_at")
+            except Exception:
+                return None
+        d = os.path.dirname(d)
+    return None
+
+
 @dataclass
 class TradeRecord:
     """One closed trade parsed from Nous."""
@@ -417,13 +434,24 @@ def get_trade_stats(
     created_after: str | None = None,
     created_before: str | None = None,
 ) -> TradeStats:
-    """Main entry point — cached for 30s (default queries only)."""
+    """Main entry point — cached for 30s (default queries only).
+
+    Auto-applies stats_reset_at from paper-state.json as the default
+    created_after, so stats only reflect the current paper trading session.
+    Old Nous trade_close nodes are preserved for memory/learning but excluded
+    from stats unless an explicit created_after override is passed.
+    """
     global _cached_stats, _cache_time
 
-    has_filters = created_after or created_before or limit != 500
+    # Explicit caller overrides (non-default values)
+    explicit_filter = bool(created_after or created_before or limit != 500)
 
-    # Use cache for default (unfiltered) queries only
-    if not has_filters:
+    # Auto-apply reset timestamp when no explicit created_after is set
+    if created_after is None:
+        created_after = _get_stats_reset_at()
+
+    # Use cache for default (reset-scoped) queries only
+    if not explicit_filter:
         now = time.time()
         if _cached_stats is not None and (now - _cache_time) < _CACHE_TTL:
             return _cached_stats
@@ -436,8 +464,8 @@ def get_trade_stats(
     )
     stats = compute_stats(trades)
 
-    # Only cache unfiltered results
-    if not has_filters:
+    # Cache default (reset-scoped) results
+    if not explicit_filter:
         _cached_stats = stats
         _cache_time = time.time()
 

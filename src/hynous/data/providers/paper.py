@@ -76,6 +76,7 @@ class PaperProvider:
         self.fills: list[dict] = []
         self.leverage_map: dict[str, int] = {}
         self._next_oid: int = 1000
+        self._stats_reset_at: str | None = None
         self._lock = threading.Lock()
 
         # Determine storage path (relative to project root)
@@ -662,6 +663,7 @@ class PaperProvider:
                 coin: asdict(pos) for coin, pos in self.positions.items()
             },
             "fills": self.fills[-100:],  # Keep last 100 fills
+            "stats_reset_at": self._stats_reset_at,
         }
         try:
             import tempfile
@@ -690,6 +692,7 @@ class PaperProvider:
             self._next_oid = data.get("next_oid", 1000)
             self.leverage_map = data.get("leverage_map", {})
             self.fills = data.get("fills", [])
+            self._stats_reset_at = data.get("stats_reset_at")
 
             for coin, pos_data in data.get("positions", {}).items():
                 self.positions[coin] = PaperPosition(**pos_data)
