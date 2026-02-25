@@ -1487,6 +1487,20 @@ class Daemon:
             mfe_pct = self._peak_roe.get(coin, 0.0)
             trade_type = type_info.get("type", "macro")
 
+            # Derive position sizing from cached state (for ROE + fee analytics)
+            pos_meta = self._prev_positions.get(coin, {})
+            leverage = int(pos_meta.get("leverage", type_info.get("leverage", 0)))
+            size = float(pos_meta.get("size", 0))
+            size_usd = round(size * entry_px, 2) if size > 0 and entry_px > 0 else 0.0
+            margin_used = round(size_usd / leverage, 2) if leverage > 0 else 0.0
+            lev_return_pct = round(pnl / margin_used * 100, 2) if margin_used > 0 else 0.0
+            _taker = 0.00035
+            fee_estimate = round((size * entry_px + size * exit_px) * _taker, 4) if size > 0 else 0.0
+            pnl_gross = round(pnl + fee_estimate, 4)
+            is_fee_loss = bool(pnl_gross > 0 and pnl <= 0)
+            is_fee_heavy = bool(pnl_gross > 0 and fee_estimate / pnl_gross > 0.5)
+            mfe_usd = round(mfe_pct / 100 * margin_used, 2) if margin_used > 0 else 0.0
+
             signals = {
                 "action": "close",
                 "side": side,
@@ -1495,10 +1509,19 @@ class Daemon:
                 "exit": exit_px,
                 "pnl_usd": round(pnl, 4),
                 "pnl_pct": round(pnl_pct, 2),
+                "lev_return_pct": lev_return_pct,
                 "close_type": classification,
                 "opened_at": opened_at,
                 "mfe_pct": round(mfe_pct, 2),
                 "trade_type": trade_type,
+                "size_usd": size_usd,
+                "margin_used": margin_used,
+                "leverage": leverage,
+                "mfe_usd": mfe_usd,
+                "fee_estimate": fee_estimate,
+                "pnl_gross": pnl_gross,
+                "fee_loss": is_fee_loss,
+                "fee_heavy": is_fee_heavy,
             }
 
             # Find the matching entry node for edge linking
