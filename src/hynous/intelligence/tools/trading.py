@@ -77,6 +77,37 @@ def _record_trade_span(
 # Helpers
 # =============================================================================
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Return True if the exception is a 429 / rate-limit response."""
+    msg = str(exc).lower()
+    return "429" in msg or "too many requests" in msg or "rate limit" in msg
+
+
+def _retry_exchange_call(fn, *args, max_attempts: int = 3, wait_s: float = 6.0, **kwargs):
+    """Call fn(*args, **kwargs) with retry on rate-limit errors.
+
+    Retries up to max_attempts times, waiting wait_s seconds between each
+    attempt on 429 / rate-limit errors only.  Any other exception is
+    re-raised immediately without retrying.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            if _is_rate_limit_error(exc):
+                last_exc = exc
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        "Rate limit on attempt %d/%d — retrying in %.0fs",
+                        attempt + 1, max_attempts, wait_s,
+                    )
+                    time.sleep(wait_s)
+            else:
+                raise  # Non-rate-limit error — fail fast
+    raise last_exc  # All retries exhausted
+
+
 def _get_trading_provider():
     """Get the Hyperliquid provider with trading capabilities."""
     from ...data.providers.hyperliquid import get_provider
@@ -834,16 +865,20 @@ def handle_execute_trade(
             return "\n".join(lines)
 
     else:
-        # Market order
+        # Market order — retries on 429 (rate limit) up to 3×, 6s apart
         slip = slippage or config.hyperliquid.default_slippage
         _order_start = time.monotonic()
         try:
             if size is not None:
                 # Base-asset sizing: convert to USD for market_open
                 effective_usd = size * price
-                result = provider.market_open(symbol, is_buy, effective_usd, slip)
+                result = _retry_exchange_call(
+                    provider.market_open, symbol, is_buy, effective_usd, slip,
+                )
             else:
-                result = provider.market_open(symbol, is_buy, size_usd, slip)
+                result = _retry_exchange_call(
+                    provider.market_open, symbol, is_buy, size_usd, slip,
+                )
         except Exception as e:
             _record_trade_span("execute_trade", "order_fill", False, f"Market order failed: {e}", duration_ms=int((time.monotonic() - _order_start) * 1000), symbol=symbol, side=side, order_type="market", error=str(e))
             return f"Error executing market order: {e}"
@@ -1391,11 +1426,13 @@ def handle_close_position(
         exit_px = result.get("avg_px", limit_price)
         closed_sz = result.get("filled_sz", actual_sz)
     else:
-        # Market close
+        # Market close — retries on 429 (rate limit) up to 3×, 6s apart
         slip = config.hyperliquid.default_slippage
         _close_start = time.monotonic()
         try:
-            result = provider.market_close(symbol, size=close_size, slippage=slip)
+            result = _retry_exchange_call(
+                provider.market_close, symbol, size=close_size, slippage=slip,
+            )
         except Exception as e:
             _record_trade_span("close_position", "order_fill", False, f"Close failed: {e}", duration_ms=int((time.monotonic() - _close_start) * 1000), symbol=symbol, error=str(e))
             return f"Error closing position: {e}"
