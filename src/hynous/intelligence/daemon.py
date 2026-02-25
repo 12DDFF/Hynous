@@ -1386,6 +1386,9 @@ class Daemon:
                             })
                             self._position_types.pop(sym, None)
                             self._persist_position_types()
+                            # Remove from snapshot so _check_positions doesn't re-detect
+                            # this close and send a duplicate WIN/LOSS Discord message
+                            self._prev_positions.pop(sym, None)
                             # Cancel any remaining orders so TP/SL don't linger on closed position
                             try:
                                 self._get_provider().cancel_all_orders(sym)
@@ -1871,6 +1874,9 @@ class Daemon:
                                     })
                                     self._position_types.pop(coin, None)
                                     self._persist_position_types()
+                                    # Remove from snapshot so _check_positions doesn't re-detect
+                                    # this close and send a duplicate WIN/LOSS Discord message
+                                    self._prev_positions.pop(coin, None)
                                     try:
                                         self._get_provider().cancel_all_orders(coin)
                                     except Exception:
