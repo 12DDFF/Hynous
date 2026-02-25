@@ -1825,9 +1825,59 @@ class Daemon:
                 roe_pct = p["return_pct"]  # Already leveraged return on margin
                 leverage = p.get("leverage", 20)
 
-                # Track peak ROE for MFE (max favorable excursion)
+                # Track peak ROE for MFE (max favorable excursion).
+                # When a new peak is recorded AND it crosses the Small Wins threshold,
+                # fire immediately — peak ROE reliably captures taps that the fast 10s
+                # loop misses (mid price ≠ mark price, or price taps+reverses in <10s).
                 if roe_pct > self._peak_roe.get(coin, 0):
                     self._peak_roe[coin] = roe_pct
+                    if not self._small_wins_exited.get(coin):
+                        ts_sw = get_trading_settings()
+                        if ts_sw.small_wins_mode:
+                            fee_be_roe_sw = self.config.daemon.taker_fee_pct * leverage
+                            exit_roe_sw = max(ts_sw.small_wins_roe_pct, fee_be_roe_sw + 0.1)
+                            if roe_pct >= exit_roe_sw:
+                                try:
+                                    result_sw = self._get_provider().market_close(coin)
+                                    self._small_wins_exited[coin] = True
+                                    exit_px_sw = result_sw.get("avg_px", mark_px)
+                                    realized_pnl_sw = result_sw.get("closed_pnl", 0.0)
+                                    net_roe_sw = roe_pct - fee_be_roe_sw
+                                    type_info_sw = self.get_position_type(coin)
+                                    trade_type_sw = type_info_sw["type"]
+                                    type_label_sw = f"{trade_type_sw} {leverage}x"
+                                    sw_msg = (
+                                        f"[SMALL WINS] {coin} {side.upper()} closed at {roe_pct:+.1f}% ROE "
+                                        f"({type_label_sw}). Fee break-even: {fee_be_roe_sw:.1f}% → "
+                                        f"net after fees: ~{net_roe_sw:+.1f}% ROE. "
+                                        f"Small Wins Mode locked in profit automatically."
+                                    )
+                                    _queue_and_persist("System", f"Small Wins Exit: {coin}", sw_msg)
+                                    _notify_discord_simple(
+                                        f"Exited {coin} {side} [Small Wins] — "
+                                        f"+${abs(realized_pnl_sw):.2f} · ROE {roe_pct:+.1f}% "
+                                        f"(net ~{net_roe_sw:+.1f}%)"
+                                    )
+                                    log_event(DaemonEvent(
+                                        "profit", f"small_wins_exit: {coin} {side}",
+                                        f"Exit @ ROE {roe_pct:+.1f}% | fee BE {fee_be_roe_sw:.1f}% "
+                                        f"| net ~{net_roe_sw:+.1f}% | {type_label_sw}",
+                                    ))
+                                    self._update_daily_pnl(realized_pnl_sw)
+                                    self._record_trigger_close({
+                                        "coin": coin, "side": side, "entry_px": entry_px,
+                                        "exit_px": exit_px_sw, "realized_pnl": realized_pnl_sw,
+                                        "classification": "small_wins",
+                                    })
+                                    self._position_types.pop(coin, None)
+                                    self._persist_position_types()
+                                    try:
+                                        self._get_provider().cancel_all_orders(coin)
+                                    except Exception:
+                                        pass
+                                    continue  # Position closed — skip profit alerts
+                                except Exception as sw_err:
+                                    logger.warning("Small wins exit failed for %s: %s", coin, sw_err)
 
                 # Reset alerts if position side flipped (close long → open short)
                 prev_side = self._profit_sides.get(coin)
