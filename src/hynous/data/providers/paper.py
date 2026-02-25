@@ -313,6 +313,7 @@ class PaperProvider:
                 trade = self._close_at_locked(symbol, price)
                 oid = trade["oid"]
                 filled_sz = trade["size"]
+                closed_pnl = trade["closed_pnl"]
                 self._save()
             else:
                 # Partial close
@@ -336,10 +337,13 @@ class PaperProvider:
                 filled_sz = close_sz
                 self._save()
 
-        return {
+        result = {
             "symbol": symbol, "oid": oid, "filled_sz": filled_sz,
             "avg_px": price, "status": "filled",
         }
+        if full_close:
+            result["closed_pnl"] = closed_pnl
+        return result
 
     def limit_open(self, symbol: str, is_buy: bool, limit_px: float,
                    size_usd: float | None = None, sz: float | None = None,
@@ -606,22 +610,26 @@ class PaperProvider:
         """
         pos = self.positions.pop(symbol)
         pnl = pos.unrealized_pnl(exit_px)
-        fee = pos.size * exit_px * self.TAKER_FEE
-        net_pnl = pnl - fee
+        exit_fee = pos.size * exit_px * self.TAKER_FEE
+        entry_fee = pos.size * pos.entry_px * self.TAKER_FEE  # already paid at open
 
-        # Return margin + net PnL
-        self.balance += pos.margin + net_pnl
+        # Balance gets back margin + gross PnL minus exit fee (entry fee was already deducted at open)
+        net_pnl_balance = pnl - exit_fee
+        self.balance += pos.margin + net_pnl_balance
+
+        # Reported PnL includes both fees — accurate for stats/journal/daily PnL display
+        net_pnl_reported = pnl - exit_fee - entry_fee
 
         oid = self._next_oid
         self._next_oid += 1
         direction = f"Close {'Long' if pos.side == 'long' else 'Short'}"
         self._record_fill(symbol, "A" if pos.side == "long" else "B",
-                          pos.size, exit_px, net_pnl, direction, oid)
+                          pos.size, exit_px, net_pnl_reported, direction, oid)
 
         return {
             "coin": symbol, "side": pos.side, "size": pos.size,
             "entry_px": pos.entry_px, "exit_px": exit_px,
-            "closed_pnl": net_pnl, "oid": oid,
+            "closed_pnl": net_pnl_reported, "oid": oid,
         }
 
     def _record_fill(self, coin: str, side: str, size: float, price: float,

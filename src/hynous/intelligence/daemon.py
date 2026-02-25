@@ -1262,8 +1262,10 @@ class Daemon:
                     exit_roe = max(ts.small_wins_roe_pct, fee_be_roe + 0.1)
                     if roe_pct >= exit_roe:
                         try:
-                            self._provider.market_close(sym)
+                            result = self._provider.market_close(sym)
                             self._small_wins_exited[sym] = True
+                            exit_px_sw = result.get("avg_px", px)
+                            realized_pnl_sw = result.get("closed_pnl", 0.0)
                             net_roe = roe_pct - fee_be_roe
                             type_info = self.get_position_type(sym)
                             trade_type = type_info["type"]
@@ -1280,6 +1282,16 @@ class Daemon:
                                 f"Exit @ ROE {roe_pct:+.1f}% | fee BE {fee_be_roe:.1f}% "
                                 f"| net ~{net_roe:+.1f}% | {type_label}",
                             ))
+                            # Update daily PnL circuit breaker
+                            self._update_daily_pnl(realized_pnl_sw)
+                            # Record in Nous journal (same path as SL/TP closes)
+                            self._record_trigger_close({
+                                "coin": sym, "side": side, "entry_px": entry_px,
+                                "exit_px": exit_px_sw, "realized_pnl": realized_pnl_sw,
+                                "classification": "small_wins",
+                            })
+                            self._position_types.pop(sym, None)
+                            self._persist_position_types()
                             # Cancel any remaining orders so TP/SL don't linger on closed position
                             try:
                                 self._provider.cancel_all_orders(sym)
