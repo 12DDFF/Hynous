@@ -279,6 +279,8 @@ class ClosedTrade(BaseModel):
     trade_type: str = ""  # "micro" or "macro"
     mfe_pct: float = 0.0         # max favorable excursion ROE % (peak, gross)
     mfe_usd: float = 0.0         # peak dollar value (mfe_pct / 100 * margin)
+    mae_pct: float = 0.0         # max adverse excursion ROE % (trough, negative = drawdown)
+    mae_usd: float = 0.0         # trough dollar value
     lev_return_pct: float = 0.0  # net leveraged ROE % (same basis as mfe_pct)
     leverage: int = 0            # position leverage; 0 = unknown (pre-signal)
     fee_loss: bool = False  # directionally correct but fees ate profit
@@ -404,6 +406,8 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
         "trade_type": "",
         "mfe_pct": 0.0,
         "mfe_usd": 0.0,
+        "mae_pct": 0.0,
+        "mae_usd": 0.0,
         "lev_return_pct": 0.0,
         "fee_loss": False,
         "fee_heavy": False,
@@ -447,6 +451,8 @@ def _enrich_trade(close_node: dict, nous_client) -> dict:
             # Path 3: derive margin from size_usd / leverage
             if result["mfe_usd"] == 0.0 and sz_usd > 0 and lev_stored > 0:
                 result["mfe_usd"] = round(mfe_pct_raw / 100 * sz_usd / lev_stored, 2)
+        result["mae_pct"]        = float(close_signals.get("mae_pct", 0.0))
+        result["mae_usd"]        = float(close_signals.get("mae_usd", 0.0))
         result["fee_loss"]       = bool(close_signals.get("fee_loss", False))
         result["fee_heavy"]      = bool(close_signals.get("fee_heavy", False))
         result["fee_estimate"]   = float(close_signals.get("fee_estimate", 0.0))
@@ -3765,6 +3771,8 @@ class AppState(rx.State):
                     trade_type=enrichment.get("trade_type", ""),
                     mfe_pct=enrichment.get("mfe_pct", 0.0),
                     mfe_usd=enrichment.get("mfe_usd") or t.mfe_usd,
+                    mae_pct=enrichment.get("mae_pct", 0.0),
+                    mae_usd=enrichment.get("mae_usd", 0.0),
                     lev_return_pct=enrichment.get("lev_return_pct") or t.lev_return_pct,
                     fee_loss=enrichment.get("fee_loss", False) or t.fee_loss,
                     fee_heavy=enrichment.get("fee_heavy", False) or t.fee_heavy,

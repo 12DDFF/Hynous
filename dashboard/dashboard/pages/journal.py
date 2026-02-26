@@ -328,63 +328,97 @@ def _trade_row(trade: ClosedTrade) -> rx.Component:
                 spacing="1",
                 align="center",
             ),
-            # Peak — toggles between ROE % and dollar amount
+            # MFE / MAE — stacked: peak above, trough below (small, red)
             # Green  = peak cleared fee break-even (mfe_pct > 0.07 × leverage)
             # Amber  = peaked in profit but never enough to cover fees (fee trap)
             # Gray   = leverage unknown (old trade) or no favorable excursion
-            rx.cond(
-                AppState.journal_pnl_mode == "pct",
+            rx.vstack(
                 rx.cond(
-                    trade.mfe_pct > 0,
-                    rx.text(
-                        "+" + trade.mfe_pct.to(str) + "%",
-                        font_size="0.8rem",
-                        font_weight="500",
-                        color=rx.cond(
-                            trade.leverage == 0,
-                            "#525252",  # unknown leverage — don't mislead
-                            rx.cond(
-                                trade.mfe_pct > (trade.leverage * 0.07),
-                                "#4ade80",   # fee-profitable at peak
-                                "#fbbf24",   # fee trap — peaked but below break-even
-                            ),
-                        ),
-                        min_width="70px",
-                        font_family="JetBrains Mono",
-                    ),
-                    rx.text("—", font_size="0.8rem", color="#525252", min_width="70px"),
-                ),
-                rx.cond(
-                    trade.mfe_usd > 0,
-                    rx.text(
-                        "+$" + trade.mfe_usd.to(str),
-                        font_size="0.8rem",
-                        font_weight="500",
-                        color=rx.cond(
-                            trade.leverage == 0,
-                            "#525252",
-                            rx.cond(
-                                trade.mfe_pct > (trade.leverage * 0.07),
-                                "#4ade80",
-                                "#fbbf24",
-                            ),
-                        ),
-                        min_width="70px",
-                        font_family="JetBrains Mono",
-                    ),
+                    AppState.journal_pnl_mode == "pct",
                     rx.cond(
                         trade.mfe_pct > 0,
                         rx.text(
                             "+" + trade.mfe_pct.to(str) + "%",
                             font_size="0.8rem",
                             font_weight="500",
-                            color="#525252",
-                            min_width="70px",
+                            color=rx.cond(
+                                trade.leverage == 0,
+                                "#525252",
+                                rx.cond(
+                                    trade.mfe_pct > (trade.leverage * 0.07),
+                                    "#4ade80",
+                                    "#fbbf24",
+                                ),
+                            ),
                             font_family="JetBrains Mono",
                         ),
-                        rx.text("—", font_size="0.8rem", color="#525252", min_width="70px"),
+                        rx.text("—", font_size="0.8rem", color="#525252"),
+                    ),
+                    rx.cond(
+                        trade.mfe_usd > 0,
+                        rx.text(
+                            "+$" + trade.mfe_usd.to(str),
+                            font_size="0.8rem",
+                            font_weight="500",
+                            color=rx.cond(
+                                trade.leverage == 0,
+                                "#525252",
+                                rx.cond(
+                                    trade.mfe_pct > (trade.leverage * 0.07),
+                                    "#4ade80",
+                                    "#fbbf24",
+                                ),
+                            ),
+                            font_family="JetBrains Mono",
+                        ),
+                        rx.cond(
+                            trade.mfe_pct > 0,
+                            rx.text(
+                                "+" + trade.mfe_pct.to(str) + "%",
+                                font_size="0.8rem",
+                                font_weight="500",
+                                color="#525252",
+                                font_family="JetBrains Mono",
+                            ),
+                            rx.text("—", font_size="0.8rem", color="#525252"),
+                        ),
                     ),
                 ),
+                # MAE (trough) — only show when we have data
+                rx.cond(
+                    trade.mae_pct < 0,
+                    rx.cond(
+                        AppState.journal_pnl_mode == "pct",
+                        rx.text(
+                            trade.mae_pct.to(str) + "%",
+                            font_size="0.68rem",
+                            color="#f87171",
+                            font_family="JetBrains Mono",
+                            opacity="0.7",
+                        ),
+                        rx.cond(
+                            trade.mae_usd < 0,
+                            rx.text(
+                                "-$" + (-trade.mae_usd).to(str),
+                                font_size="0.68rem",
+                                color="#f87171",
+                                font_family="JetBrains Mono",
+                                opacity="0.7",
+                            ),
+                            rx.text(
+                                trade.mae_pct.to(str) + "%",
+                                font_size="0.68rem",
+                                color="#f87171",
+                                font_family="JetBrains Mono",
+                                opacity="0.7",
+                            ),
+                        ),
+                    ),
+                    rx.fragment(),
+                ),
+                spacing="0",
+                align_items="start",
+                min_width="70px",
             ),
             # Duration
             rx.text(
