@@ -328,7 +328,8 @@ class Daemon:
         # Profit level tracking: {coin: {tier: last_alert_timestamp}}
         self._profit_alerts: dict[str, dict[str, float]] = {}
         self._profit_sides: dict[str, str] = {}  # coin → side (detect flips)
-        self._peak_roe: dict[str, float] = {}     # coin → max ROE % seen during hold
+        self._peak_roe: dict[str, float] = {}     # coin → max ROE % seen during hold (MFE)
+        self._trough_roe: dict[str, float] = {}   # coin → min ROE % seen during hold (MAE, negative = drawdown)
         self._current_roe: dict[str, float] = {}   # coin → latest computed ROE % (updated every 10s)
         self._breakeven_set: dict[str, bool] = {}  # coin → True once breakeven SL placed this hold
         self._small_wins_exited: dict[str, bool] = {}  # coin → True once small-wins exit fired
@@ -526,6 +527,10 @@ class Daemon:
         """Get max favorable excursion (peak ROE %) tracked during hold."""
         return self._peak_roe.get(coin, 0.0)
 
+    def get_trough_roe(self, coin: str) -> float:
+        """Get max adverse excursion (trough ROE %, negative = drawdown) tracked during hold."""
+        return self._trough_roe.get(coin, 0.0)
+
     @property
     def last_trade_ago(self) -> str:
         """Human-readable time since last trade (entry or close)."""
@@ -696,6 +701,7 @@ class Daemon:
                         self._scanner.peak_roe_data = {
                             coin: {
                                 "peak_roe":    self._peak_roe.get(coin, 0.0),
+                                "trough_roe":  self._trough_roe.get(coin, 0.0),
                                 "current_roe": self._current_roe.get(coin, pos.get("return_pct", 0.0)),
                                 "leverage":    pos.get("leverage", 20),
                                 "trade_type":  self.get_position_type(coin)["type"],
@@ -1286,6 +1292,8 @@ class Daemon:
                 self._current_roe[sym] = roe_pct  # Always update — scanner uses this
                 if roe_pct > self._peak_roe.get(sym, 0):
                     self._peak_roe[sym] = roe_pct
+                if roe_pct < self._trough_roe.get(sym, 0):
+                    self._trough_roe[sym] = roe_pct
 
                 # Breakeven stop: check every 10s with fresh price (not just 60s)
                 if (
@@ -1641,6 +1649,7 @@ class Daemon:
                 "coin": coin, "side": side, "entry_px": entry_px,
                 "exit_px": exit_px, "realized_pnl": realized_pnl,
                 "classification": classification,
+                "mae_pct": self._trough_roe.get(coin, 0.0),
             })
 
         # Wake the agent with the appropriate message
@@ -1687,8 +1696,11 @@ class Daemon:
                 from datetime import datetime, timezone
                 opened_at = datetime.fromtimestamp(entry_time, tz=timezone.utc).isoformat()
 
-            # Get peak ROE (MFE) and trade_type before they're cleaned up
+            # Get peak ROE (MFE) and trough ROE (MAE) before they're cleaned up.
+            # _handle_position_close passes mae_pct in event dict so it's captured
+            # before _trough_roe is cleaned up; fall back to dict for trigger closes.
             mfe_pct = self._peak_roe.get(coin, 0.0)
+            mae_pct = event.get("mae_pct", self._trough_roe.get(coin, 0.0))
             trade_type = type_info.get("type", "macro")
 
             # Derive position sizing from cached state (for ROE + fee analytics)
@@ -1704,6 +1716,7 @@ class Daemon:
             is_fee_loss = bool(pnl_gross > 0 and pnl <= 0)
             is_fee_heavy = bool(pnl_gross > 0 and fee_estimate / pnl_gross > 0.5)
             mfe_usd = round(mfe_pct / 100 * margin_used, 2) if margin_used > 0 else 0.0
+            mae_usd = round(mae_pct / 100 * margin_used, 2) if margin_used > 0 else 0.0
 
             signals = {
                 "action": "close",
@@ -1717,11 +1730,13 @@ class Daemon:
                 "close_type": classification,
                 "opened_at": opened_at,
                 "mfe_pct": round(mfe_pct, 2),
+                "mae_pct": round(mae_pct, 2),
+                "mfe_usd": mfe_usd,
+                "mae_usd": mae_usd,
                 "trade_type": trade_type,
                 "size_usd": size_usd,
                 "margin_used": margin_used,
                 "leverage": leverage,
-                "mfe_usd": mfe_usd,
                 "fee_estimate": fee_estimate,
                 "pnl_gross": pnl_gross,
                 "fee_loss": is_fee_loss,
@@ -1836,9 +1851,11 @@ class Daemon:
                 roe_pct = p["return_pct"]  # Already leveraged return on margin
                 leverage = p.get("leverage", 20)
 
-                # Track peak ROE for MFE (max favorable excursion).
+                # Track MFE (peak) and MAE (trough) for each position.
                 if roe_pct > self._peak_roe.get(coin, 0):
                     self._peak_roe[coin] = roe_pct
+                if roe_pct < self._trough_roe.get(coin, 0):
+                    self._trough_roe[coin] = roe_pct
 
                 # ── Small Wins: place exchange-side TP order once per hold ──────────
                 # Polling can miss spikes that reverse within the 10s window. Placing
@@ -1937,7 +1954,8 @@ class Daemon:
                     self._breakeven_set.pop(coin, None)         # New position — re-evaluate breakeven
                     self._small_wins_exited.pop(coin, None)    # New hold — re-arm small wins
                     self._small_wins_tp_placed.pop(coin, None) # New hold — re-arm TP order
-                    self._peak_roe.pop(coin, None)             # New hold — reset peak tracking
+                    self._peak_roe.pop(coin, None)             # New hold — reset MFE
+                    self._trough_roe.pop(coin, None)           # New hold — reset MAE
                 self._profit_sides[coin] = side
 
                 if coin not in self._profit_alerts:
@@ -2001,6 +2019,9 @@ class Daemon:
             for coin in list(self._small_wins_tp_placed):
                 if coin not in open_coins:
                     del self._small_wins_tp_placed[coin]
+            for coin in list(self._trough_roe):
+                if coin not in open_coins:
+                    del self._trough_roe[coin]
 
         except Exception as e:
             logger.debug("Profit level check failed: %s", e)

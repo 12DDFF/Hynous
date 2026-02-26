@@ -1568,11 +1568,13 @@ def handle_close_position(
     # Get peak ROE (MFE) and trade_type from daemon before position cleanup
     mfe_pct = 0.0
     close_trade_type = "macro"
+    mae_pct = 0.0
     try:
         from ...intelligence.daemon import get_active_daemon
         daemon = get_active_daemon()
         if daemon:
             mfe_pct = daemon.get_peak_roe(symbol)
+            mae_pct = daemon.get_trough_roe(symbol)
             close_trade_type = daemon.get_position_type(symbol).get("type", "macro")
     except Exception:
         pass
@@ -1596,6 +1598,7 @@ def handle_close_position(
             "size_usd": round(closed_sz * exit_px, 2),
             "opened_at": opened_at,
             "mfe_pct": round(mfe_pct, 2),
+            "mae_pct": round(mae_pct, 2),
             "trade_type": close_trade_type,
             "fee_loss":    is_fee_loss,
             "fee_heavy":   is_fee_heavy,
@@ -1604,6 +1607,7 @@ def handle_close_position(
             "margin_used": round(margin_used, 2),
             "leverage":    int(position.get("leverage", 0)),
             "mfe_usd":     round(mfe_pct / 100 * margin_used, 2) if margin_used > 0 else 0.0,
+            "mae_usd":     round(mae_pct / 100 * margin_used, 2) if margin_used > 0 else 0.0,
         },
         link_to=entry_node_id,  # Edge: entry --part_of--> close (SSA 0.85)
         edge_type="part_of",
