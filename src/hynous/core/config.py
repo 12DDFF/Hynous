@@ -365,7 +365,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
             enabled=sat_raw.get("enabled", False),
             db_path=sat_raw.get("db_path", "storage/satellite.db"),
             data_layer_db_path=sat_raw.get(
-                "data_layer_db_path", "storage/hynous-data.db",
+                "data_layer_db_path", "data-layer/storage/hynous-data.db",
             ),
             snapshot_interval=sat_raw.get("snapshot_interval", 300),
             coins=sat_raw.get("coins", ["BTC", "ETH", "SOL"]),
