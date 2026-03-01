@@ -411,7 +411,7 @@ async def _ml_status(request):
     def _query():
         config = load_config()
         db_path = str(config.project_root / config.satellite.db_path)
-        # Check runtime state from daemon (more accurate than config file)
+        # Check runtime state from daemon if available, otherwise config file
         sat_enabled = config.satellite.enabled
         try:
             from . import state as _st
@@ -651,6 +651,9 @@ async def _ml_satellite_toggle(request):
 
     def _toggle():
         from . import state as _st
+        # Ensure agent+daemon are initialized in this worker
+        if _st._daemon is None:
+            _st._get_agent()
         if _st._daemon is None:
             return None, "Daemon not running"
         if enabled:
