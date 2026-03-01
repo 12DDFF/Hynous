@@ -414,10 +414,9 @@ async def _ml_status(request):
         # Check runtime state from daemon (more accurate than config file)
         sat_enabled = config.satellite.enabled
         try:
-            from .state import _get_agent
-            agent = _get_agent()
-            if agent and hasattr(agent, "daemon") and agent.daemon:
-                sat_enabled = agent.daemon.satellite_enabled
+            from . import state as _st
+            if _st._daemon is not None:
+                sat_enabled = _st._daemon.satellite_enabled
         except Exception:
             pass
         result = {
@@ -651,15 +650,13 @@ async def _ml_satellite_toggle(request):
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
     def _toggle():
-        from .state import _get_agent
-        agent = _get_agent()
-        if not agent or not hasattr(agent, "daemon") or not agent.daemon:
+        from . import state as _st
+        if _st._daemon is None:
             return None, "Daemon not running"
-        daemon = agent.daemon
         if enabled:
-            ok = daemon.enable_satellite()
+            ok = _st._daemon.enable_satellite()
         else:
-            ok = daemon.disable_satellite()
+            ok = _st._daemon.disable_satellite()
         return ok, None
 
     try:
