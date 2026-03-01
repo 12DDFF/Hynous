@@ -125,7 +125,7 @@ sections:
 
 # ML Satellite — feature engine + inference (SPEC-02/03)
 satellite:
-  enabled: false                        # Disabled during UI dev — enable when daemon runs stably
+  enabled: true                        # Disabled during UI dev — enable when daemon runs stably
   db_path: "storage/satellite.db"       # Satellite SQLite database
   data_layer_db_path: "data-layer/storage/hynous-data.db"  # Read-only access to data-layer for historical queries
   snapshot_interval: 300                 # Feature snapshot frequency (matches deriv_poll_interval)
