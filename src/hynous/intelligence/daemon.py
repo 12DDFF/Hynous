@@ -783,6 +783,18 @@ class Daemon:
 
     def _loop(self):
         """The daemon's heartbeat. Runs in a background thread."""
+        import sys as _sys
+        try:
+            self._loop_inner()
+        except Exception as e:
+            print(f"[daemon] FATAL: loop crashed: {e}", file=_sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc(file=_sys.stderr)
+            self._running = False
+
+    def _loop_inner(self):
+        """Actual daemon loop (wrapped by _loop for crash protection)."""
+        import sys as _sys
         # Startup health check — verify Nous is reachable
         self._check_health(startup=True)
         # Seed clusters if none exist
@@ -803,6 +815,7 @@ class Daemon:
         self._last_phantom_check = time.time()
         self._load_phantoms()
         self._load_daily_pnl()
+        print("[daemon] initialization complete, entering main loop", file=_sys.stderr, flush=True)
 
         while self._running:
             try:
