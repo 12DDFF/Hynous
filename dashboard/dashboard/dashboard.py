@@ -650,17 +650,27 @@ async def _ml_satellite_toggle(request):
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
     def _toggle():
-        from . import state as _st
-        # Ensure agent+daemon are initialized in this worker
-        if _st._daemon is None:
-            _st._get_agent()
-        if _st._daemon is None:
-            return None, "Daemon not running"
-        if enabled:
-            ok = _st._daemon.enable_satellite()
-        else:
-            ok = _st._daemon.disable_satellite()
-        return ok, None
+        import re
+        from hynous.core.config import load_config
+        config = load_config()
+        config_path = config.project_root / "config" / "default.yaml"
+        try:
+            text = config_path.read_text()
+            text = re.sub(
+                r"(satellite:\s*\n\s*enabled:\s*)(\S+)",
+                rf"\g<1>{'true' if enabled else 'false'}",
+                text,
+            )
+            config_path.write_text(text)
+        except Exception as e:
+            return None, f"Config write failed: {e}"
+        # Signal the daemon to pick up the change via a flag file
+        flag = config.project_root / "storage" / ".satellite_toggle"
+        try:
+            flag.write_text("enable" if enabled else "disable")
+        except Exception:
+            pass
+        return True, None
 
     try:
         ok, err = await asyncio.to_thread(_toggle)

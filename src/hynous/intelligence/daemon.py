@@ -607,6 +607,21 @@ class Daemon:
         except Exception:
             logger.debug("Could not persist satellite config", exc_info=True)
 
+    def _check_satellite_toggle(self):
+        """Check for a toggle flag file written by the dashboard API."""
+        flag = self._config.project_root / "storage" / ".satellite_toggle"
+        if not flag.exists():
+            return
+        try:
+            action = flag.read_text().strip()
+            flag.unlink()
+            if action == "enable" and self._satellite_store is None:
+                self.enable_satellite()
+            elif action == "disable" and self._satellite_store is not None:
+                self.disable_satellite()
+        except Exception:
+            logger.debug("Satellite toggle check failed", exc_info=True)
+
     @property
     def satellite_enabled(self) -> bool:
         """Whether satellite is currently active."""
@@ -793,6 +808,9 @@ class Daemon:
             try:
                 now = time.time()
                 self._heartbeat = now
+
+                # 0a. Check for satellite toggle flag from dashboard
+                self._check_satellite_toggle()
 
                 # 0. Daily reset check (circuit breaker)
                 self._check_daily_reset()
