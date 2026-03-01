@@ -784,9 +784,7 @@ class Daemon:
     def _dlog(self, msg: str):
         """Write a debug message to daemon trace file (bypasses granian log level)."""
         try:
-            from pathlib import Path
-            log_file = Path(str(self.config.project_root)) / "storage" / "daemon-trace.log"
-            with open(log_file, "a") as f:
+            with open("/tmp/daemon-trace.log", "a") as f:
                 f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
                 f.flush()
         except Exception:
@@ -794,6 +792,13 @@ class Daemon:
 
     def _loop(self):
         """The daemon's heartbeat. Runs in a background thread."""
+        # Write directly to /tmp first to confirm thread is alive
+        try:
+            with open("/tmp/daemon-trace.log", "a") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} _loop() entered\n")
+                f.flush()
+        except Exception:
+            pass
         try:
             self._loop_inner()
         except Exception as e:
