@@ -411,8 +411,17 @@ async def _ml_status(request):
     def _query():
         config = load_config()
         db_path = str(config.project_root / config.satellite.db_path)
+        # Check runtime state from daemon (more accurate than config file)
+        sat_enabled = config.satellite.enabled
+        try:
+            from .state import _get_agent
+            agent = _get_agent()
+            if agent and hasattr(agent, "daemon") and agent.daemon:
+                sat_enabled = agent.daemon.satellite_enabled
+        except Exception:
+            pass
         result = {
-            "satellite_enabled": config.satellite.enabled,
+            "satellite_enabled": sat_enabled,
             "db_exists": os.path.exists(db_path),
             "db_size_mb": 0,
             "last_tick_time": None,
@@ -628,6 +637,41 @@ async def _ml_model(request):
 
 
 app._api.add_route("/api/ml/model", _ml_model)
+
+
+async def _ml_satellite_toggle(request):
+    """POST /api/ml/satellite/toggle — enable or disable satellite at runtime."""
+    import asyncio
+    from starlette.responses import JSONResponse
+
+    try:
+        body = await request.json()
+        enabled = body.get("enabled", False)
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    def _toggle():
+        from .state import _get_agent
+        agent = _get_agent()
+        if not agent or not hasattr(agent, "daemon") or not agent.daemon:
+            return None, "Daemon not running"
+        daemon = agent.daemon
+        if enabled:
+            ok = daemon.enable_satellite()
+        else:
+            ok = daemon.disable_satellite()
+        return ok, None
+
+    try:
+        ok, err = await asyncio.to_thread(_toggle)
+        if err:
+            return JSONResponse({"error": err}, status_code=503)
+        return JSONResponse({"enabled": enabled, "success": ok})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/ml/satellite/toggle", _ml_satellite_toggle, methods=["POST"])
 
 
 # Eagerly start agent + daemon when the ASGI backend starts.

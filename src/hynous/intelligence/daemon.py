@@ -452,6 +452,7 @@ class Daemon:
                 self._satellite_dl_conn = None
 
         # Stats
+        self._config = config  # keep reference for runtime satellite toggle
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
         self.scanner_wakes: int = 0
@@ -526,6 +527,90 @@ class Daemon:
             pass
         logger.info("Daemon stopped (wakes=%d, watchpoints=%d, learning=%d)",
                      self.wake_count, self.watchpoint_fires, self.learning_sessions)
+
+    def enable_satellite(self) -> bool:
+        """Enable satellite at runtime (persists to config YAML)."""
+        if self._satellite_store is not None:
+            return True  # already running
+        try:
+            from satellite.config import SatelliteConfig as SatCfg
+            from satellite.store import SatelliteStore
+            import sqlite3
+
+            config = self._config
+            root = config.project_root
+            sat_db = str(root / config.satellite.db_path)
+            dl_db = str(root / config.satellite.data_layer_db_path)
+
+            self._satellite_config = SatCfg(
+                enabled=True,
+                db_path=sat_db,
+                data_layer_db_path=dl_db,
+                snapshot_interval=config.satellite.snapshot_interval,
+                coins=config.satellite.coins,
+                min_position_size_usd=config.satellite.min_position_size_usd,
+                liq_cascade_threshold=config.satellite.liq_cascade_threshold,
+                liq_cascade_min_usd=config.satellite.liq_cascade_min_usd,
+                store_raw_data=config.satellite.store_raw_data,
+                funding_settlement_hours=config.satellite.funding_settlement_hours,
+            )
+            self._satellite_store = SatelliteStore(sat_db)
+            self._satellite_store.connect()
+
+            if Path(dl_db).exists():
+                self._satellite_dl_conn = sqlite3.connect(
+                    dl_db, check_same_thread=False, timeout=5,
+                )
+                self._satellite_dl_conn.execute("PRAGMA busy_timeout=3000")
+                self._satellite_dl_conn.row_factory = sqlite3.Row
+
+            self._update_satellite_config(True)
+            logger.info("Satellite enabled at runtime: %s", sat_db)
+            return True
+        except Exception:
+            logger.exception("Failed to enable satellite at runtime")
+            self._satellite_store = None
+            self._satellite_dl_conn = None
+            return False
+
+    def disable_satellite(self) -> bool:
+        """Disable satellite at runtime (persists to config YAML)."""
+        if self._satellite_store is None:
+            return True  # already off
+        try:
+            if self._satellite_dl_conn:
+                self._satellite_dl_conn.close()
+            if self._satellite_store and self._satellite_store._conn:
+                self._satellite_store._conn.close()
+        except Exception:
+            pass
+        self._satellite_store = None
+        self._satellite_config = None
+        self._satellite_dl_conn = None
+        self._update_satellite_config(False)
+        logger.info("Satellite disabled at runtime")
+        return True
+
+    def _update_satellite_config(self, enabled: bool):
+        """Persist satellite.enabled to config YAML."""
+        try:
+            config_path = self._config.project_root / "config" / "default.yaml"
+            text = config_path.read_text()
+            # Replace the enabled line under satellite section
+            import re
+            text = re.sub(
+                r"(satellite:\s*\n\s*enabled:\s*)(\S+)",
+                rf"\g<1>{'true' if enabled else 'false'}",
+                text,
+            )
+            config_path.write_text(text)
+        except Exception:
+            logger.debug("Could not persist satellite config", exc_info=True)
+
+    @property
+    def satellite_enabled(self) -> bool:
+        """Whether satellite is currently active."""
+        return self._satellite_store is not None
 
     @property
     def is_running(self) -> bool:
