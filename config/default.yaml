@@ -127,7 +127,7 @@ sections:
 satellite:
   enabled: true                         # Master switch — compute ML features every deriv poll
   db_path: "storage/satellite.db"       # Satellite SQLite database
-  data_layer_db_path: "storage/hynous-data.db"  # Read-only access to data-layer for historical queries
+  data_layer_db_path: "data-layer/storage/hynous-data.db"  # Read-only access to data-layer for historical queries
   snapshot_interval: 300                 # Feature snapshot frequency (matches deriv_poll_interval)
   coins:                                 # Coins to compute features for
     - "BTC"

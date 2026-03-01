@@ -186,7 +186,7 @@ class SatelliteConfig:
     """ML satellite feature engine (SPEC-02/03)."""
     enabled: bool = False
     db_path: str = "storage/satellite.db"
-    data_layer_db_path: str = "storage/hynous-data.db"
+    data_layer_db_path: str = "data-layer/storage/hynous-data.db"
     snapshot_interval: int = 300
     coins: list[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
     min_position_size_usd: float = 1000
