@@ -690,13 +690,29 @@ async def _eager_agent_start():
     import asyncio, sys
     await asyncio.sleep(3)
     try:
-        from .state import _get_agent
+        from .state import _get_agent, _daemon
         agent = await asyncio.to_thread(_get_agent)
         if agent:
+            # Log daemon thread status
+            with open("/tmp/daemon-trace.log", "a") as f:
+                from .state import _daemon as d
+                f.write(f"eager_start: agent OK, _daemon={d}\n")
+                if d:
+                    f.write(f"eager_start: daemon._running={d._running}, thread={d._thread}\n")
+                    if d._thread:
+                        f.write(f"eager_start: thread.is_alive={d._thread.is_alive()}\n")
+                f.flush()
             print("[hynous] Agent + daemon started eagerly on boot", file=sys.stderr, flush=True)
         else:
+            with open("/tmp/daemon-trace.log", "a") as f:
+                from .state import _agent_error
+                f.write(f"eager_start: agent FAILED: {_agent_error}\n")
+                f.flush()
             print("[hynous] Agent failed to start on boot", file=sys.stderr, flush=True)
     except Exception as e:
+        with open("/tmp/daemon-trace.log", "a") as f:
+            f.write(f"eager_start: EXCEPTION: {e}\n")
+            f.flush()
         print(f"[hynous] Eager start error: {e}", file=sys.stderr, flush=True)
 
 app.register_lifespan_task(_eager_agent_start)
