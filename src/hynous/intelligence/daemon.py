@@ -953,6 +953,8 @@ class Daemon:
             except Exception as e:
                 log_event(DaemonEvent("error", "Loop error", str(e)))
                 logger.error("Daemon loop error: %s", e)
+                import sys as _sys
+                print(f"[daemon] loop error: {e}", file=_sys.stderr, flush=True)
 
             # Sleep between checks — 10s granularity
             time.sleep(10)
@@ -1165,8 +1167,9 @@ class Daemon:
 
                         heatmap_adapter = _HeatmapAdapter()
                         flow_adapter = _OrderFlowAdapter()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import sys as _sys
+                        print(f"[satellite] adapter creation failed: {e}", file=_sys.stderr, flush=True)
 
                 satellite.tick(
                     snapshot=self.snapshot,
@@ -1176,8 +1179,11 @@ class Daemon:
                     store=self._satellite_store,
                     config=self._satellite_config,
                 )
-            except Exception:
-                logger.debug("Satellite tick failed", exc_info=True)
+            except Exception as e:
+                import sys as _sys
+                print(f"[satellite] tick failed: {e}", file=_sys.stderr, flush=True)
+                import traceback
+                traceback.print_exc(file=_sys.stderr)
 
     def _record_historical_snapshots(self):
         """Write funding, OI, volume to historical tables for ML features.

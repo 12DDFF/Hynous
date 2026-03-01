@@ -1200,6 +1200,7 @@ class AppState(rx.State):
             self.scanner_status_color = "#525252"
             self.scanner_subtitle = ""
             self.active_watches = []
+            self.satellite_running = False
             return
 
         self.daemon_running = True
@@ -1291,6 +1292,9 @@ class AppState(rx.State):
             ]
         else:
             self.active_watches = []
+
+        # Sync satellite toggle with actual daemon state
+        self.satellite_running = _daemon.satellite_enabled
 
     def _snapshot_regime(self):
         """Update all regime-related state fields."""
