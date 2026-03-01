@@ -1147,9 +1147,32 @@ class Daemon:
                     if self._satellite_dl_conn else None
                 )
 
+                # Adapters wrapping data-layer HTTP client to match engine interfaces
+                heatmap_adapter = None
+                flow_adapter = None
+                if self.config.data_layer.enabled:
+                    try:
+                        from ..data.providers.hynous_data import get_client
+                        _dl_client = get_client()
+
+                        class _HeatmapAdapter:
+                            def get_heatmap(self, coin):
+                                return _dl_client.heatmap(coin)
+
+                        class _OrderFlowAdapter:
+                            def get_order_flow(self, coin):
+                                return _dl_client.order_flow(coin) or {"windows": {}, "total_trades": 0}
+
+                        heatmap_adapter = _HeatmapAdapter()
+                        flow_adapter = _OrderFlowAdapter()
+                    except Exception:
+                        pass
+
                 satellite.tick(
                     snapshot=self.snapshot,
                     data_layer_db=dl_db,
+                    heatmap_engine=heatmap_adapter,
+                    order_flow_engine=flow_adapter,
                     store=self._satellite_store,
                     config=self._satellite_config,
                 )
