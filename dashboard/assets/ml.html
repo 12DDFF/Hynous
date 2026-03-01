@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ML Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color:#e5e5e5;font-family:Inter,system-ui,sans-serif;font-size:14px;scrollbar-width:thin;scrollbar-color:#262626 transparent}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#262626;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#404040}
+
+.header{padding:20px 24px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.header-left h1{font-size:1.25rem;font-weight:600;color:#fafafa;margin-bottom:4px}
+.header-left p{font-size:0.8rem;color:#525252}
+
+.coin-tabs{display:flex;gap:4px;background:#0f0f0f;border-radius:8px;padding:4px;border:1px solid #1a1a1a}
+.coin-tab{padding:6px 14px;border-radius:6px;font-size:0.8rem;font-weight:500;color:#737373;cursor:pointer;transition:all .15s;user-select:none}
+.coin-tab:hover{color:#e5e5e5;background:#1a1a1a}
+.coin-tab.active{color:#fafafa;background:#1a1a1a}
+
+.stats-bar{display:flex;gap:24px;padding:16px 24px;border-bottom:1px solid #141414;flex-wrap:wrap}
+.stat{display:flex;align-items:center;gap:8px}
+.stat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.stat-dot.green{background:#22c55e;box-shadow:0 0 6px #22c55e}
+.stat-dot.red{background:#ef4444;box-shadow:0 0 6px #ef4444}
+.stat-dot.yellow{background:#eab308;box-shadow:0 0 6px #eab308}
+.stat-dot.gray{background:#525252}
+.stat-label{font-size:0.75rem;color:#525252}
+.stat-value{font-size:0.8rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px 24px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+
+.panel{background:#0c0c0c;border:1px solid #141414;border-radius:10px;overflow:hidden;min-height:320px;display:flex;flex-direction:column}
+.panel-hdr{padding:14px 16px;border-bottom:1px solid #141414;display:flex;align-items:center;justify-content:space-between}
+.panel-hdr h3{font-size:0.85rem;font-weight:600;color:#d4d4d4}
+.panel-hdr .badge{font-size:0.65rem;color:#525252;font-family:'JetBrains Mono',monospace;background:#141414;padding:2px 8px;border-radius:4px}
+.panel-body{padding:16px;flex:1;overflow-y:auto}
+
+.placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;min-height:200px;gap:12px;color:#404040;text-align:center;padding:24px}
+.placeholder-icon{font-size:2rem;opacity:0.3}
+.placeholder-title{font-size:0.85rem;color:#525252;font-weight:500}
+.placeholder-sub{font-size:0.75rem;color:#404040;max-width:280px;line-height:1.5}
+
+/* Feature Monitor */
+.feature-group{margin-bottom:16px}
+.feature-group:last-child{margin-bottom:0}
+.group-label{font-size:0.65rem;text-transform:uppercase;letter-spacing:0.08em;color:#404040;margin-bottom:8px;font-weight:600}
+.feature-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+.feature-avail{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.feature-avail.on{background:#22c55e}
+.feature-avail.off{background:#ef4444}
+.feature-name{font-size:0.75rem;color:#737373;width:160px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feature-bar-wrap{flex:1;height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden;min-width:60px}
+.feature-bar{height:100%;border-radius:2px;transition:width .4s ease}
+.feature-bar.positive{background:#22c55e}
+.feature-bar.negative{background:#ef4444}
+.feature-bar.neutral{background:#525252}
+.feature-val{font-size:0.75rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:70px;text-align:right;flex-shrink:0}
+
+/* Data Quality */
+.quality-section{margin-bottom:16px}
+.quality-section:last-child{margin-bottom:0}
+.quality-row{display:flex;align-items:center;gap:10px;padding:5px 0}
+.quality-label{font-size:0.75rem;color:#737373;width:140px;flex-shrink:0}
+.quality-bar-wrap{flex:1;height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden}
+.quality-bar{height:100%;border-radius:3px;background:#6366f1;transition:width .4s ease}
+.quality-val{font-size:0.75rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:70px;text-align:right;flex-shrink:0}
+
+/* Predictions */
+.signal-badge{display:inline-block;padding:4px 12px;border-radius:6px;font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em}
+.signal-badge.long{background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.3)}
+.signal-badge.short{background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3)}
+.signal-badge.skip{background:rgba(82,82,82,0.15);color:#737373;border:1px solid rgba(82,82,82,0.3)}
+.signal-badge.conflict{background:rgba(234,179,8,0.15);color:#eab308;border:1px solid rgba(234,179,8,0.3)}
+
+.pred-roe{font-size:1.5rem;font-weight:700;font-family:'JetBrains Mono',monospace}
+.pred-roe.positive{color:#22c55e}
+.pred-roe.negative{color:#ef4444}
+
+.pred-meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px}
+.pred-meta-item{font-size:0.75rem;color:#525252}
+.pred-meta-item span{color:#a3a3a3;font-family:'JetBrains Mono',monospace}
+
+.shap-section{margin-top:16px}
+.shap-title{font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;color:#404040;margin-bottom:8px;font-weight:600}
+.shap-row{display:flex;align-items:center;gap:8px;padding:3px 0}
+.shap-name{font-size:0.7rem;color:#737373;width:140px;flex-shrink:0}
+.shap-bar-wrap{flex:1;height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden;position:relative}
+.shap-bar{height:100%;border-radius:3px;position:absolute;top:0}
+.shap-bar.pos{background:#22c55e;left:50%}
+.shap-bar.neg{background:#ef4444;right:50%}
+.shap-val{font-size:0.7rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:60px;text-align:right;flex-shrink:0}
+
+/* Model Performance */
+.model-section{margin-bottom:16px}
+.model-section:last-child{margin-bottom:0}
+.model-section-title{font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;color:#404040;margin-bottom:8px;font-weight:600}
+.model-row{display:flex;justify-content:space-between;padding:4px 0}
+.model-key{font-size:0.75rem;color:#737373}
+.model-val{font-size:0.75rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace}
+.feature-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.feature-tag{font-size:0.65rem;color:#525252;background:#141414;padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <h1>Machine Learning</h1>
+        <p>Feature engine, model performance, predictions</p>
+    </div>
+    <div class="coin-tabs" id="coin-tabs">
+        <div class="coin-tab active" data-coin="BTC">BTC</div>
+        <div class="coin-tab" data-coin="ETH">ETH</div>
+        <div class="coin-tab" data-coin="SOL">SOL</div>
+    </div>
+</div>
+
+<div class="stats-bar" id="stats-bar">
+    <div class="stat">
+        <div class="stat-dot gray" id="sat-dot"></div>
+        <span class="stat-label">Satellite</span>
+        <span class="stat-value" id="sat-status">--</span>
+    </div>
+    <div class="stat">
+        <div class="stat-dot gray" id="model-dot"></div>
+        <span class="stat-label">Model</span>
+        <span class="stat-value" id="model-status">--</span>
+    </div>
+    <div class="stat">
+        <span class="stat-label">Snapshots</span>
+        <span class="stat-value" id="snap-count">--</span>
+    </div>
+    <div class="stat">
+        <span class="stat-label">Last Tick</span>
+        <span class="stat-value" id="last-tick">--</span>
+    </div>
+    <div class="stat">
+        <span class="stat-label">DB Size</span>
+        <span class="stat-value" id="db-size">--</span>
+    </div>
+</div>
+
+<div class="grid">
+    <!-- Panel 1: Feature Monitor -->
+    <div class="panel">
+        <div class="panel-hdr">
+            <h3>Feature Monitor</h3>
+            <span class="badge" id="feature-coin-badge">BTC</span>
+        </div>
+        <div class="panel-body" id="feature-body">
+            <div class="placeholder" id="feature-placeholder">
+                <div class="placeholder-icon">&#9881;</div>
+                <div class="placeholder-title">No feature data</div>
+                <div class="placeholder-sub">Enable satellite and wait for the first tick to see feature values</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Panel 2: Data Quality -->
+    <div class="panel">
+        <div class="panel-hdr">
+            <h3>Data Quality</h3>
+            <span class="badge" id="quality-badge">--</span>
+        </div>
+        <div class="panel-body" id="quality-body">
+            <div class="placeholder" id="quality-placeholder">
+                <div class="placeholder-icon">&#128202;</div>
+                <div class="placeholder-title">No snapshot data</div>
+                <div class="placeholder-sub">Satellite must be enabled and running to collect snapshots</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Panel 3: Predictions -->
+    <div class="panel">
+        <div class="panel-hdr">
+            <h3>Predictions</h3>
+            <span class="badge" id="pred-coin-badge">BTC</span>
+        </div>
+        <div class="panel-body" id="pred-body">
+            <div class="placeholder" id="pred-placeholder">
+                <div class="placeholder-icon">&#129504;</div>
+                <div class="placeholder-title">No model loaded</div>
+                <div class="placeholder-sub">Train a model to see predictions. Collect data first (~52K snapshots via Artemis)</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Panel 4: Model Performance -->
+    <div class="panel">
+        <div class="panel-hdr">
+            <h3>Model Performance</h3>
+            <span class="badge" id="model-version-badge">--</span>
+        </div>
+        <div class="panel-body" id="model-body">
+            <div class="placeholder" id="model-placeholder">
+                <div class="placeholder-icon">&#128200;</div>
+                <div class="placeholder-title">No model trained</div>
+                <div class="placeholder-sub">Collect data first, then train a model to see performance metrics</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    "use strict";
+
+    // ── Config ──────────────────────────────────────────────────────
+    var B = location.port === "3000"
+        ? "http://localhost:8000"
+        : location.origin;
+
+    var activeCoin = "BTC";
+
+    // Feature metadata: name → { group, label, min, max, neutral, format }
+    var FEATURES = {
+        liq_magnet_direction:  { group: "Liquidation", label: "Liq Magnet Dir",     min: -1,  max: 1,   neutral: 0,   fmt: "f2" },
+        oi_vs_7d_avg_ratio:    { group: "Liquidation", label: "OI vs 7d Avg",       min: 0.5, max: 2,   neutral: 1,   fmt: "f3" },
+        liq_cascade_active:    { group: "Liquidation", label: "Liq Cascade",        min: 0,   max: 1,   neutral: 0,   fmt: "bool" },
+        liq_1h_vs_4h_avg:      { group: "Liquidation", label: "Liq 1h vs 4h",      min: 0,   max: 5,   neutral: 1,   fmt: "f2" },
+        funding_vs_30d_zscore: { group: "Funding",     label: "Funding Z-Score",    min: -3,  max: 3,   neutral: 0,   fmt: "f2" },
+        hours_to_funding:      { group: "Funding",     label: "Hours to Funding",   min: 0,   max: 8,   neutral: 4,   fmt: "f1" },
+        oi_funding_pressure:   { group: "Funding",     label: "OI Fund Pressure",   min: -5,  max: 5,   neutral: 0,   fmt: "f2" },
+        cvd_normalized_5m:     { group: "Momentum",    label: "CVD Norm 5m",        min: -1,  max: 1,   neutral: 0,   fmt: "f3" },
+        price_change_5m_pct:   { group: "Momentum",    label: "Price Chg 5m",       min: -2,  max: 2,   neutral: 0,   fmt: "pct" },
+        volume_vs_1h_avg_ratio:{ group: "Momentum",    label: "Vol vs 1h Avg",      min: 0,   max: 5,   neutral: 1,   fmt: "f2" },
+        realized_vol_1h:       { group: "Context",     label: "Realized Vol 1h",    min: 0,   max: 5,   neutral: 0,   fmt: "f3" },
+        sessions_overlapping:  { group: "Context",     label: "Sessions Overlap",   min: 0,   max: 3,   neutral: 1,   fmt: "int" },
+    };
+
+    var AVAIL_MAP = {
+        liq_magnet_direction:  "liq_magnet_avail",
+        oi_vs_7d_avg_ratio:    "oi_7d_avail",
+        liq_cascade_active:    "liq_cascade_avail",
+        liq_1h_vs_4h_avg:      "liq_cascade_avail",
+        funding_vs_30d_zscore: "funding_zscore_avail",
+        hours_to_funding:      "funding_zscore_avail",
+        oi_funding_pressure:   "oi_funding_pressure_avail",
+        cvd_normalized_5m:     "cvd_avail",
+        price_change_5m_pct:   "price_change_5m_avail",
+        volume_vs_1h_avg_ratio:"volume_avail",
+        realized_vol_1h:       "realized_vol_avail",
+        sessions_overlapping:  "realized_vol_avail",
+    };
+
+    var GROUPS_ORDER = ["Liquidation", "Funding", "Momentum", "Context"];
+
+    // ── Helpers ─────────────────────────────────────────────────────
+    function vis() { return !document.hidden; }
+
+    function api(url) {
+        return fetch(B + url).then(function(r) { return r.json(); }).catch(function() { return null; });
+    }
+
+    function $(id) { return document.getElementById(id); }
+
+    function fmtVal(val, fmt) {
+        if (val === null || val === undefined) return "--";
+        switch (fmt) {
+            case "f1": return val.toFixed(1);
+            case "f2": return val.toFixed(2);
+            case "f3": return val.toFixed(3);
+            case "pct": return (val >= 0 ? "+" : "") + val.toFixed(2) + "%";
+            case "bool": return val ? "YES" : "NO";
+            case "int": return Math.round(val).toString();
+            default: return val.toString();
+        }
+    }
+
+    function timeAgo(ts) {
+        if (!ts) return "--";
+        var diff = Date.now() / 1000 - ts;
+        if (diff < 60) return Math.floor(diff) + "s ago";
+        if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+        if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+        return Math.floor(diff / 86400) + "d ago";
+    }
+
+    function barPct(val, min, max) {
+        if (val === null || val === undefined) return 0;
+        return Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+    }
+
+    // ── Coin Tabs ───────────────────────────────────────────────────
+    document.querySelectorAll(".coin-tab").forEach(function(tab) {
+        tab.addEventListener("click", function() {
+            document.querySelectorAll(".coin-tab").forEach(function(t) { t.classList.remove("active"); });
+            tab.classList.add("active");
+            activeCoin = tab.dataset.coin;
+            $("feature-coin-badge").textContent = activeCoin;
+            $("pred-coin-badge").textContent = activeCoin;
+            refreshFeatures();
+            refreshPredictions();
+        });
+    });
+
+    // ── Status Bar ──────────────────────────────────────────────────
+    function refreshStatus() {
+        if (!vis()) return;
+        api("/api/ml/status").then(function(d) {
+            if (!d) return;
+            var satDot = $("sat-dot");
+            var satStatus = $("sat-status");
+            if (!d.db_exists) {
+                satDot.className = "stat-dot red";
+                satStatus.textContent = "No DB";
+            } else if (!d.satellite_enabled) {
+                satDot.className = "stat-dot red";
+                satStatus.textContent = "Disabled";
+            } else if (d.last_tick_time && (Date.now() / 1000 - d.last_tick_time) > 600) {
+                satDot.className = "stat-dot yellow";
+                satStatus.textContent = "Stale";
+            } else {
+                satDot.className = "stat-dot green";
+                satStatus.textContent = "Running";
+            }
+
+            var modelDot = $("model-dot");
+            var modelStatus = $("model-status");
+            if (d.model_loaded) {
+                modelDot.className = "stat-dot green";
+                modelStatus.textContent = "v" + d.model_version;
+            } else {
+                modelDot.className = "stat-dot gray";
+                modelStatus.textContent = "None";
+            }
+
+            $("snap-count").textContent = d.snapshot_count.toLocaleString();
+            $("last-tick").textContent = timeAgo(d.last_tick_time);
+            $("db-size").textContent = d.db_size_mb + " MB";
+        });
+    }
+
+    // ── Feature Monitor ─────────────────────────────────────────────
+    function refreshFeatures() {
+        if (!vis()) return;
+        api("/api/ml/features?coin=" + activeCoin).then(function(d) {
+            var body = $("feature-body");
+            var ph = $("feature-placeholder");
+            if (!d || d.error) {
+                ph.style.display = "flex";
+                if (d && d.error === "no_db") {
+                    ph.querySelector(".placeholder-title").textContent = "No satellite DB";
+                    ph.querySelector(".placeholder-sub").textContent = "Enable satellite first";
+                } else {
+                    ph.querySelector(".placeholder-title").textContent = "No data for " + activeCoin;
+                    ph.querySelector(".placeholder-sub").textContent = "Satellite must be enabled and running";
+                }
+                // Remove previous feature rows
+                body.querySelectorAll(".feature-group").forEach(function(g) { g.remove(); });
+                return;
+            }
+            ph.style.display = "none";
+            // Remove old groups
+            body.querySelectorAll(".feature-group").forEach(function(g) { g.remove(); });
+
+            GROUPS_ORDER.forEach(function(group) {
+                var groupEl = document.createElement("div");
+                groupEl.className = "feature-group";
+                groupEl.innerHTML = '<div class="group-label">' + group + '</div>';
+
+                Object.keys(FEATURES).forEach(function(name) {
+                    var meta = FEATURES[name];
+                    if (meta.group !== group) return;
+                    var val = d[name];
+                    var availCol = AVAIL_MAP[name];
+                    var avail = d[availCol] !== undefined ? d[availCol] : 1;
+                    var pct = barPct(val, meta.min, meta.max);
+                    var neutralPct = barPct(meta.neutral, meta.min, meta.max);
+                    var barClass = "neutral";
+                    if (val !== null && val !== undefined) {
+                        if (val > meta.neutral * 1.1 + 0.01) barClass = "positive";
+                        else if (val < meta.neutral * 0.9 - 0.01) barClass = "negative";
+                    }
+
+                    var row = document.createElement("div");
+                    row.className = "feature-row";
+                    row.innerHTML =
+                        '<div class="feature-avail ' + (avail ? "on" : "off") + '"></div>' +
+                        '<div class="feature-name" title="' + name + '">' + meta.label + '</div>' +
+                        '<div class="feature-bar-wrap"><div class="feature-bar ' + barClass + '" style="width:' + pct + '%"></div></div>' +
+                        '<div class="feature-val">' + fmtVal(val, meta.fmt) + '</div>';
+                    groupEl.appendChild(row);
+                });
+                body.appendChild(groupEl);
+            });
+        });
+    }
+
+    // ── Data Quality ────────────────────────────────────────────────
+    function refreshQuality() {
+        if (!vis()) return;
+        api("/api/ml/snapshots/stats").then(function(d) {
+            var body = $("quality-body");
+            var ph = $("quality-placeholder");
+            if (!d || d.error) {
+                ph.style.display = "flex";
+                body.querySelectorAll(".quality-section").forEach(function(s) { s.remove(); });
+                return;
+            }
+            ph.style.display = "none";
+            body.querySelectorAll(".quality-section").forEach(function(s) { s.remove(); });
+
+            var totalSnaps = 0;
+            Object.keys(d.coins || {}).forEach(function(c) { totalSnaps += d.coins[c].total; });
+            $("quality-badge").textContent = totalSnaps.toLocaleString() + " total";
+
+            // Coin snapshot counts
+            var sec1 = document.createElement("div");
+            sec1.className = "quality-section";
+            sec1.innerHTML = '<div class="group-label">Snapshot Counts</div>';
+            ["BTC", "ETH", "SOL"].forEach(function(coin) {
+                var info = d.coins[coin] || { total: 0, last_24h: 0 };
+                var expected = 288; // 86400 / 300
+                var pct24 = Math.min(100, (info.last_24h / expected) * 100);
+                var row = document.createElement("div");
+                row.className = "quality-row";
+                row.innerHTML =
+                    '<div class="quality-label">' + coin + '</div>' +
+                    '<div class="quality-bar-wrap"><div class="quality-bar" style="width:' + pct24 + '%"></div></div>' +
+                    '<div class="quality-val">' + info.total.toLocaleString() + ' (' + info.last_24h + '/24h)</div>';
+                sec1.appendChild(row);
+            });
+            body.appendChild(sec1);
+
+            // Label coverage
+            var sec2 = document.createElement("div");
+            sec2.className = "quality-section";
+            sec2.innerHTML = '<div class="group-label">Labels</div>';
+            var labelRow = document.createElement("div");
+            labelRow.className = "quality-row";
+            var labelPct = totalSnaps > 0 ? Math.min(100, (d.label_count / totalSnaps) * 100) : 0;
+            labelRow.innerHTML =
+                '<div class="quality-label">Labeled Snapshots</div>' +
+                '<div class="quality-bar-wrap"><div class="quality-bar" style="width:' + labelPct + '%"></div></div>' +
+                '<div class="quality-val">' + (d.label_count || 0).toLocaleString() + ' (' + labelPct.toFixed(1) + '%)</div>';
+            sec2.appendChild(labelRow);
+            body.appendChild(sec2);
+
+            // Feature availability
+            var sec3 = document.createElement("div");
+            sec3.className = "quality-section";
+            sec3.innerHTML = '<div class="group-label">Feature Availability</div>';
+            var avails = d.availability_rates || {};
+            var availNames = {
+                liq_magnet_avail: "Liq Magnet",
+                oi_7d_avail: "OI 7d",
+                liq_cascade_avail: "Liq Cascade",
+                funding_zscore_avail: "Funding Z",
+                oi_funding_pressure_avail: "OI Fund Press",
+                cvd_avail: "CVD",
+                price_change_5m_avail: "Price 5m",
+                volume_avail: "Volume",
+                realized_vol_avail: "Realized Vol",
+            };
+            Object.keys(availNames).forEach(function(col) {
+                var pct = avails[col] || 0;
+                var row = document.createElement("div");
+                row.className = "quality-row";
+                row.innerHTML =
+                    '<div class="quality-label">' + availNames[col] + '</div>' +
+                    '<div class="quality-bar-wrap"><div class="quality-bar" style="width:' + pct + '%;' + (pct < 50 ? 'background:#ef4444' : pct < 80 ? 'background:#eab308' : '') + '"></div></div>' +
+                    '<div class="quality-val">' + pct.toFixed(1) + '%</div>';
+                sec3.appendChild(row);
+            });
+            body.appendChild(sec3);
+        });
+    }
+
+    // ── Predictions ─────────────────────────────────────────────────
+    function refreshPredictions() {
+        if (!vis()) return;
+        api("/api/ml/predictions?coin=" + activeCoin).then(function(d) {
+            var body = $("pred-body");
+            var ph = $("pred-placeholder");
+            if (!d || d.error) {
+                ph.style.display = "flex";
+                if (d && d.error === "no_db") {
+                    ph.querySelector(".placeholder-title").textContent = "No satellite DB";
+                    ph.querySelector(".placeholder-sub").textContent = "Enable satellite first";
+                } else {
+                    ph.querySelector(".placeholder-title").textContent = "No predictions yet";
+                    ph.querySelector(".placeholder-sub").textContent = "Train a model to generate predictions";
+                }
+                // Remove old pred content
+                body.querySelectorAll(".pred-content").forEach(function(c) { c.remove(); });
+                return;
+            }
+            ph.style.display = "none";
+            body.querySelectorAll(".pred-content").forEach(function(c) { c.remove(); });
+
+            var content = document.createElement("div");
+            content.className = "pred-content";
+
+            // Signal badge
+            var signal = (d.signal || "skip").toLowerCase();
+            var badgeClass = signal === "long" ? "long" : signal === "short" ? "short" : signal === "conflict" ? "conflict" : "skip";
+            content.innerHTML = '<div style="margin-bottom:16px"><span class="signal-badge ' + badgeClass + '">' + signal.toUpperCase() + '</span></div>';
+
+            // Predicted ROE values
+            var longROE = d.predicted_long_roe;
+            var shortROE = d.predicted_short_roe;
+            var roeDiv = document.createElement("div");
+            roeDiv.style.cssText = "display:flex;gap:24px;margin-bottom:4px";
+            roeDiv.innerHTML =
+                '<div><div style="font-size:0.65rem;color:#404040;text-transform:uppercase;margin-bottom:4px">Long ROE</div>' +
+                '<div class="pred-roe ' + (longROE >= 0 ? "positive" : "negative") + '">' + (longROE >= 0 ? "+" : "") + (longROE !== null && longROE !== undefined ? longROE.toFixed(2) : "--") + '%</div></div>' +
+                '<div><div style="font-size:0.65rem;color:#404040;text-transform:uppercase;margin-bottom:4px">Short ROE</div>' +
+                '<div class="pred-roe ' + (shortROE >= 0 ? "positive" : "negative") + '">' + (shortROE >= 0 ? "+" : "") + (shortROE !== null && shortROE !== undefined ? shortROE.toFixed(2) : "--") + '%</div></div>';
+            content.appendChild(roeDiv);
+
+            // Meta info
+            var meta = document.createElement("div");
+            meta.className = "pred-meta";
+            meta.innerHTML =
+                '<div class="pred-meta-item">Threshold: <span>' + (d.entry_threshold !== null && d.entry_threshold !== undefined ? d.entry_threshold.toFixed(1) + "%" : "--") + '</span></div>' +
+                '<div class="pred-meta-item">Inference: <span>' + (d.inference_time_ms !== null && d.inference_time_ms !== undefined ? d.inference_time_ms.toFixed(1) + "ms" : "--") + '</span></div>' +
+                '<div class="pred-meta-item">Model: <span>' + (d.model_version || "--") + '</span></div>';
+            content.appendChild(meta);
+
+            // SHAP top 5
+            var shapData = d.shap_top5 || [];
+            if (shapData.length > 0) {
+                var shapSection = document.createElement("div");
+                shapSection.className = "shap-section";
+                shapSection.innerHTML = '<div class="shap-title">SHAP Feature Importance (Top 5)</div>';
+                var maxAbs = 0;
+                shapData.forEach(function(s) { maxAbs = Math.max(maxAbs, Math.abs(s.value || s[1] || 0)); });
+                if (maxAbs === 0) maxAbs = 1;
+
+                shapData.slice(0, 5).forEach(function(s) {
+                    var name = s.feature || s[0] || "?";
+                    var val = s.value || s[1] || 0;
+                    var pct = Math.abs(val) / maxAbs * 50;
+                    var cls = val >= 0 ? "pos" : "neg";
+                    var row = document.createElement("div");
+                    row.className = "shap-row";
+                    row.innerHTML =
+                        '<div class="shap-name">' + name + '</div>' +
+                        '<div class="shap-bar-wrap"><div class="shap-bar ' + cls + '" style="width:' + pct + '%"></div></div>' +
+                        '<div class="shap-val">' + (val >= 0 ? "+" : "") + val.toFixed(3) + '</div>';
+                    shapSection.appendChild(row);
+                });
+                content.appendChild(shapSection);
+            }
+
+            body.appendChild(content);
+        });
+    }
+
+    // ── Model Performance ───────────────────────────────────────────
+    function refreshModel() {
+        if (!vis()) return;
+        api("/api/ml/model").then(function(d) {
+            var body = $("model-body");
+            var ph = $("model-placeholder");
+            if (!d || d.error) {
+                ph.style.display = "flex";
+                body.querySelectorAll(".model-content").forEach(function(c) { c.remove(); });
+                $("model-version-badge").textContent = "--";
+                return;
+            }
+            ph.style.display = "none";
+            body.querySelectorAll(".model-content").forEach(function(c) { c.remove(); });
+            $("model-version-badge").textContent = "v" + (d.version || "?");
+
+            var content = document.createElement("div");
+            content.className = "model-content";
+
+            // Key metrics
+            var sec1 = document.createElement("div");
+            sec1.className = "model-section";
+            sec1.innerHTML = '<div class="model-section-title">Key Metrics</div>';
+            var metrics = [
+                ["Version", "v" + (d.version || "?")],
+                ["Validation MAE", d.validation_mae !== null && d.validation_mae !== undefined ? d.validation_mae.toFixed(3) + "% ROE" : "--"],
+                ["Training Samples", (d.training_samples || 0).toLocaleString()],
+                ["Validation Samples", (d.validation_samples || 0).toLocaleString()],
+                ["Training Range", (d.training_start || "--") + " to " + (d.training_end || "--")],
+                ["Feature Hash", (d.feature_hash || "--").substring(0, 12)],
+                ["Created", d.created_at || "--"],
+            ];
+            metrics.forEach(function(m) {
+                var row = document.createElement("div");
+                row.className = "model-row";
+                row.innerHTML = '<span class="model-key">' + m[0] + '</span><span class="model-val">' + m[1] + '</span>';
+                sec1.appendChild(row);
+            });
+            content.appendChild(sec1);
+
+            // XGBoost params
+            if (d.xgboost_params) {
+                var sec2 = document.createElement("div");
+                sec2.className = "model-section";
+                sec2.innerHTML = '<div class="model-section-title">XGBoost Parameters</div>';
+                Object.keys(d.xgboost_params).forEach(function(k) {
+                    var row = document.createElement("div");
+                    row.className = "model-row";
+                    row.innerHTML = '<span class="model-key">' + k + '</span><span class="model-val">' + d.xgboost_params[k] + '</span>';
+                    sec2.appendChild(row);
+                });
+                content.appendChild(sec2);
+            }
+
+            // Feature names
+            if (d.feature_names && d.feature_names.length > 0) {
+                var sec3 = document.createElement("div");
+                sec3.className = "model-section";
+                sec3.innerHTML = '<div class="model-section-title">Features (' + d.feature_names.length + ')</div>';
+                var tags = document.createElement("div");
+                tags.className = "feature-tags";
+                d.feature_names.forEach(function(f) {
+                    tags.innerHTML += '<span class="feature-tag">' + f + '</span>';
+                });
+                sec3.appendChild(tags);
+                content.appendChild(sec3);
+            }
+
+            // Notes
+            if (d.notes) {
+                var sec4 = document.createElement("div");
+                sec4.className = "model-section";
+                sec4.innerHTML = '<div class="model-section-title">Training Notes</div><div style="font-size:0.75rem;color:#737373;line-height:1.5">' + d.notes + '</div>';
+                content.appendChild(sec4);
+            }
+
+            body.appendChild(content);
+        });
+    }
+
+    // ── Polling Orchestration ───────────────────────────────────────
+    refreshStatus();
+    refreshFeatures();
+    refreshQuality();
+    refreshPredictions();
+    refreshModel();
+
+    setInterval(refreshStatus, 30000);
+    setInterval(function() { refreshFeatures(); refreshPredictions(); }, 60000);
+    setInterval(function() { refreshQuality(); refreshModel(); }, 120000);
+
+    // Refresh on tab visibility change
+    document.addEventListener("visibilitychange", function() {
+        if (!document.hidden) {
+            refreshStatus();
+            refreshFeatures();
+            refreshQuality();
+            refreshPredictions();
+            refreshModel();
+        }
+    });
+})();
+</script>
+</body>
+</html>

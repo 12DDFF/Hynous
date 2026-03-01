@@ -11,7 +11,7 @@ Run with:
 import reflex as rx
 from .state import AppState
 from .components import navbar
-from .pages import home_page, chat_page, graph_page, journal_page, memory_page, login_page, debug_page, settings_page, data_page
+from .pages import home_page, chat_page, graph_page, journal_page, memory_page, login_page, debug_page, settings_page, data_page, ml_page
 
 
 def _dashboard_content() -> rx.Component:
@@ -158,6 +158,7 @@ def _dashboard_content() -> rx.Component:
                 on_journal=AppState.go_to_journal,
                 on_memory=AppState.go_to_memory,
                 on_data=AppState.go_to_data,
+                on_ml=AppState.go_to_ml,
                 on_settings=AppState.go_to_settings,
                 on_debug=AppState.go_to_debug,
                 on_logout=AppState.logout,
@@ -187,12 +188,16 @@ def _dashboard_content() -> rx.Component:
                             AppState.current_page == "data",
                             data_page(),
                             rx.cond(
-                                AppState.current_page == "settings",
-                                settings_page(),
+                                AppState.current_page == "ml",
+                                ml_page(),
                                 rx.cond(
-                                    AppState.current_page == "debug",
-                                    debug_page(),
-                                    memory_page(),
+                                    AppState.current_page == "settings",
+                                    settings_page(),
+                                    rx.cond(
+                                        AppState.current_page == "debug",
+                                        debug_page(),
+                                        memory_page(),
+                                    ),
                                 ),
                             ),
                         ),
@@ -385,6 +390,244 @@ async def _candle_proxy(request):
 
 
 app._api.add_route("/api/candles", _candle_proxy)
+
+
+# ── ML / Satellite API endpoints ────────────────────────────────────
+
+def _get_satellite_db_path():
+    """Resolve satellite.db path from project config."""
+    from hynous.core.config import load_config
+    from pathlib import Path
+    config = load_config()
+    return str(config.project_root / config.satellite.db_path)
+
+
+async def _ml_status(request):
+    """GET /api/ml/status — satellite engine status summary."""
+    import asyncio, os, sqlite3, time
+    from starlette.responses import JSONResponse
+    from hynous.core.config import load_config
+
+    def _query():
+        config = load_config()
+        db_path = str(config.project_root / config.satellite.db_path)
+        result = {
+            "satellite_enabled": config.satellite.enabled,
+            "db_exists": os.path.exists(db_path),
+            "db_size_mb": 0,
+            "last_tick_time": None,
+            "snapshot_count": 0,
+            "coins": config.satellite.coins,
+            "model_loaded": False,
+            "model_version": None,
+        }
+        if not result["db_exists"]:
+            return result
+        result["db_size_mb"] = round(os.path.getsize(db_path) / (1024 * 1024), 2)
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT COUNT(*) as cnt FROM snapshots").fetchone()
+            result["snapshot_count"] = row["cnt"]
+            row = conn.execute("SELECT MAX(created_at) as latest FROM snapshots").fetchone()
+            if row["latest"]:
+                result["last_tick_time"] = row["latest"]
+            # Check for model metadata
+            try:
+                row = conn.execute("SELECT value FROM satellite_metadata WHERE key = 'model_version'").fetchone()
+                if row:
+                    result["model_loaded"] = True
+                    result["model_version"] = row["value"]
+            except Exception:
+                pass
+            conn.close()
+        except Exception:
+            pass
+        return result
+
+    try:
+        data = await asyncio.to_thread(_query)
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/ml/status", _ml_status)
+
+
+async def _ml_features(request):
+    """GET /api/ml/features?coin=BTC — latest feature snapshot."""
+    import asyncio, sqlite3
+    from starlette.responses import JSONResponse
+
+    coin = request.query_params.get("coin", "BTC")
+
+    def _query():
+        db_path = _get_satellite_db_path()
+        import os
+        if not os.path.exists(db_path):
+            return None, "no_db"
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM snapshots WHERE coin = ? ORDER BY created_at DESC LIMIT 1",
+            (coin,),
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None, "no_data"
+        return dict(row), None
+
+    try:
+        data, err = await asyncio.to_thread(_query)
+        if err:
+            return JSONResponse({"error": err}, status_code=404)
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/ml/features", _ml_features)
+
+
+async def _ml_snapshots_stats(request):
+    """GET /api/ml/snapshots/stats — per-coin counts and feature availability."""
+    import asyncio, sqlite3, time
+    from starlette.responses import JSONResponse
+
+    def _query():
+        db_path = _get_satellite_db_path()
+        import os
+        if not os.path.exists(db_path):
+            return None, "no_db"
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        now = time.time()
+        day_ago = now - 86400
+        # Per-coin counts
+        rows = conn.execute(
+            "SELECT coin, COUNT(*) as total, SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END) as last_24h FROM snapshots GROUP BY coin",
+            (day_ago,),
+        ).fetchall()
+        coins = {r["coin"]: {"total": r["total"], "last_24h": r["last_24h"]} for r in rows}
+        # Label count
+        try:
+            row = conn.execute("SELECT COUNT(*) as cnt FROM snapshot_labels").fetchone()
+            label_count = row["cnt"]
+        except Exception:
+            label_count = 0
+        # Feature availability rates
+        avail_cols = [
+            "liq_magnet_avail", "oi_7d_avail", "liq_cascade_avail",
+            "funding_zscore_avail", "oi_funding_pressure_avail", "cvd_avail",
+            "price_change_5m_avail", "volume_avail", "realized_vol_avail",
+        ]
+        avail_rates = {}
+        try:
+            total_row = conn.execute("SELECT COUNT(*) as cnt FROM snapshots").fetchone()
+            total = total_row["cnt"] if total_row["cnt"] > 0 else 1
+            for col in avail_cols:
+                r = conn.execute(f"SELECT SUM({col}) as s FROM snapshots").fetchone()
+                avail_rates[col] = round((r["s"] or 0) / total * 100, 1)
+        except Exception:
+            pass
+        conn.close()
+        return {"coins": coins, "label_count": label_count, "availability_rates": avail_rates}, None
+
+    try:
+        data, err = await asyncio.to_thread(_query)
+        if err:
+            return JSONResponse({"error": err}, status_code=404)
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/ml/snapshots/stats", _ml_snapshots_stats)
+
+
+async def _ml_predictions(request):
+    """GET /api/ml/predictions?coin=BTC — latest prediction."""
+    import asyncio, sqlite3, json
+    from starlette.responses import JSONResponse
+
+    coin = request.query_params.get("coin", "BTC")
+
+    def _query():
+        db_path = _get_satellite_db_path()
+        import os
+        if not os.path.exists(db_path):
+            return None, "no_db"
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT * FROM predictions WHERE coin = ? ORDER BY created_at DESC LIMIT 1",
+                (coin,),
+            ).fetchone()
+        except Exception:
+            conn.close()
+            return None, "no_data"
+        conn.close()
+        if not row:
+            return None, "no_data"
+        result = dict(row)
+        # Parse SHAP JSON if present
+        if result.get("shap_top5_json"):
+            try:
+                result["shap_top5"] = json.loads(result["shap_top5_json"])
+            except Exception:
+                result["shap_top5"] = []
+        return result, None
+
+    try:
+        data, err = await asyncio.to_thread(_query)
+        if err:
+            return JSONResponse({"error": err}, status_code=404)
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/ml/predictions", _ml_predictions)
+
+
+async def _ml_model(request):
+    """GET /api/ml/model — model metadata."""
+    import asyncio, json, os
+    from starlette.responses import JSONResponse
+    from hynous.core.config import load_config
+
+    def _query():
+        config = load_config()
+        artifacts_dir = config.project_root / "artifacts"
+        if not artifacts_dir.exists():
+            return None, "no_data"
+        # Find latest version directory
+        versions = sorted(
+            [d for d in artifacts_dir.iterdir() if d.is_dir() and d.name.startswith("v")],
+            key=lambda d: int(d.name[1:]) if d.name[1:].isdigit() else 0,
+            reverse=True,
+        )
+        if not versions:
+            return None, "no_data"
+        latest = versions[0]
+        meta_file = latest / f"metadata_{latest.name}.json"
+        if not meta_file.exists():
+            return None, "no_data"
+        with open(meta_file) as f:
+            return json.load(f), None
+
+    try:
+        data, err = await asyncio.to_thread(_query)
+        if err:
+            return JSONResponse({"error": err}, status_code=404)
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/ml/model", _ml_model)
 
 
 # Eagerly start agent + daemon when the ASGI backend starts.

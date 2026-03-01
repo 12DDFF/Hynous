@@ -59,7 +59,7 @@ def nav_item(
     )
 
 
-def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_journal: callable, on_memory: callable, on_data: callable = None, on_settings: callable = None, on_debug: callable = None, on_logout: callable = None) -> rx.Component:
+def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_journal: callable, on_memory: callable, on_data: callable = None, on_ml: callable = None, on_settings: callable = None, on_debug: callable = None, on_logout: callable = None) -> rx.Component:
     """Main navigation bar - fixed, clean, aligned."""
     return rx.hstack(
         # Left section - Logo (fixed width for consistency)
@@ -94,6 +94,7 @@ def navbar(current_page: rx.Var[str], on_home: callable, on_chat: callable, on_j
             nav_item("Journal", current_page == "journal", on_journal, has_unread=AppState.journal_unread),
             nav_item("Memory", current_page == "memory", on_memory, has_unread=AppState.memory_unread),
             nav_item("Data", current_page == "data", on_data),
+            nav_item("ML", current_page == "ml", on_ml),
             nav_item("Settings", current_page == "settings", on_settings),
             nav_item("Debug", current_page == "debug", on_debug),
             spacing="1",

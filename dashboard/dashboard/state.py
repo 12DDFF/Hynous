@@ -2115,6 +2115,10 @@ class AppState(rx.State):
         """Navigate to data intelligence page."""
         self.current_page = "data"
 
+    def go_to_ml(self):
+        """Navigate to ML dashboard page."""
+        self.current_page = "ml"
+
     def go_to_memory(self):
         """Navigate to memory management page and load data."""
         self.current_page = "memory"
