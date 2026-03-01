@@ -81,7 +81,12 @@ class PaperProvider:
 
         # Determine storage path (relative to project root)
         self._storage_path = self._find_storage_path()
+        _is_first_run = not os.path.exists(self._storage_path)
         self._load()
+        if _is_first_run:
+            # First-ever run — stamp the session start so stats only include this session.
+            self._stats_reset_at = datetime.now(timezone.utc).isoformat()
+            self._save()
         logger.info("PaperProvider initialized (balance=$%.2f, positions=%d)",
                      self.balance, len(self.positions))
 
@@ -522,6 +527,26 @@ class PaperProvider:
                 else:
                     pos.liquidation_px = pos.entry_px * (1 + 0.95 / leverage)
                 self._save()
+
+    def reset_paper_stats(self):
+        """Mark the current time as the session start for trade stats filtering.
+
+        All trade_close Nous nodes created before this timestamp will be excluded
+        from stats/journal — they belong to a previous paper session.
+        After calling this, also clear the trade_analytics module-level cache
+        so stale aggregates aren't returned on the next load.
+        """
+        with self._lock:
+            self._stats_reset_at = datetime.now(timezone.utc).isoformat()
+            self._save()
+        logger.info("Paper stats reset — new session starts at %s", self._stats_reset_at)
+        # Invalidate cached stats so the next get_trade_stats() re-fetches
+        try:
+            from ...core import trade_analytics
+            trade_analytics._cached_stats = None
+            trade_analytics._cache_time = 0
+        except Exception:
+            pass
 
     # ================================================================
     # Paper-Specific: Trigger Checking (called by daemon)

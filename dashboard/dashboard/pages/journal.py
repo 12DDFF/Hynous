@@ -621,6 +621,26 @@ def _symbol_breakdown() -> rx.Component:
 def _trades_content() -> rx.Component:
     """Existing trades tab content — stats, equity, tables."""
     return rx.vstack(
+        rx.hstack(
+            rx.text(
+                "Current Session",
+                font_size="0.75rem",
+                color="#525252",
+                font_weight="500",
+            ),
+            rx.spacer(),
+            rx.button(
+                "Reset Session",
+                on_click=AppState.reset_paper_stats,
+                size="1",
+                variant="ghost",
+                color="#525252",
+                cursor="pointer",
+                _hover={"color": "#f87171"},
+            ),
+            width="100%",
+            align="center",
+        ),
         _stats_row(),
         _equity_chart(),
         rx.hstack(
@@ -991,21 +1011,45 @@ def journal_page() -> rx.Component:
                 rx.spacer(),
                 _tab_bar(),
                 rx.spacer(),
-                rx.box(
-                    rx.icon(
-                        "refresh-cw",
-                        size=14,
-                        color="#525252",
-                        cursor="pointer",
-                        _hover={"color": "#a3a3a3"},
+                rx.hstack(
+                    rx.tooltip(
+                        rx.box(
+                            rx.icon(
+                                "rotate-ccw",
+                                size=13,
+                                color="#525252",
+                                cursor="pointer",
+                                _hover={"color": "#ef4444"},
+                            ),
+                            on_click=AppState.reset_paper_stats,
+                            padding="6px",
+                            border_radius="6px",
+                            cursor="pointer",
+                            flex_shrink="0",
+                            _hover={"background": "#1a1a1a"},
+                            transition="background 0.15s ease",
+                        ),
+                        content="Reset Stats (new paper session)",
                     ),
-                    on_click=AppState.load_journal,
-                    padding="6px",
-                    border_radius="6px",
-                    cursor="pointer",
+                    rx.box(
+                        rx.icon(
+                            "refresh-cw",
+                            size=14,
+                            color="#525252",
+                            cursor="pointer",
+                            _hover={"color": "#a3a3a3"},
+                        ),
+                        on_click=AppState.load_journal,
+                        padding="6px",
+                        border_radius="6px",
+                        cursor="pointer",
+                        flex_shrink="0",
+                        _hover={"background": "#1a1a1a"},
+                        transition="background 0.15s ease",
+                    ),
+                    spacing="1",
+                    align="center",
                     flex_shrink="0",
-                    _hover={"background": "#1a1a1a"},
-                    transition="background 0.15s ease",
                 ),
                 width="100%",
                 align="center",

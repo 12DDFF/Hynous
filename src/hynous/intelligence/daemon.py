@@ -4121,6 +4121,10 @@ class Daemon:
             logger.info("Agent busy (user chatting), skipping daemon wake")
             return None
 
+        # Snapshot before the agent runs so finally can detect agent-initiated closes.
+        # _check_positions() won't see them because _prev_positions is refreshed in finally.
+        positions_before = dict(self._prev_positions)
+
         try:
             # === 0. Ensure fresh prices before any wake ===
             # Briefing uses snapshot.prices — stale prices = stale reasoning.
@@ -4298,6 +4302,25 @@ class Daemon:
                         p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"], "leverage": p.get("leverage", 20)}
                         for p in state.get("positions", [])
                     }
+                    # Detect agent-initiated closes and update the circuit breaker.
+                    # Any coin present before the wake but absent after was closed
+                    # by the agent — _check_positions() won't catch it because
+                    # _prev_positions was just refreshed above.
+                    for coin in positions_before:
+                        if coin not in self._prev_positions:
+                            try:
+                                fills = provider.get_user_fills(
+                                    start_ms=int((time.time() - 300) * 1000)
+                                )
+                                close_fill = next(
+                                    (f for f in reversed(fills)
+                                     if f.get("coin") == coin and "Close" in f.get("direction", "")),
+                                    None,
+                                )
+                                if close_fill:
+                                    self._update_daily_pnl(close_fill.get("closed_pnl", 0.0))
+                            except Exception:
+                                pass
             except Exception:
                 pass
 

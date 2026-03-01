@@ -355,6 +355,25 @@ async def _agent_message(request):
 app._api.add_route("/api/agent-message", _agent_message, methods=["POST"])
 
 
+async def _reset_paper_stats(request):
+    """POST /api/reset-paper-stats — stamp a new session start for trade stats filtering."""
+    from starlette.responses import JSONResponse
+    try:
+        from hynous.data.providers.hyperliquid import get_provider
+        from hynous.core.config import load_config
+        config = load_config()
+        provider = get_provider(config=config)
+        if not hasattr(provider, "reset_paper_stats"):
+            return JSONResponse({"error": "Only available in paper mode"}, status_code=400)
+        provider.reset_paper_stats()
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/reset-paper-stats", _reset_paper_stats, methods=["POST"])
+
+
 async def _data_health_proxy(request):
     """Proxy /api/data-health → localhost:8100/health"""
     import httpx

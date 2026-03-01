@@ -352,7 +352,8 @@ def build_briefing(
             state_for_pnl = provider.get_user_state()
         if state_for_pnl and config:
             _acct = state_for_pnl["account_value"]
-            _init = config.execution.paper_balance if config else 1000
+            _init = getattr(provider, "_initial_balance", None) or \
+                    (config.execution.paper_balance if config else 1000)
             _account_pnl = _acct - _init
     except Exception:
         pass
@@ -380,7 +381,8 @@ def _build_portfolio_section(provider, daemon, config, user_state: dict | None =
 
     acct = state["account_value"]
     unrealized = state["unrealized_pnl"]
-    initial = config.execution.paper_balance if config else 1000
+    initial = getattr(provider, "_initial_balance", None) or \
+              (config.execution.paper_balance if config else 1000)
     ret_pct = ((acct - initial) / initial * 100) if initial > 0 else 0
 
     daily_pnl = ""

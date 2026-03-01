@@ -3733,6 +3733,19 @@ class AppState(rx.State):
                 self.regret_miss_rate = rate
                 self.regret_miss_rate_high = rate_pct >= 50
 
+    async def reset_paper_stats(self):
+        """Reset paper trade stats — stamps current time as session start so old Nous
+        nodes are excluded from win rate / PnL calculations going forward."""
+        def _do_reset():
+            from hynous.data.providers.hyperliquid import get_provider
+            from hynous.core.config import load_config
+            provider = get_provider(config=load_config())
+            if hasattr(provider, "reset_paper_stats"):
+                provider.reset_paper_stats()
+
+        await asyncio.to_thread(_do_reset)
+        await self.load_journal()
+
     @staticmethod
     def _fetch_journal_data():
         """Fetch journal data from trade analytics + Nous enrichment (sync, runs in thread)."""

@@ -129,7 +129,10 @@ def _build_portfolio(provider, daemon, config) -> tuple[str, list[str]]:
     unrealized = state["unrealized_pnl"]
 
     # Calculate return % from initial balance
-    initial = config.execution.paper_balance if config else 1000
+    # Use provider._initial_balance (actual wallet start) rather than config value —
+    # they diverge when config is changed after the state file was created.
+    initial = getattr(provider, "_initial_balance", None) or \
+              (config.execution.paper_balance if config else 1000)
     ret_pct = ((acct - initial) / initial * 100) if initial > 0 else 0
 
     # Daily PnL from daemon (if running)
