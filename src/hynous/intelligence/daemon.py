@@ -413,11 +413,17 @@ class Daemon:
                 from satellite.store import SatelliteStore
                 import sqlite3
 
+                # Resolve relative paths against project root (not cwd,
+                # since systemd WorkingDirectory may differ)
+                root = config.project_root
+                sat_db = str(root / config.satellite.db_path)
+                dl_db = str(root / config.satellite.data_layer_db_path)
+
                 # Map daemon's SatelliteConfig to satellite module's config
                 self._satellite_config = SatCfg(
                     enabled=config.satellite.enabled,
-                    db_path=config.satellite.db_path,
-                    data_layer_db_path=config.satellite.data_layer_db_path,
+                    db_path=sat_db,
+                    data_layer_db_path=dl_db,
                     snapshot_interval=config.satellite.snapshot_interval,
                     coins=config.satellite.coins,
                     min_position_size_usd=config.satellite.min_position_size_usd,
@@ -426,21 +432,18 @@ class Daemon:
                     store_raw_data=config.satellite.store_raw_data,
                     funding_settlement_hours=config.satellite.funding_settlement_hours,
                 )
-                self._satellite_store = SatelliteStore(config.satellite.db_path)
+                self._satellite_store = SatelliteStore(sat_db)
                 self._satellite_store.connect()
 
                 # Read-only connection to data-layer DB for historical queries
-                dl_db_path = config.satellite.data_layer_db_path
-                if Path(dl_db_path).exists():
+                if Path(dl_db).exists():
                     self._satellite_dl_conn = sqlite3.connect(
-                        dl_db_path, check_same_thread=False, timeout=5,
+                        dl_db, check_same_thread=False, timeout=5,
                     )
                     self._satellite_dl_conn.execute("PRAGMA busy_timeout=3000")
                     self._satellite_dl_conn.row_factory = sqlite3.Row
 
-                logger.info(
-                    "Satellite initialized: %s", config.satellite.db_path,
-                )
+                logger.info("Satellite initialized: %s", sat_db)
             except Exception:
                 logger.exception(
                     "Satellite initialization failed, continuing without ML",
