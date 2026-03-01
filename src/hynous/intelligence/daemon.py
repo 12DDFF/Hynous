@@ -781,28 +781,41 @@ class Daemon:
     # Main Loop
     # ================================================================
 
+    def _dlog(self, msg: str):
+        """Write a debug message to daemon trace file (bypasses granian log level)."""
+        try:
+            from pathlib import Path
+            log_file = Path(str(self.config.project_root)) / "storage" / "daemon-trace.log"
+            with open(log_file, "a") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+                f.flush()
+        except Exception:
+            pass
+
     def _loop(self):
         """The daemon's heartbeat. Runs in a background thread."""
-        import sys as _sys
         try:
             self._loop_inner()
         except Exception as e:
-            print(f"[daemon] FATAL: loop crashed: {e}", file=_sys.stderr, flush=True)
-            import traceback
-            traceback.print_exc(file=_sys.stderr)
+            self._dlog(f"FATAL: loop crashed: {e}")
+            import traceback, io
+            buf = io.StringIO()
+            traceback.print_exc(file=buf)
+            self._dlog(buf.getvalue())
             self._running = False
 
     def _loop_inner(self):
         """Actual daemon loop (wrapped by _loop for crash protection)."""
-        import sys as _sys
-        # Startup health check — verify Nous is reachable
+        self._dlog("init: starting health check")
         self._check_health(startup=True)
-        # Seed clusters if none exist
+        self._dlog("init: seeding clusters")
         self._seed_clusters()
 
-        # Initial data fetch
+        self._dlog("init: polling prices")
         self._poll_prices()
+        self._dlog("init: polling derivatives")
         self._poll_derivatives()
+        self._dlog("init: position tracking")
         self._init_position_tracking()
         self._last_review = time.time()
         self._last_curiosity_check = time.time()
@@ -815,7 +828,7 @@ class Daemon:
         self._last_phantom_check = time.time()
         self._load_phantoms()
         self._load_daily_pnl()
-        print("[daemon] initialization complete, entering main loop", file=_sys.stderr, flush=True)
+        self._dlog("init: COMPLETE — entering main loop")
 
         while self._running:
             try:
@@ -1149,6 +1162,7 @@ class Daemon:
 
         # Satellite: compute and store ML features (SPEC-03)
         if self._satellite_store:
+            self._dlog(f"satellite: tick starting (store={self._satellite_store is not None})")
             try:
                 import satellite
 
@@ -1181,9 +1195,9 @@ class Daemon:
                         heatmap_adapter = _HeatmapAdapter()
                         flow_adapter = _OrderFlowAdapter()
                     except Exception as e:
-                        import sys as _sys
-                        print(f"[satellite] adapter creation failed: {e}", file=_sys.stderr, flush=True)
+                        self._dlog(f"satellite: adapter creation failed: {e}")
 
+                self._dlog(f"satellite: calling tick (heatmap={heatmap_adapter is not None}, flow={flow_adapter is not None})")
                 satellite.tick(
                     snapshot=self.snapshot,
                     data_layer_db=dl_db,
@@ -1192,11 +1206,13 @@ class Daemon:
                     store=self._satellite_store,
                     config=self._satellite_config,
                 )
+                self._dlog("satellite: tick complete")
             except Exception as e:
-                import sys as _sys
-                print(f"[satellite] tick failed: {e}", file=_sys.stderr, flush=True)
-                import traceback
-                traceback.print_exc(file=_sys.stderr)
+                self._dlog(f"satellite: tick FAILED: {e}")
+                import traceback, io
+                buf = io.StringIO()
+                traceback.print_exc(file=buf)
+                self._dlog(buf.getvalue())
 
     def _record_historical_snapshots(self):
         """Write funding, OI, volume to historical tables for ML features.
