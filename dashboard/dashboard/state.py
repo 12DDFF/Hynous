@@ -744,6 +744,9 @@ class AppState(rx.State):
     debug_filter_status: str = ""
     debug_expanded_spans: list[str] = []  # IDs of expanded spans (multi-open)
 
+    # === Satellite ML ===
+    satellite_running: bool = False
+
     # === Navigation ===
     current_page: str = "home"
 
@@ -2100,6 +2103,27 @@ class AppState(rx.State):
         self._snapshot_regime()
         self._add_activity("system", "Daemon started", "info")
 
+    def toggle_satellite(self, checked: bool = True):
+        """Toggle satellite ML engine on/off via daemon."""
+        global _daemon
+        if _daemon is None:
+            # Ensure daemon is initialized
+            agent = _get_agent()
+            if not agent:
+                return
+            if _daemon is None:
+                from hynous.intelligence.daemon import Daemon
+                _daemon = Daemon(agent, agent.config)
+            if not _daemon.is_running:
+                _daemon.start()
+
+        if checked:
+            ok = _daemon.enable_satellite()
+            self.satellite_running = ok
+        else:
+            _daemon.disable_satellite()
+            self.satellite_running = False
+
     # === Navigation ===
 
     def go_to_home(self):
@@ -2117,7 +2141,13 @@ class AppState(rx.State):
 
     def go_to_ml(self):
         """Navigate to ML dashboard page."""
+        global _daemon
         self.current_page = "ml"
+        # Sync satellite_running with actual daemon state
+        if _daemon is not None:
+            self.satellite_running = _daemon.satellite_enabled
+        else:
+            self.satellite_running = False
 
     def go_to_memory(self):
         """Navigate to memory management page and load data."""
