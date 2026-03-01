@@ -182,6 +182,23 @@ class DiscordConfig:
 
 
 @dataclass
+class SatelliteConfig:
+    """ML satellite feature engine (SPEC-02/03)."""
+    enabled: bool = False
+    db_path: str = "storage/satellite.db"
+    data_layer_db_path: str = "storage/hynous-data.db"
+    snapshot_interval: int = 300
+    coins: list[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
+    min_position_size_usd: float = 1000
+    liq_cascade_threshold: float = 2.5
+    liq_cascade_min_usd: float = 500_000
+    store_raw_data: bool = True
+    funding_settlement_hours: list[int] = field(
+        default_factory=lambda: [0, 8, 16]
+    )
+
+
+@dataclass
 class Config:
     """Main application configuration."""
 
@@ -201,6 +218,7 @@ class Config:
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
     data_layer: DataLayerConfig = field(default_factory=DataLayerConfig)
     sections: SectionsConfig = field(default_factory=SectionsConfig)
+    satellite: SatelliteConfig = field(default_factory=SatelliteConfig)
 
     # Paths
     project_root: Path = field(default_factory=_find_project_root)
@@ -239,6 +257,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
     orch_raw = raw.get("orchestrator", {})
     dl_raw = raw.get("data_layer", {})
     sections_raw = raw.get("sections", {})
+    sat_raw = raw.get("satellite", {})
 
     return Config(
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
@@ -341,6 +360,22 @@ def load_config(config_path: Optional[str] = None) -> Config:
             enabled=sections_raw.get("enabled", True),
             intent_boost=sections_raw.get("intent_boost", 1.3),
             default_section=sections_raw.get("default_section", "KNOWLEDGE"),
+        ),
+        satellite=SatelliteConfig(
+            enabled=sat_raw.get("enabled", False),
+            db_path=sat_raw.get("db_path", "storage/satellite.db"),
+            data_layer_db_path=sat_raw.get(
+                "data_layer_db_path", "storage/hynous-data.db",
+            ),
+            snapshot_interval=sat_raw.get("snapshot_interval", 300),
+            coins=sat_raw.get("coins", ["BTC", "ETH", "SOL"]),
+            min_position_size_usd=sat_raw.get("min_position_size_usd", 1000),
+            liq_cascade_threshold=sat_raw.get("liq_cascade_threshold", 2.5),
+            liq_cascade_min_usd=sat_raw.get("liq_cascade_min_usd", 500_000),
+            store_raw_data=sat_raw.get("store_raw_data", True),
+            funding_settlement_hours=sat_raw.get(
+                "funding_settlement_hours", [0, 8, 16],
+            ),
         ),
         project_root=root,
     )

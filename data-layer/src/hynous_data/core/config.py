@@ -74,6 +74,12 @@ class OrderFlowConfig:
 
 
 @dataclass
+class L2SubscriberConfig:
+    enabled: bool = False  # disabled by default until tested
+    coins: list[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
+
+
+@dataclass
 class SmartMoneyConfig:
     profile_window_days: int = 7
     profile_refresh_hours: int = 2
@@ -104,6 +110,7 @@ class Config:
     heatmap: HeatmapConfig = field(default_factory=HeatmapConfig)
     order_flow: OrderFlowConfig = field(default_factory=OrderFlowConfig)
     smart_money: SmartMoneyConfig = field(default_factory=SmartMoneyConfig)
+    l2_subscriber: L2SubscriberConfig = field(default_factory=L2SubscriberConfig)
     project_root: Path = field(default_factory=_find_project_root)
 
 
@@ -143,5 +150,6 @@ def load_config(config_path: str | None = None) -> Config:
         heatmap=_sub(HeatmapConfig, "heatmap"),
         order_flow=_sub(OrderFlowConfig, "order_flow"),
         smart_money=_sub(SmartMoneyConfig, "smart_money"),
+        l2_subscriber=_sub(L2SubscriberConfig, "l2_subscriber"),
         project_root=root,
     )

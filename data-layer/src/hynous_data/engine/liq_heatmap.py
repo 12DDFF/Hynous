@@ -76,13 +76,30 @@ class LiqHeatmapEngine:
         self._last_recompute = time.time()
 
     def _compute_coin_heatmap(self, coin: str, mid_px: float) -> dict | None:
-        """Compute heatmap for a single coin."""
-        conn = self._db.conn
+        """Compute heatmap for a single coin with noise filtering.
 
-        # Get all positions for this coin
+        Filters applied (SPEC-01, ml-011):
+          - Minimum $1K position size
+          - Exclude is_bot=1 wallets (joined with wallet_profiles)
+          - Staleness filter: exclude positions not updated within 1200s
+        """
+        conn = self._db.conn
+        now = time.time()
+        staleness_cutoff = now - 1200  # Tier 3 worst case: 600s poll × 2
+
         rows = conn.execute(
-            "SELECT side, size_usd, liq_px FROM positions WHERE coin = ? AND liq_px IS NOT NULL AND liq_px > 0",
-            (coin,),
+            """
+            SELECT p.side, p.size_usd, p.liq_px
+            FROM positions p
+            LEFT JOIN wallet_profiles wp ON p.address = wp.address
+            WHERE p.coin = ?
+              AND p.size_usd >= 1000
+              AND p.liq_px IS NOT NULL
+              AND p.liq_px > 0
+              AND p.updated_at >= ?
+              AND COALESCE(wp.is_bot, 0) = 0
+            """,
+            (coin, staleness_cutoff),
         ).fetchall()
 
         if not rows:

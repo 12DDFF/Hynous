@@ -27,6 +27,7 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ..core.config import Config
 from ..core.daemon_log import log_event, DaemonEvent, flush as flush_daemon_log
@@ -401,6 +402,51 @@ class Daemon:
             self._playbook_matcher = PlaybookMatcher(
                 cache_ttl=config.daemon.playbook_cache_ttl,
             )
+
+        # Satellite: ML feature engine (SPEC-03)
+        self._satellite_store = None
+        self._satellite_config = None
+        self._satellite_dl_conn = None  # read-only conn to data-layer DB
+        if config.satellite.enabled:
+            try:
+                from satellite.config import SatelliteConfig as SatCfg
+                from satellite.store import SatelliteStore
+                import sqlite3
+
+                # Map daemon's SatelliteConfig to satellite module's config
+                self._satellite_config = SatCfg(
+                    enabled=config.satellite.enabled,
+                    db_path=config.satellite.db_path,
+                    data_layer_db_path=config.satellite.data_layer_db_path,
+                    snapshot_interval=config.satellite.snapshot_interval,
+                    coins=config.satellite.coins,
+                    min_position_size_usd=config.satellite.min_position_size_usd,
+                    liq_cascade_threshold=config.satellite.liq_cascade_threshold,
+                    liq_cascade_min_usd=config.satellite.liq_cascade_min_usd,
+                    store_raw_data=config.satellite.store_raw_data,
+                    funding_settlement_hours=config.satellite.funding_settlement_hours,
+                )
+                self._satellite_store = SatelliteStore(config.satellite.db_path)
+                self._satellite_store.connect()
+
+                # Read-only connection to data-layer DB for historical queries
+                dl_db_path = config.satellite.data_layer_db_path
+                if Path(dl_db_path).exists():
+                    self._satellite_dl_conn = sqlite3.connect(
+                        dl_db_path, check_same_thread=False, timeout=5,
+                    )
+                    self._satellite_dl_conn.execute("PRAGMA busy_timeout=3000")
+                    self._satellite_dl_conn.row_factory = sqlite3.Row
+
+                logger.info(
+                    "Satellite initialized: %s", config.satellite.db_path,
+                )
+            except Exception:
+                logger.exception(
+                    "Satellite initialization failed, continuing without ML",
+                )
+                self._satellite_store = None
+                self._satellite_dl_conn = None
 
         # Stats
         self.wake_count: int = 0
@@ -879,6 +925,12 @@ class Daemon:
         except Exception as e:
             logger.debug("HL derivatives poll failed: %s", e)
 
+        # Record historical snapshots for ML feature computation (SPEC-01)
+        try:
+            self._record_historical_snapshots()
+        except Exception as e:
+            logger.debug("Historical snapshot recording failed: %s", e)
+
         # Coinglass: fear & greed
         try:
             from ..data.providers.coinglass import get_provider as cg_get
@@ -973,6 +1025,62 @@ class Daemon:
         self.snapshot.last_deriv_poll = time.time()
         self._data_changed = True
         self.polls += 1
+
+        # Satellite: compute and store ML features (SPEC-03)
+        if self._satellite_store:
+            try:
+                import satellite
+
+                # Lightweight adapter so features.py can call db_adapter.conn.execute()
+                class _DbAdapter:
+                    def __init__(self, conn):
+                        self.conn = conn
+
+                dl_db = (
+                    _DbAdapter(self._satellite_dl_conn)
+                    if self._satellite_dl_conn else None
+                )
+
+                satellite.tick(
+                    snapshot=self.snapshot,
+                    data_layer_db=dl_db,
+                    store=self._satellite_store,
+                    config=self._satellite_config,
+                )
+            except Exception:
+                logger.debug("Satellite tick failed", exc_info=True)
+
+    def _record_historical_snapshots(self):
+        """Write funding, OI, volume to historical tables for ML features.
+
+        Called after every _poll_derivatives() (~300s interval).
+        Uses data-layer HTTP client if available, otherwise no-op.
+        """
+        if not self.config.data_layer.enabled:
+            return
+
+        from ..data.providers.hynous_data import get_client
+        client = get_client()
+        if not client.is_available:
+            return
+
+        funding = {}
+        oi = {}
+        volume = {}
+
+        for sym in self.config.execution.symbols:
+            f = self.snapshot.funding.get(sym)
+            if f is not None:
+                funding[sym] = f
+            o = self.snapshot.oi_usd.get(sym)
+            if o is not None:
+                oi[sym] = o
+            v = self.snapshot.volume_usd.get(sym)
+            if v is not None:
+                volume[sym] = v
+
+        if funding or oi or volume:
+            client.record_historical(funding=funding, oi=oi, volume=volume)
 
     def _fetch_regime_candles(self) -> list[dict]:
         """Fetch 50 x 1h BTC candles for regime classification."""

@@ -167,6 +167,33 @@ class TradeStream:
                 "time": trade.get("time", 0),
             })
 
+            # Record liquidation events (SPEC-01)
+            if trade.get("liquidation") or trade.get("liq"):
+                try:
+                    size_usd = abs(px * sz)
+                    if size_usd >= 100:  # ignore dust liquidations
+                        normalized_side = (
+                            "long" if side == "B"
+                            else "short" if side == "A"
+                            else side
+                        )
+                        users_list = trade.get("users", [])
+                        address = (
+                            users_list[0]
+                            if users_list and isinstance(users_list, list)
+                            else None
+                        )
+                        with self._db.write_lock:
+                            self._db.conn.execute(
+                                "INSERT INTO liquidation_events "
+                                "(coin, occurred_at, side, size_usd, price, address) "
+                                "VALUES (?, ?, ?, ?, ?, ?)",
+                                (coin, now, normalized_side, size_usd, px, address),
+                            )
+                            self._db.conn.commit()
+                except Exception:
+                    pass  # never crash trade stream for liq recording
+
             # Address discovery from users field
             users = trade.get("users")
             if users and isinstance(users, list):

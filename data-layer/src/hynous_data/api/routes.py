@@ -293,4 +293,49 @@ def create_router(c: dict) -> APIRouter:
         ).fetchall()
         return {"alerts": [dict(r) for r in rows]}
 
+    # ---- Historical Data Recording (SPEC-01) ----
+
+    @router.post("/v1/historical/record")
+    def record_historical(body: dict = Body(...)):
+        """Record funding, OI, volume snapshots for ML feature computation.
+
+        Called by the daemon after each _poll_derivatives() (~300s interval).
+        """
+        db = c["db"]
+        now = time.time()
+        recorded = 0
+
+        funding = body.get("funding", {})
+        oi = body.get("oi", {})
+        volume = body.get("volume", {})
+
+        with db.write_lock:
+            for coin, rate in funding.items():
+                if rate is not None:
+                    db.conn.execute(
+                        "INSERT OR IGNORE INTO funding_history "
+                        "(coin, recorded_at, rate) VALUES (?, ?, ?)",
+                        (coin, now, rate),
+                    )
+                    recorded += 1
+            for coin, oi_usd in oi.items():
+                if oi_usd is not None:
+                    db.conn.execute(
+                        "INSERT OR IGNORE INTO oi_history "
+                        "(coin, recorded_at, oi_usd) VALUES (?, ?, ?)",
+                        (coin, now, oi_usd),
+                    )
+                    recorded += 1
+            for coin, vol in volume.items():
+                if vol is not None:
+                    db.conn.execute(
+                        "INSERT OR IGNORE INTO volume_history "
+                        "(coin, recorded_at, volume_usd) VALUES (?, ?, ?)",
+                        (coin, now, vol),
+                    )
+                    recorded += 1
+            db.conn.commit()
+
+        return {"status": "ok", "recorded": recorded}
+
     return router

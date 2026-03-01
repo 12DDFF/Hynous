@@ -337,6 +337,21 @@ class HynousDataClient:
     def sm_active_alerts(self) -> dict | None:
         return self._get("/v1/smart-money/alerts/active")
 
+    # ---- Historical Recording (SPEC-01) ----
+
+    def record_historical(
+        self,
+        funding: dict[str, float],
+        oi: dict[str, float],
+        volume: dict[str, float],
+    ) -> dict | None:
+        """Record funding/OI/volume snapshots to historical tables."""
+        return self._post("/v1/historical/record", {
+            "funding": funding,
+            "oi": oi,
+            "volume": volume,
+        })
+
     # ---- Stats ----
 
     def stats(self) -> dict | None:

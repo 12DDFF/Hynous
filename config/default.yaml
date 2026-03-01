@@ -123,6 +123,25 @@ sections:
   intent_boost: 1.3               # Score multiplier for query-relevant sections (Issue 6)
   default_section: "KNOWLEDGE"    # Fallback section for unknown subtypes
 
+# ML Satellite — feature engine + inference (SPEC-02/03)
+satellite:
+  enabled: true                         # Master switch — compute ML features every deriv poll
+  db_path: "storage/satellite.db"       # Satellite SQLite database
+  data_layer_db_path: "storage/hynous-data.db"  # Read-only access to data-layer for historical queries
+  snapshot_interval: 300                 # Feature snapshot frequency (matches deriv_poll_interval)
+  coins:                                 # Coins to compute features for
+    - "BTC"
+    - "ETH"
+    - "SOL"
+  min_position_size_usd: 1000           # Noise filter for heatmap positions
+  liq_cascade_threshold: 2.5            # Liquidation intensity ratio threshold
+  liq_cascade_min_usd: 500000           # Min USD for cascade detection
+  store_raw_data: true                   # Store raw API responses for retroactive debugging
+  funding_settlement_hours:              # Hyperliquid funding settlement times (UTC)
+    - 0
+    - 8
+    - 16
+
 # Event detection thresholds
 events:
   funding:

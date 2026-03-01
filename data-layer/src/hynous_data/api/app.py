@@ -22,7 +22,7 @@ def create_app(components: dict) -> FastAPI:
         yield
         # Graceful shutdown — stop all components
         log.info("API shutting down — stopping components...")
-        for name in ("trade_stream", "position_poller", "hlp_tracker", "liq_heatmap"):
+        for name in ("trade_stream", "position_poller", "hlp_tracker", "liq_heatmap", "l2_subscriber"):
             comp = components.get(name)
             if comp and hasattr(comp, "stop"):
                 try:

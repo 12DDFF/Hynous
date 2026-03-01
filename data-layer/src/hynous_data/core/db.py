@@ -129,6 +129,46 @@ CREATE TABLE IF NOT EXISTS position_changes (
 );
 CREATE INDEX IF NOT EXISTS idx_pc_address ON position_changes(address);
 CREATE INDEX IF NOT EXISTS idx_pc_detected ON position_changes(detected_at);
+
+-- Historical: Funding rate snapshots (one per coin per deriv poll)
+CREATE TABLE IF NOT EXISTS funding_history (
+    coin        TEXT NOT NULL,
+    recorded_at REAL NOT NULL,
+    rate        REAL NOT NULL,
+    PRIMARY KEY (coin, recorded_at)
+);
+CREATE INDEX IF NOT EXISTS idx_fh_coin_time ON funding_history(coin, recorded_at);
+
+-- Historical: Open interest snapshots (one per coin per deriv poll)
+CREATE TABLE IF NOT EXISTS oi_history (
+    coin        TEXT NOT NULL,
+    recorded_at REAL NOT NULL,
+    oi_usd      REAL NOT NULL,
+    PRIMARY KEY (coin, recorded_at)
+);
+CREATE INDEX IF NOT EXISTS idx_oh_coin_time ON oi_history(coin, recorded_at);
+
+-- Historical: Volume snapshots (one per coin per deriv poll)
+CREATE TABLE IF NOT EXISTS volume_history (
+    coin        TEXT NOT NULL,
+    recorded_at REAL NOT NULL,
+    volume_usd  REAL NOT NULL,
+    PRIMARY KEY (coin, recorded_at)
+);
+CREATE INDEX IF NOT EXISTS idx_vh_coin_time ON volume_history(coin, recorded_at);
+
+-- Historical: Liquidation events (individual events, not aggregates)
+CREATE TABLE IF NOT EXISTS liquidation_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    coin        TEXT NOT NULL,
+    occurred_at REAL NOT NULL,
+    side        TEXT NOT NULL,
+    size_usd    REAL NOT NULL,
+    price       REAL NOT NULL,
+    address     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_le_coin_time ON liquidation_events(coin, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_le_time ON liquidation_events(occurred_at);
 """
 
 
@@ -198,15 +238,43 @@ class Database:
         return self._conn
 
     def prune_old_data(self, days: int = 7):
-        """Delete time-series rows older than N days."""
+        """Delete time-series rows older than N days.
+
+        Historical tables (funding, OI, volume, liquidation events) use
+        90-day retention for ML feature computation.
+        """
         cutoff = time.time() - days * 86400
-        c = self._conn
-        assert c is not None
+        conn = self._conn
+        assert conn is not None
         with self.write_lock:
-            cur1 = c.execute("DELETE FROM hlp_snapshots WHERE snapshot_at < ?", (cutoff,))
-            cur2 = c.execute("DELETE FROM pnl_snapshots WHERE snapshot_at < ?", (cutoff,))
-            deleted = cur1.rowcount + cur2.rowcount
-            c.commit()
+            cur1 = conn.execute(
+                "DELETE FROM hlp_snapshots WHERE snapshot_at < ?", (cutoff,)
+            )
+            cur2 = conn.execute(
+                "DELETE FROM pnl_snapshots WHERE snapshot_at < ?", (cutoff,)
+            )
+            # Historical tables: keep longer (90 days) for ML feature computation
+            hist_cutoff = time.time() - 90 * 86400
+            cur3 = conn.execute(
+                "DELETE FROM funding_history WHERE recorded_at < ?",
+                (hist_cutoff,),
+            )
+            cur4 = conn.execute(
+                "DELETE FROM oi_history WHERE recorded_at < ?", (hist_cutoff,)
+            )
+            cur5 = conn.execute(
+                "DELETE FROM volume_history WHERE recorded_at < ?",
+                (hist_cutoff,),
+            )
+            cur6 = conn.execute(
+                "DELETE FROM liquidation_events WHERE occurred_at < ?",
+                (hist_cutoff,),
+            )
+            deleted = sum(
+                cur.rowcount
+                for cur in [cur1, cur2, cur3, cur4, cur5, cur6]
+            )
+            conn.commit()
         if deleted:
             log.info("Pruned %d old time-series rows (cutoff=%d days)", deleted, days)
 

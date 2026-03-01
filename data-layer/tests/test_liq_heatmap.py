@@ -1,6 +1,6 @@
 """Tests for liquidation heatmap engine."""
 
-import sqlite3
+import time
 
 from hynous_data.core.db import Database
 from hynous_data.core.config import HeatmapConfig
@@ -21,10 +21,10 @@ def _insert_position(db, address, coin, side, size_usd, liq_px):
         INSERT OR REPLACE INTO positions
         (address, coin, side, size, size_usd, entry_px, mark_px,
          leverage, margin_used, liq_px, unrealized_pnl, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (address, coin, side, size_usd / 100000, size_usd, 100000, 100000,
-         10, size_usd / 10, liq_px, 0),
+         10, size_usd / 10, liq_px, 0, time.time()),
     )
     db.conn.commit()
 

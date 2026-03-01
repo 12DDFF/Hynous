@@ -142,6 +142,14 @@ class Orchestrator:
             self._components["hlp_tracker"] = hlp
             log.info("HlpTracker started")
 
+        # L2 WebSocket subscriber (SPEC-01)
+        if self.cfg.l2_subscriber.enabled:
+            from hynous_data.collectors.l2_subscriber import L2Subscriber
+            l2 = L2Subscriber(coins=self.cfg.l2_subscriber.coins)
+            l2.start()
+            self._components["l2_subscriber"] = l2
+            log.info("L2Subscriber started")
+
         # Start engine threads
         liq_heatmap.start()
         log.info("Signal engines started")
@@ -215,7 +223,7 @@ class Orchestrator:
         """Gracefully shut down all components."""
         log.info("Shutting down...")
         self._stop_event.set()
-        for name in ("trade_stream", "position_poller", "hlp_tracker", "liq_heatmap"):
+        for name in ("trade_stream", "position_poller", "hlp_tracker", "liq_heatmap", "l2_subscriber"):
             comp = self._components.get(name)
             if comp and hasattr(comp, "stop"):
                 comp.stop()

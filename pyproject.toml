@@ -30,6 +30,14 @@ dependencies = [
 
     # Async
     "aiohttp>=3.9.0",
+
+    # ML Satellite (SPEC-02 through SPEC-07)
+    "xgboost>=2.0.0",
+    "shap>=0.42.0",
+    "scikit-learn>=1.3.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "boto3>=1.28.0",       # Artemis S3 pipeline
 ]
 
 [project.optional-dependencies]
