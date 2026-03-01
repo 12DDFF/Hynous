@@ -452,7 +452,6 @@ class Daemon:
                 self._satellite_dl_conn = None
 
         # Stats
-        self._config = config  # keep reference for runtime satellite toggle
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
         self.scanner_wakes: int = 0
@@ -537,7 +536,7 @@ class Daemon:
             from satellite.store import SatelliteStore
             import sqlite3
 
-            config = self._config
+            config = self.config
             root = config.project_root
             sat_db = str(root / config.satellite.db_path)
             dl_db = str(root / config.satellite.data_layer_db_path)
@@ -594,7 +593,7 @@ class Daemon:
     def _update_satellite_config(self, enabled: bool):
         """Persist satellite.enabled to config YAML."""
         try:
-            config_path = self._config.project_root / "config" / "default.yaml"
+            config_path = self.config.project_root / "config" / "default.yaml"
             text = config_path.read_text()
             # Replace the enabled line under satellite section
             import re
@@ -609,18 +608,19 @@ class Daemon:
 
     def _check_satellite_toggle(self):
         """Check for a toggle flag file written by the dashboard API."""
-        flag = self._config.project_root / "storage" / ".satellite_toggle"
-        if not flag.exists():
-            return
         try:
+            flag = Path(str(self.config.project_root)) / "storage" / ".satellite_toggle"
+            if not flag.exists():
+                return
             action = flag.read_text().strip()
             flag.unlink()
+            logger.info("Satellite toggle flag: %s", action)
             if action == "enable" and self._satellite_store is None:
                 self.enable_satellite()
             elif action == "disable" and self._satellite_store is not None:
                 self.disable_satellite()
         except Exception:
-            logger.debug("Satellite toggle check failed", exc_info=True)
+            logger.exception("Satellite toggle check failed")
 
     @property
     def satellite_enabled(self) -> bool:
