@@ -208,7 +208,7 @@ Subscribes to the Hyperliquid WebSocket for **all coins** and processes every tr
 
 1. **Address discovery** -- extracts trader addresses from the `users` field and batch-inserts them into the `addresses` table (1s flush interval)
 2. **Trade buffering** -- appends each trade to per-coin in-memory deques (`_trade_buffers`, 50K trades/coin max) consumed by the OrderFlow engine
-3. **Liquidation recording** -- detects liquidation trades and writes them to `liquidation_events` (min $100 size)
+3. **Liquidation recording** -- detects liquidation trades and writes them to `liquidation_events` (min $100 size). Side semantics: `side="B"` (buy = SHORT liquidated) maps to `"short"`, `side="A"` (sell = LONG liquidated) maps to `"long"`
 
 Health monitoring: if no trades arrive for 30s, the WebSocket is considered dead and auto-reconnects. Exposes `is_healthy` property and `stats()`.
 
@@ -232,7 +232,7 @@ Watched wallets are always included in every poll cycle regardless of tier/stale
 
 ### HlpTracker (`collectors/hlp_tracker.py`)
 
-Polls 3 known HLP (Hyperliquid Liquidity Provider) vault addresses on a fixed 60s interval. Writes position snapshots to `hlp_snapshots` and maintains an in-memory cache for fast API reads. Computes sentiment (side flips, net delta) from historical snapshots.
+Polls 3 known HLP (Hyperliquid Liquidity Provider) vault addresses on a fixed 60s interval. Writes position snapshots to `hlp_snapshots` and maintains an in-memory cache for fast API reads. Computes sentiment (side flips, net delta) from historical snapshots. Position `size_usd` is computed using mark price (derived from `positionValue / size`) for accurate current-value reporting.
 
 ### L2Subscriber (`collectors/l2_subscriber.py`)
 

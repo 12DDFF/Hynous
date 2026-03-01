@@ -196,7 +196,7 @@ long_roe, short_roe = artifact.predict(raw_features, availability)
 
 ## SHAP Explainability
 
-`explain.py` wraps SHAP `TreeExplainer` for per-prediction interpretability. XGBoost + TreeExplainer runs in ~100 microseconds per prediction.
+`explain.py` wraps SHAP `TreeExplainer` for per-prediction interpretability. XGBoost + TreeExplainer runs in ~100 microseconds per prediction. Requires SHAP >= 0.50.0 for XGBoost 3.x compatibility (3.x changed `base_score` to array format).
 
 ### Functions
 

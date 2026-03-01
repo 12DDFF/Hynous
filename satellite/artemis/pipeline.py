@@ -274,7 +274,7 @@ def _process_perp_balances(
         Number of unique addresses discovered.
     """
     from satellite.artemis.seeder import seed_addresses
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     significant_addresses = set()
     oi_by_coin: dict[str, float] = {}
@@ -321,7 +321,9 @@ def _process_perp_balances(
     seed_addresses(db, list(significant_addresses), date_str)
 
     # Write OI history
-    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    dt = datetime.strptime(date_str, "%Y-%m-%d").replace(
+        tzinfo=timezone.utc,
+    )
     epoch = dt.timestamp()
     with db.write_lock:
         for coin, oi in oi_by_coin.items():

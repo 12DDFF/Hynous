@@ -154,7 +154,8 @@ CREATE TABLE IF NOT EXISTS co_occurrences (
     address_a   TEXT NOT NULL,
     address_b   TEXT NOT NULL,
     coin        TEXT NOT NULL,
-    occurred_at REAL NOT NULL
+    occurred_at REAL NOT NULL,
+    UNIQUE(address_a, address_b, coin, occurred_at)
 );
 CREATE INDEX IF NOT EXISTS idx_cooc_time ON co_occurrences(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_cooc_addr_a ON co_occurrences(address_a);
@@ -184,4 +185,15 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             )
         except Exception:
             pass  # column already exists
+
+    # v2 -> v3: Add UNIQUE constraint to co_occurrences (INSERT OR IGNORE
+    # had no effect without it — duplicates accumulated silently).
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cooc_unique "
+            "ON co_occurrences(address_a, address_b, coin, occurred_at)",
+        )
+    except Exception:
+        pass  # index already exists
+
     conn.commit()

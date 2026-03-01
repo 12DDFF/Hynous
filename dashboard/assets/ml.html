@@ -107,6 +107,17 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
 .model-val{font-size:0.75rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace}
 .feature-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
 .feature-tag{font-size:0.65rem;color:#525252;background:#141414;padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace}
+
+/* Prediction History */
+.pred-history-panel{grid-column:1/-1}
+.history-table{width:100%;border-collapse:collapse;font-size:0.75rem}
+.history-table th{font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;color:#404040;padding:0 8px 8px;text-align:left;font-weight:600;border-bottom:1px solid #1a1a1a}
+.history-table td{padding:6px 8px;border-bottom:1px solid #141414;color:#a3a3a3;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.history-table tr:last-child td{border-bottom:none}
+.history-table .td-time{color:#525252;font-size:0.7rem}
+.history-table .td-driver{color:#737373;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.history-table .td-roe.pos{color:#22c55e}
+.history-table .td-roe.neg{color:#ef4444}
 </style>
 </head>
 <body>
@@ -210,6 +221,23 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
     </div>
 </div>
 
+<!-- Panel 5: Prediction History (full width) -->
+<div style="padding:0 24px 24px">
+    <div class="panel pred-history-panel">
+        <div class="panel-hdr">
+            <h3>Prediction History</h3>
+            <span class="badge" id="history-badge">--</span>
+        </div>
+        <div class="panel-body" id="history-body">
+            <div class="placeholder" id="history-placeholder">
+                <div class="placeholder-icon">&#128202;</div>
+                <div class="placeholder-title">No prediction history</div>
+                <div class="placeholder-sub">Predictions are logged after model is trained and running.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 (function() {
     "use strict";
@@ -300,6 +328,7 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
             $("pred-coin-badge").textContent = activeCoin;
             refreshFeatures();
             refreshPredictions();
+            refreshHistory();
         });
     });
 
@@ -557,6 +586,85 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
         });
     }
 
+    // ── Prediction History ───────────────────────────────────────────────────
+    function refreshHistory() {
+        if (!vis()) return;
+        api("/api/ml/predictions/history?coin=" + activeCoin + "&limit=50").then(function(d) {
+            var body = $("history-body");
+            var ph = $("history-placeholder");
+            body.querySelectorAll(".history-content").forEach(function(c) { c.remove(); });
+
+            if (!d || d.error) {
+                ph.style.display = "flex";
+                if (d && d.error === "no_db") {
+                    ph.querySelector(".placeholder-title").textContent = "No satellite DB";
+                    ph.querySelector(".placeholder-sub").textContent = "Enable satellite first";
+                } else {
+                    ph.querySelector(".placeholder-title").textContent = "No prediction history";
+                    ph.querySelector(".placeholder-sub").textContent = "Predictions are logged after model is trained and running.";
+                }
+                $("history-badge").textContent = "--";
+                return;
+            }
+
+            var rows = d.predictions || [];
+            if (!rows.length) {
+                ph.style.display = "flex";
+                ph.querySelector(".placeholder-title").textContent = "No prediction history";
+                ph.querySelector(".placeholder-sub").textContent = "Predictions are logged after model is trained and running.";
+                $("history-badge").textContent = "0";
+                return;
+            }
+
+            ph.style.display = "none";
+            $("history-badge").textContent = rows.length + " predictions";
+
+            var content = document.createElement("div");
+            content.className = "history-content";
+            content.style.overflowX = "auto";
+
+            var html = '<table class="history-table"><thead><tr>' +
+                '<th>Time</th><th>Signal</th><th>Long ROE</th><th>Short ROE</th>' +
+                '<th>Top Driver</th><th>Model</th>' +
+                '</tr></thead><tbody>';
+
+            rows.forEach(function(p) {
+                var signal = (p.signal || "skip").toLowerCase();
+                var badgeCls = signal === "long" ? "long" : signal === "short" ? "short" : signal === "conflict" ? "conflict" : "skip";
+
+                var lROE = p.predicted_long_roe;
+                var sROE = p.predicted_short_roe;
+                var lStr = lROE !== null && lROE !== undefined ? (lROE >= 0 ? "+" : "") + lROE.toFixed(2) + "%" : "--";
+                var sStr = sROE !== null && sROE !== undefined ? (sROE >= 0 ? "+" : "") + sROE.toFixed(2) + "%" : "--";
+                var lCls = lROE >= 0 ? "pos" : "neg";
+                var sCls = sROE >= 0 ? "pos" : "neg";
+
+                var driver = "--";
+                var shap = p.shap_top5 || [];
+                if (shap.length > 0) {
+                    var s0 = shap[0];
+                    var fname = s0.feature || s0[0] || "?";
+                    var fval = s0.value !== undefined ? s0.value : (s0[1] !== undefined ? s0[1] : null);
+                    driver = fname + (fval !== null ? " " + (fval >= 0 ? "+" : "") + fval.toFixed(2) : "");
+                }
+
+                html +=
+                    '<tr>' +
+                    '<td class="td-time">' + timeAgo(p.predicted_at) + '</td>' +
+                    '<td><span class="signal-badge ' + badgeCls + '">' + signal.toUpperCase() + '</span></td>' +
+                    '<td class="td-roe ' + lCls + '">' + lStr + '</td>' +
+                    '<td class="td-roe ' + sCls + '">' + sStr + '</td>' +
+                    '<td class="td-driver">' + driver + '</td>' +
+                    '<td>' + (p.model_version !== undefined ? 'v' + p.model_version : '--') + '</td>' +
+                    '</tr>';
+            });
+
+            html += '</tbody></table>';
+            content.innerHTML = html;
+            body.appendChild(content);
+        });
+    }
+
     // ── Model Performance ───────────────────────────────────────────
     function refreshModel() {
         if (!vis()) return;
@@ -643,9 +751,10 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
     refreshQuality();
     refreshPredictions();
     refreshModel();
+    refreshHistory();
 
     setInterval(refreshStatus, 30000);
-    setInterval(function() { refreshFeatures(); refreshPredictions(); }, 60000);
+    setInterval(function() { refreshFeatures(); refreshPredictions(); refreshHistory(); }, 60000);
     setInterval(function() { refreshQuality(); refreshModel(); }, 120000);
 
     // Refresh on tab visibility change
@@ -656,6 +765,7 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
             refreshQuality();
             refreshPredictions();
             refreshModel();
+            refreshHistory();
         }
     });
 })();

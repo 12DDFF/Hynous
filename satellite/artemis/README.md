@@ -104,7 +104,7 @@ A `_SyntheticSnapshot` object is constructed for each timestamp to satisfy the `
 
 ## Wallet Profiler
 
-`profiler.py:batch_profile()` computes per-wallet metrics using FIFO trade matching:
+`profiler.py:batch_profile()` computes per-wallet metrics using FIFO trade matching (uses `collections.deque` for O(1) popleft):
 
 | Metric | Description |
 |--------|-------------|
@@ -127,7 +127,7 @@ Minimum 10 trades to attempt profiling; minimum 5 matched round trips to produce
 `seeder.py:seed_addresses()` inserts discovered addresses into the data-layer `addresses` table using `INSERT OR IGNORE` (existing addresses are not overwritten). New addresses receive:
 
 - `tier = 3` (lowest polling priority -- upgraded after profiling)
-- `first_seen` / `last_seen` set to the processing date
+- `first_seen` / `last_seen` set to the processing date (UTC-aware epoch)
 - `trade_count = 0`, `total_size_usd = 0`
 
 Batch size: 1,000 rows per insert.
@@ -136,7 +136,7 @@ Batch size: 1,000 rows per insert.
 
 ## Layer 2: Co-occurrence
 
-`layer2.py:collect_co_occurrence()` detects wallets that enter positions within a configurable time window (default 300s / 5 minutes). This data is stored in the `co_occurrences` table in `satellite.db` for future smart money ML features (not used in the v1 model).
+`layer2.py:collect_co_occurrence()` detects wallets that enter positions within a configurable time window (default 300s / 5 minutes). This data is stored in the `co_occurrences` table in `satellite.db` with a UNIQUE constraint on `(address_a, address_b, coin, occurred_at)` to prevent duplicate accumulation. Used for future smart money ML features (not used in the v1 model).
 
 Prepared capabilities:
 1. Entry co-occurrence (temporal clustering of entries)

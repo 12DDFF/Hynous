@@ -173,8 +173,8 @@ class TradeStream:
                     size_usd = abs(px * sz)
                     if size_usd >= 100:  # ignore dust liquidations
                         normalized_side = (
-                            "long" if side == "B"
-                            else "short" if side == "A"
+                            "short" if side == "B"
+                            else "long" if side == "A"
                             else side
                         )
                         users_list = trade.get("users", [])

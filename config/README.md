@@ -238,7 +238,7 @@ sections:
 
 ### `satellite` -> `SatelliteConfig`
 
-ML satellite — feature engine + XGBoost inference. Computes feature snapshots from Hyperliquid market data, stores in SQLite, runs predictions. Requires `xgboost`, `shap`, and `numpy` (declared in `pyproject.toml`).
+ML satellite — feature engine + XGBoost inference. Computes feature snapshots from Hyperliquid market data, stores in SQLite, runs predictions. Requires `xgboost`, `shap>=0.50.0` (for XGBoost 3.x compatibility), and `numpy` (declared in `pyproject.toml`).
 
 ```yaml
 satellite:

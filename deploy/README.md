@@ -56,7 +56,7 @@ The setup script (`deploy/setup.sh`) runs 7 steps:
 2. **Node.js 22 LTS** + `pnpm` (via nodesource)
 3. **App user** — creates a `hynous` system user
 4. **Clone repo** to `/opt/hynous`
-5. **Python venv** — creates `.venv`, installs the project (`pip install -e .`) + `discord.py` + dashboard requirements. This includes satellite dependencies: `xgboost>=2.0.0`, `shap>=0.42.0`, `numpy>=1.24.0` (declared in `pyproject.toml`).
+5. **Python venv** — creates `.venv`, installs the project (`pip install -e .`) + `discord.py` + dashboard requirements. This includes satellite dependencies: `xgboost>=2.0.0`, `shap>=0.50.0` (required for XGBoost 3.x compatibility), `numpy>=1.24.0` (declared in `pyproject.toml`).
 6. **Nous server** — runs `pnpm install` in `nous-server/`
 7. **Config** — copies `.env.example` to `.env`, creates `storage/` directory
 

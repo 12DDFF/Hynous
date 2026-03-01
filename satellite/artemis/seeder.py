@@ -6,7 +6,7 @@ traders).
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,9 @@ def seed_addresses(
     Returns:
         Number of new addresses inserted.
     """
-    epoch = datetime.strptime(date_str, "%Y-%m-%d").timestamp()
+    epoch = datetime.strptime(date_str, "%Y-%m-%d").replace(
+        tzinfo=timezone.utc,
+    ).timestamp()
     inserted = 0
 
     for i in range(0, len(addresses), batch_size):

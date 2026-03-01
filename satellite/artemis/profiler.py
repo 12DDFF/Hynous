@@ -10,6 +10,7 @@ Processes ~10K wallets in ~30-60 minutes on VPS.
 
 import logging
 import time
+from collections import deque
 
 log = logging.getLogger(__name__)
 
@@ -98,12 +99,12 @@ def compute_profile(
 
     matched_trades = []
     for coin, coin_trades in by_coin.items():
-        entries = []
+        entries = deque()
         for t in coin_trades:
             if t["side"] == "buy":
                 entries.append(t)
             elif t["side"] == "sell" and entries:
-                entry = entries.pop(0)  # FIFO
+                entry = entries.popleft()  # FIFO
                 if entry["px"] <= 0:
                     continue
                 pnl_pct = (

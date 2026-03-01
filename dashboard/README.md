@@ -83,11 +83,14 @@ dashboard/
 ### Data (`data.py`)
 - Full-screen data intelligence dashboard via `data.html` iframe
 - Proxied through the Reflex backend to the hynous-data service (port 8100)
+- **Price chart**: Candlestick (OHLC) with green/red coloring, crosshair tooltip showing O/H/L/C grid
+- **Heatmap price lines**: Top 5 liquidation buckets above + below current price drawn as dashed price lines on the candlestick chart, colored by dominance (green = long, red = short, yellow = mixed), refreshed every 30s
 
 ### ML (`ml.py`)
 - Full-screen ML/Satellite dashboard via `ml.html` iframe
 - Satellite on/off toggle overlay (Reflex switch wired to daemon runtime state)
-- Status, feature snapshots, predictions, model metadata, and SHAP explanations
+- 5 panels: status, feature snapshots, data quality, predictions, and prediction history (newest-first table with signal badges, ROE, top SHAP driver, model version)
+- Model metadata and SHAP explanations
 
 ### Settings (`settings.py`)
 - Runtime-adjustable trading parameters in a two-column card grid
@@ -125,6 +128,7 @@ The dashboard proxies several backend APIs through the Reflex backend (`dashboar
 | `/api/ml/features` | local query | GET | Latest feature snapshot per coin |
 | `/api/ml/snapshots/stats` | local query | GET | Per-coin snapshot counts and availability |
 | `/api/ml/predictions` | local query | GET | Latest ML prediction per coin |
+| `/api/ml/predictions/history` | local query | GET | Prediction history newest-first (limit capped at 200) |
 | `/api/ml/model` | local query | GET | Model metadata (artifacts directory) |
 | `/api/ml/satellite/toggle` | config write | POST | Enable/disable satellite at runtime |
 | `/api/candles` | Hyperliquid API | GET | OHLCV candle data |

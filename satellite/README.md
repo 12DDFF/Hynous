@@ -10,7 +10,7 @@
 satellite/
 ├── __init__.py        # tick() entry point — called by daemon every 300s
 ├── config.py          # SatelliteConfig dataclass + SafetyConfig
-├── schema.py          # SQLite schema (7 tables) + migrations
+├── schema.py          # SQLite schema (8 tables) + migrations
 ├── features.py        # 12-feature compute engine (SINGLE SOURCE OF TRUTH)
 ├── normalize.py       # 5 transform types + FeatureScaler (fitted on train only)
 ├── labeler.py         # Async outcome labeling (forward-looking ROE + simulated exits)
@@ -88,7 +88,7 @@ Defined in `normalize.py`. Scalers are fitted on training data **only** and froz
 
 ## Database Schema
 
-Defined in `schema.py`. Seven tables in `satellite.db`:
+Defined in `schema.py`. Eight tables in `satellite.db`:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
@@ -99,9 +99,9 @@ Defined in `schema.py`. Seven tables in `satellite.db`:
 | `snapshot_labels` | Outcome labels (ROE at 15m/30m/1h/4h, gross + net) | Gross ROE all windows, net ROE 30m, MAE 30m |
 | `simulated_exits` | Exit model training data (Model B bootstrap) | `current_roe`, `remaining_roe`, `should_hold` |
 | `predictions` | Every inference result logged | `predicted_long_roe`, `predicted_short_roe`, `signal`, `shap_top5_json` |
-| `co_occurrences` | Layer 2: wallet entry co-occurrence (future smart money ML) | `address_a`, `address_b`, `coin`, `occurred_at` |
+| `co_occurrences` | Layer 2: wallet entry co-occurrence (future smart money ML) | `address_a`, `address_b`, `coin`, `occurred_at` + UNIQUE constraint |
 
-Indexes on `(coin)`, `(created_at)`, `(coin, created_at)` for snapshots; `(coin, predicted_at)` and `(signal)` for predictions.
+Indexes on `(coin)`, `(created_at)`, `(coin, created_at)` for snapshots; `(coin, predicted_at)` and `(signal)` for predictions; `(occurred_at)`, `(address_a)`, `(address_b)` for co_occurrences.
 
 ---
 

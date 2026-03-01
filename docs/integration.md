@@ -150,6 +150,7 @@ The daemon is the central orchestrator. It polls market data from Hyperliquid, p
 | `/api/ml/features?coin=BTC` | GET | Latest feature snapshot for a coin (all 12 features + avail flags) |
 | `/api/ml/snapshots/stats` | GET | Per-coin counts, 24h counts, feature availability rates |
 | `/api/ml/predictions?coin=BTC` | GET | Latest model prediction + SHAP explanations |
+| `/api/ml/predictions/history?coin=BTC&limit=50` | GET | Prediction history newest-first (limit capped at 200), parses SHAP JSON |
 | `/api/ml/model` | GET | Model metadata from `artifacts/` directory |
 | `/api/ml/satellite/toggle` | POST | Enable/disable satellite at runtime (writes flag file) |
 

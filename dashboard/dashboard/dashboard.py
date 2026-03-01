@@ -619,6 +619,60 @@ async def _ml_predictions(request):
 app._api.add_route("/api/ml/predictions", _ml_predictions)
 
 
+async def _ml_predictions_history(request):
+    """GET /api/ml/predictions/history?coin=BTC&limit=50 — prediction history newest-first."""
+    import asyncio, sqlite3, json
+    from starlette.responses import JSONResponse
+
+    coin = request.query_params.get("coin", "BTC")
+    try:
+        limit = min(int(request.query_params.get("limit", "50")), 200)
+    except (ValueError, TypeError):
+        limit = 50
+
+    def _query():
+        db_path = _get_satellite_db_path()
+        import os
+        if not os.path.exists(db_path):
+            return None, "no_db"
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT * FROM predictions WHERE coin = ? ORDER BY predicted_at DESC LIMIT ?",
+                (coin, limit),
+            ).fetchall()
+        except Exception:
+            conn.close()
+            return None, "no_data"
+        conn.close()
+        results = []
+        for row in rows:
+            r = dict(row)
+            if r.get("shap_top5_json"):
+                try:
+                    r["shap_top5"] = json.loads(r["shap_top5_json"])
+                except Exception:
+                    r["shap_top5"] = []
+            else:
+                r["shap_top5"] = []
+            results.append(r)
+        return results, None
+
+    try:
+        data, err = await asyncio.to_thread(_query)
+        if err == "no_db":
+            return JSONResponse({"error": "no_db"}, status_code=404)
+        if err:
+            return JSONResponse({"predictions": [], "coin": coin, "count": 0})
+        return JSONResponse({"predictions": data or [], "coin": coin, "count": len(data or [])})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/ml/predictions/history", _ml_predictions_history)
+
+
 async def _ml_model(request):
     """GET /api/ml/model — model metadata."""
     import asyncio, json, os

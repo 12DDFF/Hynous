@@ -89,7 +89,7 @@ class HlpTracker:
                 if lev > 200 or lev < 0:
                     lev = 1
                 upnl = safe_float(p.get("unrealizedPnl", 0))
-                size_usd = abs(size) * entry_px
+                size_usd = abs(size) * mark_px
 
                 record = {
                     "vault_address": vault_addr,

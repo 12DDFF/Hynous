@@ -541,6 +541,7 @@
   // PRICE CHART — Polymarket-style area chart
   // =====================================================================
   let chart, series;
+  let heatmapLines = [];  // LightweightCharts IPriceLine references for cleanup
 
   function initPrice() {
     const el = document.getElementById('price-wrap');
@@ -559,14 +560,12 @@
       handleScale: { mouseWheel: true, pinch: true },
     });
 
-    series = chart.addAreaSeries({
-      lineColor: '#6366f1', lineWidth: 2,
-      topColor: 'rgba(99,102,241,0.25)', bottomColor: 'rgba(99,102,241,0)',
-      crosshairMarkerVisible: true,
-      crosshairMarkerRadius: 4,
-      crosshairMarkerBorderColor: '#6366f1',
-      crosshairMarkerBackgroundColor: '#6366f1',
-      crosshairMarkerBorderWidth: 0,
+    series = chart.addCandlestickSeries({
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
+      borderVisible: false,
       priceLineVisible: false,
       lastValueVisible: true,
     });
@@ -579,17 +578,23 @@
       }
       const d = param.seriesData.get(series);
       if (!d) { tip.style.display = 'none'; return; }
-      const px = d.value !== undefined ? d.value : d.close;
       const dt = new Date(param.time * 1000);
       const ts = dt.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      const fmtPx = px >= 1 ? '$' + px.toLocaleString(undefined, {maximumFractionDigits: 2}) : '$' + px.toFixed(4);
-      tip.innerHTML = '<div class="tt-time">' + ts + '</div><div class="tt-price" style="color:#6366f1">' + fmtPx + '</div>';
+      function fmtC(v) { return v >= 1 ? '$' + v.toLocaleString(undefined, {maximumFractionDigits: 2}) : '$' + v.toFixed(4); }
+      tip.innerHTML =
+        '<div class="tt-time">' + ts + '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;margin-top:3px">' +
+        '<span style="color:#525252;font-size:0.6rem">O</span><span class="tt-price" style="color:#e5e5e5">' + fmtC(d.open) + '</span>' +
+        '<span style="color:#525252;font-size:0.6rem">H</span><span class="tt-price" style="color:#22c55e">' + fmtC(d.high) + '</span>' +
+        '<span style="color:#525252;font-size:0.6rem">L</span><span class="tt-price" style="color:#ef4444">' + fmtC(d.low) + '</span>' +
+        '<span style="color:#525252;font-size:0.6rem">C</span><span class="tt-price" style="color:#e5e5e5">' + fmtC(d.close) + '</span>' +
+        '</div>';
       let left = param.point.x;
-      const tw = tip.offsetWidth || 100;
+      const tw = tip.offsetWidth || 120;
       if (left + tw/2 > el.clientWidth) left = el.clientWidth - tw/2;
       if (left - tw/2 < 0) left = tw/2;
       tip.style.left = left + 'px';
-      tip.style.top = Math.max(0, param.point.y - 48) + 'px';
+      tip.style.top = Math.max(0, param.point.y - 72) + 'px';
       tip.style.transform = 'translateX(-50%)';
       tip.style.display = 'block';
     });
@@ -602,10 +607,62 @@
     if (!candles || candles.error || !Array.isArray(candles) || !candles.length) {
       document.getElementById('price-badge').textContent = 'no data'; return;
     }
-    series.setData(candles.map(c => ({ time: Math.floor(c.t/1000), value: c.c })));
+    series.setData(candles.map(c => ({ time: Math.floor(c.t/1000), open: c.o, high: c.h, low: c.l, close: c.c })));
     const last = candles[candles.length-1];
     const px = last.c >= 1 ? '$' + last.c.toLocaleString(undefined,{maximumFractionDigits:2}) : '$' + last.c.toFixed(4);
     document.getElementById('price-badge').textContent = coin + ' ' + px;
+  }
+
+  async function updateHeatmapLines() {
+    // Remove all previously created price lines before redrawing
+    heatmapLines.forEach(l => { try { series.removePriceLine(l); } catch (_) {} });
+    heatmapLines = [];
+
+    if (!series) return;
+
+    const data = await api(B + '/api/data/heatmap/' + coin);
+    if (!data || data.error || !data.buckets || !data.buckets.length) return;
+
+    const mid = data.mid_price || 0;
+    const buckets = data.buckets;
+
+    // Compute total liquidation per bucket and separate into above/below current price
+    const scored = buckets.map(b => ({
+      price_mid: b.price_mid,
+      total: (b.long_liq_usd || 0) + (b.short_liq_usd || 0),
+      long_usd: b.long_liq_usd || 0,
+      short_usd: b.short_liq_usd || 0,
+    })).filter(b => b.total > 0);
+
+    const above = scored.filter(b => b.price_mid > mid).sort((a, b_) => b_.total - a.total).slice(0, 5);
+    const below = scored.filter(b => b.price_mid <= mid).sort((a, b_) => b_.total - a.total).slice(0, 5);
+    const topBuckets = [...above, ...below];
+
+    topBuckets.forEach(b => {
+      // Determine dominance color
+      let color;
+      if (b.long_usd > b.short_usd * 1.2) {
+        color = 'rgba(34,197,94,0.4)';    // long-dominated — potential support
+      } else if (b.short_usd > b.long_usd * 1.2) {
+        color = 'rgba(239,68,68,0.4)';    // short-dominated — potential resistance
+      } else {
+        color = 'rgba(234,179,8,0.4)';    // mixed
+      }
+
+      // Format dollar amount for title: $4.2M or $800K
+      const t = b.total;
+      const title = t >= 1e6 ? '$' + (t/1e6).toFixed(1) + 'M' : t >= 1e3 ? '$' + (t/1e3).toFixed(0) + 'K' : '$' + t.toFixed(0);
+
+      const line = series.createPriceLine({
+        price: b.price_mid,
+        color: color,
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: title,
+      });
+      heatmapLines.push(line);
+    });
   }
 
   // =====================================================================
@@ -1947,7 +2004,7 @@
   // =====================================================================
   // ORCHESTRATION
   // =====================================================================
-  function refreshAll() { updatePrice(); updateHeatmap(); updateWhale(); updateFlow(); updateSM(); updateHLP(); updateStats(); }
+  function refreshAll() { updatePrice(); updateHeatmapLines(); updateHeatmap(); updateWhale(); updateFlow(); updateSM(); updateHLP(); updateStats(); }
 
   // Whale explorer expand/close
   document.getElementById('whale-expand').addEventListener('click', openWhaleOverlay);
@@ -1964,7 +2021,7 @@
   // Price chart + order flow: 10s
   setInterval(() => { if (vis()) { updatePrice(); updateFlow(); } }, 10000);
   // Heatmap + whales: 30s
-  setInterval(() => { if (!vis()) return; updateHeatmap(); updateWhale(); }, 30000);
+  setInterval(() => { if (!vis()) return; updateHeatmapLines(); updateHeatmap(); updateWhale(); }, 30000);
   // Smart money + HLP + stats: 60s
   setInterval(() => { if (!vis()) return; updateSM(); updateHLP(); updateStats(); }, 60000);
 })();
