@@ -1,111 +1,150 @@
-# Nous Packages
+# Nous Server
 
-> **Monorepo containing all Nous implementation code.**
-> This directory is excluded from Obsidian indexing but accessible to AI agents.
+> **Monorepo containing the Nous memory system: `@nous/core` library + Hono HTTP server.**
 
 ## Directory Structure
 
 ```
-packages/
-├── package.json          # Workspace root
-├── pnpm-workspace.yaml   # Monorepo configuration
-├── tsconfig.base.json    # Shared TypeScript config
+nous-server/
+├── pnpm-workspace.yaml       # Monorepo configuration
 │
-└── core/                 # @nous/core - Foundation library
-    ├── src/
-    │   ├── constants.ts  # Shared constants
-    │   │
-    │   │  # Phase 1: Foundation
-    │   ├── nodes/        # Node types, schemas, creation (storm-011)
-    │   ├── blocks/       # Block parsing and structure (storm-011)
-    │   ├── edges/        # Edge types and relationships (storm-011)
-    │   ├── temporal/     # Four-type time handling (storm-011)
-    │   ├── editing/      # Semantic editing, versioning (storm-011)
-    │   ├── storage/      # Three-layer storage (storm-004)
-    │   ├── tps/          # Temporal Parsing System (storm-004)
-    │   ├── episodes/     # Episode utilities (storm-004)
-    │   ├── db/           # Database infrastructure (storm-017)
-    │   ├── sync/         # Sync infrastructure (storm-017)
-    │   │
-    │   │  # Phase 2: Data Representation
-    │   ├── embeddings/   # Contextual Embedding Ecosystem (storm-016)
-    │   ├── edges/weight/ # Edge Weight Calculation (storm-031)
-    │   ├── params/       # Algorithm Parameters (storm-028)
-    │   │
-    │   │  # Phase 3: Retrieval Core
-    │   ├── ssa/          # Seeded Spreading Activation (storm-005)
-    │   ├── qcs/          # Query Classification System (storm-008)
-    │   ├── retrieval/    # Retrieval Architecture (storm-003)
-    │   │
-    │   │  # Phase 4: Memory Lifecycle
-    │   └── gate-filter/  # Gate Filter System (storm-036)
-    │
-    ├── package.json
-    └── tsconfig.json
+├── core/                      # @nous/core — Foundation library (v0.3.0)
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── src/
+│       ├── index.ts           # Root re-exports
+│       ├── constants.ts       # Shared constants
+│       ├── constants.test.ts
+│       │
+│       │  # Foundation
+│       ├── nodes/             # Node types, schemas, creation
+│       ├── blocks/            # Block parsing and structure
+│       ├── edges/             # Edge types, relationships, weight calculation
+│       ├── temporal/          # Four-type time handling
+│       ├── editing/           # Semantic editing, versioning
+│       ├── tps/               # Temporal Parsing System
+│       ├── episodes/          # Episode utilities
+│       ├── db/                # Database infrastructure (SQLite)
+│       ├── sync/              # Sync infrastructure
+│       │
+│       │  # Data Representation
+│       ├── embeddings/        # Contextual Embedding Ecosystem (OpenAI)
+│       ├── params/            # Algorithm parameters (SSA weights, decay, thresholds)
+│       │
+│       │  # Retrieval
+│       ├── ssa/               # Seeded Spreading Activation (BM25 + vector + graph)
+│       ├── qcs/               # Query Classification System
+│       ├── retrieval/         # Retrieval architecture
+│       │
+│       │  # Memory Lifecycle
+│       ├── gate-filter/       # Pre-storage quality gate
+│       ├── forgetting/        # FSRS-based decay
+│       ├── contradiction/     # Contradiction detection and resolution
+│       ├── clusters/          # Cluster management
+│       ├── sections/          # Memory sections (4-section bias layer)
+│       │
+│       │  # Agent & Operations
+│       ├── agent/             # Agent-facing utilities
+│       ├── agent-tools/       # Agent tool definitions
+│       ├── api/               # API type definitions
+│       ├── backend/           # Backend utilities
+│       ├── operations/        # Batch operations
+│       ├── ingestion/         # Node ingestion pipeline
+│       ├── context-window/    # Context window management
+│       ├── working-memory/    # Working memory utilities
+│       │
+│       │  # Infrastructure
+│       ├── llm/               # LLM integration
+│       ├── prompts/           # Prompt templates
+│       ├── security/          # Security and privacy tiers
+│       └── adaptive-limits/   # Adaptive rate limiting
+│
+└── server/                    # Hono HTTP server (:3100)
+    └── src/
+        ├── index.ts           # Server entry point
+        ├── db.ts              # Database initialization
+        ├── embed.ts           # Embedding utilities
+        ├── utils.ts           # Shared helpers
+        ├── core-bridge.ts     # Bridge between server and @nous/core
+        ├── ssa-context.ts     # SSA context builder
+        └── routes/
+            ├── nodes.ts       # CRUD: GET/POST/PATCH/DELETE /v1/nodes
+            ├── edges.ts       # CRUD: GET/POST/DELETE /v1/edges, POST /v1/edges/:id/strengthen
+            ├── search.ts      # POST /v1/search (SSA-powered)
+            ├── classify.ts    # POST /v1/classify-query (QCS)
+            ├── clusters.ts    # /v1/clusters CRUD + membership
+            ├── contradiction.ts # /v1/contradiction (detect, queue, resolve)
+            ├── decay.ts       # POST /v1/decay (FSRS batch)
+            ├── graph.ts       # GET /v1/graph (full graph for visualization)
+            ├── health.ts      # GET /v1/health
 ```
-
-## Relationship to Specs
-
-Each package implements specs from `Specs/`:
-
-| Package | Implements | Spec Location | Status | Tests |
-|---------|------------|---------------|--------|-------|
-| `@nous/core` | storm-011 (Nodes) | `Specs/Phase-1-Foundation/storm-011/` | Finalized | 33 |
-| `@nous/core` | storm-004 (Storage) | `Specs/Phase-1-Foundation/storm-004/` | Finalized | 104 |
-| `@nous/core` | storm-017 (Infrastructure) | `Specs/Phase-1-Foundation/storm-017/` | Finalized | 108 |
-| `@nous/core` | storm-016 (Embeddings) | `Specs/Phase-2-Data-Representation/storm-016/` | Finalized | 112 |
-| `@nous/core` | storm-031 (Edge Weight) | `Specs/Phase-2-Data-Representation/storm-031/` | Finalized | 120 |
-| `@nous/core` | storm-028 (Params) | `Specs/Phase-2-Data-Representation/storm-028/` | Finalized | 133 |
-| `@nous/core` | storm-005 (SSA) | `Specs/Phase-3-Retrieval-Core/storm-005/` | Finalized | 98 |
-| `@nous/core` | storm-008 (QCS) | `Specs/Phase-3-Retrieval-Core/storm-008/` | Finalized | 121 |
-| `@nous/core` | storm-003 (Retrieval) | `Specs/Phase-3-Retrieval-Core/storm-003/` | Finalized | 107 |
-| `@nous/core` | storm-036 (Gate Filter) | `Specs/Phase-4-Memory-Lifecycle/storm-036/` | Finalized | 103 |
-| `@nous/api` | storm-023 | (future) | - | - |
-| `@nous/sdk` | storm-030 | (future) | - | - |
-
-**Total Tests:** 1236 passing
 
 ## Getting Started
 
 ```bash
-# Navigate to packages directory
-cd packages
+# Navigate to nous-server
+cd nous-server
 
 # Install dependencies
 pnpm install
 
-# Run all tests
-pnpm test
+# Build core library (required before server can import)
+cd core && pnpm build && cd ..
 
-# Build all packages
-pnpm build
+# Run tests
+cd core && pnpm test
+
+# Start server
+cd server && pnpm dev
 ```
+
+> **Important:** When you add or change exports in `core/src/` (e.g., `params/index.ts`, `sections/index.ts`), you must rebuild: `cd core && pnpm build`. The server imports from `core/dist/`, not `core/src/`. The DTS build may fail due to a pre-existing `src/db/adapter.ts` type error, but the ESM build succeeds and that is what the server uses.
+
+## Tests
+
+Tests are co-located with source files (`.test.ts` suffix) and run via vitest.
+
+```bash
+cd core
+pnpm test          # Run all tests
+pnpm test:watch    # Watch mode
+pnpm test:coverage # With coverage
+```
+
+**Current count:** 4272+ passing tests (1 pre-existing `PRIVACY_TIERS` failure).
+
+## Key Modules
+
+| Module | Purpose | Tests |
+|--------|---------|-------|
+| `nodes/` | Node types, schemas, CRUD | 33 |
+| `edges/` | Edge types, weight calculation | 120 |
+| `ssa/` | Seeded Spreading Activation | 104 |
+| `qcs/` | Query Classification | 121 |
+| `retrieval/` | Retrieval architecture | 107 |
+| `params/` | Algorithm parameters | 133 |
+| `embeddings/` | Vector embeddings (OpenAI) | 112 |
+| `db/` | SQLite infrastructure | 108 |
+| `gate-filter/` | Pre-storage quality gate | 103 |
+| `sections/` | 4-section memory bias layer | - |
+| `contradiction/` | Contradiction detection/resolution | - |
+| `forgetting/` | FSRS-based memory decay | - |
 
 ## Development Workflow
 
-1. **Read the spec** - Check `Specs/Phase-X-Name/storm-XXX/` for interfaces
-2. **Follow the Engineering Guide** - `Specs/Engineering-Guide.md` (7 phases)
-3. **Implement** - Write code in the appropriate package
-4. **Test** - Write tests alongside implementation
-5. **Validate** - Ensure implementation matches spec
-6. **Finalize** - Update spec status and unblock dependents
-
-See [[Hub#Workflow: Iterative Storm Development]] and [[Specs/Engineering-Guide]] for the full lifecycle.
-
-## Adding a New Package
-
-1. Create directory: `packages/[name]/`
-2. Copy structure from `core/`
-3. Update `pnpm-workspace.yaml`
-4. Run `pnpm install`
+1. Implement in the appropriate module under `core/src/`
+2. Write tests alongside implementation (`.test.ts` suffix)
+3. Ensure exports are added to the module's `index.ts`
+4. Update `core/package.json` exports field if adding a new module
+5. Rebuild: `cd core && pnpm build`
 
 ## For AI Agents
 
-This directory contains the actual implementation code. When implementing a spec:
+- Implementation code lives in `core/src/` and `server/src/`
+- The server is a thin HTTP layer; all logic lives in `@nous/core`
+- `core-bridge.ts` maps core constants (e.g., `EDGE_TYPE_WEIGHTS`) for server use
+- Route files in `server/src/routes/` map 1:1 to REST endpoints
 
-1. Read the spec files in `Specs/Phase-X-Name/storm-XXX/spec/`
-2. Read the Engineering Guide: `Specs/Engineering-Guide.md`
-3. Implement in the corresponding package under `packages/`
-4. Write tests in the same directory as the code (`.test.ts` suffix)
-5. Ensure exports are added to the module's `index.ts`
-6. Update `packages/core/package.json` exports field
+---
+
+Last updated: 2026-03-01

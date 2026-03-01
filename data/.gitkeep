@@ -1,4 +1,0 @@
-# Data directory
-# Databases and persistent storage go here
-# This file ensures the directory is tracked by git
-# Actual data files should be in .gitignore

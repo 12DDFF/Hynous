@@ -4,12 +4,13 @@
 
 ---
 
-## Main Entry Points
+## Files
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `run_dashboard.py` | Launch Reflex dashboard | `python -m scripts.run_dashboard` |
-| `run_daemon.py` | Launch background agent | `python -m scripts.run_daemon` |
+| `run_dashboard.py` | Launch Reflex dashboard on `:3000` | `python -m scripts.run_dashboard` |
+| `artemis_sync.sh` | Daily Artemis data pipeline — process yesterday's on-chain data and update satellite features | Cron: `0 1 * * * /path/to/artemis_sync.sh` |
+| `backup_satellite.sh` | Automated SQLite backup for `satellite.db` and `hynous-data.db` — 7-day local retention, optional weekly scp to remote | Cron: `0 3 * * * /path/to/backup_satellite.sh` |
 
 ---
 
@@ -19,12 +20,14 @@
 # Run dashboard (development)
 python -m scripts.run_dashboard
 
-# Run daemon (background agent)
-python -m scripts.run_daemon
-
 # Or use the Makefile
 make dashboard
-make daemon
+
+# Artemis daily sync (normally via cron)
+HYNOUS_ROOT=/root/hynous bash scripts/artemis_sync.sh
+
+# Manual backup
+HYNOUS_STORAGE=/root/hynous/storage bash scripts/backup_satellite.sh
 ```
 
 ---
@@ -48,3 +51,7 @@ def main():
 if __name__ == "__main__":
     main()
 ```
+
+---
+
+Last updated: 2026-03-01

@@ -15,9 +15,11 @@ core/
 ├── clock.py           # Timestamp injection for agent messages
 ├── costs.py           # LLM cost tracking (per-model, per-session)
 ├── trade_analytics.py # Trade performance analytics (TradeRecord, TradeStats, thesis enrichment, time filtering)
+├── trading_settings.py # Runtime-adjustable trading parameters (TradingSettings dataclass, JSON persistence, thread-safe singleton)
 ├── persistence.py     # Paper trading state + conversation history persistence
 ├── daemon_log.py      # Daemon event logging for UI display
 ├── memory_tracker.py  # Memory mutation tracking per agent cycle
+├── equity_tracker.py  # Append-only equity curve persistence (5-min snapshots, 30-day prune)
 ├── request_tracer.py  # Debug trace collector (spans per agent.chat() call)
 └── trace_log.py       # Trace persistence + content-addressed payload storage
 ```
@@ -39,6 +41,21 @@ print(config.orchestrator.enabled)  # True (retrieval orchestrator)
 ```
 
 Key config dataclasses: `AgentConfig`, `MemoryConfig`, `OrchestratorConfig`, `DaemonConfig`, `NousConfig`, `ExecutionConfig`, `DiscordConfig`.
+
+---
+
+## Trading Settings
+
+Runtime-adjustable parameters persisted to `storage/trading_settings.json`. Thread-safe singleton with lazy loading. Read by `prompts/builder.py` to inject live values into the system prompt.
+
+```python
+from hynous.core.trading_settings import get_trading_settings
+
+ts = get_trading_settings()
+print(ts.tier_high_margin_pct)   # High conviction margin %
+print(ts.micro_leverage)         # Micro trade leverage
+print(ts.small_wins_mode)        # Whether small wins exit mode is active
+```
 
 ---
 
@@ -88,7 +105,7 @@ logger.info("Something happened")
 
 Debug trace infrastructure for the dashboard's trace inspector. Records every `agent.chat()` / `chat_stream()` call as a trace with ordered spans.
 
-### `request_tracer.py` — In-process trace collector
+### `request_tracer.py` -- In-process trace collector
 
 Thread-safe singleton (same pattern as `memory_tracker.py`). Records spans during each chat call, flushes completed traces to `trace_log.py`.
 
@@ -108,9 +125,9 @@ get_tracer().record_span(trace_id, {"type": "llm_call", "model": "claude-sonnet"
 get_tracer().end_trace(trace_id, "completed", "BTC is at $97K...")
 ```
 
-Span types: `context`, `retrieval`, `llm_call`, `tool_execution`, `memory_op`, `compression`, `queue_flush`.
+Span types: `context`, `retrieval`, `llm_call`, `tool_execution`, `memory_op`, `compression`, `queue_flush`, `trade_step`.
 
-### `trace_log.py` — Persistence + content-addressed payloads
+### `trace_log.py` -- Persistence + content-addressed payloads
 
 Follows `daemon_log.py` pattern: thread-safe, Lock, lazy load, FIFO cap at 500, 14-day retention.
 
@@ -122,3 +139,7 @@ from hynous.core.trace_log import store_payload, load_payload
 hash_id = store_payload(json.dumps(messages))  # Returns SHA256[:16]
 content = load_payload(hash_id)                # Returns original content
 ```
+
+---
+
+Last updated: 2026-03-01
