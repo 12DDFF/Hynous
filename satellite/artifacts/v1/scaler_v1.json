@@ -1,0 +1,70 @@
+{
+  "feature_names": [
+    "liq_magnet_direction",
+    "oi_vs_7d_avg_ratio",
+    "liq_cascade_active",
+    "liq_1h_vs_4h_avg",
+    "funding_vs_30d_zscore",
+    "hours_to_funding",
+    "oi_funding_pressure",
+    "cvd_normalized_5m",
+    "price_change_5m_pct",
+    "volume_vs_1h_avg_ratio",
+    "realized_vol_1h",
+    "sessions_overlapping"
+  ],
+  "feature_hash": "255621ae64e93145",
+  "transform_map": {
+    "liq_magnet_direction": "P",
+    "liq_cascade_active": "P",
+    "cvd_normalized_5m": "P",
+    "sessions_overlapping": "P",
+    "funding_vs_30d_zscore": "C",
+    "hours_to_funding": "Z",
+    "price_change_5m_pct": "Z",
+    "realized_vol_1h": "Z",
+    "oi_vs_7d_avg_ratio": "L",
+    "liq_1h_vs_4h_avg": "L",
+    "volume_vs_1h_avg_ratio": "L",
+    "oi_funding_pressure": "S"
+  },
+  "params": {
+    "liq_magnet_direction": {},
+    "oi_vs_7d_avg_ratio": {
+      "log_mean": 0.6931471805599454,
+      "log_std": 1.1102230246251565e-16
+    },
+    "liq_cascade_active": {},
+    "liq_1h_vs_4h_avg": {
+      "log_mean": 0.6931471805599454,
+      "log_std": 1.1102230246251565e-16
+    },
+    "funding_vs_30d_zscore": {
+      "clip_low": -5.0,
+      "clip_high": 5.0
+    },
+    "hours_to_funding": {
+      "mean": 3.993546830441868,
+      "std": 2.285526072310863
+    },
+    "oi_funding_pressure": {
+      "slog_mean": 0.0,
+      "slog_std": 0.0
+    },
+    "cvd_normalized_5m": {},
+    "price_change_5m_pct": {
+      "mean": -0.0005873301134739875,
+      "std": 0.21342248673085423
+    },
+    "volume_vs_1h_avg_ratio": {
+      "log_mean": 0.543730870237892,
+      "log_std": 0.43972416717312185
+    },
+    "realized_vol_1h": {
+      "mean": 0.5521298411202574,
+      "std": 0.42902479485519657
+    },
+    "sessions_overlapping": {}
+  },
+  "fitted": true
+}

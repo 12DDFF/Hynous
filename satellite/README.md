@@ -217,6 +217,45 @@ Health check passes if: snapshot rate > 90%, max gap < 15 minutes, labeling back
 
 ---
 
+## Trained Model: v1
+
+The first trained model lives in `satellite/artifacts/v1/`. It is committed to the repo but **not yet wired into the daemon** — inference code exists (`InferenceEngine`) but nothing calls it yet.
+
+### v1 Artifact
+
+| File | Size | Contents |
+|------|------|----------|
+| `model_long_v1.pkl` | 296KB | XGBoost Booster (long ROE predictor) |
+| `model_short_v1.pkl` | 271KB | XGBoost Booster (short ROE predictor) |
+| `scaler_v1.json` | 1.7KB | Fitted FeatureScaler (sealed to training data) |
+| `metadata_v1.json` | 1.2KB | Training metadata, params, feature hash |
+
+### Training Summary
+
+- **Data**: 166,750 labeled snapshots (BTC/ETH/SOL), Aug 2025 -- Feb 2026
+- **Split**: 85/15 time-based (train through Jan 30, val Feb onward)
+- **Train samples**: 141,739 | **Val samples**: 25,011
+- **Validation MAE**: Long 4.441, Short 4.667
+- **Walk-forward**: 9 generations (60-day min train, 14-day test steps), profitable in all 9 windows across bull, bear, and chop regimes
+
+### Feature Importance (SHAP)
+
+Top features by mean absolute SHAP value (stable across all regimes):
+
+1. `realized_vol_1h` -- dominant (~70% of total SHAP)
+2. `price_change_5m_pct` -- consistent #2
+3. `funding_vs_30d_zscore` -- #1 derivatives feature in bear/chop regimes
+4. `volume_vs_1h_avg_ratio` -- #2 derivatives feature
+5. `sessions_overlapping`, `hours_to_funding`, `cvd_normalized_5m` -- modest but stable
+
+### Known Limitations
+
+1. **Live feature gap**: The top 2 features (`realized_vol_1h`, `price_change_5m_pct`) are computed from candle data in backfill but **stub out in live `compute_features()`** (return neutral with avail=0). Wiring these from the data-layer's candle/trade stream is required before the model operates at full strength.
+2. **Inference not wired**: `InferenceEngine` exists but the daemon does not call it. The current flow is `tick()` -> `compute_features()` -> store. Adding inference after feature computation is the next integration step.
+3. **Label design**: Target is "best 30-min forward-looking ROE at 20x leverage" -- assumes optimal exit timing within the window. Real execution will capture a fraction of this.
+
+---
+
 ## Related Documentation
 
 - `satellite/artemis/README.md` -- Historical backfill pipeline
@@ -225,4 +264,4 @@ Health check passes if: snapshot rate > 90%, max gap < 15 minutes, labeling back
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-03-02
