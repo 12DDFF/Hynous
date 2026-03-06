@@ -95,6 +95,14 @@ class TradingSettings:
     small_wins_mode: bool = False
     small_wins_roe_pct: float = 3.0  # Gross ROE % to exit at (fee BE enforced as floor)
 
+    # --- Trailing Stop ---
+    # Mechanical trailing stop — code handles exits, LLM handles entries.
+    # Once ROE exceeds trailing_activation_roe, the stop trails at (1 - trailing_retracement_pct/100) * peak_roe.
+    # Stop moves upward only, executes immediately when hit. No LLM involvement.
+    trailing_stop_enabled: bool = True
+    trailing_activation_roe: float = 2.8    # ROE % threshold to begin trailing
+    trailing_retracement_pct: float = 50.0  # % of peak ROE allowed as giveback before exit
+
 
 _lock = threading.Lock()
 _cached: TradingSettings | None = None

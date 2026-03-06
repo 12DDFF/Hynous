@@ -124,9 +124,15 @@ class DaemonConfig:
     peak_reversion_threshold_micro: float = 0.40  # Giveback fraction to alert on micro (40% = tight, fast trades)
     peak_reversion_threshold_macro: float = 0.50  # Giveback fraction to alert on macro (50% = swings breathe)
     breakeven_stop_enabled: bool = True            # Auto-move SL to entry buffer once fees are cleared
-    breakeven_buffer_micro_pct: float = 0.10       # Price % buffer below entry (long) / above (short) — micro
-    breakeven_buffer_macro_pct: float = 0.30       # Same buffer for macro (wider — swing noise tolerance)
+    breakeven_buffer_micro_pct: float = 0.07       # Price % buffer above entry (long) / below (short) — micro (equals round-trip fee → nets ~0%)
+    breakeven_buffer_macro_pct: float = 0.07       # Same for macro — true breakeven regardless of trade type
     taker_fee_pct: float = 0.07                    # Round-trip taker fee as % of notional (drives fee BE calc)
+    # Trailing stop (mechanical exit — no agent involvement)
+    trailing_stop_enabled: bool = True              # Master switch for trailing stop system
+    trailing_activation_roe: float = 2.8            # ROE % to activate trailing (modeled optimum)
+    trailing_retracement_pct: float = 50.0          # % of peak ROE to give back before stop fires (50% = trail at half peak)
+    # Candle-based peak tracking (enhances MFE/MAE accuracy)
+    candle_peak_tracking_enabled: bool = True       # Use 1m candle high/low for peak/trough tracking
 
 
 @dataclass

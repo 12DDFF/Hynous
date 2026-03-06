@@ -49,6 +49,15 @@ daemon:
   max_wakes_per_hour: 6              # Rate limit on agent wakes per hour
   wake_cooldown_seconds: 120         # Min seconds between non-priority wakes
   playbook_cache_ttl: 1800           # Playbook matcher cache refresh interval (seconds, 30 min)
+  # Peak profit protection
+  breakeven_buffer_micro_pct: 0.07   # Price % buffer for breakeven stop (matches round-trip fee)
+  breakeven_buffer_macro_pct: 0.07   # Same for macro trades
+  # Trailing stop (mechanical exit — no agent involvement)
+  trailing_stop_enabled: true          # Master switch
+  trailing_activation_roe: 2.8         # ROE % to activate trailing
+  trailing_retracement_pct: 50.0       # % of peak ROE to give back before exit
+  # Candle-based peak tracking (enhances MFE/MAE for trailing stop accuracy)
+  candle_peak_tracking_enabled: true
 
 # Market scanner (anomaly detection across ALL Hyperliquid pairs)
 scanner:

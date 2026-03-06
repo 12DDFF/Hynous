@@ -368,6 +368,11 @@ def build_briefing(
     if stats_line:
         sections.append(stats_line)
 
+    # --- Recent individual trade outcomes ---
+    recent_trades = _build_recent_trades(daemon)
+    if recent_trades:
+        sections.append(recent_trades)
+
     # --- Memory counts (from daemon cache) ---
     memory_line = _build_memory_line(daemon)
     if memory_line:
@@ -737,6 +742,137 @@ def _build_stats_line(account_pnl: float | None = None) -> str:
     except Exception:
         pass
     return ""
+
+
+def _build_recent_trades(daemon) -> str:
+    """Recent individual trade outcomes for pattern awareness.
+
+    Shows last 6 closed trades with coin, side, leverage, PnL, time-ago,
+    MFE, and exit reason. ~100-150 tokens.
+
+    Primary source: daemon in-memory cache (instant, no HTTP).
+    Fallback: Nous trade_close nodes via get_trade_stats() (30s cached).
+    """
+    if daemon is None:
+        return ""
+
+    trades = []
+
+    # Primary: daemon in-memory cache (populated on every close)
+    cache = getattr(daemon, "_recent_trade_closes", None)
+    if cache and len(cache) > 0:
+        now = time.time()
+        for t in list(cache)[:6]:
+            age_s = now - t.get("closed_at", now)
+            trades.append({
+                "coin": t["coin"],
+                "side": t["side"],
+                "leverage": t.get("leverage", 20),
+                "lev_return_pct": t.get("lev_return_pct", 0),
+                "mfe_pct": t.get("mfe_pct", 0),
+                "close_type": t.get("close_type", "unknown"),
+                "age_s": age_s,
+            })
+
+    # Fallback: Nous (after daemon restart, cache is empty)
+    if not trades:
+        try:
+            from ..core.trade_analytics import get_trade_stats
+            stats = get_trade_stats()
+            if stats.trades:
+                now = time.time()
+                for t in stats.trades[:6]:
+                    age_s = 0
+                    try:
+                        from datetime import datetime, timezone
+                        closed_dt = datetime.fromisoformat(
+                            t.closed_at.replace("Z", "+00:00")
+                        )
+                        age_s = now - closed_dt.timestamp()
+                    except Exception:
+                        pass
+
+                    close_type = t.close_type
+                    if close_type == "full":
+                        close_type = "agent close"
+
+                    trades.append({
+                        "coin": t.symbol,
+                        "side": t.side,
+                        "leverage": t.leverage or 20,
+                        "lev_return_pct": t.lev_return_pct,
+                        "mfe_pct": 0,
+                        "close_type": close_type,
+                        "age_s": age_s,
+                    })
+        except Exception:
+            pass
+
+    if not trades:
+        return ""
+
+    # Format each trade line
+    lines = []
+    for t in trades:
+        age = t["age_s"]
+        if age < 60:
+            age_str = f"{int(age)}s ago"
+        elif age < 3600:
+            age_str = f"{int(age / 60)}m ago"
+        elif age < 86400:
+            h = int(age / 3600)
+            m = int((age % 3600) / 60)
+            age_str = f"{h}h{m}m ago" if m > 0 else f"{h}h ago"
+        else:
+            age_str = f"{int(age / 86400)}d ago"
+
+        pnl = t["lev_return_pct"]
+        pnl_str = f"{pnl:+.1f}%"
+
+        mfe_str = ""
+        if t["mfe_pct"] and t["mfe_pct"] > 0.5:
+            mfe_str = f" | MFE +{t['mfe_pct']:.1f}%"
+
+        exit_map = {
+            "stop_loss": "stop loss",
+            "take_profit": "take profit",
+            "trailing_stop": "trailing stop",
+            "small_wins": "small wins",
+            "liquidation": "liquidation",
+            "agent close": "agent close",
+            "full": "agent close",
+            "merged": "agent close",
+        }
+        exit_reason = exit_map.get(t["close_type"], t["close_type"])
+
+        lines.append(
+            f"  {t['coin']} {t['side'].upper()} {t['leverage']}x | {pnl_str} | "
+            f"{age_str}{mfe_str} | exit: {exit_reason}"
+        )
+
+    # Directional bias warning
+    sides = [t["side"] for t in trades]
+    if len(trades) >= 4:
+        long_count = sum(1 for s in sides if s == "long")
+        short_count = len(sides) - long_count
+        if long_count >= len(trades) - 1:
+            lines.append(f"  ↑ {long_count}/{len(trades)} recent trades are LONG — check for directional bias")
+        elif short_count >= len(trades) - 1:
+            lines.append(f"  ↑ {short_count}/{len(trades)} recent trades are SHORT — check for directional bias")
+
+    # Repeated-symbol loss warning
+    coins = [t["coin"] for t in trades]
+    for coin in set(coins):
+        coin_trades = [t for t in trades if t["coin"] == coin]
+        if len(coin_trades) >= 3:
+            coin_losses = sum(1 for t in coin_trades if t["lev_return_pct"] < 0)
+            if coin_losses >= 2:
+                lines.append(
+                    f"  ↑ {coin_losses}/{len(coin_trades)} recent {coin} trades lost — "
+                    f"consider skipping next {coin} setup"
+                )
+
+    return "Recent Trades (last " + str(len(trades)) + "):\n" + "\n".join(lines)
 
 
 def _build_ml_section(predictions: dict[str, dict]) -> str:

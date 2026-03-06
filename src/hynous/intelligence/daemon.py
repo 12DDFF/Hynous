@@ -20,6 +20,7 @@ Usage:
     daemon.stop()    # Graceful shutdown
 """
 
+import collections
 import json
 import logging
 import queue as _queue_module
@@ -323,6 +324,7 @@ class Daemon:
         self._prev_positions: dict[str, dict] = {}    # coin → {side, size, entry_px}
         self._tracked_triggers: dict[str, list] = {}  # coin → trigger orders snapshot
         self._last_fill_check: float = 0
+        self._last_candle_peak_check: float = 0     # Timestamp of last candle peak tracking run
         self._fill_fires: int = 0
         self._processed_fills: set[str] = set()       # Fill hashes already processed
 
@@ -335,6 +337,8 @@ class Daemon:
         self._breakeven_set: dict[str, bool] = {}  # coin → True once breakeven SL placed this hold
         self._small_wins_exited: dict[str, bool] = {}  # coin → True once small-wins exit fired
         self._small_wins_tp_placed: dict[str, bool] = {}  # coin → True once exchange TP order placed
+        self._trailing_active: dict[str, bool] = {}   # coin → True once trail is engaged
+        self._trailing_stop_px: dict[str, float] = {}  # coin → current trailing stop price level
 
         # Position type registry: {coin: {"type": "micro"|"macro", "entry_time": float}}
         # Populated by trading tool via register_position_type(), inferred on restart
@@ -351,6 +355,11 @@ class Daemon:
         self._entries_this_week: int = 0
         self._last_entry_time: float = 0
         self._last_close_time: float = 0
+
+        # Recent trade close history (in-memory, for briefing injection)
+        # Deque of dicts: {coin, side, leverage, lev_return_pct, mfe_pct, close_type, closed_at}
+        # Newest first, capped at 10. Populated by _handle_position_close + _record_trigger_close.
+        self._recent_trade_closes: collections.deque = collections.deque(maxlen=10)
 
         # Pending follow-up watches: sym → {fire_at, thesis, side, scheduled_at}
         # Ephemeral — lost on restart. Use manage_watchpoints for persistent alerts.
@@ -890,6 +899,19 @@ class Daemon:
                 # SL/TP must fire promptly — can't wait 60s between checks.
                 # Fetches fresh prices only for position symbols (1 cheap API call).
                 self._fast_trigger_check()
+
+                # 1a-bis. Candle-based peak tracking (every 60s) for open positions
+                # Catches MFE/MAE extremes missed by 10s polling gaps.
+                if (
+                    self.config.daemon.candle_peak_tracking_enabled
+                    and self._prev_positions
+                    and now - self._last_candle_peak_check >= 60
+                ):
+                    try:
+                        self._update_peaks_from_candles()
+                    except Exception as e:
+                        logger.debug("Candle peak tracking error: %s", e)
+                    self._last_candle_peak_check = now
 
                 # 1b. Full position tracking + profit monitoring (every 60s)
                 if now - self._last_fill_check >= self.config.daemon.price_poll_interval:
@@ -1803,8 +1825,8 @@ class Daemon:
                         ) / 100.0
                         is_long = (side == "long")
                         be_price = (
-                            entry_px * (1 - buffer_pct) if is_long
-                            else entry_px * (1 + buffer_pct)
+                            entry_px * (1 + buffer_pct) if is_long
+                            else entry_px * (1 - buffer_pct)
                         )
                         # Check if existing SL is already adequate
                         triggers = self._tracked_triggers.get(sym, [])
@@ -1850,6 +1872,126 @@ class Daemon:
                                     _queue_and_persist("System", f"Breakeven stop: {sym}", response)
                             except Exception as be_err:
                                 logger.warning("Breakeven stop failed for %s: %s", sym, be_err)
+
+                # ── Trailing Stop: mechanical exit, no agent involvement ──────────
+                # Activates once ROE exceeds threshold. Trails at configured
+                # retracement from peak. Stop only moves up, never down.
+                # Executes immediately — no wake, no LLM decision.
+                if (
+                    self.config.daemon.trailing_stop_enabled
+                    and not self._small_wins_exited.get(sym)  # Don't trail if small wins already closed
+                ):
+                    ts = get_trading_settings()
+                    if ts.trailing_stop_enabled:
+                        activation_roe = ts.trailing_activation_roe
+                        retracement_pct = ts.trailing_retracement_pct / 100.0
+                        peak = self._peak_roe.get(sym, 0)
+
+                        # Phase 1: Check if trail should activate
+                        if not self._trailing_active.get(sym) and roe_pct >= activation_roe:
+                            self._trailing_active[sym] = True
+                            logger.info(
+                                "Trailing stop ACTIVATED: %s %s | ROE %.1f%% >= %.1f%% threshold",
+                                sym, side, roe_pct, activation_roe,
+                            )
+
+                        # Phase 2: Update trailing stop price (only if active)
+                        if self._trailing_active.get(sym) and peak > 0:
+                            # Trail ROE = peak * (1 - retracement)
+                            trail_roe = peak * (1.0 - retracement_pct)
+
+                            # Floor: never trail below breakeven (fee break-even ROE)
+                            fee_be_roe = self.config.daemon.taker_fee_pct * leverage
+                            trail_roe = max(trail_roe, fee_be_roe)
+
+                            # Convert trail ROE to price
+                            trail_price_pct = trail_roe / leverage / 100.0
+                            if side == "long":
+                                new_trail_px = entry_px * (1 + trail_price_pct)
+                            else:
+                                new_trail_px = entry_px * (1 - trail_price_pct)
+
+                            # Stop only moves UP (tighter) — never backwards
+                            old_trail_px = self._trailing_stop_px.get(sym, 0)
+                            if side == "long":
+                                should_update = (new_trail_px > old_trail_px) if old_trail_px > 0 else True
+                            else:
+                                should_update = (new_trail_px < old_trail_px) if old_trail_px > 0 else True
+
+                            if should_update:
+                                self._trailing_stop_px[sym] = new_trail_px
+                                # Update the paper provider's SL to match
+                                try:
+                                    # Cancel existing SL first, then place new one
+                                    triggers = self._tracked_triggers.get(sym, [])
+                                    for t in triggers:
+                                        if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                            self._get_provider().cancel_order(sym, t["oid"])
+                                    self._get_provider().place_trigger_order(
+                                        symbol=sym,
+                                        is_buy=(side != "long"),
+                                        sz=pos.get("size", 0),
+                                        trigger_px=new_trail_px,
+                                        tpsl="sl",
+                                    )
+                                    # Refresh trigger cache so check_triggers sees the new SL
+                                    self._refresh_trigger_cache()
+                                    if old_trail_px > 0:
+                                        logger.info(
+                                            "Trailing stop UPDATED: %s %s | $%,.2f → $%,.2f (peak ROE %.1f%%, trail ROE %.1f%%)",
+                                            sym, side, old_trail_px, new_trail_px, peak, trail_roe,
+                                        )
+                                except Exception as trail_err:
+                                    logger.warning("Trailing stop update failed for %s: %s", sym, trail_err)
+
+                        # Phase 3: Check if trailing stop is HIT
+                        # This is a backup — paper provider's check_triggers() catches it too,
+                        # but we want immediate execution + proper classification.
+                        if self._trailing_active.get(sym):
+                            trail_px = self._trailing_stop_px.get(sym)
+                            if trail_px and trail_px > 0:
+                                trail_hit = (
+                                    (side == "long" and px <= trail_px) or
+                                    (side == "short" and px >= trail_px)
+                                )
+                                if trail_hit:
+                                    try:
+                                        result = self._get_provider().market_close(sym)
+                                        realized_pnl = result.get("closed_pnl", 0.0)
+                                        exit_px_trail = result.get("avg_px", px)
+                                        trail_roe_at_exit = roe_pct
+                                        peak_at_exit = self._peak_roe.get(sym, 0)
+
+                                        trail_msg = (
+                                            f"[TRAILING STOP] {sym} {side.upper()} closed at {trail_roe_at_exit:+.1f}% ROE "
+                                            f"(peak was {peak_at_exit:+.1f}%). Trail stop @ ${trail_px:,.2f} hit."
+                                        )
+                                        _queue_and_persist("System", f"Trailing Stop: {sym}", trail_msg)
+                                        _notify_discord_simple(
+                                            f"Trailing stop hit: {sym} {side.upper()} | "
+                                            f"ROE {trail_roe_at_exit:+.1f}% (peak {peak_at_exit:+.1f}%) | "
+                                            f"PnL ${realized_pnl:+.2f}"
+                                        )
+                                        log_event(DaemonEvent(
+                                            "profit", f"trailing_stop: {sym} {side}",
+                                            f"Exit ROE {trail_roe_at_exit:+.1f}% | Peak {peak_at_exit:+.1f}% | "
+                                            f"PnL ${realized_pnl:+.2f}",
+                                        ))
+                                        self._update_daily_pnl(realized_pnl)
+                                        self._record_trigger_close({
+                                            "coin": sym, "side": side, "entry_px": entry_px,
+                                            "exit_px": exit_px_trail, "realized_pnl": realized_pnl,
+                                            "classification": "trailing_stop",
+                                        })
+                                        self._position_types.pop(sym, None)
+                                        self._persist_position_types()
+                                        self._prev_positions.pop(sym, None)
+                                        try:
+                                            self._get_provider().cancel_all_orders(sym)
+                                        except Exception:
+                                            pass
+                                    except Exception as trail_close_err:
+                                        logger.warning("Trailing stop close failed for %s: %s", sym, trail_close_err)
 
                 # Small Wins Mode: mechanical exit at configured ROE target (no agent decision)
                 ts = get_trading_settings()
@@ -1909,6 +2051,71 @@ class Daemon:
             logger.debug("Fast trigger check failed: %s", e)
 
         self._check_pending_watches()
+
+    def _update_peaks_from_candles(self):
+        """Enhance MFE/MAE with 1m candle high/low for open positions.
+
+        Polls only miss peaks/troughs between 10s samples. 1m candles
+        include the true intra-candle extreme. Called once per minute.
+        Only fetches candles for coins with open positions (1 API call each).
+        """
+        if not self._prev_positions:
+            return
+
+        provider = self._get_provider()
+        now_ms = int(time.time() * 1000)
+        # Fetch last 2 minutes of 1m candles — ensures we get the just-closed candle
+        start_ms = now_ms - 2 * 60 * 1000
+
+        for sym, pos in self._prev_positions.items():
+            entry_px = pos.get("entry_px", 0)
+            leverage = pos.get("leverage", 20)
+            side = pos.get("side", "long")
+            if entry_px <= 0:
+                continue
+
+            try:
+                candles = provider.get_candles(sym, "1m", start_ms, now_ms)
+            except Exception:
+                logger.debug("Candle peak tracking failed for %s", sym)
+                continue
+
+            if not candles:
+                continue
+
+            for candle in candles:
+                high = candle.get("h", 0)
+                low = candle.get("l", 0)
+                if high <= 0 or low <= 0:
+                    continue
+
+                # Compute ROE at candle high and low
+                if side == "long":
+                    best_roe = ((high - entry_px) / entry_px * 100) * leverage
+                    worst_roe = ((low - entry_px) / entry_px * 100) * leverage
+                else:
+                    # Short profits when price drops (low), loses when price rises (high)
+                    best_roe = ((entry_px - low) / entry_px * 100) * leverage
+                    worst_roe = ((entry_px - high) / entry_px * 100) * leverage
+
+                # Update peaks — only if candle extreme exceeds current record
+                if best_roe > self._peak_roe.get(sym, 0):
+                    old_peak = self._peak_roe.get(sym, 0)
+                    self._peak_roe[sym] = best_roe
+                    if best_roe - old_peak > 0.5:  # Only log significant corrections
+                        logger.info(
+                            "MFE corrected by candle: %s %s | %.1f%% → %.1f%% (+%.1f%%)",
+                            sym, side, old_peak, best_roe, best_roe - old_peak,
+                        )
+
+                if worst_roe < self._trough_roe.get(sym, 0):
+                    old_trough = self._trough_roe.get(sym, 0)
+                    self._trough_roe[sym] = worst_roe
+                    if old_trough - worst_roe > 0.5:
+                        logger.info(
+                            "MAE corrected by candle: %s %s | %.1f%% → %.1f%% (%.1f%%)",
+                            sym, side, old_trough, worst_roe, worst_roe - old_trough,
+                        )
 
     def _check_pending_watches(self) -> None:
         """Fire any monitor_signal follow-ups whose delay has elapsed.
@@ -2147,6 +2354,25 @@ class Daemon:
         # Wake the agent with the appropriate message
         self._wake_for_fill(coin, side, entry_px, exit_px, realized_pnl, classification)
 
+        # Cache close for briefing Recent Trades — for ALL close types (not just trigger closes)
+        peak_roe = self._peak_roe.get(coin, 0.0)
+        pos_leverage = prev_data.get("leverage", 20)
+        pos_size = prev_data.get("size", 0)
+        if entry_px > 0 and pos_size > 0:
+            margin_used = pos_size * entry_px / pos_leverage if pos_leverage > 0 else 0
+            lev_ret = round(realized_pnl / margin_used * 100, 1) if margin_used > 0 else 0
+        else:
+            lev_ret = 0
+        self._recent_trade_closes.appendleft({
+            "coin": coin,
+            "side": side,
+            "leverage": pos_leverage,
+            "lev_return_pct": lev_ret,
+            "mfe_pct": round(peak_roe, 1),
+            "close_type": classification,
+            "closed_at": time.time(),
+        })
+
     def _record_trigger_close(self, event: dict):
         """Write a trade_close node to Nous when paper SL/TP/liquidation fires.
 
@@ -2250,6 +2476,17 @@ class Daemon:
                 logger.info("Recorded %s close for %s in Nous: %s", classification, coin, node_id)
             else:
                 logger.warning("Failed to record %s close for %s in Nous", classification, coin)
+
+            # Cache for briefing Recent Trades section
+            self._recent_trade_closes.appendleft({
+                "coin": coin,
+                "side": side,
+                "leverage": leverage,
+                "lev_return_pct": lev_return_pct,
+                "mfe_pct": round(mfe_pct, 1),
+                "close_type": classification,
+                "closed_at": time.time(),
+            })
         except Exception as e:
             logger.error("_record_trigger_close failed for %s: %s", event.get("coin", "?"), e)
 
@@ -2448,6 +2685,8 @@ class Daemon:
                     self._small_wins_tp_placed.pop(coin, None) # New hold — re-arm TP order
                     self._peak_roe.pop(coin, None)             # New hold — reset MFE
                     self._trough_roe.pop(coin, None)           # New hold — reset MAE
+                    self._trailing_active.pop(coin, None)      # New hold — re-arm trailing
+                    self._trailing_stop_px.pop(coin, None)     # New hold — clear trail price
                 self._profit_sides[coin] = side
 
                 if coin not in self._profit_alerts:
@@ -2514,6 +2753,12 @@ class Daemon:
             for coin in list(self._trough_roe):
                 if coin not in open_coins:
                     del self._trough_roe[coin]
+            for coin in list(self._trailing_active):
+                if coin not in open_coins:
+                    del self._trailing_active[coin]
+            for coin in list(self._trailing_stop_px):
+                if coin not in open_coins:
+                    del self._trailing_stop_px[coin]
 
         except Exception as e:
             logger.debug("Profit level check failed: %s", e)

@@ -1301,12 +1301,7 @@ CLOSE_TOOL_DEF = {
             },
             "force": {
                 "type": "boolean",
-                "description": (
-                    "Override fee-loss pre-flight check. Default false. "
-                    "Pass true ONLY when closing for risk management (broken thesis, "
-                    "stop management) — not to harvest a tiny green. "
-                    "Fee losses are directionally correct exits that still cost money."
-                ),
+                "description": "Deprecated — no longer has any effect. Kept for backward compatibility.",
             },
             "reasoning": {
                 "type": "string",
@@ -1360,28 +1355,6 @@ def handle_close_position(
         entry_px=position.get("entry_px", 0), size=position["size"],
     )
 
-    # --- Pre-flight fee check ---
-    # If closing would be a fee loss (direction correct but net < 0), block unless force=True
-    if not force:
-        mark_px = float(position.get("mark_px", 0))
-        unrealized_pnl = float(position.get("unrealized_pnl", 0))
-        full_size_pre = float(position.get("size", 0))
-        entry_px_pre = float(position.get("entry_px", 0))
-        if mark_px > 0 and full_size_pre > 0 and entry_px_pre > 0:
-            proj_size = full_size_pre * (partial_pct / 100.0)
-            proj_gross = unrealized_pnl * (partial_pct / 100.0)
-            proj_fees = proj_size * (entry_px_pre + mark_px) * 0.00035
-            proj_net = proj_gross - proj_fees
-            if proj_gross > 0 and proj_net < 0:
-                return (
-                    f"⚠ FEE BLOCK — closing {symbol} now would be a fee loss.\n"
-                    f"  Projected gross: {_fmt_price(proj_gross)}  |  "
-                    f"  Est. fees: ~{_fmt_price(proj_fees)}  |  "
-                    f"  Net: {_fmt_price(proj_net)}\n"
-                    f"Direction is correct. If you are closing for risk management "
-                    f"(thesis broken, stop management), pass force=True. "
-                    f"Otherwise, let TP work."
-                )
 
     # --- Validate limit close ---
     if order_type == "limit" and limit_price is None:
@@ -1794,14 +1767,36 @@ def handle_modify_position(
                 f"mark price ({_fmt_price(mark_px)}) for a short."
             )
 
-    changes = []
-
-    # --- Fetch existing trigger orders ONCE for selective cancellation ---
+    # --- Fetch existing trigger orders (used by lockout check AND cancel-replace flow) ---
     existing_triggers = []
     try:
         existing_triggers = provider.get_trigger_orders(symbol)
     except Exception as e:
         logger.warning("Failed to fetch trigger orders: %s", e)
+
+    # --- Mechanical stop lockout: LLM can only TIGHTEN stops, never widen ---
+    # Protects trailing/breakeven stops set by the daemon from being overridden.
+    if stop_loss is not None:
+        existing_sl = None
+        for t in existing_triggers:
+            if t.get("order_type") == "stop_loss":
+                existing_sl = t.get("trigger_px")
+                break
+        if existing_sl is not None:
+            if is_long and stop_loss < existing_sl:
+                return (
+                    f"BLOCKED: Cannot widen stop loss from ${existing_sl:,.2f} to ${stop_loss:,.2f}. "
+                    f"Mechanical stops can only be TIGHTENED (moved closer to current price). "
+                    f"Your SL must be >= ${existing_sl:,.2f} for this long."
+                )
+            if not is_long and stop_loss > existing_sl:
+                return (
+                    f"BLOCKED: Cannot widen stop loss from ${existing_sl:,.2f} to ${stop_loss:,.2f}. "
+                    f"Mechanical stops can only be TIGHTENED (moved closer to current price). "
+                    f"Your SL must be <= ${existing_sl:,.2f} for this short."
+                )
+
+    changes = []
 
     # --- Cancel orders ---
     if cancel_orders:
