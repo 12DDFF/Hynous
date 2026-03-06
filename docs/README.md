@@ -14,6 +14,7 @@ Hynous is a personal crypto intelligence system with an autonomous LLM trading a
 | [CLAUDE.md](../CLAUDE.md) | Agent instructions for working in this codebase |
 | [config/README.md](../config/README.md) | Configuration reference (`default.yaml`, `theme.yaml`) |
 | [integration.md](./integration.md) | Cross-system data flows (daemon, satellite, data-layer, dashboard) |
+| [revisions/](./revisions/) | Recent revision guides (3 tracks, all implemented) |
 | [archive/](./archive/) | Historical revision guides (all completed) |
 | [documentation-updating/](./documentation-updating/) | Current documentation audit and update tracking |
 
@@ -94,13 +95,25 @@ Key conventions:
 - New tools go in `src/hynous/intelligence/tools/` AND must be added to `prompts/builder.py` TOOL_STRATEGY
 - New pages go in `dashboard/dashboard/pages/` and are registered in `dashboard.py`
 - Config changes go in `config/default.yaml` and are modeled in `src/hynous/core/config.py`
-- All revisions are complete. There is no pending implementation work in `docs/archive/`.
+- All revisions are complete. Historical guides in `docs/archive/`, recent guides in `docs/revisions/`.
+
+---
+
+## Recent Revisions (2026-03-05)
+
+Implementation guides in [revisions/](./revisions/) — all implemented:
+
+| Track | Description |
+|-------|-------------|
+| [mechanical-exits/](./revisions/mechanical-exits/) | Trailing stops, breakeven stops, stop-tightening lockout, MFE/MAE tracking |
+| [realtime-price-data/](./revisions/realtime-price-data/) | 1-minute candle high/low enhancement for MFE/MAE tracking |
+| [agent-trade-memory/](./revisions/agent-trade-memory/) | Recent trade closes injected into briefing (deque + Nous fallback) |
 
 ---
 
 ## Archive
 
-Historical revision and implementation guides live in [archive/](./archive/). All 10 revision tracks are fully implemented:
+Historical revision and implementation guides live in [archive/](./archive/). All 11 revision tracks are fully implemented:
 
 - Nous wiring (10 issues)
 - Memory functionality (16 items)
@@ -112,9 +125,10 @@ Historical revision and implementation guides live in [archive/](./archive/). Al
 - Memory pruning
 - Memory sections (7 issues + brain visualization)
 - Portfolio tracking (3 bugs: stats_reset_at, initial balance, circuit breaker)
+- ML wiring (daemon inference pipeline, shadow mode)
 
 See [archive/README.md](./archive/README.md) for a complete index.
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-03-05

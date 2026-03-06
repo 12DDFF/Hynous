@@ -1,6 +1,6 @@
 # Archive Index
 
-> Historical revision and implementation guides. All 9 revision tracks are fully implemented. There is no pending work.
+> Historical revision and implementation guides. All 10 revision tracks are fully implemented. There is no pending work here. Active revisions are in `docs/revisions/`.
 
 ---
 
@@ -82,7 +82,15 @@ Brain-inspired memory sectioning: per-section retrieval weights, decay curves, c
 |-----------|----------|--------|
 | [memory-sections/](./memory-sections/) | Executive summary + 7 issue guides + brain visualization guide | ALL 7 ISSUES DONE |
 
-### 9. Other
+### 9. ML Wiring (2026-03-05)
+
+ML inference pipeline wired into live daemon: model loading, per-coin predictions, SHAP explanations, satellite.db persistence, briefing injection, kill switch safety, shadow mode.
+
+| Directory | Contents | Status |
+|-----------|----------|--------|
+| [../ML-wiring/](../ML-wiring/) | Implementation notes + interaction issues doc | IMPLEMENTED |
+
+### 10. Other
 
 | Directory | Contents | Status |
 |-----------|----------|--------|
@@ -93,7 +101,7 @@ Brain-inspired memory sectioning: per-section retrieval weights, decay curves, c
 
 ## For Agents
 
-All revisions are complete. If you need to understand a past design decision, read the relevant directory above. Start with the executive summary if one exists, then drill into implementation guides.
+All revisions are complete. Recent revision guides (mechanical exits, real-time price data, agent trade memory) are in `docs/revisions/`. If you need to understand a past design decision, read the relevant directory above. Start with the executive summary if one exists, then drill into implementation guides.
 
 Key starting points for understanding the system:
 - `nous-wiring/executive-summary.md` -- Nous integration overview
@@ -103,4 +111,4 @@ Key starting points for understanding the system:
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-03-05

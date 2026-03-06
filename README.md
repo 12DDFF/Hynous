@@ -26,7 +26,7 @@ hynous/
 ├── src/hynous/              # Main Python application
 │   ├── intelligence/        # LLM agent brain (agent, daemon, tools, prompts, scanner)
 │   ├── nous/                # Python HTTP client for Nous memory API
-│   ├── data/                # Market data providers (Hyperliquid, Binance, CryptoQuant)
+│   ├── data/                # Market data providers (Hyperliquid, Coinglass, CryptoCompare, Perplexity)
 │   ├── discord/             # Discord bot integration
 │   └── core/                # Shared utilities (config, types, errors, logging, tracing)
 │
@@ -88,7 +88,7 @@ If you're an AI agent working on this project:
 
 1. **Read first:** `ARCHITECTURE.md` explains how all four layers connect
 2. **Check docs:** `docs/archive/` has all completed revision history — start with `docs/archive/nous-wiring/executive-summary.md` for the Nous integration story
-3. **All revisions complete** — Nous wiring, memory search, trade recall, trade debug, token optimization, memory pruning, memory sections, and brain visualization all fully implemented
+3. **All revisions complete** — Nous wiring, memory search, trade recall, trade debug, token optimization, memory pruning, memory sections, brain visualization, portfolio tracking, ML wiring, mechanical exits, real-time price data, and agent trade memory all fully implemented
 4. **Follow patterns:** Each directory has a README explaining conventions
 5. **Stay modular:** One feature = one module. Don't mix concerns
 6. **Tool registration:** New tools need both `registry.py` registration AND `prompts/builder.py` system prompt guidance — registering alone is not enough
@@ -120,6 +120,11 @@ If you're an AI agent working on this project:
 - [x] Satellite ML engine (feature extraction, labeling, training, inference)
 - [x] Brain-inspired memory sections (4-section model, playbook matcher, bias layer)
 - [x] Brain visualization (sagittal SVG + per-section force graphs)
+- [x] ML inference wired into live daemon (shadow mode)
+- [x] Portfolio tracking fixes (stats reset, initial balance, circuit breaker)
+- [x] Mechanical exits (trailing stops, breakeven stops, MFE/MAE tracking)
+- [x] Real-time price data (1-min candle peak tracking)
+- [x] Agent trade memory (recent closes in briefing)
 - [ ] Phase 5: Live trading
 
 ---
@@ -131,11 +136,11 @@ If you're an AI agent working on this project:
 | UI | Reflex (Python-native, compiles to React) |
 | Agent | Claude (Anthropic) via LiteLLM |
 | Memory | @nous/core (TypeScript) via HTTP API |
-| Data | Hyperliquid SDK, Binance, CryptoQuant |
+| Data | Hyperliquid SDK, Coinglass, CryptoCompare, Perplexity |
 | ML | Satellite (Python, scikit-learn/XGBoost) |
 | Deploy | Ubuntu 24.04, systemd, Caddy HTTPS |
 | Config | YAML (default.yaml, theme.yaml) |
 
 ---
 
-*Last updated: 2026-03-01*
+*Last updated: 2026-03-05*

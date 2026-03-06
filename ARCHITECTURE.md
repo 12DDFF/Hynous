@@ -367,7 +367,7 @@ Large content (LLM messages, responses, injected context) is stored via SHA256 c
 
 ## Tools Reference
 
-22 tool modules registering 29 tools:
+21 tool modules registering 28 tools:
 
 | Module | Tools | Description |
 |--------|-------|-------------|
@@ -576,6 +576,24 @@ Debug Dashboard planning and implementation. **IMPLEMENTED.**
 
 Three paper trading portfolio bugs fixed (2026-03-01): (1) `stats_reset_at` auto-stamped on first run + `reset_paper_stats()` method + dashboard Reset Stats button; (2) initial balance now read from `provider._initial_balance` in context snapshot and briefing (not YAML config); (3) daemon-wake-initiated agent closes now update `_daily_realized_pnl` via fill lookup in `_wake_agent()` finally block. **ALL 3 BUGS FIXED.**
 
+### `docs/ML-wiring/`
+
+ML inference pipeline wired into live daemon (2026-03-05): model loading at startup, `_run_satellite_inference()` after each `satellite.tick()`, prediction persistence to `satellite.db`, briefing injection via `_latest_predictions` cache, kill switch safety checks, shadow mode default. **IMPLEMENTED.**
+
+---
+
+### `docs/revisions/mechanical-exits/`
+
+Mechanical exit system (2026-03-05): trailing stops (activate at 2.8% ROE, 50% retracement trail, floor at fee-breakeven), breakeven stops (BUG-1 fix: formula inversion), stop-tightening lockout, MFE/MAE tracking. Code handles exits deterministically; LLM handles entries. **IMPLEMENTED.**
+
+### `docs/revisions/realtime-price-data/`
+
+1-minute candle high/low enhancement (2026-03-05): uses candle extremes to catch MFE/MAE peaks missed by 10s polling gaps. Supplements polling-based tracking. **IMPLEMENTED.**
+
+### `docs/revisions/agent-trade-memory/`
+
+Agent trade memory (2026-03-05): in-memory deque of recent trade closes injected into briefing, with Nous fallback for cold starts. **IMPLEMENTED.**
+
 ---
 
 ## For Future Agents
@@ -583,14 +601,14 @@ Three paper trading portfolio bugs fixed (2026-03-01): (1) `stats_reset_at` auto
 When working on this codebase:
 
 1. **Check docs/archive/ first** -- contains documented issues and their resolutions (formerly `revisions/`)
-2. **All revisions complete** -- Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning, memory sections, brain visualization, and portfolio tracking are all fully implemented
-3. **Check existing patterns** -- Don't reinvent, extend
-4. **Keep modules focused** -- One responsibility per file
-5. **Update this doc** -- If you change architecture, document it
-6. **Test your changes** -- Don't break what works
-7. **System prompt matters** -- Tools registered in `registry.py` also need guidance in `prompts/builder.py` TOOL_STRATEGY or the agent won't use them
-8. **Nous dist rebuild** -- When changing `@nous/core` exports, run `pnpm build` in `nous-server/core/` to update `dist/`
+2. **All revisions complete** -- Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning, memory sections, brain visualization, portfolio tracking, ML wiring, mechanical exits, real-time price data, and agent trade memory are all fully implemented (see docs/archive/ and docs/revisions/)
+4. **Check existing patterns** -- Don't reinvent, extend
+5. **Keep modules focused** -- One responsibility per file
+6. **Update this doc** -- If you change architecture, document it
+7. **Test your changes** -- Don't break what works
+8. **System prompt matters** -- Tools registered in `registry.py` also need guidance in `prompts/builder.py` TOOL_STRATEGY or the agent won't use them
+9. **Nous dist rebuild** -- When changing `@nous/core` exports, run `pnpm build` in `nous-server/core/` to update `dist/`
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-03-05
