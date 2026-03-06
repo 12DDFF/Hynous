@@ -459,15 +459,27 @@ async def _ml_status(request):
             row = conn.execute("SELECT MAX(created_at) as latest FROM snapshots").fetchone()
             if row["latest"]:
                 result["last_tick_time"] = row["latest"]
-            # Check for model metadata
+            conn.close()
+            # Check for model artifact on disk
             try:
-                row = conn.execute("SELECT value FROM satellite_metadata WHERE key = 'model_version'").fetchone()
-                if row:
-                    result["model_loaded"] = True
-                    result["model_version"] = row["value"]
+                import json as _json
+                from hynous.core.config import load_config as _lc
+                _cfg = _lc()
+                _artifacts_dir = _cfg.project_root / "satellite" / "artifacts"
+                if _artifacts_dir.exists():
+                    _versions = sorted(
+                        [d for d in _artifacts_dir.iterdir() if d.is_dir() and d.name.startswith("v")],
+                        key=lambda d: int(d.name[1:]) if d.name[1:].isdigit() else 0,
+                        reverse=True,
+                    )
+                    if _versions:
+                        _latest = _versions[0]
+                        _meta = _latest / f"metadata_{_latest.name}.json"
+                        if _meta.exists():
+                            result["model_loaded"] = True
+                            result["model_version"] = _latest.name
             except Exception:
                 pass
-            conn.close()
         except Exception:
             pass
         return result
@@ -681,7 +693,7 @@ async def _ml_model(request):
 
     def _query():
         config = load_config()
-        artifacts_dir = config.project_root / "artifacts"
+        artifacts_dir = config.project_root / "satellite" / "artifacts"
         if not artifacts_dir.exists():
             return None, "no_data"
         # Find latest version directory
