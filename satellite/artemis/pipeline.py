@@ -242,7 +242,13 @@ def _process_perp_balances(
                 if not address:
                     continue
 
-                positions = record.get("assetPositions", [])
+                # Artemis S3 format nests positions inside response.perpetual
+                perp = record.get("response", {}).get("perpetual", {})
+                positions = (
+                    perp.get("assetPositions")
+                    or record.get("assetPositions")
+                    or []
+                )
                 has_significant = False
 
                 for pos in positions:
