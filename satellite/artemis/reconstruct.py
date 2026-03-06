@@ -88,6 +88,18 @@ def reconstruct_day(
                     funding_by_coin[coin], data_layer_db,
                 )
 
+                # Filter candles to window around this snapshot
+                # (compute_features uses last few candles relative to 'now')
+                snap_ms = snapshot_time * 1000
+                c5m = [
+                    c for c in candles_by_coin[coin]
+                    if c["t"] <= snap_ms
+                ]
+                c1m = [
+                    c for c in candles_1m_by_coin[coin]
+                    if c["t"] <= snap_ms
+                ]
+
                 result = compute_features(
                     coin=coin,
                     snapshot=synthetic_snapshot,
@@ -96,14 +108,13 @@ def reconstruct_day(
                     order_flow_engine=None,
                     config=None,
                     timestamp=snapshot_time,
+                    candles_5m=c5m,
+                    candles_1m=c1m,
                 )
 
-                # Override features needing special historical computation
-                _enrich_historical_features(
-                    result, coin, snapshot_time,
-                    candles_by_coin[coin], data_layer_db,
-                    candles_1m=candles_1m_by_coin[coin],
-                )
+                # CVD: compute_features needs OrderFlowEngine (None in backfill).
+                # Override from trade_flow_history table instead.
+                _enrich_cvd(result, coin, snapshot_time, data_layer_db)
 
                 # Mark as backfill
                 result.raw_data = result.raw_data or {}
@@ -132,11 +143,102 @@ def reconstruct_day(
 
         snapshot_time += 300  # next 5-minute mark
 
+    # Re-label previous day's unlabeled snapshots.
+    # When day N was processed, snapshots after ~20:00 UTC couldn't get 4h labels
+    # because day N+1's candles didn't exist yet. Now that we've built day N+1's
+    # candles (this day), we can fill those gaps.
+    prev_labels = _relabel_previous_day(
+        dt, coins, data_layer_db, satellite_store,
+    )
+    labels_computed += prev_labels
+
     log.info(
-        "Reconstructed %s: %d snapshots, %d labels",
-        date_str, snapshots_created, labels_computed,
+        "Reconstructed %s: %d snapshots, %d labels (%d from prev day relabel)",
+        date_str, snapshots_created, labels_computed, prev_labels,
     )
     return snapshots_created, labels_computed
+
+
+def _relabel_previous_day(
+    current_dt: datetime,
+    coins: list[str],
+    data_layer_db: object,
+    satellite_store: object,
+) -> int:
+    """Re-label unlabeled snapshots from the previous day.
+
+    When day N was reconstructed, late-day snapshots (after ~20:00 UTC)
+    couldn't get 4h forward labels because day N+1's candles didn't exist.
+    Now that day N+1 has been processed, we load candles spanning both days
+    and fill in the missing labels.
+
+    Args:
+        current_dt: The current day being processed (day N+1).
+        coins: List of coin symbols.
+        data_layer_db: Data-layer DB with candles_history.
+        satellite_store: SatelliteStore for reading/writing.
+
+    Returns:
+        Number of labels computed.
+    """
+    from satellite.labeler import compute_labels, save_labels
+
+    prev_dt = current_dt - timedelta(days=1)
+    prev_start = prev_dt.timestamp()
+    prev_end = current_dt.timestamp()
+
+    labels_added = 0
+
+    for coin in coins:
+        # Find unlabeled snapshots from previous day
+        unlabeled = satellite_store.conn.execute(
+            """
+            SELECT s.snapshot_id, s.created_at, s.coin
+            FROM snapshots s
+            LEFT JOIN snapshot_labels sl ON s.snapshot_id = sl.snapshot_id
+            WHERE s.coin = ? AND s.created_at >= ? AND s.created_at < ?
+              AND sl.snapshot_id IS NULL
+            ORDER BY s.created_at ASC
+            """,
+            (coin, prev_start, prev_end),
+        ).fetchall()
+
+        if not unlabeled:
+            continue
+
+        # Load candles spanning prev day + 4h into current day
+        candles = _load_candles_from_db(
+            data_layer_db, coin, "5m",
+            prev_start - 3600, prev_end + 14400,
+        )
+
+        if not candles:
+            continue
+
+        for row in unlabeled:
+            try:
+                label_result = compute_labels(
+                    snapshot_id=row["snapshot_id"],
+                    entry_time=row["created_at"],
+                    coin=coin,
+                    candles=candles,
+                )
+                if label_result:
+                    save_labels(satellite_store, label_result)
+                    labels_added += 1
+            except Exception:
+                log.debug(
+                    "Failed relabel for %s at %s",
+                    coin, row["created_at"], exc_info=True,
+                )
+
+        if labels_added:
+            log.info(
+                "Re-labeled %d snapshots from %s for %s",
+                labels_added, prev_dt.strftime("%Y-%m-%d"), coin,
+            )
+
+    return labels_added
 
 
 class _SyntheticSnapshot:
@@ -170,10 +272,10 @@ def _build_synthetic_snapshot(
     """
     snap = _SyntheticSnapshot()
 
-    # Price from nearest candle
+    # Price from nearest candle (HL-format keys: t=ms, c=close)
     nearest_candle = _find_nearest_candle(candles, timestamp)
     if nearest_candle:
-        snap.prices[coin] = nearest_candle["close"]
+        snap.prices[coin] = nearest_candle["c"]
 
     # Funding from nearest historical record
     nearest_funding = _find_nearest_record(
@@ -195,46 +297,23 @@ def _build_synthetic_snapshot(
     except Exception:
         pass
 
-    # Volume from candle data
-    if nearest_candle:
-        snap.volume_usd[coin] = (
-            nearest_candle.get("volume", 0) * nearest_candle["close"]
-        )
+    # Volume: NOT set here. _compute_volume_ratio reads from volume_history table.
+    # Setting volume_usd from candle data would use wrong semantics (candle vol != 5m bucket vol).
 
     return snap
 
 
-def _enrich_historical_features(
+def _enrich_cvd(
     result: object,
     coin: str,
     timestamp: float,
-    candles: list[dict],
     data_layer_db: object,
-    candles_1m: list[dict] | None = None,
 ) -> None:
-    """Override features that need special historical computation.
+    """Override CVD from trade_flow_history (no OrderFlowEngine in backfill).
 
-    Some features can't be computed by compute_features() in historical
-    mode because they need data sources not available (no live heatmap,
-    no live CVD). Compute them from Artemis-derived data instead.
+    compute_features() sets CVD to neutral when order_flow_engine is None.
+    We fill it from the same taker-side buy/sell volumes stored by the pipeline.
     """
-    import math
-
-    # price_change_5m_pct from candles
-    current_candle = _find_nearest_candle(candles, timestamp)
-    prev_candle = _find_nearest_candle(candles, timestamp - 300)
-    if (
-        current_candle and prev_candle
-        and prev_candle["close"] > 0
-    ):
-        pct = (
-            (current_candle["close"] - prev_candle["close"])
-            / prev_candle["close"] * 100
-        )
-        result.features["price_change_5m_pct"] = pct
-        result.availability["price_change_5m_avail"] = 1
-
-    # cvd_normalized_5m from trade_flow_history (populated by _process_node_fills)
     try:
         bucket_start = int(timestamp // 300) * 300
         row = data_layer_db.conn.execute(
@@ -254,37 +333,6 @@ def _enrich_historical_features(
                 result.availability["cvd_avail"] = 1
     except Exception:
         pass  # table may not exist yet, feature stays at neutral
-
-    # realized_vol_1h from 1-minute candles
-    if candles_1m:
-        try:
-            # Get 1m candles in the past hour
-            hour_candles = [
-                c for c in candles_1m
-                if timestamp - 3600 <= c["open_time"] < timestamp
-            ]
-            if len(hour_candles) >= 10:
-                # Compute log returns
-                returns = []
-                for i in range(1, len(hour_candles)):
-                    prev_close = hour_candles[i - 1]["close"]
-                    curr_close = hour_candles[i]["close"]
-                    if prev_close > 0 and curr_close > 0:
-                        returns.append(
-                            math.log(curr_close / prev_close),
-                        )
-                if len(returns) >= 5:
-                    mean_ret = sum(returns) / len(returns)
-                    variance = sum(
-                        (r - mean_ret) ** 2 for r in returns
-                    ) / len(returns)
-                    # Annualize: std * sqrt(periods_per_hour)
-                    # But we want hourly vol, so just std * sqrt(60)
-                    realized_vol = math.sqrt(variance) * math.sqrt(60) * 100
-                    result.features["realized_vol_1h"] = realized_vol
-                    result.availability["realized_vol_avail"] = 1
-        except Exception:
-            pass  # feature stays at neutral
 
 
 # ─── Data Loading (from candles_history table) ───────────────────────────────
@@ -312,12 +360,12 @@ def _load_candles_from_db(
         ).fetchall()
         return [
             {
-                "open_time": float(r["open_time"]),
-                "open": float(r["open"]),
-                "high": float(r["high"]),
-                "low": float(r["low"]),
-                "close": float(r["close"]),
-                "volume": float(r["volume"]),
+                "t": float(r["open_time"]) * 1000,  # ms, matches HL API format
+                "o": float(r["open"]),
+                "h": float(r["high"]),
+                "l": float(r["low"]),
+                "c": float(r["close"]),
+                "v": float(r["volume"]),
             }
             for r in rows
         ]
@@ -423,19 +471,18 @@ def _fetch_candles(
         candles = []
         for c in raw:
             t = c["t"]
-            open_time = (
-                t / 1000 if isinstance(t, (int, float)) else float(t)
-            )
+            # Keep as ms (HL-format) — matches _load_candles_from_db output
+            t_ms = float(t) if isinstance(t, (int, float)) else float(t)
             candles.append({
-                "open_time": open_time,
-                "open": float(c["o"]),
-                "high": float(c["h"]),
-                "low": float(c["l"]),
-                "close": float(c["c"]),
-                "volume": float(c["v"]),
+                "t": t_ms,
+                "o": float(c["o"]),
+                "h": float(c["h"]),
+                "l": float(c["l"]),
+                "c": float(c["c"]),
+                "v": float(c["v"]),
             })
 
-        return sorted(candles, key=lambda x: x["open_time"])
+        return sorted(candles, key=lambda x: x["t"])
 
     except Exception:
         log.exception("Failed to fetch candles for %s", coin)
@@ -517,10 +564,14 @@ def _fetch_funding_history(
 def _find_nearest_candle(
     candles: list[dict], timestamp: float,
 ) -> dict | None:
-    """Find the candle whose open_time is closest to but <= timestamp."""
+    """Find the candle whose open time is closest to but <= timestamp.
+
+    Candles use HL-format keys: t is in milliseconds.
+    """
     best = None
+    ts_ms = timestamp * 1000
     for c in candles:
-        if c["open_time"] <= timestamp:
+        if c["t"] <= ts_ms:
             best = c
         else:
             break

@@ -344,6 +344,9 @@ class Daemon:
         # Populated by trading tool via register_position_type(), inferred on restart
         self._position_types: dict[str, dict] = {}
 
+        # Volume delta tracking (24h rolling → 5m delta for volume_history parity)
+        self._prev_day_volume: dict[str, float] = {}
+
         # Risk guardrails (circuit breaker)
         self._daily_realized_pnl: float = 0.0
         self._daily_reset_date: str = ""    # YYYY-MM-DD UTC
@@ -1314,9 +1317,18 @@ class Daemon:
             o = self.snapshot.oi_usd.get(sym)
             if o is not None:
                 oi[sym] = o
-            v = self.snapshot.volume_usd.get(sym)
-            if v is not None:
-                volume[sym] = v
+            # Compute 5m volume delta from consecutive dayNtlVlm readings.
+            # dayNtlVlm is a cumulative counter that resets at 00:00 UTC.
+            # This matches backfill semantics (5m bucket volume in volume_history).
+            current_day_vol = self.snapshot.volume_usd.get(sym, 0)
+            prev_day_vol = self._prev_day_volume.get(sym, 0)
+            if prev_day_vol > 0 and current_day_vol >= prev_day_vol:
+                volume[sym] = current_day_vol - prev_day_vol
+            elif prev_day_vol > 0 and current_day_vol < prev_day_vol:
+                # Cumulative counter decreased → midnight UTC reset. Skip this tick.
+                pass
+            # else: first reading after restart, skip (no baseline yet)
+            self._prev_day_volume[sym] = current_day_vol
 
         if funding or oi or volume:
             client.record_historical(funding=funding, oi=oi, volume=volume)

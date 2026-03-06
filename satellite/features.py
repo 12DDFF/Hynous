@@ -349,8 +349,8 @@ def _compute_oi_ratio(
         cutoff = now - 7 * 86400
         row = data_layer_db.conn.execute(
             "SELECT AVG(oi_usd) as avg_oi FROM oi_history "
-            "WHERE coin = ? AND recorded_at >= ?",
-            (coin, cutoff),
+            "WHERE coin = ? AND recorded_at >= ? AND recorded_at <= ?",
+            (coin, cutoff, now),
         ).fetchone()
 
         avg_oi = safe_float(row["avg_oi"]) if row else 0
@@ -396,14 +396,16 @@ def _compute_liq_cascade(
 
         row_1h = data_layer_db.conn.execute(
             "SELECT COALESCE(SUM(size_usd), 0) as total "
-            "FROM liquidation_events WHERE coin = ? AND occurred_at >= ?",
-            (coin, cutoff_1h),
+            "FROM liquidation_events "
+            "WHERE coin = ? AND occurred_at >= ? AND occurred_at <= ?",
+            (coin, cutoff_1h, now),
         ).fetchone()
 
         row_4h = data_layer_db.conn.execute(
             "SELECT COALESCE(SUM(size_usd), 0) as total "
-            "FROM liquidation_events WHERE coin = ? AND occurred_at >= ?",
-            (coin, cutoff_4h),
+            "FROM liquidation_events "
+            "WHERE coin = ? AND occurred_at >= ? AND occurred_at <= ?",
+            (coin, cutoff_4h, now),
         ).fetchone()
 
         liq_1h = safe_float(row_1h["total"])
@@ -455,8 +457,9 @@ def _compute_funding_zscore(
 
         current_row = data_layer_db.conn.execute(
             "SELECT rate FROM funding_history "
-            "WHERE coin = ? ORDER BY recorded_at DESC LIMIT 1",
-            (coin,),
+            "WHERE coin = ? AND recorded_at <= ? "
+            "ORDER BY recorded_at DESC LIMIT 1",
+            (coin, now),
         ).fetchone()
 
         if current_row is None:
@@ -471,8 +474,8 @@ def _compute_funding_zscore(
         # Compute 30-day stats in Python (SQLite has no STDEV_POP)
         rows = data_layer_db.conn.execute(
             "SELECT rate FROM funding_history "
-            "WHERE coin = ? AND recorded_at >= ?",
-            (coin, cutoff_30d),
+            "WHERE coin = ? AND recorded_at >= ? AND recorded_at <= ?",
+            (coin, cutoff_30d, now),
         ).fetchall()
 
         if len(rows) < 10:  # need >= 10 points for meaningful z-score
@@ -707,38 +710,50 @@ def _compute_volume_ratio(
     data_layer_db: object,
     now: float,
 ) -> None:
-    """Compute volume_vs_1h_avg_ratio: current_volume / avg_volume_1h."""
+    """Compute volume_vs_1h_avg_ratio: recent_1h_volume / previous_4h_avg_hourly.
+
+    Both live and backfill write 5m bucket volumes to volume_history.
+    This function reads exclusively from that table — never from snapshot.volume_usd
+    (which is HL's 24h rolling total, a different metric entirely).
+    """
     try:
-        current_volume = safe_float(
-            getattr(snapshot, "volume_usd", {}).get(coin)
-        )
-        if current_volume <= 0:
-            features["volume_vs_1h_avg_ratio"] = NEUTRAL_VALUES[
-                "volume_vs_1h_avg_ratio"
-            ]
-            avail["volume_avail"] = 0
-            return
-
         cutoff_1h = now - 3600
-        row = data_layer_db.conn.execute(
-            "SELECT AVG(volume_usd) as avg_vol FROM volume_history "
-            "WHERE coin = ? AND recorded_at >= ?",
-            (coin, cutoff_1h),
+        cutoff_5h = now - 5 * 3600
+
+        # Current: sum of volume in last hour (twelve 5m buckets)
+        row_1h = data_layer_db.conn.execute(
+            "SELECT SUM(volume_usd) as total FROM volume_history "
+            "WHERE coin = ? AND recorded_at >= ? AND recorded_at <= ?",
+            (coin, cutoff_1h, now),
         ).fetchone()
+        current_1h = safe_float(row_1h["total"]) if row_1h else 0
 
-        avg_vol = safe_float(row["avg_vol"]) if row else 0
-
-        if avg_vol <= 0:
+        if current_1h <= 0:
             features["volume_vs_1h_avg_ratio"] = NEUTRAL_VALUES[
                 "volume_vs_1h_avg_ratio"
             ]
             avail["volume_avail"] = 0
             return
 
-        features["volume_vs_1h_avg_ratio"] = current_volume / avg_vol
+        # Average: hourly volume over previous 4 hours
+        row_avg = data_layer_db.conn.execute(
+            "SELECT SUM(volume_usd) / 4.0 as avg_hourly FROM volume_history "
+            "WHERE coin = ? AND recorded_at >= ? AND recorded_at < ?",
+            (coin, cutoff_5h, cutoff_1h),
+        ).fetchone()
+        avg_hourly = safe_float(row_avg["avg_hourly"]) if row_avg else 0
+
+        if avg_hourly <= 0:
+            features["volume_vs_1h_avg_ratio"] = NEUTRAL_VALUES[
+                "volume_vs_1h_avg_ratio"
+            ]
+            avail["volume_avail"] = 0
+            return
+
+        features["volume_vs_1h_avg_ratio"] = current_1h / avg_hourly
         avail["volume_avail"] = 1
-        raw_data["volume_current"] = current_volume
-        raw_data["volume_1h_avg"] = avg_vol
+        raw_data["volume_1h"] = current_1h
+        raw_data["volume_avg_hourly"] = avg_hourly
 
     except Exception:
         log.debug(

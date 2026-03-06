@@ -131,13 +131,14 @@ def process_single_day(
         # Phase 2: Node Fills (hourly Parquet)
         trades = 0
         profiles = 0
+        liq_count = 0
         fills_prefix = f"{config.s3_prefix}node_fills/hourly/{y}/{m}/{d}/"
         fills_files = _download_s3_all(
             config.s3_bucket, fills_prefix,
             temp_dir / "node_fills",
         )
         if fills_files:
-            trades, profiles = _process_node_fills_parquet(
+            trades, profiles, liq_count = _process_node_fills_parquet(
                 fills_files, data_layer_db, date_str, config,
                 skip_profiling=skip_profiling,
             )
@@ -158,7 +159,7 @@ def process_single_day(
     return DayResult(
         date=date_str,
         addresses_discovered=addresses,
-        liquidation_events=0,  # no liq flag in Parquet data
+        liquidation_events=liq_count,
         trades_processed=trades,
         profiles_computed=profiles,
         snapshots_reconstructed=snapshots,
@@ -294,20 +295,20 @@ def _process_node_fills_parquet(
     date_str: str,
     config: ArtemisConfig,
     skip_profiling: bool = False,
-) -> tuple[int, int]:
-    """Process Node Fills Parquet files: extract trades, volume, CVD.
+) -> tuple[int, int, int]:
+    """Process Node Fills Parquet files: extract trades, volume, CVD, liquidations, OI.
 
     Parquet columns: user, coin, px, sz, side (B/A), time, dir,
         closedPnl, crossed (taker flag), fee, tid, ...
 
     Each trade appears twice (buyer + seller). We use crossed=True
-    (taker) for volume/CVD to avoid double-counting.
+    (taker) for volume/CVD/OI to avoid double-counting.
 
     Args:
         skip_profiling: If True, skip wallet profiling to save memory.
 
     Returns:
-        (trades_processed, profiles_computed)
+        (trades_processed, profiles_computed, liquidation_events)
     """
     import pyarrow.parquet as pq
 
@@ -323,15 +324,30 @@ def _process_node_fills_parquet(
     candle_builders_5m: dict[tuple[str, int], dict] = {}
     candle_builders_1m: dict[tuple[str, int], dict] = {}
 
+    # NEW: track liquidation events and OI deltas per 5m bucket
+    liq_events: list[tuple] = []
+    oi_delta_by_coin_bucket: dict[tuple[str, int], float] = {}
+
     for fp in sorted(file_paths):
-        read_cols = ["coin", "px", "sz", "side", "crossed", "time"]
+        base_cols = ["coin", "px", "sz", "side", "crossed", "time"]
         if not skip_profiling:
-            read_cols.append("user")
+            base_cols.append("user")
+
+        # Try reading with dir column; fall back without if column doesn't exist
         try:
-            table = pq.read_table(str(fp), columns=read_cols)
+            table = pq.read_table(str(fp), columns=base_cols + ["dir"])
         except Exception:
-            log.warning("Failed to read Parquet: %s", fp)
-            continue
+            try:
+                table = pq.read_table(str(fp), columns=base_cols)
+            except Exception:
+                log.warning("Failed to read Parquet: %s", fp)
+                continue
+
+        # dir column may not exist in all Parquet files
+        try:
+            col_dir = table.column("dir")
+        except KeyError:
+            col_dir = None
 
         # Use PyArrow columnar access (no Pandas, much less memory)
         n_rows = table.num_rows
@@ -374,6 +390,35 @@ def _process_node_fills_parquet(
                     continue
 
                 total_trades += 1
+
+                # Extract dir column for liquidations + OI tracking
+                raw_dir = col_dir[i].as_py() if col_dir is not None else None
+                dir_val = raw_dir if isinstance(raw_dir, str) else ""
+
+                # Liquidation extraction: dir contains "Liq Long" or "Liq Short"
+                if "Liq" in dir_val and crossed and coin:
+                    liq_side = "long" if "Long" in dir_val else "short"
+                    liq_size_usd = abs(px * sz)
+                    if liq_size_usd >= 100:  # match live $100 dust filter
+                        liq_events.append((
+                            coin, timestamp, liq_side,
+                            liq_size_usd, px, None,
+                        ))
+
+                # OI delta tracking from taker fills only (avoid double-counting)
+                # "Open*" increases OI, "Close*" and "Liq*" decrease OI
+                if crossed and coin and dir_val:
+                    bucket_5m = int(timestamp // 300) * 300
+                    oi_key = (coin, bucket_5m)
+                    change_usd = abs(px * sz)
+                    if dir_val.startswith("Open"):
+                        oi_delta_by_coin_bucket[oi_key] = (
+                            oi_delta_by_coin_bucket.get(oi_key, 0) + change_usd
+                        )
+                    elif dir_val.startswith("Close") or dir_val.startswith("Liq"):
+                        oi_delta_by_coin_bucket[oi_key] = (
+                            oi_delta_by_coin_bucket.get(oi_key, 0) - change_usd
+                        )
 
                 # Only count TAKER fills for volume/CVD/candles (avoid double-counting)
                 if crossed and coin and size_usd > 0:
@@ -509,6 +554,77 @@ def _process_node_fills_parquet(
                 candle_rows,
             )
 
+        # Write liquidation events (clear day first to allow re-runs)
+        if liq_events:
+            dt_start = datetime.strptime(
+                date_str, "%Y-%m-%d",
+            ).replace(tzinfo=timezone.utc).timestamp()
+            dt_end = dt_start + 86400
+            db.conn.execute(
+                "DELETE FROM liquidation_events "
+                "WHERE occurred_at >= ? AND occurred_at < ?",
+                (dt_start, dt_end),
+            )
+            db.conn.executemany(
+                "INSERT INTO liquidation_events "
+                "(coin, occurred_at, side, size_usd, price, address) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                liq_events,
+            )
+
+        # Build intra-day OI from daily anchor + cumulative deltas
+        dt_epoch = datetime.strptime(
+            date_str, "%Y-%m-%d",
+        ).replace(tzinfo=timezone.utc).timestamp()
+
+        oi_rows_written = 0
+        for coin_name in config.coins:
+            anchor_row = db.conn.execute(
+                "SELECT oi_usd FROM oi_history "
+                "WHERE coin = ? AND recorded_at = ?",
+                (coin_name, dt_epoch),
+            ).fetchone()
+            if not anchor_row:
+                log.warning(
+                    "No OI anchor for %s on %s — skipping intra-day OI",
+                    coin_name, date_str,
+                )
+                continue
+
+            anchor_oi = float(anchor_row["oi_usd"])
+
+            # Get sorted 5m buckets for this coin
+            coin_buckets = sorted(
+                (bucket, delta)
+                for (c, bucket), delta in oi_delta_by_coin_bucket.items()
+                if c == coin_name
+            )
+
+            cumulative = 0.0
+            intra_oi_rows = []
+            for bucket, delta in coin_buckets:
+                cumulative += delta
+                oi_at_bucket = anchor_oi + cumulative
+                if oi_at_bucket > 0:
+                    intra_oi_rows.append((coin_name, float(bucket), oi_at_bucket))
+
+            if intra_oi_rows:
+                db.conn.executemany(
+                    "INSERT OR IGNORE INTO oi_history "
+                    "(coin, recorded_at, oi_usd) VALUES (?, ?, ?)",
+                    intra_oi_rows,
+                )
+                oi_rows_written += len(intra_oi_rows)
+
+            # Validation: log EOD drift
+            if coin_buckets:
+                eod_oi = anchor_oi + cumulative
+                drift_pct = abs(eod_oi - anchor_oi) / anchor_oi * 100 if anchor_oi > 0 else 0
+                log.debug(
+                    "OI drift %s %s: anchor=%.0f, eod=%.0f, drift=%.1f%%",
+                    coin_name, date_str, anchor_oi, eod_oi, drift_pct,
+                )
+
         db.conn.commit()
 
     # Profile significant wallets (skipped during backfill to save memory)
@@ -522,11 +638,12 @@ def _process_node_fills_parquet(
         profiles = batch_profile(db, significant_traders, date_str)
 
     log.info(
-        "Node Fills %s: %d taker trades, %d vol buckets, %d 5m candles, %d 1m candles, %d profiles",
+        "Node Fills %s: %d trades, %d vol buckets, %d 5m candles, %d 1m candles, %d liqs, %d OI buckets, %d profiles",
         date_str, total_trades, len(volume_by_coin_bucket),
-        len(candle_builders_5m), len(candle_builders_1m), profiles,
+        len(candle_builders_5m), len(candle_builders_1m),
+        len(liq_events), len(oi_delta_by_coin_bucket), profiles,
     )
-    return total_trades, profiles
+    return total_trades, profiles, len(liq_events)
 
 
 def _safe_delete(path: Path) -> None:

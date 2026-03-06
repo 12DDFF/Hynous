@@ -106,15 +106,16 @@ def compute_labels(
         entry_time: Unix timestamp of the snapshot (entry moment).
         coin: Coin symbol (for logging only).
         candles: List of OHLCV candle dicts, sorted by time ascending.
-            Required keys: open_time (epoch), open, high, low, close, volume.
+            HL-format keys: t (ms), o, h, l, c, v.
             Must cover at least 4h of data after entry_time.
         leverage: Position leverage (default 20x).
 
     Returns:
         LabelResult with all labels computed, or None if insufficient data.
     """
-    # Filter to strictly future candles only (open_time > entry_time)
-    future_candles = [c for c in candles if c["open_time"] > entry_time]
+    # Filter to strictly future candles only (t in ms, entry_time in seconds)
+    entry_ms = entry_time * 1000
+    future_candles = [c for c in candles if c["t"] > entry_ms]
 
     if len(future_candles) < 3:
         log.debug(
@@ -128,16 +129,17 @@ def compute_labels(
         log.debug("No entry candle found for %s at %s", coin, entry_time)
         return None
 
-    entry_price = entry_candle["close"]
+    entry_price = entry_candle["c"]
     if entry_price <= 0:
         return None
 
     # Compute gross ROE for each window
     result_data = {}
     for window_name, window_seconds in LABEL_WINDOWS.items():
+        window_end_ms = (entry_time + window_seconds) * 1000
         window_candles = [
             c for c in future_candles
-            if c["open_time"] <= entry_time + window_seconds
+            if c["t"] <= window_end_ms
         ]
 
         if not window_candles:
@@ -146,13 +148,13 @@ def compute_labels(
             continue
 
         # Best long ROE: highest high in window
-        best_high = max(c["high"] for c in window_candles)
+        best_high = max(c["h"] for c in window_candles)
         long_roe_gross = (
             (best_high - entry_price) / entry_price * leverage * 100
         )
 
         # Best short ROE: lowest low in window
-        best_low = min(c["low"] for c in window_candles)
+        best_low = min(c["l"] for c in window_candles)
         short_roe_gross = (
             (1 - best_low / entry_price) * leverage * 100
         )
@@ -225,12 +227,13 @@ def _find_entry_candle(
 ) -> dict | None:
     """Find the candle whose interval contains entry_time.
 
-    Returns the candle where open_time <= entry_time < open_time + interval.
-    If no exact match, returns the most recent candle before entry_time.
+    Returns the candle where t <= entry_time < next candle t.
+    Candles use HL-format: t in milliseconds, entry_time in seconds.
     """
     best = None
+    entry_ms = entry_time * 1000
     for c in candles:
-        if c["open_time"] <= entry_time:
+        if c["t"] <= entry_ms:
             best = c
         else:
             break
@@ -254,20 +257,21 @@ def _compute_mae(
     MAE = worst drawdown experienced before reaching the best exit.
     Negative value (e.g., -5.2% = 5.2% drawdown).
     """
+    window_end_ms = (entry_time + window_seconds) * 1000
     window_candles = [
         c for c in future_candles
-        if c["open_time"] <= entry_time + window_seconds
+        if c["t"] <= window_end_ms
     ]
 
     if not window_candles:
         return None, None
 
     # Long MAE: worst low relative to entry
-    worst_low = min(c["low"] for c in window_candles)
+    worst_low = min(c["l"] for c in window_candles)
     mae_long = (worst_low - entry_price) / entry_price * leverage * 100
 
     # Short MAE: worst high relative to entry
-    worst_high = max(c["high"] for c in window_candles)
+    worst_high = max(c["h"] for c in window_candles)
     mae_short = (1 - worst_high / entry_price) * leverage * 100
 
     return _clip_roe(mae_long), _clip_roe(mae_short)
@@ -446,14 +450,15 @@ def generate_simulated_exits(
     Returns:
         List of SimulatedExit rows for both long and short.
     """
-    future_candles = [c for c in candles if c["open_time"] > entry_time]
+    entry_ms = entry_time * 1000
+    future_candles = [c for c in candles if c["t"] > entry_ms]
     if len(future_candles) < 2:
         return []
 
     entry_candle = _find_entry_candle(candles, entry_time)
     if entry_candle is None:
         return []
-    entry_price = entry_candle["close"]
+    entry_price = entry_candle["c"]
     if entry_price <= 0:
         return []
 
@@ -473,7 +478,7 @@ def generate_simulated_exits(
             if checkpoint_candle is None:
                 continue
 
-            checkpoint_price = checkpoint_candle["close"]
+            checkpoint_price = checkpoint_candle["c"]
 
             # Current ROE at checkpoint (fee-adjusted — net ROE)
             if side == "long":
@@ -488,15 +493,17 @@ def generate_simulated_exits(
                 )
 
             # Best remaining ROE (from checkpoint to end of window)
+            checkpoint_ms = checkpoint_time * 1000
+            window_end_ms = (entry_time + hold_window) * 1000
             remaining_candles = [
                 c for c in future_candles
-                if checkpoint_time < c["open_time"] <= entry_time + hold_window
+                if checkpoint_ms < c["t"] <= window_end_ms
             ]
 
             if remaining_candles:
                 if side == "long":
                     best_remaining_high = max(
-                        c["high"] for c in remaining_candles
+                        c["h"] for c in remaining_candles
                     )
                     remaining_roe = (
                         (best_remaining_high - entry_price)
@@ -504,7 +511,7 @@ def generate_simulated_exits(
                     )
                 else:
                     best_remaining_low = min(
-                        c["low"] for c in remaining_candles
+                        c["l"] for c in remaining_candles
                     )
                     remaining_roe = (
                         (1 - best_remaining_low / entry_price)
