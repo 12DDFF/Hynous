@@ -407,6 +407,9 @@ class Daemon:
         self._satellite_store = None
         self._satellite_config = None
         self._satellite_dl_conn = None  # read-only conn to data-layer DB
+        self._inference_engine = None              # NEW — unconditional
+        self._kill_switch = None                   # NEW — unconditional
+        self._latest_predictions: dict[str, dict] = {}  # NEW — unconditional
         if config.satellite.enabled:
             try:
                 from satellite.config import SatelliteConfig as SatCfg
@@ -450,6 +453,62 @@ class Daemon:
                 )
                 self._satellite_store = None
                 self._satellite_dl_conn = None
+
+        # Load inference model (if satellite store init succeeded)
+        if self._satellite_store:
+            try:
+                from satellite.training.artifact import ModelArtifact
+                from satellite.inference import InferenceEngine
+                from satellite.safety import KillSwitch
+
+                # Find latest artifact version
+                artifacts_dir = config.project_root / "satellite" / "artifacts"
+                if artifacts_dir.exists():
+                    versions = sorted(
+                        [d for d in artifacts_dir.iterdir()
+                         if d.is_dir() and d.name.startswith("v")],
+                        key=lambda d: int(d.name.lstrip("v")),
+                    )
+                    if versions:
+                        latest = versions[-1]
+                        artifact = ModelArtifact.load(latest)
+
+                        # Read threshold from config (with default)
+                        threshold = getattr(
+                            config.satellite, "inference_entry_threshold", 3.0
+                        )
+                        self._inference_engine = InferenceEngine(
+                            artifact, entry_threshold=threshold,
+                        )
+
+                        # Kill switch — starts in shadow mode by default
+                        self._kill_switch = KillSwitch(
+                            self._satellite_config.safety,
+                            store=self._satellite_store,
+                        )
+
+                        # Apply shadow mode from config
+                        shadow_mode = getattr(
+                            config.satellite, "inference_shadow_mode", True
+                        )
+                        self._kill_switch._cfg.shadow_mode = shadow_mode
+
+                        logger.info(
+                            "Satellite inference loaded: v%d (%d samples, threshold %.1f%%, shadow=%s)",
+                            artifact.metadata.version,
+                            artifact.metadata.training_samples,
+                            threshold,
+                            shadow_mode,
+                        )
+                    else:
+                        logger.info("No model artifacts found in %s", artifacts_dir)
+                else:
+                    logger.info("Artifacts directory not found: %s", artifacts_dir)
+
+            except Exception:
+                logger.exception("Satellite inference init failed, continuing without ML")
+                self._inference_engine = None
+                self._kill_switch = None
 
         # Stats
         self.wake_count: int = 0
@@ -1176,6 +1235,15 @@ class Daemon:
                     except Exception as e:
                         logger.warning("Satellite adapter creation failed: %s", e)
 
+                # Fetch candles for satellite features (price_change_5m, realized_vol_1h)
+                candles_map = {}
+                for coin in self._satellite_config.coins:
+                    try:
+                        c5m, c1m = self._fetch_satellite_candles(coin)
+                        candles_map[coin] = (c5m, c1m)
+                    except Exception:
+                        logger.debug("Candle fetch failed for %s", coin)
+
                 satellite.tick(
                     snapshot=self.snapshot,
                     data_layer_db=dl_db,
@@ -1183,7 +1251,19 @@ class Daemon:
                     order_flow_engine=flow_adapter,
                     store=self._satellite_store,
                     config=self._satellite_config,
+                    candles_map=candles_map,  # NEW
                 )
+
+                # Run ML inference on fresh features
+                try:
+                    self._run_satellite_inference(
+                        dl_db=dl_db,
+                        heatmap_adapter=heatmap_adapter,
+                        flow_adapter=flow_adapter,
+                        candles_map=candles_map,
+                    )
+                except Exception:
+                    logger.debug("Satellite inference failed", exc_info=True)
             except Exception:
                 logger.debug("Satellite tick failed", exc_info=True)
 
@@ -1232,6 +1312,173 @@ class Daemon:
         except Exception as e:
             logger.debug("Regime candle fetch failed: %s", e)
             return []
+
+    def _run_satellite_inference(
+        self,
+        dl_db: object,
+        heatmap_adapter: object | None,
+        flow_adapter: object | None,
+        candles_map: dict[str, tuple[list, list]] | None = None,
+    ) -> None:
+        """Run ML inference on all configured coins after satellite.tick().
+
+        Stores predictions to satellite.db and caches them for briefing injection.
+        Optionally wakes agent on strong signals (if not in shadow mode).
+        """
+        if not self._inference_engine or not self._satellite_store:
+            return
+
+        # Check kill switch
+        if self._kill_switch and not self._kill_switch.is_active:
+            logger.debug(
+                "Satellite inference skipped: kill switch active (%s)",
+                self._kill_switch.disable_reason,
+            )
+            return
+
+        # Check staleness
+        if self._kill_switch:
+            self._kill_switch.check_staleness()
+            if not self._kill_switch.is_active:
+                return
+
+        import json
+        import time as _time
+
+        shadow = self._kill_switch.is_shadow if self._kill_switch else True
+        signals = []
+
+        for coin in self._satellite_config.coins:
+            try:
+                c5m, c1m = (candles_map or {}).get(coin, (None, None))
+                result = self._inference_engine.predict(
+                    coin=coin,
+                    snapshot=self.snapshot,
+                    data_layer_db=dl_db,
+                    heatmap_engine=heatmap_adapter,
+                    order_flow_engine=flow_adapter,
+                    explain=True,
+                    candles_5m=c5m,
+                    candles_1m=c1m,
+                )
+
+                # Build SHAP top 5 JSON for storage
+                shap_json = None
+                exp = (
+                    result.explanation_long
+                    if result.signal == "long"
+                    else result.explanation_short
+                )
+                if exp is None:
+                    exp = result.explanation_long  # fallback
+                if exp and exp.top_contributors:
+                    shap_data = [
+                        {"feature": name, "value": round(val, 4), "shap": round(shap_val, 4)}
+                        for name, val, shap_val in exp.top_contributors[:5]
+                    ]
+                    shap_json = json.dumps(shap_data)
+
+                # Save prediction to DB
+                self._satellite_store.save_prediction(
+                    predicted_at=_time.time(),
+                    coin=coin,
+                    model_version=self._inference_engine._artifact.metadata.version,
+                    predicted_long_roe=result.predicted_long_roe,
+                    predicted_short_roe=result.predicted_short_roe,
+                    signal=result.signal,
+                    entry_threshold=self._inference_engine.entry_threshold,
+                    inference_time_ms=result.inference_time_ms,
+                    snapshot_id=None,
+                    shap_top5_json=shap_json,
+                )
+
+                # Update kill switch snapshot time
+                if self._kill_switch:
+                    self._kill_switch.record_snapshot_time(_time.time())
+
+                # Cache for briefing injection
+                self._latest_predictions[coin] = {
+                    "signal": result.signal,
+                    "long_roe": result.predicted_long_roe,
+                    "short_roe": result.predicted_short_roe,
+                    "confidence": result.confidence,
+                    "summary": result.summary,
+                    "inference_time_ms": result.inference_time_ms,
+                    "timestamp": _time.time(),
+                    "shadow": shadow,
+                }
+
+                # Collect actionable signals for potential wake
+                if result.signal in ("long", "short"):
+                    signals.append(result)
+
+                logger.debug(
+                    "ML inference %s: %s (long=%.1f%%, short=%.1f%%, %.1fms)%s",
+                    coin, result.signal,
+                    result.predicted_long_roe, result.predicted_short_roe,
+                    result.inference_time_ms,
+                    " [shadow]" if shadow else "",
+                )
+
+            except Exception:
+                logger.debug("Inference failed for %s", coin, exc_info=True)
+
+        # Wake agent on strong signals (only if NOT in shadow mode)
+        if signals and not shadow:
+            # Only wake if no position already open in the signaled direction
+            wake_signals = []
+            for sig in signals:
+                coin = sig.coin
+                existing = self._prev_positions.get(coin)
+                if existing:
+                    # Already holding this coin — skip wake
+                    # (agent will see signal in next regular briefing)
+                    continue
+                wake_signals.append(sig)
+
+            if wake_signals:
+                summary_parts = [s.summary for s in wake_signals[:3]]
+                msg = (
+                    "[ML Signal]\n"
+                    + "\n".join(summary_parts)
+                    + "\n\nModel detected actionable signal. Evaluate and decide."
+                )
+                self._wake_agent(
+                    msg,
+                    source="daemon:ml_signal",
+                    max_tokens=1536,
+                    max_coach_cycles=0,
+                )
+
+    def _fetch_satellite_candles(self, coin: str) -> tuple[list[dict], list[dict]]:
+        """Fetch 5m and 1m candles for satellite features.
+
+        Returns:
+            (candles_5m, candles_1m) — both sorted ascending by timestamp.
+            Either list may be empty on failure.
+        """
+        provider = self._get_provider()
+        now_ms = int(time.time() * 1000)
+        candles_5m = []
+        candles_1m = []
+
+        try:
+            # 5m candles: need 3 for price_change (current + previous + one extra)
+            # Fetch 30 min of 5m candles (6 candles)
+            start_5m = now_ms - 30 * 60 * 1000
+            candles_5m = provider.get_candles(coin, "5m", start_5m, now_ms)
+        except Exception:
+            logger.debug("Failed to fetch 5m candles for %s", coin)
+
+        try:
+            # 1m candles: need 60+ for realized vol (1 hour)
+            # Fetch 70 minutes of 1m candles (buffer for forming candle)
+            start_1m = now_ms - 70 * 60 * 1000
+            candles_1m = provider.get_candles(coin, "1m", start_1m, now_ms)
+        except Exception:
+            logger.debug("Failed to fetch 1m candles for %s", coin)
+
+        return candles_5m, candles_1m
 
     def _fetch_fast_signals(self) -> dict | None:
         """Fetch real-time signals from data layer for regime classifier.
@@ -4163,6 +4410,7 @@ class Daemon:
                     briefing_text = build_briefing(
                         self._data_cache, self.snapshot,
                         self._get_provider(), self, self.config,
+                        ml_predictions=self._latest_predictions,  # NEW
                     )
                     # Get positions for code questions
                     try:
@@ -4173,6 +4421,7 @@ class Daemon:
                     code_questions = build_code_questions(
                         self._data_cache, self.snapshot, positions, self.config,
                         daemon=self,
+                        ml_predictions=self._latest_predictions,  # NEW
                     )
                 except Exception as e:
                     logger.debug("Briefing build failed: %s", e)

@@ -196,6 +196,10 @@ class SatelliteConfig:
     funding_settlement_hours: list[int] = field(
         default_factory=lambda: [0, 8, 16]
     )
+    # Inference (SPEC-05)
+    inference_entry_threshold: float = 3.0
+    inference_conflict_margin: float = 1.0
+    inference_shadow_mode: bool = True
 
 
 @dataclass
@@ -376,6 +380,9 @@ def load_config(config_path: Optional[str] = None) -> Config:
             funding_settlement_hours=sat_raw.get(
                 "funding_settlement_hours", [0, 8, 16],
             ),
+            inference_entry_threshold=sat_raw.get("inference_entry_threshold", 3.0),
+            inference_conflict_margin=sat_raw.get("inference_conflict_margin", 1.0),
+            inference_shadow_mode=sat_raw.get("inference_shadow_mode", True),
         ),
         project_root=root,
     )

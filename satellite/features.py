@@ -159,6 +159,8 @@ def compute_features(
     order_flow_engine: object | None = None,
     config: SatelliteConfig | None = None,
     timestamp: float | None = None,
+    candles_5m: list[dict] | None = None,   # NEW: [{t, o, h, l, c, v}, ...]
+    candles_1m: list[dict] | None = None,   # NEW: [{t, o, h, l, c, v}, ...]
 ) -> FeatureResult:
     """Compute all 12 structural features for a single coin at a point in time.
 
@@ -228,6 +230,7 @@ def compute_features(
     # 9. price_change_5m_pct
     _compute_price_change(
         coin, features, avail, raw_data, snapshot, data_layer_db, now,
+        candles_5m=candles_5m,
     )
 
     # 10. volume_vs_1h_avg_ratio
@@ -240,6 +243,7 @@ def compute_features(
     # 11. realized_vol_1h
     _compute_realized_vol(
         coin, features, avail, raw_data, data_layer_db, now,
+        candles_1m=candles_1m,
     )
 
     # 12. sessions_overlapping
@@ -647,17 +651,51 @@ def _compute_price_change(
     snapshot: object,
     data_layer_db: object,
     now: float,
+    candles_5m: list[dict] | None = None,
 ) -> None:
-    """Compute price_change_5m_pct.
+    """Compute price_change_5m_pct from 5m candle data.
 
-    NOTE: Requires candle data not yet available from a persistent source.
-    Returns neutral with avail=0 until candle source is wired in.
+    Formula: (close_now - close_5m_ago) / close_5m_ago * 100
+    Matches Artemis backfill logic (reconstruct.py lines 223-235).
+
+    Args:
+        candles_5m: List of 5m candles [{t, o, h, l, c, v}, ...] sorted by t asc.
+                    t is Unix milliseconds. Expects at least 2 candles.
     """
-    # This feature is best computed from candle data.
-    # For Artemis backfill (SPEC-07), candles come from HL candles API.
-    # For live, the daemon fetches candles but doesn't persist them yet.
-    features["price_change_5m_pct"] = NEUTRAL_VALUES["price_change_5m_pct"]
-    avail["price_change_5m_avail"] = 0
+    if not candles_5m or len(candles_5m) < 2:
+        features["price_change_5m_pct"] = NEUTRAL_VALUES["price_change_5m_pct"]
+        avail["price_change_5m_avail"] = 0
+        return
+
+    try:
+        # Use the last two completed candles (drop the forming one if present).
+        # Candles are sorted ascending by timestamp.
+        # The last candle may be still forming — use second-to-last as "current"
+        # and third-to-last as "previous" to ensure both are complete.
+        # If we only have 2 candles, use them directly (best effort).
+        if len(candles_5m) >= 3:
+            current = candles_5m[-2]   # last completed
+            previous = candles_5m[-3]  # 5m before that
+        else:
+            current = candles_5m[-1]
+            previous = candles_5m[-2]
+
+        close_now = float(current.get("c", 0))
+        close_prev = float(previous.get("c", 0))
+
+        if close_prev <= 0:
+            features["price_change_5m_pct"] = NEUTRAL_VALUES["price_change_5m_pct"]
+            avail["price_change_5m_avail"] = 0
+            return
+
+        pct = (close_now - close_prev) / close_prev * 100
+        features["price_change_5m_pct"] = pct
+        avail["price_change_5m_avail"] = 1
+
+    except Exception:
+        log.debug("Failed to compute price_change_5m_pct for %s", coin, exc_info=True)
+        features["price_change_5m_pct"] = NEUTRAL_VALUES["price_change_5m_pct"]
+        avail["price_change_5m_avail"] = 0
 
 
 def _compute_volume_ratio(
@@ -719,14 +757,55 @@ def _compute_realized_vol(
     raw_data: dict,
     data_layer_db: object,
     now: float,
+    candles_1m: list[dict] | None = None,
 ) -> None:
-    """Compute realized_vol_1h: std dev of 1m returns * sqrt(60).
+    """Compute realized_vol_1h: stdev of 1m log returns * sqrt(60) * 100.
 
-    NOTE: Requires 1-minute price data not yet available.
-    Returns neutral with avail=0 until candle source is wired in.
+    Matches Artemis backfill logic (reconstruct.py lines 258-287).
+
+    Args:
+        candles_1m: List of 1m candles [{t, o, h, l, c, v}, ...] sorted by t asc.
+                    t is Unix milliseconds. Needs at least 10 candles in the last hour.
     """
-    features["realized_vol_1h"] = NEUTRAL_VALUES["realized_vol_1h"]
-    avail["realized_vol_avail"] = 0
+    if not candles_1m:
+        features["realized_vol_1h"] = NEUTRAL_VALUES["realized_vol_1h"]
+        avail["realized_vol_avail"] = 0
+        return
+
+    try:
+        # Filter to candles within the last hour
+        cutoff_ms = (now - 3600) * 1000
+        hour_candles = [c for c in candles_1m if float(c.get("t", 0)) >= cutoff_ms]
+
+        if len(hour_candles) < 10:
+            features["realized_vol_1h"] = NEUTRAL_VALUES["realized_vol_1h"]
+            avail["realized_vol_avail"] = 0
+            return
+
+        # Compute log returns
+        returns = []
+        for i in range(1, len(hour_candles)):
+            prev_close = float(hour_candles[i - 1].get("c", 0))
+            curr_close = float(hour_candles[i].get("c", 0))
+            if prev_close > 0 and curr_close > 0:
+                returns.append(math.log(curr_close / prev_close))
+
+        if len(returns) < 5:
+            features["realized_vol_1h"] = NEUTRAL_VALUES["realized_vol_1h"]
+            avail["realized_vol_avail"] = 0
+            return
+
+        mean_ret = sum(returns) / len(returns)
+        variance = sum((r - mean_ret) ** 2 for r in returns) / len(returns)
+        realized_vol = math.sqrt(variance) * math.sqrt(60) * 100
+
+        features["realized_vol_1h"] = realized_vol
+        avail["realized_vol_avail"] = 1
+
+    except Exception:
+        log.debug("Failed to compute realized_vol_1h for %s", coin, exc_info=True)
+        features["realized_vol_1h"] = NEUTRAL_VALUES["realized_vol_1h"]
+        avail["realized_vol_avail"] = 0
 
 
 def _compute_sessions(

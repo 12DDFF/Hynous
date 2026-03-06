@@ -90,16 +90,19 @@ The daemon is the central orchestrator. It polls market data from Hyperliquid, p
 **What**: After each `_poll_derivatives()` cycle (~300s), if satellite is enabled, the daemon calls `satellite.tick()` with the current market snapshot and data-layer connection.
 
 **Code path**:
-1. `daemon.py` (line ~1144) checks `if self._satellite_store:`
-2. Creates `_HeatmapAdapter` and `_OrderFlowAdapter` wrappers around `HynousDataClient` (lines ~1166-1175)
-3. Calls `satellite.tick(snapshot, data_layer_db, heatmap_engine, order_flow_engine, store, config)` (line ~1179)
-4. `satellite/__init__.py:tick()` iterates over configured coins, calls `compute_features()` for each, writes results via `store.save_snapshot(result)`
+1. `daemon.py` checks `if self._satellite_store:`
+2. Fetches candles per coin via `_fetch_satellite_candles(coin)` — 5m candles (30min window) and 1m candles (70min window) from Hyperliquid
+3. Builds `candles_map = {coin: (candles_5m, candles_1m)}` for all configured coins
+4. Creates `_HeatmapAdapter` and `_OrderFlowAdapter` wrappers around `HynousDataClient`
+5. Calls `satellite.tick(snapshot, data_layer_db, heatmap_engine, order_flow_engine, store, config, candles_map=candles_map)`
+6. `satellite/__init__.py:tick()` iterates over configured coins, extracts per-coin candles, calls `compute_features()` for each (including live candle data), writes results via `store.save_snapshot(result)`
 
 **Data passed in**:
 - `snapshot` -- daemon's `MarketSnapshot` (prices, funding, OI, volume)
 - `data_layer_db` -- read-only SQLite connection to data-layer DB (wrapped in `_DbAdapter`)
 - `heatmap_engine` -- adapter calling `HynousDataClient.heatmap(coin)` via HTTP to `:8100`
 - `order_flow_engine` -- adapter calling `HynousDataClient.order_flow(coin)` via HTTP to `:8100`
+- `candles_map` -- `{coin: (candles_5m, candles_1m)}` fetched from Hyperliquid candle API (NEW)
 
 **Config**: `satellite.enabled`, `satellite.coins`, `satellite.db_path`, `satellite.data_layer_db_path` in `config/default.yaml`
 
@@ -108,17 +111,64 @@ The daemon is the central orchestrator. It polls market data from Hyperliquid, p
 ```
   Daemon                          Satellite
     │                                │
+    │  _fetch_satellite_candles()    │
+    │  (Hyperliquid 5m + 1m candles) │
+    │                                │
     │  satellite.tick(               │
     │    snapshot,                   │
     │    data_layer_db,              │
     │    heatmap_engine,             │
     │    order_flow_engine,          │
-    │    store, config               │
+    │    store, config,              │
+    │    candles_map,                │
     │  )                             │
     │ ─────────────────────────────► │
     │                                │  compute_features() x N coins
+    │                                │  (with live candle data)
     │                                │  store.save_snapshot()
     │                                │  writes to satellite.db
+```
+
+---
+
+## Flow 3a: Daemon --> Inference Engine (Running Predictions)
+
+**What**: After every `satellite.tick()`, the daemon calls `_run_satellite_inference()` to run the v1 XGBoost model on fresh features and cache results for briefing injection.
+
+**Code path**:
+1. `daemon.py:_run_satellite_inference()` checks `self._inference_engine` and `self._kill_switch`
+2. `KillSwitch.check_staleness()` verifies data freshness (auto-disable if no snapshot for >900s)
+3. For each configured coin, calls `InferenceEngine.predict(coin, snapshot, dl_db, ..., candles_5m, candles_1m)` — reuses the same `candles_map` from tick
+4. Builds SHAP top-5 JSON from `result.explanation_long/short.top_contributors`
+5. Writes prediction to `satellite.db` via `store.save_prediction()`
+6. Updates `self._latest_predictions[coin]` cache with signal, ROE, confidence, timestamp, shadow flag
+7. If `result.signal in ("long","short")` AND no existing position for that coin AND NOT shadow mode: calls `_wake_agent(source="daemon:ml_signal")`
+
+**Model loading**: On daemon startup (inside `if self._satellite_store:`), the daemon scans `satellite/artifacts/` for the latest versioned directory, loads `ModelArtifact`, creates `InferenceEngine` and `KillSwitch`, applies `inference_shadow_mode` from config.
+
+**Config**: `satellite.inference_entry_threshold` (3.0%), `satellite.inference_conflict_margin` (1.0%), `satellite.inference_shadow_mode` (true)
+
+```
+  Daemon                          InferenceEngine         satellite.db
+    │                                │                        │
+    │  _run_satellite_inference()    │                        │
+    │                                │                        │
+    │  for coin in coins:            │                        │
+    │    predict(coin, snapshot,     │                        │
+    │      candles_5m, candles_1m)   │                        │
+    │ ─────────────────────────────► │                        │
+    │                                │  compute_features()    │
+    │                                │  scaler.transform()    │
+    │                                │  XGBoost.predict()     │
+    │                                │  SHAP.explain()        │
+    │ ◄── InferenceResult ────────── │                        │
+    │                                │                        │
+    │  save_prediction()             │                        │
+    │ ──────────────────────────────────────────────────────► │
+    │  cache → _latest_predictions   │                        │
+    │                                │                        │
+    │  [if signal + not shadow]      │                        │
+    │  _wake_agent("daemon:ml_signal")                        │
 ```
 
 ---
@@ -337,8 +387,9 @@ The daemon is the central orchestrator. It polls market data from Hyperliquid, p
 |---|------|-----------|----------|-----------|
 | 1 | Daemon --> Data-Layer | HTTP POST | `:8100/v1/historical/record` | Every 300s |
 | 2 | Satellite <-- Data-Layer DB | SQLite read-only | Direct file access | Every 300s |
-| 3 | Daemon --> Satellite | Python function call | `satellite.tick()` | Every 300s |
-| 4 | Satellite --> satellite.db | SQLite write | `store.save_snapshot()` | Every 300s |
+| 3 | Daemon --> Satellite | Python function call | `satellite.tick()` with `candles_map` | Every 300s |
+| 3a | Daemon --> Inference Engine | Python function call | `_run_satellite_inference()` | Every 300s |
+| 4 | Satellite --> satellite.db | SQLite write | `store.save_snapshot()` + `save_prediction()` | Every 300s |
 | 5 | Dashboard <-- satellite.db | SQLite read-only | `/api/ml/*` endpoints | On page load |
 | 6 | Dashboard <-- Data-Layer | HTTP proxy | `/api/data/*` --> `:8100` | On demand |
 | 7 | Agent --> Data-Layer | HTTP via tool | `data_layer` tool --> `:8100` | On demand |
@@ -348,4 +399,4 @@ The daemon is the central orchestrator. It polls market data from Hyperliquid, p
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-03-05

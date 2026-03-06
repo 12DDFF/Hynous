@@ -112,6 +112,8 @@ class InferenceEngine:
         heatmap_engine: object | None = None,
         order_flow_engine: object | None = None,
         explain: bool = True,
+        candles_5m: list[dict] | None = None,   # NEW
+        candles_1m: list[dict] | None = None,   # NEW
     ) -> InferenceResult:
         """Run full inference pipeline for a single coin.
 
@@ -135,6 +137,8 @@ class InferenceEngine:
             data_layer_db=data_layer_db,
             heatmap_engine=heatmap_engine,
             order_flow_engine=order_flow_engine,
+            candles_5m=candles_5m,     # NEW
+            candles_1m=candles_1m,     # NEW
         )
 
         # 2. Transform structural features through sealed scaler (12 values)

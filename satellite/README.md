@@ -124,6 +124,10 @@ satellite:
   liq_cascade_min_usd: 500000           # Minimum total liq USD for cascade
   store_raw_data: true                   # Store raw API responses (~1.5GB/yr)
   funding_settlement_hours: [0, 8, 16]   # Hyperliquid funding times (UTC)
+  # Inference (SPEC-05)
+  inference_entry_threshold: 3.0         # Min predicted ROE (%) to generate entry signal
+  inference_conflict_margin: 1.0         # Both sides must differ by this to avoid "conflict"
+  inference_shadow_mode: true            # Shadow mode: predict but don't execute trades
 ```
 
 Safety configuration lives in `SatelliteConfig.safety` (see Kill Switch section below).
@@ -153,16 +157,23 @@ This iterates over configured coins, calls `compute_features()` for each, and wr
 
 ### Satellite -> Trading (inference)
 
-`InferenceEngine.predict()` runs the full pipeline for a single coin:
+The daemon loads the model at startup and calls `_run_satellite_inference()` after every `satellite.tick()`:
 
-1. `compute_features()` -- compute raw features (same function as collection)
-2. `scaler.transform()` -- normalize 12 structural features using sealed scaler
-3. Append 9 availability flags (binary, no normalization) -- 21-dimensional vector
-4. XGBoost `model.predict()` -- two separate models (long, short) predict net ROE %
-5. SHAP `TreeExplainer` -- per-prediction explanation (~100us)
-6. `_decide()` -- threshold + conflict resolution produces signal
+1. `KillSwitch.check_staleness()` -- verify data freshness
+2. For each coin, `InferenceEngine.predict()` runs the full pipeline:
+   - `compute_features()` -- compute raw features with live candles
+   - `scaler.transform()` -- normalize 12 structural features using sealed scaler
+   - Append 9 availability flags (binary, no normalization) -- 21-dimensional vector
+   - XGBoost `model.predict()` -- two separate models (long, short) predict net ROE %
+   - SHAP `TreeExplainer` -- per-prediction explanation (~100us)
+   - `_decide()` -- threshold + conflict resolution produces signal
+3. `store.save_prediction()` -- write result to `predictions` table
+4. Cache in `self._latest_predictions[coin]` for briefing injection
+5. If signal is `long`/`short` and not in shadow mode: `_wake_agent(source="daemon:ml_signal")`
 
 Signals: `"long"`, `"short"`, `"skip"` (neither above threshold), `"conflict"` (both above threshold within margin).
+
+**Shadow mode** (default): model predicts and logs every 300s but does not trigger wakes or trades. Disable via `inference_shadow_mode: false` after validating prediction quality.
 
 ### Position Sizing
 
@@ -219,7 +230,7 @@ Health check passes if: snapshot rate > 90%, max gap < 15 minutes, labeling back
 
 ## Trained Model: v1
 
-The first trained model lives in `satellite/artifacts/v1/`. It is committed to the repo but **not yet wired into the daemon** — inference code exists (`InferenceEngine`) but nothing calls it yet.
+The first trained model lives in `satellite/artifacts/v1/`. It is **wired into the daemon** and running in shadow mode — the daemon loads the model at startup, runs inference every 300s, and injects signals into the agent's briefing.
 
 ### v1 Artifact
 
@@ -250,9 +261,8 @@ Top features by mean absolute SHAP value (stable across all regimes):
 
 ### Known Limitations
 
-1. **Live feature gap**: The top 2 features (`realized_vol_1h`, `price_change_5m_pct`) are computed from candle data in backfill but **stub out in live `compute_features()`** (return neutral with avail=0). Wiring these from the data-layer's candle/trade stream is required before the model operates at full strength.
-2. **Inference not wired**: `InferenceEngine` exists but the daemon does not call it. The current flow is `tick()` -> `compute_features()` -> store. Adding inference after feature computation is the next integration step.
-3. **Label design**: Target is "best 30-min forward-looking ROE at 20x leverage" -- assumes optimal exit timing within the window. Real execution will capture a fraction of this.
+1. **Label design**: Target is "best 30-min forward-looking ROE at 20x leverage" — assumes optimal exit timing within the window. Real execution will capture a fraction of this.
+2. **Signal-to-execution lag**: Signals are generated every 300s but delivered to the agent only on the next daemon wake, which may be 2–10+ minutes later. See `docs/ML-wiring/ML-daemon-interaction-issues.md` for full analysis.
 
 ---
 
@@ -264,4 +274,4 @@ Top features by mean absolute SHAP value (stable across all regimes):
 
 ---
 
-Last updated: 2026-03-02
+Last updated: 2026-03-05

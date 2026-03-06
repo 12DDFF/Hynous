@@ -90,6 +90,49 @@ class SatelliteStore:
 
             self._conn.commit()
 
+    def save_prediction(
+        self,
+        predicted_at: float,
+        coin: str,
+        model_version: int,
+        predicted_long_roe: float,
+        predicted_short_roe: float,
+        signal: str,
+        entry_threshold: float,
+        inference_time_ms: float = 0.0,
+        snapshot_id: str | None = None,
+        shap_top5_json: str | None = None,
+    ) -> None:
+        """Write a prediction to the predictions table.
+
+        Args:
+            predicted_at: Unix timestamp of prediction.
+            coin: Coin symbol (BTC, ETH, SOL).
+            model_version: Artifact version number.
+            predicted_long_roe: Long prediction (%).
+            predicted_short_roe: Short prediction (%).
+            signal: Decision: "long", "short", "skip", "conflict".
+            entry_threshold: Threshold used for decision.
+            inference_time_ms: Inference duration (ms).
+            snapshot_id: Link to feature snapshot (optional).
+            shap_top5_json: JSON string of top 5 SHAP contributions (optional).
+        """
+        with self.write_lock:
+            self._conn.execute(
+                "INSERT INTO predictions "
+                "(predicted_at, coin, model_version, predicted_long_roe, "
+                "predicted_short_roe, signal, entry_threshold, inference_time_ms, "
+                "snapshot_id, shap_top5_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    predicted_at, coin, model_version,
+                    predicted_long_roe, predicted_short_roe,
+                    signal, entry_threshold, inference_time_ms,
+                    snapshot_id, shap_top5_json,
+                ),
+            )
+            self._conn.commit()
+
     def get_snapshots(
         self,
         coin: str,

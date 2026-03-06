@@ -589,7 +589,7 @@ async def _ml_predictions(request):
         conn.row_factory = sqlite3.Row
         try:
             row = conn.execute(
-                "SELECT * FROM predictions WHERE coin = ? ORDER BY created_at DESC LIMIT 1",
+                "SELECT * FROM predictions WHERE coin = ? ORDER BY predicted_at DESC LIMIT 1",
                 (coin,),
             ).fetchone()
         except Exception:

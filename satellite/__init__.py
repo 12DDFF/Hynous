@@ -20,6 +20,7 @@ def tick(
     order_flow_engine: object | None = None,
     store: "SatelliteStore | None" = None,
     config: "SatelliteConfig | None" = None,
+    candles_map: dict[str, tuple[list, list]] | None = None,  # NEW: {coin: (candles_5m, candles_1m)}
 ) -> list["FeatureResult"]:
     """Compute and store features for all configured coins.
 
@@ -44,6 +45,7 @@ def tick(
 
     for coin in cfg.coins:
         try:
+            c5m, c1m = (candles_map or {}).get(coin, (None, None))
             result = compute_features(
                 coin=coin,
                 snapshot=snapshot,
@@ -51,6 +53,8 @@ def tick(
                 heatmap_engine=heatmap_engine,
                 order_flow_engine=order_flow_engine,
                 config=cfg,
+                candles_5m=c5m,
+                candles_1m=c1m,
             )
             if store:
                 store.save_snapshot(result)

@@ -295,6 +295,7 @@ def build_briefing(
     daemon,         # For daily PnL, circuit breaker
     config,
     user_state: dict | None = None,
+    ml_predictions: dict[str, dict] | None = None,  # NEW
 ) -> str:
     """Build a ~500-800 token briefing document for daemon wakes.
 
@@ -324,6 +325,12 @@ def build_briefing(
         regime_section = format_regime_line(daemon._regime, compact=False)
         if regime_section:
             sections.append(regime_section)
+
+    # --- ML Signals (satellite inference) ---
+    if ml_predictions:
+        ml_section = _build_ml_section(ml_predictions)
+        if ml_section:
+            sections.append(ml_section)
 
     # --- Per-asset deep data ---
     for sym in data_cache.symbols:
@@ -732,6 +739,49 @@ def _build_stats_line(account_pnl: float | None = None) -> str:
     return ""
 
 
+def _build_ml_section(predictions: dict[str, dict]) -> str:
+    """Format ML prediction signals for briefing injection.
+
+    Args:
+        predictions: {coin: {signal, long_roe, short_roe, confidence, shadow, timestamp, ...}}
+    """
+    if not predictions:
+        return ""
+
+    now = time.time()
+    lines = ["ML Signals:"]
+
+    for coin, pred in sorted(predictions.items()):
+        age_s = now - pred.get("timestamp", 0)
+        if age_s > 600:  # Skip predictions older than 10 minutes
+            continue
+
+        signal = pred.get("signal", "skip")
+        long_roe = pred.get("long_roe", 0)
+        short_roe = pred.get("short_roe", 0)
+        shadow = pred.get("shadow", True)
+        mode = " [shadow]" if shadow else ""
+
+        if signal in ("long", "short"):
+            roe = long_roe if signal == "long" else short_roe
+            lines.append(
+                f"  {coin}: {signal.upper()} (predicted {roe:+.1f}% ROE){mode}"
+            )
+        elif signal == "conflict":
+            lines.append(
+                f"  {coin}: CONFLICT (long {long_roe:+.1f}%, short {short_roe:+.1f}%){mode}"
+            )
+        else:
+            lines.append(
+                f"  {coin}: skip (long {long_roe:+.1f}%, short {short_roe:+.1f}%){mode}"
+            )
+
+    if len(lines) == 1:  # Only header, no data
+        return ""
+
+    return "\n".join(lines)
+
+
 def _build_memory_line(daemon) -> str:
     """Memory counts from daemon's cached values."""
     if daemon is None:
@@ -757,6 +807,7 @@ def build_code_questions(
     positions: list[dict],  # From provider.get_user_state()["positions"]
     config,
     daemon=None,
+    ml_predictions: dict[str, dict] | None = None,  # NEW
 ) -> list[str]:
     """Generate deterministic signal-based questions from pre-fetched data.
 
@@ -856,6 +907,38 @@ def build_code_questions(
             questions.append(
                 f"F&G at {fg} (Extreme Fear) — what flips your bias?"
             )
+
+    # 7. ML model signals
+    if ml_predictions:
+        for sym, pred in ml_predictions.items():
+            signal = pred.get("signal", "skip")
+            if signal not in ("long", "short"):
+                continue
+            age = time.time() - pred.get("timestamp", 0)
+            if age > 600:
+                continue
+
+            roe = pred.get("long_roe", 0) if signal == "long" else pred.get("short_roe", 0)
+            shadow_tag = " (shadow mode)" if pred.get("shadow") else ""
+
+            if sym in position_coins:
+                # Has a position — check if signal agrees
+                for p in positions:
+                    if p["coin"] == sym:
+                        pos_side = p["side"].lower()
+                        if pos_side != signal:
+                            questions.append(
+                                f"ML model signals {signal.upper()} {sym} "
+                                f"({roe:+.1f}% ROE) but you're {pos_side.upper()} "
+                                f"— re-evaluate or hedge?{shadow_tag}"
+                            )
+                        break
+            else:
+                # No position — flag opportunity
+                questions.append(
+                    f"ML signals {signal.upper()} {sym} "
+                    f"(predicted {roe:+.1f}% ROE) — thesis?{shadow_tag}"
+                )
 
     # Cap at 4 questions
     return questions[:4]
