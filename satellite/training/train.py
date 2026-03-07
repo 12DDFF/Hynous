@@ -128,8 +128,8 @@ def train_both_models(
     """Train both long and short models, package into a ModelArtifact.
 
     Args:
-        long_data: Training data for long model (target = best_long_roe_30m_net).
-        short_data: Training data for short model (target = best_short_roe_30m_net).
+        long_data: Training data for long model (target = risk_adj_long_30m).
+        short_data: Training data for short model (target = risk_adj_short_30m).
         version: Model version number.
         params: Override XGBoost params.
 

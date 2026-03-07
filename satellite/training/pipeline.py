@@ -20,7 +20,12 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class TrainingData:
-    """Prepared training data for one model (long or short)."""
+    """Prepared training data for one model (long or short).
+
+    Target columns available:
+      - risk_adj_long_30m / risk_adj_short_30m: peak ROE minus drawdown (directional)
+      - best_long_roe_30m_net / best_short_roe_30m_net: peak ROE only (legacy)
+    """
 
     X_train: np.ndarray         # (n_train, n_features) — normalized
     y_train: np.ndarray         # (n_train,) — target ROE
@@ -52,11 +57,16 @@ def load_labeled_snapshots(
     query = """
         SELECT s.*, sl.best_long_roe_30m_net, sl.best_short_roe_30m_net,
                sl.best_long_roe_30m_gross, sl.best_short_roe_30m_gross,
-               sl.worst_long_mae_30m, sl.worst_short_mae_30m
+               sl.worst_long_mae_30m, sl.worst_short_mae_30m,
+               (sl.best_long_roe_30m_net + sl.worst_long_mae_30m)
+                   AS risk_adj_long_30m,
+               (sl.best_short_roe_30m_net + sl.worst_short_mae_30m)
+                   AS risk_adj_short_30m
         FROM snapshots s
         JOIN snapshot_labels sl ON s.snapshot_id = sl.snapshot_id
         WHERE s.coin = ?
           AND sl.best_long_roe_30m_net IS NOT NULL
+          AND sl.worst_long_mae_30m IS NOT NULL
     """
     params = [coin]
 
