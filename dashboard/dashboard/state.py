@@ -890,9 +890,14 @@ class AppState(rx.State):
     settings_small_wins_mode: bool = False
     settings_small_wins_roe_pct: float = 3.0
     settings_taker_fee_pct: float = 0.07
+    # Trailing Stop
+    settings_trailing_stop_enabled: bool = True
+    settings_trailing_activation_roe: float = 2.8
+    settings_trailing_retracement_pct: float = 50.0
     # ML Condition Wakes
     settings_ml_condition_wakes: bool = False
     settings_ml_condition_cooldown: int = 900
+    settings_ml_condition_max_alerts: int = 3
     settings_ml_stale_threshold: int = 330
     settings_ml_extreme_vol_pctl: int = 90
     settings_ml_vol_expansion: float = 1.8
@@ -3296,8 +3301,12 @@ class AppState(rx.State):
         self.settings_small_wins_mode = ts.small_wins_mode
         self.settings_small_wins_roe_pct = ts.small_wins_roe_pct
         self.settings_taker_fee_pct = ts.taker_fee_pct
+        self.settings_trailing_stop_enabled = ts.trailing_stop_enabled
+        self.settings_trailing_activation_roe = ts.trailing_activation_roe
+        self.settings_trailing_retracement_pct = ts.trailing_retracement_pct
         self.settings_ml_condition_wakes = ts.ml_condition_wakes
         self.settings_ml_condition_cooldown = ts.ml_condition_cooldown_s
+        self.settings_ml_condition_max_alerts = ts.ml_condition_max_alerts
         self.settings_ml_stale_threshold = ts.ml_stale_threshold_s
         self.settings_ml_extreme_vol_pctl = ts.ml_extreme_vol_pctl
         self.settings_ml_vol_expansion = ts.ml_vol_expansion_threshold
@@ -3353,8 +3362,12 @@ class AppState(rx.State):
             small_wins_mode=self.settings_small_wins_mode,
             small_wins_roe_pct=self.settings_small_wins_roe_pct,
             taker_fee_pct=self.settings_taker_fee_pct,
+            trailing_stop_enabled=self.settings_trailing_stop_enabled,
+            trailing_activation_roe=self.settings_trailing_activation_roe,
+            trailing_retracement_pct=self.settings_trailing_retracement_pct,
             ml_condition_wakes=self.settings_ml_condition_wakes,
             ml_condition_cooldown_s=self.settings_ml_condition_cooldown,
+            ml_condition_max_alerts=self.settings_ml_condition_max_alerts,
             ml_stale_threshold_s=self.settings_ml_stale_threshold,
             ml_extreme_vol_pctl=self.settings_ml_extreme_vol_pctl,
             ml_vol_expansion_threshold=self.settings_ml_vol_expansion,
@@ -3459,10 +3472,18 @@ class AppState(rx.State):
         self.settings_small_wins_roe_pct = float(v); self.settings_dirty = True
     def set_settings_taker_fee_pct(self, v: str):
         self.settings_taker_fee_pct = float(v); self.settings_dirty = True
+    def set_settings_trailing_stop_enabled(self, v: bool):
+        self.settings_trailing_stop_enabled = v; self.settings_dirty = True
+    def set_settings_trailing_activation_roe(self, v: str):
+        self.settings_trailing_activation_roe = float(v); self.settings_dirty = True
+    def set_settings_trailing_retracement_pct(self, v: str):
+        self.settings_trailing_retracement_pct = float(v); self.settings_dirty = True
     def set_settings_ml_condition_wakes(self, v: bool):
         self.settings_ml_condition_wakes = v; self.settings_dirty = True
     def set_settings_ml_condition_cooldown(self, v: str):
         self.settings_ml_condition_cooldown = int(float(v)); self.settings_dirty = True
+    def set_settings_ml_condition_max_alerts(self, v: str):
+        self.settings_ml_condition_max_alerts = int(float(v)); self.settings_dirty = True
     def set_settings_ml_stale_threshold(self, v: str):
         self.settings_ml_stale_threshold = int(float(v)); self.settings_dirty = True
     def set_settings_ml_extreme_vol_pctl(self, v: str):

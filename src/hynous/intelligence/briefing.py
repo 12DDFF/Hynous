@@ -1117,7 +1117,7 @@ def build_code_questions(
             vol_expand = cond.get("vol_expand", {})
             if vol_expand.get("value", 1.0) > 1.5:
                 questions.append(
-                    f"Vol expansion {vol_expand['value']:.1f}x predicted "
+                    f"Vol expansion {vol_expand.get('value', 0):.1f}x predicted "
                     f"for {sym} — potential squeeze incoming."
                 )
 

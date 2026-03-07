@@ -276,6 +276,12 @@ def _ml_conditions_card() -> rx.Component:
             "s",
         ),
         _field(
+            "Max Alerts / Wake",
+            "Cap on alerts bundled per condition wake",
+            AppState.settings_ml_condition_max_alerts,
+            AppState.set_settings_ml_condition_max_alerts,
+        ),
+        _field(
             "Stale Threshold",
             "Suppress alerts if prediction older than this",
             AppState.settings_ml_stale_threshold,
@@ -511,6 +517,34 @@ def _small_wins_card() -> rx.Component:
     )
 
 
+def _trailing_stop_card() -> rx.Component:
+    return _card(
+        "Trailing Stop", "trending-down",
+        "Mechanical trailing stop — daemon auto-exits when ROE retraces from peak.",
+        _toggle(
+            "Enable Trailing Stop",
+            "When ON: once ROE exceeds activation, stop trails peak ROE",
+            AppState.settings_trailing_stop_enabled,
+            AppState.set_settings_trailing_stop_enabled,
+        ),
+        _divider(),
+        _field(
+            "Activation ROE",
+            "ROE % threshold to begin trailing",
+            AppState.settings_trailing_activation_roe,
+            AppState.set_settings_trailing_activation_roe,
+            "%",
+        ),
+        _field(
+            "Retracement %",
+            "% of peak ROE allowed as giveback before exit",
+            AppState.settings_trailing_retracement_pct,
+            AppState.set_settings_trailing_retracement_pct,
+            "%",
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
@@ -589,6 +623,7 @@ def settings_page() -> rx.Component:
                         _micro_card(),
                         _sizing_card(),
                         _small_wins_card(),
+                        _trailing_stop_card(),
                         spacing="5",
                         width="100%",
                     ),
