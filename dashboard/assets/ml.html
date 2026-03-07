@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ML Dashboard</title>
+<title>ML Intelligence</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -15,10 +15,9 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
 ::-webkit-scrollbar-thumb{background:#262626;border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:#404040}
 
-.header{padding:20px 24px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.header{padding:20px 24px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .header-left h1{font-size:1.25rem;font-weight:600;color:#fafafa;margin-bottom:4px}
 .header-left p{font-size:0.8rem;color:#525252}
-
 .coin-tabs{display:flex;gap:4px;background:#0f0f0f;border-radius:8px;padding:4px;border:1px solid #1a1a1a}
 .coin-tab{padding:6px 14px;border-radius:6px;font-size:0.8rem;font-weight:500;color:#737373;cursor:pointer;transition:all .15s;user-select:none}
 .coin-tab:hover{color:#e5e5e5;background:#1a1a1a}
@@ -34,98 +33,96 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
 .stat-label{font-size:0.75rem;color:#525252}
 .stat-value{font-size:0.8rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace}
 
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px 24px}
-@media(max-width:900px){.grid{grid-template-columns:1fr}}
+/* Sections */
+.section{padding:0 24px 24px}
+.section-hdr{display:flex;align-items:center;justify-content:space-between;padding:16px 0 12px;cursor:pointer;user-select:none}
+.section-hdr h2{font-size:0.9rem;font-weight:600;color:#d4d4d4}
+.section-hdr .toggle{font-size:0.7rem;color:#525252;transition:transform .2s}
+.section-hdr .badge{font-size:0.65rem;color:#525252;font-family:'JetBrains Mono',monospace;background:#141414;padding:2px 8px;border-radius:4px;margin-left:8px}
+.section-body{overflow:hidden;transition:max-height .3s ease}
+.section-body.collapsed{max-height:0 !important}
 
-.panel{background:#0c0c0c;border:1px solid #141414;border-radius:10px;overflow:hidden;min-height:320px;display:flex;flex-direction:column}
-.panel-hdr{padding:14px 16px;border-bottom:1px solid #141414;display:flex;align-items:center;justify-content:space-between}
-.panel-hdr h3{font-size:0.85rem;font-weight:600;color:#d4d4d4}
-.panel-hdr .badge{font-size:0.65rem;color:#525252;font-family:'JetBrains Mono',monospace;background:#141414;padding:2px 8px;border-radius:4px}
-.panel-body{padding:16px;flex:1;overflow-y:auto}
+/* Condition Cards Grid */
+.cond-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:12px}
+.cond-card{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:16px;transition:border-color .2s}
+.cond-card:hover{border-color:#262626}
+.cond-card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.cond-name{font-size:0.8rem;font-weight:600;color:#d4d4d4}
+.regime-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em}
+.regime-low{background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
+.regime-normal{background:rgba(82,82,82,0.15);color:#a3a3a3;border:1px solid rgba(82,82,82,0.3)}
+.regime-high{background:rgba(234,179,8,0.15);color:#eab308;border:1px solid rgba(234,179,8,0.3)}
+.regime-extreme{background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3)}
+.cond-value{font-size:1.4rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:#fafafa;margin-bottom:8px}
+.cond-pctl-wrap{height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden;margin-bottom:6px;position:relative}
+.cond-pctl-bar{height:100%;border-radius:2px;transition:width .4s ease}
+.cond-desc{font-size:0.7rem;color:#525252;line-height:1.4}
 
-.placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;min-height:200px;gap:12px;color:#404040;text-align:center;padding:24px}
-.placeholder-icon{font-size:2rem;opacity:0.3}
-.placeholder-title{font-size:0.85rem;color:#525252;font-weight:500}
-.placeholder-sub{font-size:0.75rem;color:#404040;max-width:280px;line-height:1.5}
+/* Model Cards Grid */
+.model-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));gap:12px}
+.model-card{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:14px}
+.model-card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.model-name{font-size:0.8rem;font-weight:600;color:#d4d4d4}
+.model-spearman{font-size:1.1rem;font-weight:700;font-family:'JetBrains Mono',monospace}
+.spearman-tier-a-plus{color:#22c55e}
+.spearman-tier-a{color:#eab308}
+.spearman-tier-b{color:#a3a3a3}
+.model-meta{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.model-meta-row{display:flex;justify-content:space-between;font-size:0.7rem}
+.model-meta-row .k{color:#525252}
+.model-meta-row .v{color:#a3a3a3;font-family:'JetBrains Mono',monospace}
+.spearman-bar-wrap{height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden;margin-top:6px}
+.spearman-bar{height:100%;border-radius:2px;background:#6366f1}
 
-/* Feature Monitor */
-.feature-group{margin-bottom:16px}
-.feature-group:last-child{margin-bottom:0}
-.group-label{font-size:0.65rem;text-transform:uppercase;letter-spacing:0.08em;color:#404040;margin-bottom:8px;font-weight:600}
+/* Feature Groups */
+.feature-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:16px}
+.feature-group{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:14px}
+.group-label{font-size:0.65rem;text-transform:uppercase;letter-spacing:0.08em;color:#404040;margin-bottom:10px;font-weight:600}
 .feature-row{display:flex;align-items:center;gap:8px;padding:4px 0}
 .feature-avail{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 .feature-avail.on{background:#22c55e}
 .feature-avail.off{background:#ef4444}
-.feature-name{font-size:0.75rem;color:#737373;width:160px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.feature-bar-wrap{flex:1;height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden;min-width:60px}
+.feature-name{font-size:0.72rem;color:#737373;width:150px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feature-bar-wrap{flex:1;height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden;min-width:50px}
 .feature-bar{height:100%;border-radius:2px;transition:width .4s ease}
 .feature-bar.positive{background:#22c55e}
 .feature-bar.negative{background:#ef4444}
 .feature-bar.neutral{background:#525252}
-.feature-val{font-size:0.75rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:70px;text-align:right;flex-shrink:0}
+.feature-val{font-size:0.72rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:65px;text-align:right;flex-shrink:0}
 
 /* Data Quality */
-.quality-section{margin-bottom:16px}
-.quality-section:last-child{margin-bottom:0}
+.quality-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:16px}
+.quality-card{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:14px}
 .quality-row{display:flex;align-items:center;gap:10px;padding:5px 0}
-.quality-label{font-size:0.75rem;color:#737373;width:140px;flex-shrink:0}
+.quality-label{font-size:0.72rem;color:#737373;width:130px;flex-shrink:0}
 .quality-bar-wrap{flex:1;height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden}
 .quality-bar{height:100%;border-radius:3px;background:#6366f1;transition:width .4s ease}
-.quality-val{font-size:0.75rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:70px;text-align:right;flex-shrink:0}
+.quality-val{font-size:0.72rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:100px;text-align:right;flex-shrink:0}
 
-/* Predictions */
+/* Legacy Direction Panel */
+.legacy-panel{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:16px}
+.legacy-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.6rem;font-weight:600;text-transform:uppercase;background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.2);margin-bottom:8px}
 .signal-badge{display:inline-block;padding:4px 12px;border-radius:6px;font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em}
 .signal-badge.long{background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.3)}
 .signal-badge.short{background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3)}
 .signal-badge.skip{background:rgba(82,82,82,0.15);color:#737373;border:1px solid rgba(82,82,82,0.3)}
-.signal-badge.conflict{background:rgba(234,179,8,0.15);color:#eab308;border:1px solid rgba(234,179,8,0.3)}
 
-.pred-roe{font-size:1.5rem;font-weight:700;font-family:'JetBrains Mono',monospace}
-.pred-roe.positive{color:#22c55e}
-.pred-roe.negative{color:#ef4444}
+/* Placeholder */
+.placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:120px;gap:10px;color:#404040;text-align:center;padding:24px}
+.placeholder-icon{font-size:1.8rem;opacity:0.3}
+.placeholder-title{font-size:0.82rem;color:#525252;font-weight:500}
+.placeholder-sub{font-size:0.72rem;color:#404040;max-width:320px;line-height:1.5}
 
-.pred-meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px}
-.pred-meta-item{font-size:0.75rem;color:#525252}
-.pred-meta-item span{color:#a3a3a3;font-family:'JetBrains Mono',monospace}
-
-.shap-section{margin-top:16px}
-.shap-title{font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;color:#404040;margin-bottom:8px;font-weight:600}
-.shap-row{display:flex;align-items:center;gap:8px;padding:3px 0}
-.shap-name{font-size:0.7rem;color:#737373;width:140px;flex-shrink:0}
-.shap-bar-wrap{flex:1;height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden;position:relative}
-.shap-bar{height:100%;border-radius:3px;position:absolute;top:0}
-.shap-bar.pos{background:#22c55e;left:50%}
-.shap-bar.neg{background:#ef4444;right:50%}
-.shap-val{font-size:0.7rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:60px;text-align:right;flex-shrink:0}
-
-/* Model Performance */
-.model-section{margin-bottom:16px}
-.model-section:last-child{margin-bottom:0}
-.model-section-title{font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;color:#404040;margin-bottom:8px;font-weight:600}
-.model-row{display:flex;justify-content:space-between;padding:4px 0}
-.model-key{font-size:0.75rem;color:#737373}
-.model-val{font-size:0.75rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace}
-.feature-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
-.feature-tag{font-size:0.65rem;color:#525252;background:#141414;padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace}
-
-/* Prediction History */
-.pred-history-panel{grid-column:1/-1}
-.history-table{width:100%;border-collapse:collapse;font-size:0.75rem}
-.history-table th{font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;color:#404040;padding:0 8px 8px;text-align:left;font-weight:600;border-bottom:1px solid #1a1a1a}
-.history-table td{padding:6px 8px;border-bottom:1px solid #141414;color:#a3a3a3;font-family:'JetBrains Mono',monospace;white-space:nowrap}
-.history-table tr:last-child td{border-bottom:none}
-.history-table .td-time{color:#525252;font-size:0.7rem}
-.history-table .td-driver{color:#737373;max-width:160px;overflow:hidden;text-overflow:ellipsis}
-.history-table .td-roe.pos{color:#22c55e}
-.history-table .td-roe.neg{color:#ef4444}
+/* Briefing text block */
+.briefing-block{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#a3a3a3;white-space:pre-wrap;line-height:1.6;max-height:300px;overflow-y:auto}
 </style>
 </head>
 <body>
 
 <div class="header">
     <div class="header-left">
-        <h1>Machine Learning</h1>
-        <p>Feature engine, model performance, predictions</p>
+        <h1>ML Intelligence</h1>
+        <p>Condition engine, model performance, market state predictions</p>
     </div>
     <div class="coin-tabs" id="coin-tabs">
         <div class="coin-tab active" data-coin="BTC">BTC</div>
@@ -141,8 +138,13 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
         <span class="stat-value" id="sat-status">--</span>
     </div>
     <div class="stat">
+        <div class="stat-dot gray" id="cond-dot"></div>
+        <span class="stat-label">Conditions</span>
+        <span class="stat-value" id="cond-status">--</span>
+    </div>
+    <div class="stat">
         <div class="stat-dot gray" id="model-dot"></div>
-        <span class="stat-label">Model</span>
+        <span class="stat-label">Direction</span>
         <span class="stat-value" id="model-status">--</span>
     </div>
     <div class="stat">
@@ -159,29 +161,96 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
     </div>
 </div>
 
-<div class="grid">
-    <!-- Panel 1: Feature Monitor -->
-    <div class="panel">
-        <div class="panel-hdr">
-            <h3>Feature Monitor</h3>
-            <span class="badge" id="feature-coin-badge">BTC</span>
+<!-- Section 1: Live Conditions (always open) -->
+<div class="section">
+    <div class="section-hdr" onclick="toggleSection('conditions')">
+        <div style="display:flex;align-items:center">
+            <h2>Live Conditions</h2>
+            <span class="badge" id="cond-count-badge">--</span>
         </div>
-        <div class="panel-body" id="feature-body">
-            <div class="placeholder" id="feature-placeholder">
+        <span class="toggle" id="toggle-conditions">&#9660;</span>
+    </div>
+    <div class="section-body" id="body-conditions">
+        <div id="cond-content">
+            <div class="placeholder" id="cond-placeholder">
+                <div class="placeholder-icon">&#129504;</div>
+                <div class="placeholder-title">No condition predictions yet</div>
+                <div class="placeholder-sub">Train condition models and deploy to see live market state predictions</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Section 2: Briefing Preview -->
+<div class="section">
+    <div class="section-hdr" onclick="toggleSection('briefing')">
+        <div style="display:flex;align-items:center">
+            <h2>LLM Briefing Preview</h2>
+        </div>
+        <span class="toggle" id="toggle-briefing">&#9660;</span>
+    </div>
+    <div class="section-body" id="body-briefing">
+        <div id="briefing-content">
+            <div class="placeholder" id="briefing-placeholder">
+                <div class="placeholder-icon">&#128196;</div>
+                <div class="placeholder-title">No briefing text</div>
+                <div class="placeholder-sub">Condition predictions generate a briefing block for the trading agent</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Section 3: Model Performance (collapsible) -->
+<div class="section">
+    <div class="section-hdr" onclick="toggleSection('models')">
+        <div style="display:flex;align-items:center">
+            <h2>Model Performance</h2>
+            <span class="badge" id="model-count-badge">--</span>
+        </div>
+        <span class="toggle" id="toggle-models">&#9654;</span>
+    </div>
+    <div class="section-body collapsed" id="body-models">
+        <div id="models-content">
+            <div class="placeholder" id="models-placeholder">
+                <div class="placeholder-icon">&#128200;</div>
+                <div class="placeholder-title">No models found</div>
+                <div class="placeholder-sub">Train condition models to see validation metrics</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Section 4: Features (collapsible) -->
+<div class="section">
+    <div class="section-hdr" onclick="toggleSection('features')">
+        <div style="display:flex;align-items:center">
+            <h2>Feature Monitor</h2>
+            <span class="badge" id="feature-count-badge">14 features</span>
+        </div>
+        <span class="toggle" id="toggle-features">&#9654;</span>
+    </div>
+    <div class="section-body collapsed" id="body-features">
+        <div id="features-content">
+            <div class="placeholder" id="features-placeholder">
                 <div class="placeholder-icon">&#9881;</div>
                 <div class="placeholder-title">No feature data</div>
                 <div class="placeholder-sub">Enable satellite and wait for the first tick to see feature values</div>
             </div>
         </div>
     </div>
+</div>
 
-    <!-- Panel 2: Data Quality -->
-    <div class="panel">
-        <div class="panel-hdr">
-            <h3>Data Quality</h3>
+<!-- Section 5: Data Quality (collapsible) -->
+<div class="section">
+    <div class="section-hdr" onclick="toggleSection('quality')">
+        <div style="display:flex;align-items:center">
+            <h2>Data Quality</h2>
             <span class="badge" id="quality-badge">--</span>
         </div>
-        <div class="panel-body" id="quality-body">
+        <span class="toggle" id="toggle-quality">&#9654;</span>
+    </div>
+    <div class="section-body collapsed" id="body-quality">
+        <div id="quality-content">
             <div class="placeholder" id="quality-placeholder">
                 <div class="placeholder-icon">&#128202;</div>
                 <div class="placeholder-title">No snapshot data</div>
@@ -189,50 +258,29 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
             </div>
         </div>
     </div>
-
-    <!-- Panel 3: Predictions -->
-    <div class="panel">
-        <div class="panel-hdr">
-            <h3>Predictions</h3>
-            <span class="badge" id="pred-coin-badge">BTC</span>
-        </div>
-        <div class="panel-body" id="pred-body">
-            <div class="placeholder" id="pred-placeholder">
-                <div class="placeholder-icon">&#129504;</div>
-                <div class="placeholder-title">No model loaded</div>
-                <div class="placeholder-sub">Train a model to see predictions. Collect data first (~52K snapshots via Artemis)</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Panel 4: Model Performance -->
-    <div class="panel">
-        <div class="panel-hdr">
-            <h3>Model Performance</h3>
-            <span class="badge" id="model-version-badge">--</span>
-        </div>
-        <div class="panel-body" id="model-body">
-            <div class="placeholder" id="model-placeholder">
-                <div class="placeholder-icon">&#128200;</div>
-                <div class="placeholder-title">No model trained</div>
-                <div class="placeholder-sub">Collect data first, then train a model to see performance metrics</div>
-            </div>
-        </div>
-    </div>
 </div>
 
-<!-- Panel 5: Prediction History (full width) -->
-<div style="padding:0 24px 24px">
-    <div class="panel pred-history-panel">
-        <div class="panel-hdr">
-            <h3>Prediction History</h3>
-            <span class="badge" id="history-badge">--</span>
+<!-- Section 6: Legacy Direction (collapsible) -->
+<div class="section" style="padding-bottom:40px">
+    <div class="section-hdr" onclick="toggleSection('legacy')">
+        <div style="display:flex;align-items:center">
+            <h2>Direction Inference</h2>
+            <span class="badge" style="color:#ef4444">SHADOW MODE</span>
         </div>
-        <div class="panel-body" id="history-body">
-            <div class="placeholder" id="history-placeholder">
-                <div class="placeholder-icon">&#128202;</div>
-                <div class="placeholder-title">No prediction history</div>
-                <div class="placeholder-sub">Predictions are logged after model is trained and running.</div>
+        <span class="toggle" id="toggle-legacy">&#9654;</span>
+    </div>
+    <div class="section-body collapsed" id="body-legacy">
+        <div id="legacy-content">
+            <div class="legacy-panel">
+                <div class="legacy-badge">Unreliable - Spearman 0.02</div>
+                <div style="font-size:0.75rem;color:#525252;line-height:1.5;margin-bottom:12px">
+                    Direction prediction was proven ineffective across v2-v6 experiments. These predictions run in shadow mode only and are NOT used for trading decisions. The condition engine above provides the actual ML intelligence.
+                </div>
+                <div id="legacy-pred">
+                    <div class="placeholder">
+                        <div class="placeholder-title">No direction model loaded</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -242,27 +290,36 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
 (function() {
     "use strict";
 
-    // ── Config ──────────────────────────────────────────────────────
     var B = location.port === "3000"
         ? location.origin.replace(":3000", ":8000")
         : location.origin.replace("://", "://api.");
 
     var activeCoin = "BTC";
 
-    // Feature metadata: name → { group, label, min, max, neutral, format }
+    // ── v2 Feature metadata (14 features) ────────────────────────
     var FEATURES = {
-        liq_magnet_direction:  { group: "Liquidation", label: "Liq Magnet Dir",     min: -1,  max: 1,   neutral: 0,   fmt: "f2" },
-        oi_vs_7d_avg_ratio:    { group: "Liquidation", label: "OI vs 7d Avg",       min: 0.5, max: 2,   neutral: 1,   fmt: "f3" },
-        liq_cascade_active:    { group: "Liquidation", label: "Liq Cascade",        min: 0,   max: 1,   neutral: 0,   fmt: "bool" },
-        liq_1h_vs_4h_avg:      { group: "Liquidation", label: "Liq 1h vs 4h",      min: 0,   max: 5,   neutral: 1,   fmt: "f2" },
-        funding_vs_30d_zscore: { group: "Funding",     label: "Funding Z-Score",    min: -3,  max: 3,   neutral: 0,   fmt: "f2" },
-        hours_to_funding:      { group: "Funding",     label: "Hours to Funding",   min: 0,   max: 8,   neutral: 4,   fmt: "f1" },
-        oi_funding_pressure:   { group: "Funding",     label: "OI Fund Pressure",   min: -5,  max: 5,   neutral: 0,   fmt: "f2" },
-        cvd_normalized_5m:     { group: "Momentum",    label: "CVD Norm 5m",        min: -1,  max: 1,   neutral: 0,   fmt: "f3" },
-        price_change_5m_pct:   { group: "Momentum",    label: "Price Chg 5m",       min: -2,  max: 2,   neutral: 0,   fmt: "pct" },
-        volume_vs_1h_avg_ratio:{ group: "Momentum",    label: "Vol vs 1h Avg",      min: 0,   max: 5,   neutral: 1,   fmt: "f2" },
-        realized_vol_1h:       { group: "Context",     label: "Realized Vol 1h",    min: 0,   max: 5,   neutral: 0,   fmt: "f3" },
-        sessions_overlapping:  { group: "Context",     label: "Sessions Overlap",   min: 0,   max: 3,   neutral: 1,   fmt: "int" },
+        // Structure
+        liq_magnet_direction:   { group: "Structure",    label: "Liq Magnet Dir",     min: -1,  max: 1,   neutral: 0,   fmt: "f2" },
+        oi_vs_7d_avg_ratio:     { group: "Structure",    label: "OI vs 7d Avg",       min: 0.5, max: 2,   neutral: 1,   fmt: "f3" },
+        liq_cascade_active:     { group: "Structure",    label: "Liq Cascade",        min: 0,   max: 1,   neutral: 0,   fmt: "bool" },
+        liq_1h_vs_4h_avg:       { group: "Structure",    label: "Liq 1h vs 4h",       min: 0,   max: 5,   neutral: 1,   fmt: "f2" },
+        sessions_overlapping:   { group: "Structure",    label: "Sessions Overlap",   min: 0,   max: 3,   neutral: 1,   fmt: "int" },
+        // Funding
+        funding_vs_30d_zscore:  { group: "Funding",      label: "Funding Z-Score",    min: -3,  max: 3,   neutral: 0,   fmt: "f2" },
+        hours_to_funding:       { group: "Funding",      label: "Hours to Funding",   min: 0,   max: 8,   neutral: 4,   fmt: "f1" },
+        oi_funding_pressure:    { group: "Funding",      label: "OI Fund Pressure",   min: -5,  max: 5,   neutral: 0,   fmt: "f2" },
+        // Magnitude
+        cvd_normalized_5m:      { group: "Magnitude",    label: "CVD Norm 5m",        min: -1,  max: 1,   neutral: 0,   fmt: "f3" },
+        price_change_5m_pct:    { group: "Magnitude",    label: "Price Chg 5m",       min: -2,  max: 2,   neutral: 0,   fmt: "pct" },
+        volume_vs_1h_avg_ratio: { group: "Magnitude",    label: "Vol vs 1h Avg",      min: 0,   max: 5,   neutral: 1,   fmt: "f2" },
+        realized_vol_1h:        { group: "Magnitude",    label: "Realized Vol 1h",    min: 0,   max: 5,   neutral: 0,   fmt: "f3" },
+        // Directional (v2 new)
+        cvd_ratio_30m:          { group: "Directional",  label: "CVD Ratio 30m",      min: -2,  max: 2,   neutral: 0,   fmt: "f3" },
+        cvd_acceleration:       { group: "Directional",  label: "CVD Acceleration",   min: -2,  max: 2,   neutral: 0,   fmt: "f3" },
+        price_trend_1h:         { group: "Directional",  label: "Price Trend 1h",     min: -3,  max: 3,   neutral: 0,   fmt: "f3" },
+        close_position_5m:      { group: "Directional",  label: "Close Position 5m",  min: -1,  max: 1,   neutral: 0,   fmt: "f3" },
+        oi_price_direction:     { group: "Directional",  label: "OI Price Dir",       min: -2,  max: 2,   neutral: 0,   fmt: "f3" },
+        liq_imbalance_1h:       { group: "Directional",  label: "Liq Imbalance 1h",   min: -1,  max: 1,   neutral: 0,   fmt: "f3" },
     };
 
     var AVAIL_MAP = {
@@ -280,15 +337,26 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
         sessions_overlapping:  "realized_vol_avail",
     };
 
-    var GROUPS_ORDER = ["Liquidation", "Funding", "Momentum", "Context"];
+    var GROUPS_ORDER = ["Structure", "Funding", "Magnitude", "Directional"];
+
+    // Condition display metadata
+    var COND_META = {
+        vol_1h:        { label: "Volatility 1h",      desc: "Predicted realized volatility over next hour",         unit: "" },
+        vol_4h:        { label: "Volatility 4h",      desc: "Average volatility outlook over next 4 hours",         unit: "" },
+        range_30m:     { label: "Price Range 30m",     desc: "Expected total price range (long+short ROE) in 30min", unit: "%" },
+        move_30m:      { label: "Max Move 30m",        desc: "Largest single-direction move expected in 30min",       unit: "%" },
+        volume_1h:     { label: "Volume Forecast 1h",  desc: "Predicted volume vs 1h average ratio",                 unit: "x" },
+        entry_quality: { label: "Entry Quality",       desc: "How favorable is NOW vs recent entries",                unit: "" },
+        mae_short:     { label: "Short Drawdown Risk", desc: "Expected worst adverse excursion for short position",   unit: "%" },
+        vol_expand:    { label: "Vol Expansion",       desc: "Predicted volatility change ratio (>1 = expanding)",    unit: "x" },
+        mae_long:      { label: "Long Drawdown Risk",  desc: "Expected worst adverse excursion for long position",    unit: "%" },
+        funding_4h:    { label: "Funding Trajectory",  desc: "Expected change in funding z-score over 4 hours",       unit: "" },
+    };
+    var COND_ORDER = ["vol_1h","vol_4h","range_30m","move_30m","volume_1h","entry_quality","mae_short","vol_expand","mae_long","funding_4h"];
 
     // ── Helpers ─────────────────────────────────────────────────────
     function vis() { return !document.hidden; }
-
-    function api(url) {
-        return fetch(B + url).then(function(r) { return r.json(); }).catch(function() { return null; });
-    }
-
+    function api(url) { return fetch(B + url).then(function(r) { return r.json(); }).catch(function() { return null; }); }
     function $(id) { return document.getElementById(id); }
 
     function fmtVal(val, fmt) {
@@ -318,17 +386,39 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
         return Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
     }
 
+    function regimeColor(regime) {
+        switch ((regime || "").toLowerCase()) {
+            case "low": return "#60a5fa";
+            case "normal": return "#a3a3a3";
+            case "high": return "#eab308";
+            case "extreme": return "#ef4444";
+            default: return "#525252";
+        }
+    }
+
+    // ── Section Toggle ────────────────────────────────────────────
+    window.toggleSection = function(name) {
+        var body = $("body-" + name);
+        var toggle = $("toggle-" + name);
+        if (body.classList.contains("collapsed")) {
+            body.classList.remove("collapsed");
+            body.style.maxHeight = body.scrollHeight + "px";
+            toggle.innerHTML = "&#9660;";
+        } else {
+            body.classList.add("collapsed");
+            toggle.innerHTML = "&#9654;";
+        }
+    };
+
     // ── Coin Tabs ───────────────────────────────────────────────────
     document.querySelectorAll(".coin-tab").forEach(function(tab) {
         tab.addEventListener("click", function() {
             document.querySelectorAll(".coin-tab").forEach(function(t) { t.classList.remove("active"); });
             tab.classList.add("active");
             activeCoin = tab.dataset.coin;
-            $("feature-coin-badge").textContent = activeCoin;
-            $("pred-coin-badge").textContent = activeCoin;
+            refreshConditions();
             refreshFeatures();
-            refreshPredictions();
-            refreshHistory();
+            refreshLegacy();
         });
     });
 
@@ -337,35 +427,151 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
         if (!vis()) return;
         api("/api/ml/status").then(function(d) {
             if (!d) return;
-            var satDot = $("sat-dot");
-            var satStatus = $("sat-status");
+            // Satellite
+            var satDot = $("sat-dot"), satStatus = $("sat-status");
             if (!d.db_exists) {
-                satDot.className = "stat-dot red";
-                satStatus.textContent = "No DB";
+                satDot.className = "stat-dot red"; satStatus.textContent = "No DB";
             } else if (!d.satellite_enabled) {
-                satDot.className = "stat-dot red";
-                satStatus.textContent = "Disabled";
+                satDot.className = "stat-dot red"; satStatus.textContent = "Disabled";
             } else if (d.last_tick_time && (Date.now() / 1000 - d.last_tick_time) > 600) {
-                satDot.className = "stat-dot yellow";
-                satStatus.textContent = "Stale";
+                satDot.className = "stat-dot yellow"; satStatus.textContent = "Stale";
             } else {
-                satDot.className = "stat-dot green";
-                satStatus.textContent = "Running";
+                satDot.className = "stat-dot green"; satStatus.textContent = "Running";
             }
-
-            var modelDot = $("model-dot");
-            var modelStatus = $("model-status");
+            // Conditions
+            var condDot = $("cond-dot"), condStatus = $("cond-status");
+            var condCount = d.condition_models || 0;
+            if (condCount > 0) {
+                condDot.className = "stat-dot green"; condStatus.textContent = condCount + " models";
+            } else {
+                condDot.className = "stat-dot gray"; condStatus.textContent = "None";
+            }
+            // Direction (legacy)
+            var modelDot = $("model-dot"), modelStatus = $("model-status");
             if (d.model_loaded) {
-                modelDot.className = "stat-dot green";
-                modelStatus.textContent = "v" + d.model_version;
+                modelDot.className = "stat-dot yellow"; modelStatus.textContent = "v" + d.model_version + " (shadow)";
             } else {
-                modelDot.className = "stat-dot gray";
-                modelStatus.textContent = "None";
+                modelDot.className = "stat-dot gray"; modelStatus.textContent = "None";
             }
 
-            $("snap-count").textContent = d.snapshot_count.toLocaleString();
+            $("snap-count").textContent = (d.snapshot_count || 0).toLocaleString();
             $("last-tick").textContent = timeAgo(d.last_tick_time);
-            $("db-size").textContent = d.db_size_mb + " MB";
+            $("db-size").textContent = (d.db_size_mb || 0) + " MB";
+        });
+    }
+
+    // ── Live Conditions ─────────────────────────────────────────────
+    function refreshConditions() {
+        if (!vis()) return;
+        api("/api/ml/conditions?coin=" + activeCoin).then(function(d) {
+            var container = $("cond-content");
+            var ph = $("cond-placeholder");
+            var briefingContainer = $("briefing-content");
+            var briefingPh = $("briefing-placeholder");
+
+            if (!d || (!d.conditions && !d.models.length)) {
+                ph.style.display = "flex";
+                container.querySelectorAll(".cond-grid").forEach(function(g) { g.remove(); });
+                briefingPh.style.display = "flex";
+                briefingContainer.querySelectorAll(".briefing-block").forEach(function(b) { b.remove(); });
+                $("cond-count-badge").textContent = "--";
+                $("model-count-badge").textContent = "--";
+                return;
+            }
+
+            // Render condition cards
+            var conds = d.conditions || {};
+            var predictions = conds.predictions || {};
+            var predKeys = Object.keys(predictions);
+
+            if (predKeys.length > 0) {
+                ph.style.display = "none";
+                container.querySelectorAll(".cond-grid").forEach(function(g) { g.remove(); });
+                $("cond-count-badge").textContent = predKeys.length + " predictions";
+
+                var grid = document.createElement("div");
+                grid.className = "cond-grid";
+
+                COND_ORDER.forEach(function(name) {
+                    var pred = predictions[name];
+                    if (!pred) return;
+                    var meta = COND_META[name] || { label: name, desc: "", unit: "" };
+                    var regime = (pred.regime || "normal").toLowerCase();
+                    var pctl = pred.percentile || 0;
+                    var value = pred.value;
+                    var displayVal = value !== null && value !== undefined ? value.toFixed(3) : "--";
+                    if (meta.unit) displayVal += meta.unit;
+
+                    var card = document.createElement("div");
+                    card.className = "cond-card";
+                    card.innerHTML =
+                        '<div class="cond-card-hdr">' +
+                            '<span class="cond-name">' + meta.label + '</span>' +
+                            '<span class="regime-badge regime-' + regime + '">' + regime + '</span>' +
+                        '</div>' +
+                        '<div class="cond-value">' + displayVal + '</div>' +
+                        '<div class="cond-pctl-wrap"><div class="cond-pctl-bar" style="width:' + pctl + '%;background:' + regimeColor(regime) + '"></div></div>' +
+                        '<div class="cond-desc">' + pctl + 'th percentile &mdash; ' + meta.desc + '</div>';
+                    grid.appendChild(card);
+                });
+                container.appendChild(grid);
+            } else {
+                ph.style.display = "flex";
+                container.querySelectorAll(".cond-grid").forEach(function(g) { g.remove(); });
+                $("cond-count-badge").textContent = "0";
+            }
+
+            // Render briefing text
+            var briefingText = d.conditions_text;
+            briefingContainer.querySelectorAll(".briefing-block").forEach(function(b) { b.remove(); });
+            if (briefingText) {
+                briefingPh.style.display = "none";
+                var block = document.createElement("div");
+                block.className = "briefing-block";
+                block.textContent = briefingText;
+                briefingContainer.appendChild(block);
+            } else {
+                briefingPh.style.display = "flex";
+            }
+
+            // Render model performance cards
+            var models = d.models || [];
+            var modelsContainer = $("models-content");
+            var modelsPh = $("models-placeholder");
+            modelsContainer.querySelectorAll(".model-grid").forEach(function(g) { g.remove(); });
+
+            if (models.length > 0) {
+                modelsPh.style.display = "none";
+                $("model-count-badge").textContent = models.length + " models";
+
+                var mGrid = document.createElement("div");
+                mGrid.className = "model-grid";
+
+                models.forEach(function(m) {
+                    var spearman = m.spearman || 0;
+                    var tierClass = spearman >= 0.5 ? "spearman-tier-a-plus" : spearman >= 0.3 ? "spearman-tier-a" : "spearman-tier-b";
+                    var barW = Math.min(100, spearman * 100);
+
+                    var card = document.createElement("div");
+                    card.className = "model-card";
+                    card.innerHTML =
+                        '<div class="model-card-hdr">' +
+                            '<span class="model-name">' + (m.name || "?") + '</span>' +
+                            '<span class="model-spearman ' + tierClass + '">' + spearman.toFixed(3) + '</span>' +
+                        '</div>' +
+                        '<div class="spearman-bar-wrap"><div class="spearman-bar" style="width:' + barW + '%"></div></div>' +
+                        '<div class="model-meta">' +
+                            '<div class="model-meta-row"><span class="k">MAE</span><span class="v">' + (m.mae ? m.mae.toFixed(4) : "--") + '</span></div>' +
+                            '<div class="model-meta-row"><span class="k">Samples</span><span class="v">' + (m.samples ? m.samples.toLocaleString() : "--") + '</span></div>' +
+                            '<div class="model-meta-row"><span class="k">Target</span><span class="v" style="font-family:Inter,sans-serif;font-size:0.65rem;color:#525252">' + (m.target || "--") + '</span></div>' +
+                        '</div>';
+                    mGrid.appendChild(card);
+                });
+                modelsContainer.appendChild(mGrid);
+            } else {
+                modelsPh.style.display = "flex";
+                $("model-count-badge").textContent = "--";
+            }
         });
     }
 
@@ -373,38 +579,33 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
     function refreshFeatures() {
         if (!vis()) return;
         api("/api/ml/features?coin=" + activeCoin).then(function(d) {
-            var body = $("feature-body");
-            var ph = $("feature-placeholder");
+            var container = $("features-content");
+            var ph = $("features-placeholder");
             if (!d || d.error) {
                 ph.style.display = "flex";
-                if (d && d.error === "no_db") {
-                    ph.querySelector(".placeholder-title").textContent = "No satellite DB";
-                    ph.querySelector(".placeholder-sub").textContent = "Enable satellite first";
-                } else {
-                    ph.querySelector(".placeholder-title").textContent = "No data for " + activeCoin;
-                    ph.querySelector(".placeholder-sub").textContent = "Satellite must be enabled and running";
-                }
-                // Remove previous feature rows
-                body.querySelectorAll(".feature-group").forEach(function(g) { g.remove(); });
+                container.querySelectorAll(".feature-grid").forEach(function(g) { g.remove(); });
                 return;
             }
             ph.style.display = "none";
-            // Remove old groups
-            body.querySelectorAll(".feature-group").forEach(function(g) { g.remove(); });
+            container.querySelectorAll(".feature-grid").forEach(function(g) { g.remove(); });
+
+            var grid = document.createElement("div");
+            grid.className = "feature-grid";
 
             GROUPS_ORDER.forEach(function(group) {
                 var groupEl = document.createElement("div");
                 groupEl.className = "feature-group";
                 groupEl.innerHTML = '<div class="group-label">' + group + '</div>';
+                var hasFeatures = false;
 
                 Object.keys(FEATURES).forEach(function(name) {
                     var meta = FEATURES[name];
                     if (meta.group !== group) return;
+                    hasFeatures = true;
                     var val = d[name];
                     var availCol = AVAIL_MAP[name];
-                    var avail = d[availCol] !== undefined ? d[availCol] : 1;
+                    var avail = availCol ? (d[availCol] !== undefined ? d[availCol] : (val !== null && val !== undefined ? 1 : 0)) : (val !== null && val !== undefined ? 1 : 0);
                     var pct = barPct(val, meta.min, meta.max);
-                    var neutralPct = barPct(meta.neutral, meta.min, meta.max);
                     var barClass = "neutral";
                     if (val !== null && val !== undefined) {
                         if (val > meta.neutral * 1.1 + 0.01) barClass = "positive";
@@ -420,8 +621,10 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
                         '<div class="feature-val">' + fmtVal(val, meta.fmt) + '</div>';
                     groupEl.appendChild(row);
                 });
-                body.appendChild(groupEl);
+
+                if (hasFeatures) grid.appendChild(groupEl);
             });
+            container.appendChild(grid);
         });
     }
 
@@ -429,56 +632,58 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
     function refreshQuality() {
         if (!vis()) return;
         api("/api/ml/snapshots/stats").then(function(d) {
-            var body = $("quality-body");
+            var container = $("quality-content");
             var ph = $("quality-placeholder");
             if (!d || d.error) {
                 ph.style.display = "flex";
-                body.querySelectorAll(".quality-section").forEach(function(s) { s.remove(); });
+                container.querySelectorAll(".quality-grid").forEach(function(g) { g.remove(); });
                 return;
             }
             ph.style.display = "none";
-            body.querySelectorAll(".quality-section").forEach(function(s) { s.remove(); });
+            container.querySelectorAll(".quality-grid").forEach(function(g) { g.remove(); });
 
             var totalSnaps = 0;
             Object.keys(d.coins || {}).forEach(function(c) { totalSnaps += d.coins[c].total; });
             $("quality-badge").textContent = totalSnaps.toLocaleString() + " total";
 
-            // Coin snapshot counts
-            var sec1 = document.createElement("div");
-            sec1.className = "quality-section";
-            sec1.innerHTML = '<div class="group-label">Snapshot Counts</div>';
+            var grid = document.createElement("div");
+            grid.className = "quality-grid";
+
+            // Snapshot counts card
+            var card1 = document.createElement("div");
+            card1.className = "quality-card";
+            card1.innerHTML = '<div class="group-label">Snapshot Counts</div>';
             ["BTC", "ETH", "SOL"].forEach(function(coin) {
-                var info = d.coins[coin] || { total: 0, last_24h: 0 };
-                var expected = 288; // 86400 / 300
-                var pct24 = Math.min(100, (info.last_24h / expected) * 100);
+                var info = (d.coins || {})[coin] || { total: 0, last_24h: 0 };
+                var pct24 = Math.min(100, (info.last_24h / 288) * 100);
                 var row = document.createElement("div");
                 row.className = "quality-row";
                 row.innerHTML =
                     '<div class="quality-label">' + coin + '</div>' +
                     '<div class="quality-bar-wrap"><div class="quality-bar" style="width:' + pct24 + '%"></div></div>' +
                     '<div class="quality-val">' + info.total.toLocaleString() + ' (' + info.last_24h + '/24h)</div>';
-                sec1.appendChild(row);
+                card1.appendChild(row);
             });
-            body.appendChild(sec1);
+            grid.appendChild(card1);
 
-            // Label coverage
-            var sec2 = document.createElement("div");
-            sec2.className = "quality-section";
-            sec2.innerHTML = '<div class="group-label">Labels</div>';
+            // Labels card
+            var card2 = document.createElement("div");
+            card2.className = "quality-card";
+            card2.innerHTML = '<div class="group-label">Labels</div>';
+            var labelPct = totalSnaps > 0 ? Math.min(100, ((d.label_count || 0) / totalSnaps) * 100) : 0;
             var labelRow = document.createElement("div");
             labelRow.className = "quality-row";
-            var labelPct = totalSnaps > 0 ? Math.min(100, (d.label_count / totalSnaps) * 100) : 0;
             labelRow.innerHTML =
                 '<div class="quality-label">Labeled Snapshots</div>' +
                 '<div class="quality-bar-wrap"><div class="quality-bar" style="width:' + labelPct + '%"></div></div>' +
                 '<div class="quality-val">' + (d.label_count || 0).toLocaleString() + ' (' + labelPct.toFixed(1) + '%)</div>';
-            sec2.appendChild(labelRow);
-            body.appendChild(sec2);
+            card2.appendChild(labelRow);
+            grid.appendChild(card2);
 
-            // Feature availability
-            var sec3 = document.createElement("div");
-            sec3.className = "quality-section";
-            sec3.innerHTML = '<div class="group-label">Feature Availability</div>';
+            // Feature availability card
+            var card3 = document.createElement("div");
+            card3.className = "quality-card";
+            card3.innerHTML = '<div class="group-label">Feature Availability</div>';
             var avails = d.availability_rates || {};
             var availNames = {
                 liq_magnet_avail: "Liq Magnet",
@@ -499,273 +704,57 @@ html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color
                     '<div class="quality-label">' + availNames[col] + '</div>' +
                     '<div class="quality-bar-wrap"><div class="quality-bar" style="width:' + pct + '%;' + (pct < 50 ? 'background:#ef4444' : pct < 80 ? 'background:#eab308' : '') + '"></div></div>' +
                     '<div class="quality-val">' + pct.toFixed(1) + '%</div>';
-                sec3.appendChild(row);
+                card3.appendChild(row);
             });
-            body.appendChild(sec3);
+            grid.appendChild(card3);
+
+            container.appendChild(grid);
         });
     }
 
-    // ── Predictions ─────────────────────────────────────────────────
-    function refreshPredictions() {
+    // ── Legacy Direction ────────────────────────────────────────────
+    function refreshLegacy() {
         if (!vis()) return;
         api("/api/ml/predictions?coin=" + activeCoin).then(function(d) {
-            var body = $("pred-body");
-            var ph = $("pred-placeholder");
+            var container = $("legacy-pred");
+            container.innerHTML = "";
             if (!d || d.error) {
-                ph.style.display = "flex";
-                if (d && d.error === "no_db") {
-                    ph.querySelector(".placeholder-title").textContent = "No satellite DB";
-                    ph.querySelector(".placeholder-sub").textContent = "Enable satellite first";
-                } else {
-                    ph.querySelector(".placeholder-title").textContent = "No predictions yet";
-                    ph.querySelector(".placeholder-sub").textContent = "Train a model to generate predictions";
-                }
-                // Remove old pred content
-                body.querySelectorAll(".pred-content").forEach(function(c) { c.remove(); });
+                container.innerHTML = '<div class="placeholder"><div class="placeholder-title">No direction predictions</div></div>';
                 return;
             }
-            ph.style.display = "none";
-            body.querySelectorAll(".pred-content").forEach(function(c) { c.remove(); });
-
-            var content = document.createElement("div");
-            content.className = "pred-content";
-
-            // Signal badge
             var signal = (d.signal || "skip").toLowerCase();
-            var badgeClass = signal === "long" ? "long" : signal === "short" ? "short" : signal === "conflict" ? "conflict" : "skip";
-            content.innerHTML = '<div style="margin-bottom:16px"><span class="signal-badge ' + badgeClass + '">' + signal.toUpperCase() + '</span></div>';
-
-            // Predicted ROE values
+            var badgeClass = signal === "long" ? "long" : signal === "short" ? "short" : "skip";
             var longROE = d.predicted_long_roe;
             var shortROE = d.predicted_short_roe;
-            var roeDiv = document.createElement("div");
-            roeDiv.style.cssText = "display:flex;gap:24px;margin-bottom:4px";
-            roeDiv.innerHTML =
-                '<div><div style="font-size:0.65rem;color:#404040;text-transform:uppercase;margin-bottom:4px">Long ROE</div>' +
-                '<div class="pred-roe ' + (longROE >= 0 ? "positive" : "negative") + '">' + (longROE >= 0 ? "+" : "") + (longROE !== null && longROE !== undefined ? longROE.toFixed(2) : "--") + '%</div></div>' +
-                '<div><div style="font-size:0.65rem;color:#404040;text-transform:uppercase;margin-bottom:4px">Short ROE</div>' +
-                '<div class="pred-roe ' + (shortROE >= 0 ? "positive" : "negative") + '">' + (shortROE >= 0 ? "+" : "") + (shortROE !== null && shortROE !== undefined ? shortROE.toFixed(2) : "--") + '%</div></div>';
-            content.appendChild(roeDiv);
-
-            // Meta info
-            var meta = document.createElement("div");
-            meta.className = "pred-meta";
-            meta.innerHTML =
-                '<div class="pred-meta-item">Threshold: <span>' + (d.entry_threshold !== null && d.entry_threshold !== undefined ? d.entry_threshold.toFixed(1) + "%" : "--") + '</span></div>' +
-                '<div class="pred-meta-item">Inference: <span>' + (d.inference_time_ms !== null && d.inference_time_ms !== undefined ? d.inference_time_ms.toFixed(1) + "ms" : "--") + '</span></div>' +
-                '<div class="pred-meta-item">Model: <span>' + (d.model_version || "--") + '</span></div>';
-            content.appendChild(meta);
-
-            // SHAP top 5
-            var shapData = d.shap_top5 || [];
-            if (shapData.length > 0) {
-                var shapSection = document.createElement("div");
-                shapSection.className = "shap-section";
-                shapSection.innerHTML = '<div class="shap-title">SHAP Feature Importance (Top 5)</div>';
-                var maxAbs = 0;
-                shapData.forEach(function(s) { maxAbs = Math.max(maxAbs, Math.abs(s.value || s[1] || 0)); });
-                if (maxAbs === 0) maxAbs = 1;
-
-                shapData.slice(0, 5).forEach(function(s) {
-                    var name = s.feature || s[0] || "?";
-                    var val = s.value || s[1] || 0;
-                    var pct = Math.abs(val) / maxAbs * 50;
-                    var cls = val >= 0 ? "pos" : "neg";
-                    var row = document.createElement("div");
-                    row.className = "shap-row";
-                    row.innerHTML =
-                        '<div class="shap-name">' + name + '</div>' +
-                        '<div class="shap-bar-wrap"><div class="shap-bar ' + cls + '" style="width:' + pct + '%"></div></div>' +
-                        '<div class="shap-val">' + (val >= 0 ? "+" : "") + val.toFixed(3) + '</div>';
-                    shapSection.appendChild(row);
-                });
-                content.appendChild(shapSection);
-            }
-
-            body.appendChild(content);
+            container.innerHTML =
+                '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">' +
+                    '<span class="signal-badge ' + badgeClass + '">' + signal.toUpperCase() + '</span>' +
+                    '<span style="font-family:JetBrains Mono,monospace;font-size:0.8rem;color:#525252">' +
+                        'Long: ' + (longROE != null ? (longROE >= 0 ? "+" : "") + longROE.toFixed(2) + "%" : "--") +
+                        ' / Short: ' + (shortROE != null ? (shortROE >= 0 ? "+" : "") + shortROE.toFixed(2) + "%" : "--") +
+                    '</span>' +
+                '</div>';
         });
     }
 
-    // ── Prediction History ───────────────────────────────────────────────────
-    function refreshHistory() {
-        if (!vis()) return;
-        api("/api/ml/predictions/history?coin=" + activeCoin + "&limit=50").then(function(d) {
-            var body = $("history-body");
-            var ph = $("history-placeholder");
-            body.querySelectorAll(".history-content").forEach(function(c) { c.remove(); });
-
-            if (!d || d.error) {
-                ph.style.display = "flex";
-                if (d && d.error === "no_db") {
-                    ph.querySelector(".placeholder-title").textContent = "No satellite DB";
-                    ph.querySelector(".placeholder-sub").textContent = "Enable satellite first";
-                } else {
-                    ph.querySelector(".placeholder-title").textContent = "No prediction history";
-                    ph.querySelector(".placeholder-sub").textContent = "Predictions are logged after model is trained and running.";
-                }
-                $("history-badge").textContent = "--";
-                return;
-            }
-
-            var rows = d.predictions || [];
-            if (!rows.length) {
-                ph.style.display = "flex";
-                ph.querySelector(".placeholder-title").textContent = "No prediction history";
-                ph.querySelector(".placeholder-sub").textContent = "Predictions are logged after model is trained and running.";
-                $("history-badge").textContent = "0";
-                return;
-            }
-
-            ph.style.display = "none";
-            $("history-badge").textContent = rows.length + " predictions";
-
-            var content = document.createElement("div");
-            content.className = "history-content";
-            content.style.overflowX = "auto";
-
-            var html = '<table class="history-table"><thead><tr>' +
-                '<th>Time</th><th>Signal</th><th>Long ROE</th><th>Short ROE</th>' +
-                '<th>Top Driver</th><th>Model</th>' +
-                '</tr></thead><tbody>';
-
-            rows.forEach(function(p) {
-                var signal = (p.signal || "skip").toLowerCase();
-                var badgeCls = signal === "long" ? "long" : signal === "short" ? "short" : signal === "conflict" ? "conflict" : "skip";
-
-                var lROE = p.predicted_long_roe;
-                var sROE = p.predicted_short_roe;
-                var lStr = lROE !== null && lROE !== undefined ? (lROE >= 0 ? "+" : "") + lROE.toFixed(2) + "%" : "--";
-                var sStr = sROE !== null && sROE !== undefined ? (sROE >= 0 ? "+" : "") + sROE.toFixed(2) + "%" : "--";
-                var lCls = lROE >= 0 ? "pos" : "neg";
-                var sCls = sROE >= 0 ? "pos" : "neg";
-
-                var driver = "--";
-                var shap = p.shap_top5 || [];
-                if (shap.length > 0) {
-                    var s0 = shap[0];
-                    var fname = s0.feature || s0[0] || "?";
-                    var fval = s0.value !== undefined ? s0.value : (s0[1] !== undefined ? s0[1] : null);
-                    driver = fname + (fval !== null ? " " + (fval >= 0 ? "+" : "") + fval.toFixed(2) : "");
-                }
-
-                html +=
-                    '<tr>' +
-                    '<td class="td-time">' + timeAgo(p.predicted_at) + '</td>' +
-                    '<td><span class="signal-badge ' + badgeCls + '">' + signal.toUpperCase() + '</span></td>' +
-                    '<td class="td-roe ' + lCls + '">' + lStr + '</td>' +
-                    '<td class="td-roe ' + sCls + '">' + sStr + '</td>' +
-                    '<td class="td-driver">' + driver + '</td>' +
-                    '<td>' + (p.model_version !== undefined ? 'v' + p.model_version : '--') + '</td>' +
-                    '</tr>';
-            });
-
-            html += '</tbody></table>';
-            content.innerHTML = html;
-            body.appendChild(content);
-        });
-    }
-
-    // ── Model Performance ───────────────────────────────────────────
-    function refreshModel() {
-        if (!vis()) return;
-        api("/api/ml/model").then(function(d) {
-            var body = $("model-body");
-            var ph = $("model-placeholder");
-            if (!d || d.error) {
-                ph.style.display = "flex";
-                body.querySelectorAll(".model-content").forEach(function(c) { c.remove(); });
-                $("model-version-badge").textContent = "--";
-                return;
-            }
-            ph.style.display = "none";
-            body.querySelectorAll(".model-content").forEach(function(c) { c.remove(); });
-            $("model-version-badge").textContent = "v" + (d.version || "?");
-
-            var content = document.createElement("div");
-            content.className = "model-content";
-
-            // Key metrics
-            var sec1 = document.createElement("div");
-            sec1.className = "model-section";
-            sec1.innerHTML = '<div class="model-section-title">Key Metrics</div>';
-            var metrics = [
-                ["Version", "v" + (d.version || "?")],
-                ["Validation MAE", d.validation_mae !== null && d.validation_mae !== undefined ? d.validation_mae.toFixed(3) + "% ROE" : "--"],
-                ["Training Samples", (d.training_samples || 0).toLocaleString()],
-                ["Validation Samples", (d.validation_samples || 0).toLocaleString()],
-                ["Training Range", (d.training_start || "--") + " to " + (d.training_end || "--")],
-                ["Feature Hash", (d.feature_hash || "--").substring(0, 12)],
-                ["Created", d.created_at || "--"],
-            ];
-            metrics.forEach(function(m) {
-                var row = document.createElement("div");
-                row.className = "model-row";
-                row.innerHTML = '<span class="model-key">' + m[0] + '</span><span class="model-val">' + m[1] + '</span>';
-                sec1.appendChild(row);
-            });
-            content.appendChild(sec1);
-
-            // XGBoost params
-            if (d.xgboost_params) {
-                var sec2 = document.createElement("div");
-                sec2.className = "model-section";
-                sec2.innerHTML = '<div class="model-section-title">XGBoost Parameters</div>';
-                Object.keys(d.xgboost_params).forEach(function(k) {
-                    var row = document.createElement("div");
-                    row.className = "model-row";
-                    row.innerHTML = '<span class="model-key">' + k + '</span><span class="model-val">' + d.xgboost_params[k] + '</span>';
-                    sec2.appendChild(row);
-                });
-                content.appendChild(sec2);
-            }
-
-            // Feature names
-            if (d.feature_names && d.feature_names.length > 0) {
-                var sec3 = document.createElement("div");
-                sec3.className = "model-section";
-                sec3.innerHTML = '<div class="model-section-title">Features (' + d.feature_names.length + ')</div>';
-                var tags = document.createElement("div");
-                tags.className = "feature-tags";
-                d.feature_names.forEach(function(f) {
-                    tags.innerHTML += '<span class="feature-tag">' + f + '</span>';
-                });
-                sec3.appendChild(tags);
-                content.appendChild(sec3);
-            }
-
-            // Notes
-            if (d.notes) {
-                var sec4 = document.createElement("div");
-                sec4.className = "model-section";
-                sec4.innerHTML = '<div class="model-section-title">Training Notes</div><div style="font-size:0.75rem;color:#737373;line-height:1.5">' + d.notes + '</div>';
-                content.appendChild(sec4);
-            }
-
-            body.appendChild(content);
-        });
-    }
-
-    // ── Polling Orchestration ───────────────────────────────────────
+    // ── Polling ────────────────────────────────────────────────────
     refreshStatus();
+    refreshConditions();
     refreshFeatures();
     refreshQuality();
-    refreshPredictions();
-    refreshModel();
-    refreshHistory();
+    refreshLegacy();
 
     setInterval(refreshStatus, 30000);
-    setInterval(function() { refreshFeatures(); refreshPredictions(); refreshHistory(); }, 60000);
-    setInterval(function() { refreshQuality(); refreshModel(); }, 120000);
+    setInterval(function() { refreshConditions(); refreshFeatures(); }, 60000);
+    setInterval(refreshQuality, 120000);
 
-    // Refresh on tab visibility change
     document.addEventListener("visibilitychange", function() {
         if (!document.hidden) {
             refreshStatus();
+            refreshConditions();
             refreshFeatures();
             refreshQuality();
-            refreshPredictions();
-            refreshModel();
-            refreshHistory();
+            refreshLegacy();
         }
     });
 })();

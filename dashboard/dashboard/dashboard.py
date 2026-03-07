@@ -480,6 +480,16 @@ async def _ml_status(request):
                             result["model_version"] = _latest.name
             except Exception:
                 pass
+            # Check condition models
+            try:
+                _cond_dir = config.project_root / "satellite" / "artifacts" / "conditions"
+                if _cond_dir.exists():
+                    _cond_models = [d for d in _cond_dir.iterdir() if d.is_dir() and (d / "model.json").exists()]
+                    result["condition_models"] = len(_cond_models)
+                else:
+                    result["condition_models"] = 0
+            except Exception:
+                result["condition_models"] = 0
         except Exception:
             pass
         return result
@@ -767,6 +777,62 @@ async def _ml_satellite_toggle(request):
 
 
 app._api.add_route("/api/ml/satellite/toggle", _ml_satellite_toggle, methods=["POST"])
+
+
+async def _ml_conditions(request):
+    """GET /api/ml/conditions?coin=BTC — live condition predictions from daemon."""
+    import asyncio, json, time
+    from starlette.responses import JSONResponse
+
+    coin = request.query_params.get("coin", "BTC")
+
+    def _query():
+        result = {"coin": coin, "conditions": None, "conditions_text": None, "models": []}
+        # Get live conditions from daemon's _latest_predictions
+        try:
+            from . import state as _st
+            if _st._daemon is not None:
+                preds = getattr(_st._daemon, "_latest_predictions", {})
+                coin_pred = preds.get(coin, {})
+                result["conditions"] = coin_pred.get("conditions")
+                result["conditions_text"] = coin_pred.get("conditions_text")
+        except Exception:
+            pass
+        # Get model metadata from disk
+        try:
+            from hynous.core.config import load_config
+            config = load_config()
+            cond_dir = config.project_root / "satellite" / "artifacts" / "conditions"
+            if cond_dir.exists():
+                for model_dir in sorted(cond_dir.iterdir()):
+                    if not model_dir.is_dir():
+                        continue
+                    meta_file = model_dir / "metadata.json"
+                    if meta_file.exists():
+                        with open(meta_file) as f:
+                            meta = json.load(f)
+                        result["models"].append({
+                            "name": meta.get("name"),
+                            "version": meta.get("version"),
+                            "spearman": meta.get("validation_spearman"),
+                            "mae": meta.get("validation_mae"),
+                            "samples": meta.get("training_samples"),
+                            "created_at": meta.get("created_at"),
+                            "target": meta.get("target_description"),
+                            "params": meta.get("xgboost_params"),
+                        })
+        except Exception:
+            pass
+        return result
+
+    try:
+        data = await asyncio.to_thread(_query)
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+app._api.add_route("/api/ml/conditions", _ml_conditions)
 
 
 # Eagerly start agent + daemon when the ASGI backend starts.
