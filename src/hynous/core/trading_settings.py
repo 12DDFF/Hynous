@@ -104,7 +104,7 @@ class TradingSettings:
     trailing_retracement_pct: float = 50.0  # % of peak ROE allowed as giveback before exit
 
     # --- ML Condition Wakes ---
-    ml_condition_wakes: bool = False           # Master switch (OFF by default)
+    ml_condition_wakes: bool = True            # Master switch
     ml_condition_cooldown_s: int = 900         # Per alert-type per-coin cooldown
     ml_condition_max_alerts: int = 3           # Max alerts bundled per wake
     ml_stale_threshold_s: int = 330            # Suppress if prediction older than this
