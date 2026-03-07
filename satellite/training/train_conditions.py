@@ -75,6 +75,21 @@ XGBOOST_PARAMS = {
     "verbosity": 0,
 }
 
+# Targets with larger value ranges need more aggressive params (matching v7/v8 experiments)
+XGBOOST_PARAMS_AGGRESSIVE = {
+    "objective": "reg:squarederror",
+    "max_depth": 5,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 5,
+    "gamma": 0.0,
+    "verbosity": 0,
+}
+
+# Targets that need aggressive params (ROE-scale values)
+AGGRESSIVE_TARGETS = {"range_30m", "move_30m", "mae_long", "mae_short", "entry_quality"}
+
 NUM_BOOST_ROUNDS = 500
 EARLY_STOPPING_ROUNDS = 50
 
@@ -280,12 +295,19 @@ def train_single_condition(
         X_train, y_train = X[:test_start], y[:test_start]
         X_test, y_test = X[test_start:test_end], y[test_start:test_end]
 
+        # Select params based on target type
+        params = (
+            XGBOOST_PARAMS_AGGRESSIVE
+            if target.name in AGGRESSIVE_TARGETS
+            else XGBOOST_PARAMS
+        )
+
         # Train XGBoost with early stopping
         dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=feature_names)
         dtest = xgb.DMatrix(X_test, label=y_test, feature_names=feature_names)
 
         model = xgb.train(
-            XGBOOST_PARAMS,
+            params,
             dtrain,
             num_boost_round=NUM_BOOST_ROUNDS,
             evals=[(dtest, "test")],
@@ -319,8 +341,9 @@ def train_single_condition(
         log.warning("No walk-forward generations completed for %s", target.name)
         return {"name": target.name, "status": "failed", "reason": "no_generations"}
 
-    # Average metrics across generations
-    avg_spearman = float(np.mean([r["spearman"] for r in results]))
+    # Average metrics across generations (filter NaN spearman values)
+    valid_spearmans = [r["spearman"] for r in results if not np.isnan(r["spearman"])]
+    avg_spearman = float(np.mean(valid_spearmans)) if valid_spearmans else 0.0
     avg_mae = float(np.mean([r["mae"] for r in results]))
     avg_centered = float(np.mean([r["centered_dir"] for r in results]))
 
@@ -330,11 +353,16 @@ def train_single_condition(
     )
 
     # Train final model on ALL data
+    final_params = (
+        XGBOOST_PARAMS_AGGRESSIVE
+        if target.name in AGGRESSIVE_TARGETS
+        else XGBOOST_PARAMS
+    )
     dtrain_full = xgb.DMatrix(X, label=y, feature_names=feature_names)
     # Use median best_iteration from walk-forward as final round count
     median_rounds = int(np.median([r["rounds"] for r in results]))
     final_model = xgb.train(
-        XGBOOST_PARAMS,
+        final_params,
         dtrain_full,
         num_boost_round=max(median_rounds, 50),
         verbose_eval=False,
