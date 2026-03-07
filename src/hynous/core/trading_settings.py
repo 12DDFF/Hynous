@@ -103,6 +103,18 @@ class TradingSettings:
     trailing_activation_roe: float = 2.8    # ROE % threshold to begin trailing
     trailing_retracement_pct: float = 50.0  # % of peak ROE allowed as giveback before exit
 
+    # --- ML Condition Wakes ---
+    ml_condition_wakes: bool = False           # Master switch (OFF by default)
+    ml_condition_cooldown_s: int = 900         # Per alert-type per-coin cooldown
+    ml_condition_max_alerts: int = 3           # Max alerts bundled per wake
+    ml_stale_threshold_s: int = 330            # Suppress if prediction older than this
+    ml_extreme_vol_pctl: int = 90             # Percentile threshold for extreme vol wake
+    ml_vol_expansion_threshold: float = 1.8   # vol_expand value threshold
+    ml_entry_quality_pctl: int = 85           # Percentile for golden entry wake
+    ml_drawdown_risk_wake: bool = True        # Wake on extreme MAE
+    ml_regime_shift_wake: bool = True         # Wake on vol regime transitions
+    ml_funding_extreme_wake: bool = False     # Wake on extreme funding (OFF — noisy)
+
 
 _lock = threading.Lock()
 _cached: TradingSettings | None = None

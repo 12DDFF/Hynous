@@ -921,6 +921,18 @@ def _build_ml_section(predictions: dict[str, dict]) -> str:
         if conditions_text:
             lines.append("")
             lines.append(conditions_text)
+            # Prediction age annotation
+            conditions_data = pred.get("conditions", {})
+            cond_ts = conditions_data.get("timestamp")
+            if cond_ts:
+                age_s = now - cond_ts
+                if age_s < 120:
+                    freshness = "fresh"
+                elif age_s < 300:
+                    freshness = f"{age_s:.0f}s old"
+                else:
+                    freshness = f"STALE ({age_s:.0f}s) — next tick imminent"
+                lines.append(f"  [prediction age: {freshness}]")
 
     return "\n".join(lines)
 

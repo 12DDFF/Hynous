@@ -890,6 +890,16 @@ class AppState(rx.State):
     settings_small_wins_mode: bool = False
     settings_small_wins_roe_pct: float = 3.0
     settings_taker_fee_pct: float = 0.07
+    # ML Condition Wakes
+    settings_ml_condition_wakes: bool = False
+    settings_ml_condition_cooldown: int = 900
+    settings_ml_stale_threshold: int = 330
+    settings_ml_extreme_vol_pctl: int = 90
+    settings_ml_vol_expansion: float = 1.8
+    settings_ml_entry_quality_pctl: int = 85
+    settings_ml_drawdown_risk: bool = True
+    settings_ml_regime_shift: bool = True
+    settings_ml_funding_extreme: bool = False
 
     # === Collapsible Toggles ===
 
@@ -3286,6 +3296,15 @@ class AppState(rx.State):
         self.settings_small_wins_mode = ts.small_wins_mode
         self.settings_small_wins_roe_pct = ts.small_wins_roe_pct
         self.settings_taker_fee_pct = ts.taker_fee_pct
+        self.settings_ml_condition_wakes = ts.ml_condition_wakes
+        self.settings_ml_condition_cooldown = ts.ml_condition_cooldown_s
+        self.settings_ml_stale_threshold = ts.ml_stale_threshold_s
+        self.settings_ml_extreme_vol_pctl = ts.ml_extreme_vol_pctl
+        self.settings_ml_vol_expansion = ts.ml_vol_expansion_threshold
+        self.settings_ml_entry_quality_pctl = ts.ml_entry_quality_pctl
+        self.settings_ml_drawdown_risk = ts.ml_drawdown_risk_wake
+        self.settings_ml_regime_shift = ts.ml_regime_shift_wake
+        self.settings_ml_funding_extreme = ts.ml_funding_extreme_wake
         self.settings_dirty = False
 
     def save_settings(self):
@@ -3334,6 +3353,15 @@ class AppState(rx.State):
             small_wins_mode=self.settings_small_wins_mode,
             small_wins_roe_pct=self.settings_small_wins_roe_pct,
             taker_fee_pct=self.settings_taker_fee_pct,
+            ml_condition_wakes=self.settings_ml_condition_wakes,
+            ml_condition_cooldown_s=self.settings_ml_condition_cooldown,
+            ml_stale_threshold_s=self.settings_ml_stale_threshold,
+            ml_extreme_vol_pctl=self.settings_ml_extreme_vol_pctl,
+            ml_vol_expansion_threshold=self.settings_ml_vol_expansion,
+            ml_entry_quality_pctl=self.settings_ml_entry_quality_pctl,
+            ml_drawdown_risk_wake=self.settings_ml_drawdown_risk,
+            ml_regime_shift_wake=self.settings_ml_regime_shift,
+            ml_funding_extreme_wake=self.settings_ml_funding_extreme,
         )
         save_trading_settings(ts)
         _apply_trading_settings(ts)
@@ -3431,6 +3459,24 @@ class AppState(rx.State):
         self.settings_small_wins_roe_pct = float(v); self.settings_dirty = True
     def set_settings_taker_fee_pct(self, v: str):
         self.settings_taker_fee_pct = float(v); self.settings_dirty = True
+    def set_settings_ml_condition_wakes(self, v: bool):
+        self.settings_ml_condition_wakes = v; self.settings_dirty = True
+    def set_settings_ml_condition_cooldown(self, v: str):
+        self.settings_ml_condition_cooldown = int(float(v)); self.settings_dirty = True
+    def set_settings_ml_stale_threshold(self, v: str):
+        self.settings_ml_stale_threshold = int(float(v)); self.settings_dirty = True
+    def set_settings_ml_extreme_vol_pctl(self, v: str):
+        self.settings_ml_extreme_vol_pctl = int(float(v)); self.settings_dirty = True
+    def set_settings_ml_vol_expansion(self, v: str):
+        self.settings_ml_vol_expansion = round(float(v), 1); self.settings_dirty = True
+    def set_settings_ml_entry_quality_pctl(self, v: str):
+        self.settings_ml_entry_quality_pctl = int(float(v)); self.settings_dirty = True
+    def set_settings_ml_drawdown_risk(self, v: bool):
+        self.settings_ml_drawdown_risk = v; self.settings_dirty = True
+    def set_settings_ml_regime_shift(self, v: bool):
+        self.settings_ml_regime_shift = v; self.settings_dirty = True
+    def set_settings_ml_funding_extreme(self, v: bool):
+        self.settings_ml_funding_extreme = v; self.settings_dirty = True
 
     def load_debug_traces(self):
         """Load recent traces for the debug sidebar."""

@@ -258,6 +258,72 @@ def _scanner_card() -> rx.Component:
     )
 
 
+def _ml_conditions_card() -> rx.Component:
+    return _card(
+        "ML Conditions", "zap",
+        "ML condition engine wake triggers and thresholds.",
+        _toggle(
+            "Condition Wakes",
+            "Wake agent when ML conditions cross thresholds",
+            AppState.settings_ml_condition_wakes,
+            AppState.set_settings_ml_condition_wakes,
+        ),
+        _field(
+            "Alert Cooldown",
+            "Seconds between same alert type per coin",
+            AppState.settings_ml_condition_cooldown,
+            AppState.set_settings_ml_condition_cooldown,
+            "s",
+        ),
+        _field(
+            "Stale Threshold",
+            "Suppress alerts if prediction older than this",
+            AppState.settings_ml_stale_threshold,
+            AppState.set_settings_ml_stale_threshold,
+            "s",
+        ),
+        _divider(),
+        _field(
+            "Extreme Vol Percentile",
+            "Vol percentile to trigger extreme vol wake",
+            AppState.settings_ml_extreme_vol_pctl,
+            AppState.set_settings_ml_extreme_vol_pctl,
+        ),
+        _field(
+            "Vol Expansion",
+            "vol_expand value threshold",
+            AppState.settings_ml_vol_expansion,
+            AppState.set_settings_ml_vol_expansion,
+            "x",
+        ),
+        _field(
+            "Entry Quality Percentile",
+            "Minimum percentile for golden entry wake",
+            AppState.settings_ml_entry_quality_pctl,
+            AppState.set_settings_ml_entry_quality_pctl,
+        ),
+        _divider(),
+        _toggle(
+            "Drawdown Risk",
+            "Wake on extreme MAE predictions",
+            AppState.settings_ml_drawdown_risk,
+            AppState.set_settings_ml_drawdown_risk,
+        ),
+        _toggle(
+            "Regime Shift",
+            "Wake when vol regime transitions to high/extreme",
+            AppState.settings_ml_regime_shift,
+            AppState.set_settings_ml_regime_shift,
+        ),
+        _toggle(
+            "Funding Extreme",
+            "Wake on extreme funding trajectory (can be noisy)",
+            AppState.settings_ml_funding_extreme,
+            AppState.set_settings_ml_funding_extreme,
+        ),
+    )
+
+
 def _smart_money_card() -> rx.Component:
     return _card(
         "Smart Money", "brain",
@@ -531,6 +597,7 @@ def settings_page() -> rx.Component:
                         _risk_card(),
                         _limits_card(),
                         _scanner_card(),
+                        _ml_conditions_card(),
                         _smart_money_card(),
                         spacing="5",
                         width="100%",

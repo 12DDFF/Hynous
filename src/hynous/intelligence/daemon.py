@@ -534,6 +534,16 @@ class Daemon:
                 except Exception:
                     logger.debug("Condition engine load failed", exc_info=True)
 
+        # Init condition wake evaluator
+        self._condition_evaluator = None
+        if self._condition_engine:
+            try:
+                from satellite.condition_alerts import ConditionWakeEvaluator
+                self._condition_evaluator = ConditionWakeEvaluator()
+                logger.info("Condition wake evaluator initialized")
+            except Exception:
+                logger.debug("Condition wake evaluator init failed", exc_info=True)
+
         # Stats
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
@@ -762,6 +772,77 @@ class Daemon:
     def get_trough_roe(self, coin: str) -> float:
         """Get max adverse excursion (trough ROE %, negative = drawdown) tracked during hold."""
         return self._trough_roe.get(coin, 0.0)
+
+    def _build_wake_context(self, coin: str):
+        """Build position-aware context for a coin."""
+        from satellite.condition_alerts import WakeContext
+        pos = self._prev_positions.get(coin)
+        if pos:
+            return WakeContext(
+                coin=coin,
+                is_positioned=True,
+                position_side=pos.get("side"),
+                position_roe=self._current_roe.get(coin),
+                position_type=self._position_types.get(coin, {}).get("type"),
+                peak_roe=self._peak_roe.get(coin),
+                leverage=pos.get("leverage"),
+            )
+        return WakeContext(coin=coin, is_positioned=False)
+
+    def _wake_for_conditions(self):
+        """Evaluate ML conditions against thresholds and wake agent if triggered."""
+        if not self._condition_evaluator or not self._satellite_config:
+            return
+        ts = get_trading_settings()
+        if not ts.ml_condition_wakes:
+            return
+
+        contexts = {}
+        conditions = {}
+        for coin in self._satellite_config.coins:
+            pred = self._latest_predictions.get(coin, {})
+            cond = pred.get("conditions")
+            if cond:
+                contexts[coin] = self._build_wake_context(coin)
+                conditions[coin] = cond
+        if not conditions:
+            return
+
+        alerts = self._condition_evaluator.evaluate(conditions, contexts, ts)
+        if not alerts:
+            return
+
+        # Build message
+        has_priority = any(a.priority for a in alerts)
+        lines = ["[DAEMON WAKE — ML Condition Alert]", ""]
+        for alert in alerts:
+            ctx = contexts[alert.coin]
+            msg = alert.message_positioned if ctx.is_positioned else alert.message_flat
+            if not msg:
+                continue  # suppressed alert slipped through (shouldn't happen)
+            age_tag = f" (predicted {alert.prediction_age_s:.0f}s ago)"
+            if alert.prediction_age_s > 240:
+                age_tag += " — consider waiting for next tick"
+            lines.append(f"{alert.coin}: {msg}{age_tag}")
+
+        if len(lines) <= 2:  # only header + blank line, no actual alerts
+            return
+
+        lines.append("")
+        lines.append("Briefing has full market data. Validate before acting.")
+
+        message = "\n".join(lines)
+        response = self._wake_agent(
+            message, priority=has_priority,
+            max_coach_cycles=0, max_tokens=1200,
+            source="daemon:ml_conditions",
+        )
+        if response:
+            title = alerts[0].headline
+            log_event(DaemonEvent("ml_conditions", title,
+                      f"{len(alerts)} condition alerts"))
+            _queue_and_persist("ML Conditions", title, response,
+                              event_type="ml_conditions")
 
     @property
     def last_trade_ago(self) -> str:
@@ -1301,6 +1382,12 @@ class Daemon:
                     )
                 except Exception:
                     logger.debug("Satellite inference failed", exc_info=True)
+
+                # Evaluate ML conditions for active wakes
+                try:
+                    self._wake_for_conditions()
+                except Exception:
+                    logger.debug("Condition wake evaluation failed", exc_info=True)
             except Exception:
                 logger.debug("Satellite tick failed", exc_info=True)
 
