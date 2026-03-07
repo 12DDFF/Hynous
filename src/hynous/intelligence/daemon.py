@@ -522,6 +522,18 @@ class Daemon:
                 self._inference_engine = None
                 self._kill_switch = None
 
+        # Load condition models (if any exist)
+        self._condition_engine = None
+        if self._satellite_store:
+            conditions_dir = config.project_root / "satellite" / "artifacts" / "conditions"
+            if conditions_dir.exists() and any(conditions_dir.iterdir()):
+                try:
+                    from satellite.conditions import ConditionEngine
+                    self._condition_engine = ConditionEngine(conditions_dir)
+                    logger.info("Loaded %d condition models", self._condition_engine.model_count)
+                except Exception:
+                    logger.debug("Condition engine load failed", exc_info=True)
+
         # Stats
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
@@ -1456,6 +1468,27 @@ class Daemon:
 
             except Exception:
                 logger.debug("Inference failed for %s", coin, exc_info=True)
+
+        # Run condition predictions (reuse features from tick)
+        if self._condition_engine and self._satellite_store:
+            try:
+                from satellite.features import FEATURE_NAMES as _FEAT_NAMES
+                for coin in self._satellite_config.coins:
+                    latest = self._satellite_store.get_latest_snapshot(coin)
+                    if not latest:
+                        continue
+                    features = {name: latest.get(name, 0.0) for name in _FEAT_NAMES}
+                    conditions = self._condition_engine.predict(coin, features)
+                    if coin not in self._latest_predictions:
+                        self._latest_predictions[coin] = {}
+                    self._latest_predictions[coin]["conditions"] = conditions.to_dict()
+                    self._latest_predictions[coin]["conditions_text"] = conditions.to_briefing_text()
+                    logger.debug(
+                        "Condition predictions for %s: %d models, %.1fms",
+                        coin, len(conditions.predictions), conditions.inference_time_ms,
+                    )
+            except Exception:
+                logger.debug("Condition prediction failed", exc_info=True)
 
         # Wake agent on strong signals (only if NOT in shadow mode)
         if signals and not shadow:

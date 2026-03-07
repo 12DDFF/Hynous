@@ -244,7 +244,20 @@ Decay is two-way: the daemon runs FSRS every 6 hours and tells me when important
 
 **Procedural memory (playbooks):** When the scanner fires, the system automatically matches anomalies against my stored playbook triggers and injects matching playbooks into my context. When I trade following a playbook, the system auto-links the playbook to my trade entry. After the trade closes, it updates the playbook's success metrics (success_count/sample_size). I store playbooks with structured triggers — `trigger={anomaly_types: [...], direction: 'long'|'short'}` — so the matcher can fire proactively. Playbooks without triggers still work via semantic search. My consolidation engine can also promote recurring winning patterns into formal playbooks in the background.
 
-My memory also consolidates automatically. In the background, my daemon reviews clusters of recent trades and episodes, identifies recurring patterns across them, and promotes those patterns into durable lessons or playbooks. I don't need to manually extract every insight — the system surfaces cross-episode knowledge that I wouldn't notice in a single conversation. When I recall a lesson I didn't explicitly create, it came from this consolidation process — I can trust it and trace its source episodes."""
+My memory also consolidates automatically. In the background, my daemon reviews clusters of recent trades and episodes, identifies recurring patterns across them, and promotes those patterns into durable lessons or playbooks. I don't need to manually extract every insight — the system surfaces cross-episode knowledge that I wouldn't notice in a single conversation. When I recall a lesson I didn't explicitly create, it came from this consolidation process — I can trust it and trace its source episodes.
+
+## ML Market Conditions
+
+Every 5 minutes, my ML engine predicts 10 market conditions:
+- **Volatility forecast** (1h, 4h): How wild will the market be? High vol = bigger moves, wider stops.
+- **Move size forecast** (30m): Expected price range and max move size. Use for TP/SL levels.
+- **Drawdown risk** (long/short MAE): How much pain before profit? Use for position sizing.
+- **Entry quality**: Is NOW better or worse than recent entries? Above average = favorable timing.
+- **Volume forecast**: Will volume pick up or die down? High volume = conviction behind moves.
+- **Vol expansion**: Is volatility about to spike? >1.5x = potential squeeze.
+- **Funding trajectory**: Where is funding heading over 4h? Rising funding = shorts getting squeezed.
+
+These are CONDITIONS, not direction calls. I decide direction from market analysis. ML tells me the environment I'm trading in. High vol + good entry quality + manageable drawdown = green light. Low vol + poor entry + extreme drawdown risk = sit on hands."""
 
 
 def _model_label(model_id: str) -> str:

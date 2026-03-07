@@ -915,6 +915,13 @@ def _build_ml_section(predictions: dict[str, dict]) -> str:
     if len(lines) == 1:  # Only header, no data
         return ""
 
+    # Append condition engine output
+    for coin, pred in sorted(predictions.items()):
+        conditions_text = pred.get("conditions_text")
+        if conditions_text:
+            lines.append("")
+            lines.append(conditions_text)
+
     return "\n".join(lines)
 
 
@@ -1074,6 +1081,41 @@ def build_code_questions(
                 questions.append(
                     f"ML signals {signal.upper()} {sym} "
                     f"(predicted {roe:+.1f}% ROE) — thesis?{shadow_tag}"
+                )
+
+        # Condition-based questions
+        for sym, pred in ml_predictions.items():
+            cond = pred.get("conditions", {})
+
+            vol_1h = cond.get("vol_1h", {})
+            if vol_1h.get("regime") == "extreme":
+                questions.append(
+                    f"Extreme volatility predicted for {sym} "
+                    f"({vol_1h.get('percentile', '?')}th pctl) "
+                    f"— is your position size appropriate?"
+                )
+
+            entry = cond.get("entry_quality", {})
+            if entry.get("percentile", 50) > 80:
+                questions.append(
+                    f"Entry quality for {sym} is in the "
+                    f"{entry.get('percentile')}th percentile — worth evaluating."
+                )
+
+            vol_expand = cond.get("vol_expand", {})
+            if vol_expand.get("value", 1.0) > 1.5:
+                questions.append(
+                    f"Vol expansion {vol_expand['value']:.1f}x predicted "
+                    f"for {sym} — potential squeeze incoming."
+                )
+
+            mae_long = cond.get("mae_long", {})
+            mae_short = cond.get("mae_short", {})
+            if mae_long.get("regime") == "extreme" or mae_short.get("regime") == "extreme":
+                side = "long" if mae_long.get("regime") == "extreme" else "short"
+                questions.append(
+                    f"Extreme {side} drawdown risk for {sym} — "
+                    f"consider tighter stops or smaller size."
                 )
 
     # Cap at 4 questions

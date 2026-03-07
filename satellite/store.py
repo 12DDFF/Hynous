@@ -264,6 +264,14 @@ class SatelliteStore:
 
         return deleted
 
+    def get_latest_snapshot(self, coin: str) -> dict | None:
+        """Get the most recent snapshot as a dict. Used by condition engine."""
+        row = self.conn.execute(
+            "SELECT * FROM snapshots WHERE coin = ? ORDER BY created_at DESC LIMIT 1",
+            (coin,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:
