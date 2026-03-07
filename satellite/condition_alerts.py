@@ -126,9 +126,10 @@ class ConditionWakeEvaluator:
             alert_type="extreme_vol",
             coin=coin,
             headline=f"{coin} extreme vol ({pctl}th pctl)",
-            message_flat=f"Extreme vol predicted ({pctl}th percentile) — big moves ahead",
+            message_flat=f"Extreme vol predicted ({pctl}th percentile) — big moves both directions imminent",
             message_positioned=(
-                f"Extreme vol ({pctl}th pctl) — protect your {side}, tighten stops"
+                f"Extreme vol ({pctl}th pctl) — your {side} will see amplified swings. "
+                f"Tighten SL if in profit, reassess if thesis is weakening"
             ),
             priority=False,
             prediction_age_s=age,
@@ -146,18 +147,17 @@ class ConditionWakeEvaluator:
             alert_type="vol_expansion",
             coin=coin,
             headline=f"{coin} vol expanding {value:.1f}x",
-            message_flat=f"Vol expanding {value:.1f}x — breakout setup",
-            message_positioned=f"Vol expanding {value:.1f}x — your {side} may see amplified move",
+            message_flat=f"Vol expanding {value:.1f}x — breakout imminent, watch for direction",
+            message_positioned=(
+                f"Vol expanding {value:.1f}x — amplifies your {side} in both directions. "
+                f"Good if trend continues, dangerous if it reverses"
+            ),
             priority=False,
             prediction_age_s=age,
             severity=value * 50,  # normalize to ~percentile scale
         )
 
     def _check_golden_entry(self, coin, cond, ctx, settings, age) -> ConditionAlert | None:
-        # Suppressed when positioned
-        if ctx.is_positioned:
-            return None
-
         entry = cond.get("entry_quality", {})
         pctl = entry.get("percentile", 0)
         if pctl < settings.ml_entry_quality_pctl:
@@ -174,12 +174,16 @@ class ConditionWakeEvaluator:
         if mae_long.get("regime") == "extreme" and mae_short.get("regime") == "extreme":
             return None
 
+        side = ctx.position_side or "position"
         return ConditionAlert(
             alert_type="golden_entry",
             coin=coin,
             headline=f"{coin} golden entry ({pctl}th pctl)",
-            message_flat=f"Strong entry window — quality {pctl}th percentile",
-            message_positioned="",  # suppressed
+            message_flat=f"Strong entry window — quality {pctl}th percentile, conditions favor a trade",
+            message_positioned=(
+                f"Entry quality {pctl}th pctl on {coin} — "
+                f"consider adding to {side} or opening another coin if you have capacity"
+            ),
             priority=False,
             prediction_age_s=age,
             severity=pctl,
@@ -254,8 +258,11 @@ class ConditionWakeEvaluator:
             alert_type="vol_regime_shift",
             coin=coin,
             headline=f"{coin} vol regime {prev} -> {new_regime}",
-            message_flat=f"Vol regime shifted {prev} -> {new_regime} — environment changing",
-            message_positioned=f"Vol regime shifted {prev} -> {new_regime} — recalibrate stops on {side}",
+            message_flat=f"Vol regime shifted {prev} -> {new_regime} — market character changing, new setups likely",
+            message_positioned=(
+                f"Vol regime shifted {prev} -> {new_regime} — "
+                f"your {side} SL/TP may need recalibration for the new environment"
+            ),
             priority=False,
             prediction_age_s=age,
             severity=90 if new_regime == "extreme" else 75,
@@ -296,10 +303,6 @@ class ConditionWakeEvaluator:
         )
 
     def _check_composite_green(self, coin, cond, ctx, settings, age) -> ConditionAlert | None:
-        # Suppressed when positioned
-        if ctx.is_positioned:
-            return None
-
         entry = cond.get("entry_quality", {})
         vol_1h = cond.get("vol_1h", {})
         mae_long = cond.get("mae_long", {})
@@ -315,15 +318,19 @@ class ConditionWakeEvaluator:
         if mae_long.get("regime") in ("high", "extreme") or mae_short.get("regime") in ("high", "extreme"):
             return None
 
+        side = ctx.position_side or "position"
         return ConditionAlert(
             alert_type="composite_green",
             coin=coin,
             headline=f"{coin} conditions align — green light",
             message_flat=(
                 f"Multiple conditions align — entry quality {entry_pctl}th pctl, "
-                f"vol {vol_regime}, manageable risk"
+                f"vol {vol_regime}, manageable risk. Good window to act"
             ),
-            message_positioned="",  # suppressed
+            message_positioned=(
+                f"Conditions align on {coin} — entry quality {entry_pctl}th pctl, "
+                f"low drawdown risk. Favorable for adding to {side} or new position"
+            ),
             priority=False,
             prediction_age_s=age,
             severity=entry_pctl,
