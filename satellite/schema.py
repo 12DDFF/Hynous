@@ -152,6 +152,24 @@ CREATE TABLE IF NOT EXISTS predictions (
 CREATE INDEX IF NOT EXISTS idx_pred_coin_time ON predictions(coin, predicted_at);
 CREATE INDEX IF NOT EXISTS idx_pred_signal ON predictions(signal);
 
+-- Condition prediction log: every condition inference stored for live validation
+CREATE TABLE IF NOT EXISTS condition_predictions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    predicted_at    REAL NOT NULL,
+    snapshot_id     TEXT NOT NULL,
+    coin            TEXT NOT NULL,
+    model_name      TEXT NOT NULL,
+    predicted_value REAL NOT NULL,
+    percentile      INTEGER NOT NULL,
+    regime          TEXT NOT NULL,
+    inference_ms    REAL,
+
+    FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cpred_coin_time ON condition_predictions(coin, predicted_at);
+CREATE INDEX IF NOT EXISTS idx_cpred_snapshot ON condition_predictions(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_cpred_model ON condition_predictions(model_name);
+
 -- Layer 2: Entry co-occurrence data (future smart money ML)
 CREATE TABLE IF NOT EXISTS co_occurrences (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,5 +239,27 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             )
         except Exception:
             pass  # column already exists
+
+    # v4 -> v5: Add condition_predictions table for live validation
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS condition_predictions (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                predicted_at    REAL NOT NULL,
+                snapshot_id     TEXT NOT NULL,
+                coin            TEXT NOT NULL,
+                model_name      TEXT NOT NULL,
+                predicted_value REAL NOT NULL,
+                percentile      INTEGER NOT NULL,
+                regime          TEXT NOT NULL,
+                inference_ms    REAL,
+                FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cpred_coin_time ON condition_predictions(coin, predicted_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cpred_snapshot ON condition_predictions(snapshot_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cpred_model ON condition_predictions(model_name)")
+    except Exception:
+        pass
 
     conn.commit()

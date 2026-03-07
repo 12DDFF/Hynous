@@ -250,6 +250,13 @@ class SatelliteStore:
             deleted += cur.rowcount
 
             cur = self._conn.execute(
+                "DELETE FROM condition_predictions WHERE snapshot_id IN "
+                "(SELECT snapshot_id FROM snapshots WHERE created_at < ?)",
+                (cutoff,),
+            )
+            deleted += cur.rowcount
+
+            cur = self._conn.execute(
                 "DELETE FROM snapshots WHERE created_at < ?", (cutoff,),
             )
             deleted += cur.rowcount
@@ -263,6 +270,34 @@ class SatelliteStore:
             )
 
         return deleted
+
+    def save_condition_predictions(
+        self,
+        snapshot_id: str,
+        coin: str,
+        conditions: object,
+    ) -> None:
+        """Persist condition predictions for live validation.
+
+        Args:
+            snapshot_id: Snapshot the predictions were made from.
+            coin: Coin symbol.
+            conditions: MarketConditions from ConditionEngine.predict().
+        """
+        with self.write_lock:
+            for name, pred in conditions.predictions.items():
+                self._conn.execute(
+                    "INSERT INTO condition_predictions "
+                    "(predicted_at, snapshot_id, coin, model_name, "
+                    "predicted_value, percentile, regime, inference_ms) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        conditions.timestamp, snapshot_id, coin, name,
+                        round(pred.value, 6), pred.percentile,
+                        pred.regime, round(conditions.inference_time_ms, 2),
+                    ),
+                )
+            self._conn.commit()
 
     def get_latest_snapshot(self, coin: str) -> dict | None:
         """Get the most recent snapshot as a dict. Used by condition engine."""

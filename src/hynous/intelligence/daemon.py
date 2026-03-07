@@ -1579,6 +1579,12 @@ class Daemon:
                         self._latest_predictions[coin] = {}
                     self._latest_predictions[coin]["conditions"] = conditions.to_dict()
                     self._latest_predictions[coin]["conditions_text"] = conditions.to_briefing_text()
+                    # Persist for live validation
+                    self._satellite_store.save_condition_predictions(
+                        snapshot_id=latest["snapshot_id"],
+                        coin=coin,
+                        conditions=conditions,
+                    )
                     logger.debug(
                         "Condition predictions for %s: %d models, %.1fms",
                         coin, len(conditions.predictions), conditions.inference_time_ms,
