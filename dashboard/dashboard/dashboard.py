@@ -794,7 +794,16 @@ async def _ml_conditions(request):
             if _st._daemon is not None:
                 preds = getattr(_st._daemon, "_latest_predictions", {})
                 coin_pred = preds.get(coin, {})
-                result["conditions"] = coin_pred.get("conditions")
+                cond_raw = coin_pred.get("conditions")
+                if cond_raw:
+                    # Restructure flat dict for JS: wrap prediction keys under "predictions"
+                    meta_keys = {"coin", "timestamp", "inference_time_ms"}
+                    result["conditions"] = {
+                        k: v for k, v in cond_raw.items() if k in meta_keys
+                    }
+                    result["conditions"]["predictions"] = {
+                        k: v for k, v in cond_raw.items() if k not in meta_keys
+                    }
                 result["conditions_text"] = coin_pred.get("conditions_text")
         except Exception:
             pass
