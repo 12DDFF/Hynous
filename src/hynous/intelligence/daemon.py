@@ -1632,9 +1632,9 @@ class Daemon:
         candles_1m = []
 
         try:
-            # 5m candles: need 3 for price_change (current + previous + one extra)
-            # Fetch 30 min of 5m candles (6 candles)
-            start_5m = now_ms - 30 * 60 * 1000
+            # 5m candles: need 1h+ for price_trend_1h + close_position_5m
+            # Fetch 75 min of 5m candles (15 candles, covers 1h lookback + buffer)
+            start_5m = now_ms - 75 * 60 * 1000
             candles_5m = provider.get_candles(coin, "5m", start_5m, now_ms)
         except Exception:
             logger.debug("Failed to fetch 5m candles for %s", coin)
