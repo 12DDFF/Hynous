@@ -4,759 +4,698 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ML Intelligence</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:#0a0a0a;color:#e5e5e5;font-family:Inter,system-ui,sans-serif;font-size:14px;scrollbar-width:thin;scrollbar-color:#262626 transparent}
-::-webkit-scrollbar{width:6px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:#262626;border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:#404040}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a; color: #fafafa;
+  font-family: Inter, system-ui, sans-serif;
+  overflow-x: hidden;
+}
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #262626; border-radius: 4px; }
 
-.header{padding:20px 24px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
-.header-left h1{font-size:1.25rem;font-weight:600;color:#fafafa;margin-bottom:4px}
-.header-left p{font-size:0.8rem;color:#525252}
-.coin-tabs{display:flex;gap:4px;background:#0f0f0f;border-radius:8px;padding:4px;border:1px solid #1a1a1a}
-.coin-tab{padding:6px 14px;border-radius:6px;font-size:0.8rem;font-weight:500;color:#737373;cursor:pointer;transition:all .15s;user-select:none}
-.coin-tab:hover{color:#e5e5e5;background:#1a1a1a}
-.coin-tab.active{color:#fafafa;background:#1a1a1a}
+/* Header — matches data.html */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px; border-bottom: 1px solid #1a1a1a;
+  background: #0a0a0a; position: sticky; top: 0; z-index: 10;
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header-title { font-size: 0.95rem; font-weight: 600; }
+.header-sub { font-size: 0.7rem; color: #525252; }
+.coin-tabs {
+  display: flex; gap: 2px; padding: 3px;
+  background: #0f0f0f; border-radius: 8px; border: 1px solid #1a1a1a;
+}
+.coin-tab {
+  padding: 5px 14px; border-radius: 6px; border: none;
+  background: transparent; color: #525252;
+  font-size: 0.78rem; font-weight: 500; cursor: pointer;
+  transition: all 0.15s; font-family: inherit;
+}
+.coin-tab:hover { background: #1a1a1a; color: #a3a3a3; }
+.coin-tab.active { background: #1a1a1a; color: #fafafa; }
 
-.stats-bar{display:flex;gap:24px;padding:16px 24px;border-bottom:1px solid #141414;flex-wrap:wrap}
-.stat{display:flex;align-items:center;gap:8px}
-.stat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.stat-dot.green{background:#22c55e;box-shadow:0 0 6px #22c55e}
-.stat-dot.red{background:#ef4444;box-shadow:0 0 6px #ef4444}
-.stat-dot.yellow{background:#eab308;box-shadow:0 0 6px #eab308}
-.stat-dot.gray{background:#525252}
-.stat-label{font-size:0.75rem;color:#525252}
-.stat-value{font-size:0.8rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace}
+/* Stats bar */
+.stats-bar {
+  display: flex; gap: 20px; padding: 6px 20px;
+  border-bottom: 1px solid #141414; font-size: 0.68rem;
+}
+.stat-item { display: flex; align-items: center; gap: 5px; color: #404040; }
+.stat-dot { width: 5px; height: 5px; border-radius: 50%; }
+.stat-dot.on { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+.stat-dot.off { background: #ef4444; }
+.stat-dot.warn { background: #eab308; box-shadow: 0 0 4px #eab308; }
+.stat-dot.idle { background: #404040; }
+.stat-val { color: #737373; font-family: 'JetBrains Mono', monospace; }
 
-/* Sections */
-.section{padding:0 24px 24px}
-.section-hdr{display:flex;align-items:center;justify-content:space-between;padding:16px 0 12px;cursor:pointer;user-select:none}
-.section-hdr h2{font-size:0.9rem;font-weight:600;color:#d4d4d4}
-.section-hdr .toggle{font-size:0.7rem;color:#525252;transition:transform .2s}
-.section-hdr .badge{font-size:0.65rem;color:#525252;font-family:'JetBrains Mono',monospace;background:#141414;padding:2px 8px;border-radius:4px;margin-left:8px}
-.section-body{overflow:hidden;transition:max-height .3s ease}
-.section-body.collapsed{max-height:0 !important}
+/* Panel grid */
+.grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 10px; padding: 12px;
+}
+@media(max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+.panel {
+  background: #0c0c0c; border: 1px solid #141414;
+  border-radius: 8px; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.panel.full { grid-column: 1 / -1; }
+.panel-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid #141414; flex-shrink: 0;
+}
+.panel-title {
+  font-size: 0.72rem; font-weight: 600; color: #737373;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.panel-badge {
+  font-size: 0.62rem; color: #404040;
+  font-family: 'JetBrains Mono', monospace;
+}
+.panel-body { padding: 10px 12px; flex: 1; min-height: 0; overflow-y: auto; }
+.empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; min-height: 80px; color: #262626; font-size: 0.78rem;
+}
 
-/* Condition Cards Grid */
-.cond-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:12px}
-.cond-card{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:16px;transition:border-color .2s}
-.cond-card:hover{border-color:#262626}
-.cond-card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.cond-name{font-size:0.8rem;font-weight:600;color:#d4d4d4}
-.regime-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em}
-.regime-low{background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
-.regime-normal{background:rgba(82,82,82,0.15);color:#a3a3a3;border:1px solid rgba(82,82,82,0.3)}
-.regime-high{background:rgba(234,179,8,0.15);color:#eab308;border:1px solid rgba(234,179,8,0.3)}
-.regime-extreme{background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3)}
-.cond-value{font-size:1.4rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:#fafafa;margin-bottom:8px}
-.cond-pctl-wrap{height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden;margin-bottom:6px;position:relative}
-.cond-pctl-bar{height:100%;border-radius:2px;transition:width .4s ease}
-.cond-desc{font-size:0.7rem;color:#525252;line-height:1.4}
+/* ── Condition rows ────────────────────────────────────── */
+.cond-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid #0f0f0f;
+}
+.cond-row:last-child { border-bottom: none; }
+.cond-icon {
+  width: 28px; height: 28px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; flex-shrink: 0;
+}
+.cond-icon.green  { background: rgba(34,197,94,0.12); color: #22c55e; }
+.cond-icon.yellow { background: rgba(234,179,8,0.12); color: #eab308; }
+.cond-icon.red    { background: rgba(239,68,68,0.12); color: #ef4444; }
+.cond-icon.blue   { background: rgba(59,130,246,0.12); color: #60a5fa; }
+.cond-icon.gray   { background: rgba(82,82,82,0.12);  color: #737373; }
 
-/* Model Cards Grid */
-.model-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));gap:12px}
-.model-card{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:14px}
-.model-card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.model-name{font-size:0.8rem;font-weight:600;color:#d4d4d4}
-.model-spearman{font-size:1.1rem;font-weight:700;font-family:'JetBrains Mono',monospace}
-.spearman-tier-a-plus{color:#22c55e}
-.spearman-tier-a{color:#eab308}
-.spearman-tier-b{color:#a3a3a3}
-.model-meta{display:flex;flex-direction:column;gap:4px;margin-top:8px}
-.model-meta-row{display:flex;justify-content:space-between;font-size:0.7rem}
-.model-meta-row .k{color:#525252}
-.model-meta-row .v{color:#a3a3a3;font-family:'JetBrains Mono',monospace}
-.spearman-bar-wrap{height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden;margin-top:6px}
-.spearman-bar{height:100%;border-radius:2px;background:#6366f1}
+.cond-info { flex: 1; min-width: 0; }
+.cond-label { font-size: 0.72rem; font-weight: 500; color: #d4d4d4; }
+.cond-hint { font-size: 0.6rem; color: #404040; margin-top: 1px; }
 
-/* Feature Groups */
-.feature-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:16px}
-.feature-group{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:14px}
-.group-label{font-size:0.65rem;text-transform:uppercase;letter-spacing:0.08em;color:#404040;margin-bottom:10px;font-weight:600}
-.feature-row{display:flex;align-items:center;gap:8px;padding:4px 0}
-.feature-avail{width:6px;height:6px;border-radius:50%;flex-shrink:0}
-.feature-avail.on{background:#22c55e}
-.feature-avail.off{background:#ef4444}
-.feature-name{font-size:0.72rem;color:#737373;width:150px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.feature-bar-wrap{flex:1;height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden;min-width:50px}
-.feature-bar{height:100%;border-radius:2px;transition:width .4s ease}
-.feature-bar.positive{background:#22c55e}
-.feature-bar.negative{background:#ef4444}
-.feature-bar.neutral{background:#525252}
-.feature-val{font-size:0.72rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:65px;text-align:right;flex-shrink:0}
+.cond-reading { text-align: right; flex-shrink: 0; min-width: 100px; }
+.cond-val {
+  font-size: 0.82rem; font-weight: 600;
+  font-family: 'JetBrains Mono', monospace; color: #fafafa;
+}
+.cond-regime {
+  display: inline-block; padding: 1px 6px; border-radius: 4px;
+  font-size: 0.55rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; margin-left: 6px;
+}
+.regime-low     { background: rgba(59,130,246,0.15); color: #60a5fa; }
+.regime-normal  { background: rgba(82,82,82,0.12);   color: #737373; }
+.regime-high    { background: rgba(234,179,8,0.15);   color: #eab308; }
+.regime-extreme { background: rgba(239,68,68,0.15);   color: #ef4444; }
 
-/* Data Quality */
-.quality-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:16px}
-.quality-card{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:14px}
-.quality-row{display:flex;align-items:center;gap:10px;padding:5px 0}
-.quality-label{font-size:0.72rem;color:#737373;width:130px;flex-shrink:0}
-.quality-bar-wrap{flex:1;height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden}
-.quality-bar{height:100%;border-radius:3px;background:#6366f1;transition:width .4s ease}
-.quality-val{font-size:0.72rem;color:#a3a3a3;font-family:'JetBrains Mono',monospace;width:100px;text-align:right;flex-shrink:0}
+.cond-pctl { font-size: 0.58rem; color: #404040; margin-top: 2px; }
+.cond-bar-wrap { width: 60px; height: 3px; background: #1a1a1a; border-radius: 2px; overflow: hidden; display: inline-block; vertical-align: middle; margin-left: 4px; }
+.cond-bar { height: 100%; border-radius: 2px; }
 
-/* Legacy Direction Panel */
-.legacy-panel{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:16px}
-.legacy-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.6rem;font-weight:600;text-transform:uppercase;background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.2);margin-bottom:8px}
-.signal-badge{display:inline-block;padding:4px 12px;border-radius:6px;font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em}
-.signal-badge.long{background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.3)}
-.signal-badge.short{background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3)}
-.signal-badge.skip{background:rgba(82,82,82,0.15);color:#737373;border:1px solid rgba(82,82,82,0.3)}
+/* ── Gauge (for summary panel) ──────────────────────── */
+.gauge-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0;
+}
+.gauge-label { font-size: 0.68rem; color: #525252; width: 100px; flex-shrink: 0; }
+.gauge-track { flex: 1; height: 4px; background: #1a1a1a; border-radius: 2px; position: relative; }
+.gauge-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+.gauge-val {
+  font-size: 0.68rem; color: #a3a3a3; width: 50px; text-align: right; flex-shrink: 0;
+  font-family: 'JetBrains Mono', monospace;
+}
 
-/* Placeholder */
-.placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:120px;gap:10px;color:#404040;text-align:center;padding:24px}
-.placeholder-icon{font-size:1.8rem;opacity:0.3}
-.placeholder-title{font-size:0.82rem;color:#525252;font-weight:500}
-.placeholder-sub{font-size:0.72rem;color:#404040;max-width:320px;line-height:1.5}
+/* ── Model table ───────────────────────────────────── */
+.model-table { width: 100%; border-collapse: collapse; font-size: 0.68rem; }
+.model-table th {
+  text-align: left; padding: 5px 8px; color: #404040; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.58rem;
+  border-bottom: 1px solid #1a1a1a;
+}
+.model-table td {
+  padding: 5px 8px; color: #a3a3a3; border-bottom: 1px solid #0f0f0f;
+  font-family: 'JetBrains Mono', monospace;
+}
+.model-table tr:hover td { background: #0f0f0f; }
 
-/* Briefing text block */
-.briefing-block{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:10px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#a3a3a3;white-space:pre-wrap;line-height:1.6;max-height:300px;overflow-y:auto}
+.spearman-pill {
+  display: inline-block; padding: 1px 6px; border-radius: 4px;
+  font-size: 0.62rem; font-weight: 600;
+}
+.sp-excellent { background: rgba(34,197,94,0.15); color: #22c55e; }
+.sp-good      { background: rgba(234,179,8,0.15); color: #eab308; }
+.sp-ok        { background: rgba(59,130,246,0.15); color: #60a5fa; }
+
+/* ── Feature table ─────────────────────────────────── */
+.feat-group-label {
+  font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: #2a2a2a; font-weight: 600; padding: 8px 0 4px;
+}
+.feat-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.feat-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.feat-dot.on  { background: #22c55e; }
+.feat-dot.off { background: #ef4444; }
+.feat-name {
+  font-size: 0.66rem; color: #525252; width: 120px; flex-shrink: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.feat-bar-wrap { flex: 1; height: 3px; background: #1a1a1a; border-radius: 2px; overflow: hidden; min-width: 30px; }
+.feat-bar { height: 100%; border-radius: 2px; }
+.feat-bar.pos { background: #22c55e; }
+.feat-bar.neg { background: #ef4444; }
+.feat-bar.neu { background: #404040; }
+.feat-val {
+  font-size: 0.66rem; color: #737373; font-family: 'JetBrains Mono', monospace;
+  width: 55px; text-align: right; flex-shrink: 0;
+}
+
+/* ── Briefing block ────────────────────────────────── */
+.briefing-pre {
+  font-family: 'JetBrains Mono', monospace; font-size: 0.66rem;
+  color: #737373; white-space: pre-wrap; line-height: 1.6;
+  background: #080808; border-radius: 6px; padding: 10px;
+  max-height: 200px; overflow-y: auto;
+}
+
+/* ── Quality bar ───────────────────────────────────── */
+.q-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.q-label { font-size: 0.66rem; color: #525252; width: 100px; flex-shrink: 0; }
+.q-bar-wrap { flex: 1; height: 4px; background: #1a1a1a; border-radius: 2px; overflow: hidden; }
+.q-bar { height: 100%; border-radius: 2px; background: #6366f1; }
+.q-val { font-size: 0.66rem; color: #737373; font-family: 'JetBrains Mono', monospace; width: 80px; text-align: right; flex-shrink: 0; }
+
+/* Collapse toggle */
+.collapse-btn {
+  background: none; border: none; color: #525252; cursor: pointer;
+  font-size: 0.62rem; padding: 2px 6px; border-radius: 4px; font-family: inherit;
+}
+.collapse-btn:hover { color: #a3a3a3; background: #1a1a1a; }
+
+/* Legacy tag */
+.legacy-tag {
+  display: inline-block; padding: 1px 6px; border-radius: 4px;
+  font-size: 0.55rem; font-weight: 600; text-transform: uppercase;
+  background: rgba(239,68,68,0.1); color: #ef4444;
+}
 </style>
 </head>
 <body>
 
+<!-- Header -->
 <div class="header">
-    <div class="header-left">
-        <h1>ML Intelligence</h1>
-        <p>Condition engine, model performance, market state predictions</p>
-    </div>
-    <div class="coin-tabs" id="coin-tabs">
-        <div class="coin-tab active" data-coin="BTC">BTC</div>
-        <div class="coin-tab" data-coin="ETH">ETH</div>
-        <div class="coin-tab" data-coin="SOL">SOL</div>
-    </div>
+  <div class="header-left">
+    <span class="header-title">ML Intelligence</span>
+    <span class="header-sub">Condition engine &middot; 10 market state predictions</span>
+  </div>
+  <div class="coin-tabs" id="coin-tabs">
+    <button class="coin-tab active" data-coin="BTC">BTC</button>
+    <button class="coin-tab" data-coin="ETH">ETH</button>
+    <button class="coin-tab" data-coin="SOL">SOL</button>
+  </div>
 </div>
 
-<div class="stats-bar" id="stats-bar">
-    <div class="stat">
-        <div class="stat-dot gray" id="sat-dot"></div>
-        <span class="stat-label">Satellite</span>
-        <span class="stat-value" id="sat-status">--</span>
-    </div>
-    <div class="stat">
-        <div class="stat-dot gray" id="cond-dot"></div>
-        <span class="stat-label">Conditions</span>
-        <span class="stat-value" id="cond-status">--</span>
-    </div>
-    <div class="stat">
-        <div class="stat-dot gray" id="model-dot"></div>
-        <span class="stat-label">Direction</span>
-        <span class="stat-value" id="model-status">--</span>
-    </div>
-    <div class="stat">
-        <span class="stat-label">Snapshots</span>
-        <span class="stat-value" id="snap-count">--</span>
-    </div>
-    <div class="stat">
-        <span class="stat-label">Last Tick</span>
-        <span class="stat-value" id="last-tick">--</span>
-    </div>
-    <div class="stat">
-        <span class="stat-label">DB Size</span>
-        <span class="stat-value" id="db-size">--</span>
-    </div>
+<!-- Stats Bar -->
+<div class="stats-bar">
+  <div class="stat-item"><div class="stat-dot idle" id="sat-dot"></div><span>Satellite</span><span class="stat-val" id="sat-status">--</span></div>
+  <div class="stat-item"><div class="stat-dot idle" id="cond-dot"></div><span>Conditions</span><span class="stat-val" id="cond-status">--</span></div>
+  <div class="stat-item"><span>Snapshots</span><span class="stat-val" id="snap-count">--</span></div>
+  <div class="stat-item"><span>Last Tick</span><span class="stat-val" id="last-tick">--</span></div>
+  <div class="stat-item"><span>DB</span><span class="stat-val" id="db-size">--</span></div>
 </div>
 
-<!-- Section 1: Live Conditions (always open) -->
-<div class="section">
-    <div class="section-hdr" onclick="toggleSection('conditions')">
-        <div style="display:flex;align-items:center">
-            <h2>Live Conditions</h2>
-            <span class="badge" id="cond-count-badge">--</span>
-        </div>
-        <span class="toggle" id="toggle-conditions">&#9660;</span>
-    </div>
-    <div class="section-body" id="body-conditions">
-        <div id="cond-content">
-            <div class="placeholder" id="cond-placeholder">
-                <div class="placeholder-icon">&#129504;</div>
-                <div class="placeholder-title">No condition predictions yet</div>
-                <div class="placeholder-sub">Train condition models and deploy to see live market state predictions</div>
-            </div>
-        </div>
-    </div>
-</div>
+<!-- Main Grid -->
+<div class="grid">
 
-<!-- Section 2: Briefing Preview -->
-<div class="section">
-    <div class="section-hdr" onclick="toggleSection('briefing')">
-        <div style="display:flex;align-items:center">
-            <h2>LLM Briefing Preview</h2>
-        </div>
-        <span class="toggle" id="toggle-briefing">&#9660;</span>
+  <!-- Panel 1: Market State (full width, the star of the show) -->
+  <div class="panel full">
+    <div class="panel-hdr">
+      <span class="panel-title">Market State</span>
+      <span class="panel-badge" id="state-badge">waiting for data</span>
     </div>
-    <div class="section-body" id="body-briefing">
-        <div id="briefing-content">
-            <div class="placeholder" id="briefing-placeholder">
-                <div class="placeholder-icon">&#128196;</div>
-                <div class="placeholder-title">No briefing text</div>
-                <div class="placeholder-sub">Condition predictions generate a briefing block for the trading agent</div>
-            </div>
-        </div>
+    <div class="panel-body" id="state-body">
+      <div class="empty" id="state-empty">No condition predictions — train models first</div>
     </div>
-</div>
+  </div>
 
-<!-- Section 3: Model Performance (collapsible) -->
-<div class="section">
-    <div class="section-hdr" onclick="toggleSection('models')">
-        <div style="display:flex;align-items:center">
-            <h2>Model Performance</h2>
-            <span class="badge" id="model-count-badge">--</span>
-        </div>
-        <span class="toggle" id="toggle-models">&#9654;</span>
+  <!-- Panel 2: Environment Summary (left) -->
+  <div class="panel">
+    <div class="panel-hdr">
+      <span class="panel-title">Environment Summary</span>
+      <span class="panel-badge" id="summary-badge">--</span>
     </div>
-    <div class="section-body collapsed" id="body-models">
-        <div id="models-content">
-            <div class="placeholder" id="models-placeholder">
-                <div class="placeholder-icon">&#128200;</div>
-                <div class="placeholder-title">No models found</div>
-                <div class="placeholder-sub">Train condition models to see validation metrics</div>
-            </div>
-        </div>
+    <div class="panel-body" id="summary-body">
+      <div class="empty">Waiting for predictions</div>
     </div>
-</div>
+  </div>
 
-<!-- Section 4: Features (collapsible) -->
-<div class="section">
-    <div class="section-hdr" onclick="toggleSection('features')">
-        <div style="display:flex;align-items:center">
-            <h2>Feature Monitor</h2>
-            <span class="badge" id="feature-count-badge">14 features</span>
-        </div>
-        <span class="toggle" id="toggle-features">&#9654;</span>
+  <!-- Panel 3: Model Quality (right) -->
+  <div class="panel">
+    <div class="panel-hdr">
+      <span class="panel-title">Model Quality</span>
+      <span class="panel-badge" id="model-badge">--</span>
     </div>
-    <div class="section-body collapsed" id="body-features">
-        <div id="features-content">
-            <div class="placeholder" id="features-placeholder">
-                <div class="placeholder-icon">&#9881;</div>
-                <div class="placeholder-title">No feature data</div>
-                <div class="placeholder-sub">Enable satellite and wait for the first tick to see feature values</div>
-            </div>
-        </div>
+    <div class="panel-body" id="model-body" style="overflow-y:auto">
+      <div class="empty" id="model-empty">No models</div>
     </div>
-</div>
+  </div>
 
-<!-- Section 5: Data Quality (collapsible) -->
-<div class="section">
-    <div class="section-hdr" onclick="toggleSection('quality')">
-        <div style="display:flex;align-items:center">
-            <h2>Data Quality</h2>
-            <span class="badge" id="quality-badge">--</span>
-        </div>
-        <span class="toggle" id="toggle-quality">&#9654;</span>
+  <!-- Panel 4: Agent Briefing (full width) -->
+  <div class="panel full">
+    <div class="panel-hdr">
+      <span class="panel-title">Agent Briefing</span>
+      <span class="panel-badge">what the LLM sees</span>
     </div>
-    <div class="section-body collapsed" id="body-quality">
-        <div id="quality-content">
-            <div class="placeholder" id="quality-placeholder">
-                <div class="placeholder-icon">&#128202;</div>
-                <div class="placeholder-title">No snapshot data</div>
-                <div class="placeholder-sub">Satellite must be enabled and running to collect snapshots</div>
-            </div>
-        </div>
+    <div class="panel-body" id="briefing-body">
+      <div class="empty" id="briefing-empty">No briefing text</div>
     </div>
-</div>
+  </div>
 
-<!-- Section 6: Legacy Direction (collapsible) -->
-<div class="section" style="padding-bottom:40px">
-    <div class="section-hdr" onclick="toggleSection('legacy')">
-        <div style="display:flex;align-items:center">
-            <h2>Direction Inference</h2>
-            <span class="badge" style="color:#ef4444">SHADOW MODE</span>
-        </div>
-        <span class="toggle" id="toggle-legacy">&#9654;</span>
+  <!-- Panel 5: Feature Monitor (left) -->
+  <div class="panel">
+    <div class="panel-hdr">
+      <span class="panel-title">Feature Monitor</span>
+      <span class="panel-badge">14 v2 features</span>
     </div>
-    <div class="section-body collapsed" id="body-legacy">
-        <div id="legacy-content">
-            <div class="legacy-panel">
-                <div class="legacy-badge">Unreliable - Spearman 0.02</div>
-                <div style="font-size:0.75rem;color:#525252;line-height:1.5;margin-bottom:12px">
-                    Direction prediction was proven ineffective across v2-v6 experiments. These predictions run in shadow mode only and are NOT used for trading decisions. The condition engine above provides the actual ML intelligence.
-                </div>
-                <div id="legacy-pred">
-                    <div class="placeholder">
-                        <div class="placeholder-title">No direction model loaded</div>
-                    </div>
-                </div>
-            </div>
-        </div>
+    <div class="panel-body" id="feat-body" style="overflow-y:auto">
+      <div class="empty" id="feat-empty">No feature data</div>
     </div>
+  </div>
+
+  <!-- Panel 6: Data Quality (right) -->
+  <div class="panel">
+    <div class="panel-hdr">
+      <span class="panel-title">Data Quality</span>
+      <span class="panel-badge" id="quality-badge">--</span>
+    </div>
+    <div class="panel-body" id="quality-body">
+      <div class="empty" id="quality-empty">No snapshot data</div>
+    </div>
+  </div>
+
 </div>
 
 <script>
 (function() {
-    "use strict";
+  "use strict";
 
-    var B = location.port === "3000"
-        ? location.origin.replace(":3000", ":8000")
-        : location.origin.replace("://", "://api.");
+  var B = location.port === "3000"
+    ? location.origin.replace(":3000", ":8000")
+    : location.origin.replace("://", "://api.");
 
-    var activeCoin = "BTC";
+  var activeCoin = "BTC";
 
-    // ── v2 Feature metadata (14 features) ────────────────────────
-    var FEATURES = {
-        // Structure
-        liq_magnet_direction:   { group: "Structure",    label: "Liq Magnet Dir",     min: -1,  max: 1,   neutral: 0,   fmt: "f2" },
-        oi_vs_7d_avg_ratio:     { group: "Structure",    label: "OI vs 7d Avg",       min: 0.5, max: 2,   neutral: 1,   fmt: "f3" },
-        liq_cascade_active:     { group: "Structure",    label: "Liq Cascade",        min: 0,   max: 1,   neutral: 0,   fmt: "bool" },
-        liq_1h_vs_4h_avg:       { group: "Structure",    label: "Liq 1h vs 4h",       min: 0,   max: 5,   neutral: 1,   fmt: "f2" },
-        sessions_overlapping:   { group: "Structure",    label: "Sessions Overlap",   min: 0,   max: 3,   neutral: 1,   fmt: "int" },
-        // Funding
-        funding_vs_30d_zscore:  { group: "Funding",      label: "Funding Z-Score",    min: -3,  max: 3,   neutral: 0,   fmt: "f2" },
-        hours_to_funding:       { group: "Funding",      label: "Hours to Funding",   min: 0,   max: 8,   neutral: 4,   fmt: "f1" },
-        oi_funding_pressure:    { group: "Funding",      label: "OI Fund Pressure",   min: -5,  max: 5,   neutral: 0,   fmt: "f2" },
-        // Magnitude
-        cvd_normalized_5m:      { group: "Magnitude",    label: "CVD Norm 5m",        min: -1,  max: 1,   neutral: 0,   fmt: "f3" },
-        price_change_5m_pct:    { group: "Magnitude",    label: "Price Chg 5m",       min: -2,  max: 2,   neutral: 0,   fmt: "pct" },
-        volume_vs_1h_avg_ratio: { group: "Magnitude",    label: "Vol vs 1h Avg",      min: 0,   max: 5,   neutral: 1,   fmt: "f2" },
-        realized_vol_1h:        { group: "Magnitude",    label: "Realized Vol 1h",    min: 0,   max: 5,   neutral: 0,   fmt: "f3" },
-        // Directional (v2 new)
-        cvd_ratio_30m:          { group: "Directional",  label: "CVD Ratio 30m",      min: -2,  max: 2,   neutral: 0,   fmt: "f3" },
-        cvd_acceleration:       { group: "Directional",  label: "CVD Acceleration",   min: -2,  max: 2,   neutral: 0,   fmt: "f3" },
-        price_trend_1h:         { group: "Directional",  label: "Price Trend 1h",     min: -3,  max: 3,   neutral: 0,   fmt: "f3" },
-        close_position_5m:      { group: "Directional",  label: "Close Position 5m",  min: -1,  max: 1,   neutral: 0,   fmt: "f3" },
-        oi_price_direction:     { group: "Directional",  label: "OI Price Dir",       min: -2,  max: 2,   neutral: 0,   fmt: "f3" },
-        liq_imbalance_1h:       { group: "Directional",  label: "Liq Imbalance 1h",   min: -1,  max: 1,   neutral: 0,   fmt: "f3" },
-    };
+  // ── Feature config ─────────────────────────────────
+  var FEATURES = {
+    liq_magnet_direction:   { g:"Structure",   l:"Liq Magnet Dir",    mn:-1,  mx:1,   n:0,   f:"f2" },
+    oi_vs_7d_avg_ratio:     { g:"Structure",   l:"OI vs 7d Avg",     mn:0.5, mx:2,   n:1,   f:"f3" },
+    liq_cascade_active:     { g:"Structure",   l:"Liq Cascade",      mn:0,   mx:1,   n:0,   f:"bool" },
+    liq_1h_vs_4h_avg:       { g:"Structure",   l:"Liq 1h vs 4h",    mn:0,   mx:5,   n:1,   f:"f2" },
+    sessions_overlapping:   { g:"Structure",   l:"Sessions",         mn:0,   mx:3,   n:1,   f:"int" },
+    funding_vs_30d_zscore:  { g:"Funding",     l:"Funding Z",        mn:-3,  mx:3,   n:0,   f:"f2" },
+    hours_to_funding:       { g:"Funding",     l:"Hrs to Fund",      mn:0,   mx:8,   n:4,   f:"f1" },
+    oi_funding_pressure:    { g:"Funding",     l:"OI Fund Press",    mn:-5,  mx:5,   n:0,   f:"f2" },
+    cvd_normalized_5m:      { g:"Magnitude",   l:"CVD Norm 5m",      mn:-1,  mx:1,   n:0,   f:"f3" },
+    price_change_5m_pct:    { g:"Magnitude",   l:"Price Chg 5m",     mn:-2,  mx:2,   n:0,   f:"pct" },
+    volume_vs_1h_avg_ratio: { g:"Magnitude",   l:"Vol vs 1h",        mn:0,   mx:5,   n:1,   f:"f2" },
+    realized_vol_1h:        { g:"Magnitude",   l:"Realized Vol",     mn:0,   mx:5,   n:0,   f:"f3" },
+    cvd_ratio_30m:          { g:"Directional", l:"CVD Ratio 30m",    mn:-2,  mx:2,   n:0,   f:"f3" },
+    cvd_acceleration:       { g:"Directional", l:"CVD Accel",        mn:-2,  mx:2,   n:0,   f:"f3" },
+    price_trend_1h:         { g:"Directional", l:"Trend 1h",         mn:-3,  mx:3,   n:0,   f:"f3" },
+    close_position_5m:      { g:"Directional", l:"Close Pos 5m",     mn:-1,  mx:1,   n:0,   f:"f3" },
+    oi_price_direction:     { g:"Directional", l:"OI Price Dir",     mn:-2,  mx:2,   n:0,   f:"f3" },
+    liq_imbalance_1h:       { g:"Directional", l:"Liq Imbal 1h",     mn:-1,  mx:1,   n:0,   f:"f3" },
+  };
+  var AVAIL_MAP = {
+    liq_magnet_direction:"liq_magnet_avail", oi_vs_7d_avg_ratio:"oi_7d_avail",
+    liq_cascade_active:"liq_cascade_avail", liq_1h_vs_4h_avg:"liq_cascade_avail",
+    funding_vs_30d_zscore:"funding_zscore_avail", hours_to_funding:"funding_zscore_avail",
+    oi_funding_pressure:"oi_funding_pressure_avail", cvd_normalized_5m:"cvd_avail",
+    price_change_5m_pct:"price_change_5m_avail", volume_vs_1h_avg_ratio:"volume_avail",
+    realized_vol_1h:"realized_vol_avail", sessions_overlapping:"realized_vol_avail",
+  };
+  var GROUPS = ["Structure","Funding","Magnitude","Directional"];
 
-    var AVAIL_MAP = {
-        liq_magnet_direction:  "liq_magnet_avail",
-        oi_vs_7d_avg_ratio:    "oi_7d_avail",
-        liq_cascade_active:    "liq_cascade_avail",
-        liq_1h_vs_4h_avg:      "liq_cascade_avail",
-        funding_vs_30d_zscore: "funding_zscore_avail",
-        hours_to_funding:      "funding_zscore_avail",
-        oi_funding_pressure:   "oi_funding_pressure_avail",
-        cvd_normalized_5m:     "cvd_avail",
-        price_change_5m_pct:   "price_change_5m_avail",
-        volume_vs_1h_avg_ratio:"volume_avail",
-        realized_vol_1h:       "realized_vol_avail",
-        sessions_overlapping:  "realized_vol_avail",
-    };
+  // Condition display config: icon, description of what it means to the trader
+  var CONDS = {
+    vol_1h:        { icon:"~",  label:"Volatility (1h)",      good:"low",    what:"How wild will the next hour be? High = big moves, wide stops needed." },
+    vol_4h:        { icon:"~",  label:"Volatility (4h)",      good:"low",    what:"Longer vol outlook. High = choppy session ahead." },
+    range_30m:     { icon:"\u2194", label:"Price Range (30m)", good:"high",   what:"Expected total price swing in 30 min. Higher = more opportunity." },
+    move_30m:      { icon:"\u2191", label:"Max Move (30m)",    good:"high",   what:"Largest single-direction move expected. Higher = bigger TP potential." },
+    volume_1h:     { icon:"\u25B2", label:"Volume (1h)",       good:"high",   what:"Predicted volume vs average. High volume = conviction behind moves." },
+    entry_quality: { icon:"\u2713", label:"Entry Quality",     good:"high",   what:"Is NOW a good time to enter? Higher = better than recent entries." },
+    mae_short:     { icon:"\u2193", label:"Short Risk",        good:"low",    what:"Expected drawdown if you go short. Higher = more pain before profit." },
+    vol_expand:    { icon:"\u26A1",label:"Vol Expansion",      good:"context",what:"Is volatility about to spike? >1x = expanding, <1x = compressing." },
+    mae_long:      { icon:"\u2191", label:"Long Risk",         good:"low",    what:"Expected drawdown if you go long. Higher = more pain before profit." },
+    funding_4h:    { icon:"F",  label:"Funding Trend",         good:"context",what:"Where is funding heading? Rising = shorts get squeezed." },
+  };
+  var COND_ORDER = ["vol_1h","vol_4h","range_30m","move_30m","volume_1h","entry_quality","mae_short","vol_expand","mae_long","funding_4h"];
 
-    var GROUPS_ORDER = ["Structure", "Funding", "Magnitude", "Directional"];
+  // ── Helpers ─────────────────────────────────────────
+  function vis() { return !document.hidden; }
+  function api(u) { return fetch(B+u).then(function(r){return r.json()}).catch(function(){return null}); }
+  function $(id) { return document.getElementById(id); }
 
-    // Condition display metadata
-    var COND_META = {
-        vol_1h:        { label: "Volatility 1h",      desc: "Predicted realized volatility over next hour",         unit: "" },
-        vol_4h:        { label: "Volatility 4h",      desc: "Average volatility outlook over next 4 hours",         unit: "" },
-        range_30m:     { label: "Price Range 30m",     desc: "Expected total price range (long+short ROE) in 30min", unit: "%" },
-        move_30m:      { label: "Max Move 30m",        desc: "Largest single-direction move expected in 30min",       unit: "%" },
-        volume_1h:     { label: "Volume Forecast 1h",  desc: "Predicted volume vs 1h average ratio",                 unit: "x" },
-        entry_quality: { label: "Entry Quality",       desc: "How favorable is NOW vs recent entries",                unit: "" },
-        mae_short:     { label: "Short Drawdown Risk", desc: "Expected worst adverse excursion for short position",   unit: "%" },
-        vol_expand:    { label: "Vol Expansion",       desc: "Predicted volatility change ratio (>1 = expanding)",    unit: "x" },
-        mae_long:      { label: "Long Drawdown Risk",  desc: "Expected worst adverse excursion for long position",    unit: "%" },
-        funding_4h:    { label: "Funding Trajectory",  desc: "Expected change in funding z-score over 4 hours",       unit: "" },
-    };
-    var COND_ORDER = ["vol_1h","vol_4h","range_30m","move_30m","volume_1h","entry_quality","mae_short","vol_expand","mae_long","funding_4h"];
-
-    // ── Helpers ─────────────────────────────────────────────────────
-    function vis() { return !document.hidden; }
-    function api(url) { return fetch(B + url).then(function(r) { return r.json(); }).catch(function() { return null; }); }
-    function $(id) { return document.getElementById(id); }
-
-    function fmtVal(val, fmt) {
-        if (val === null || val === undefined) return "--";
-        switch (fmt) {
-            case "f1": return val.toFixed(1);
-            case "f2": return val.toFixed(2);
-            case "f3": return val.toFixed(3);
-            case "pct": return (val >= 0 ? "+" : "") + val.toFixed(2) + "%";
-            case "bool": return val ? "YES" : "NO";
-            case "int": return Math.round(val).toString();
-            default: return val.toString();
-        }
+  function fmt(v, f) {
+    if (v==null) return "--";
+    switch(f) {
+      case "f1": return v.toFixed(1);
+      case "f2": return v.toFixed(2);
+      case "f3": return v.toFixed(3);
+      case "pct": return (v>=0?"+":"")+v.toFixed(2)+"%";
+      case "bool": return v?"YES":"NO";
+      case "int": return Math.round(v)+"";
+      default: return v+"";
     }
+  }
 
-    function timeAgo(ts) {
-        if (!ts) return "--";
-        var diff = Date.now() / 1000 - ts;
-        if (diff < 60) return Math.floor(diff) + "s ago";
-        if (diff < 3600) return Math.floor(diff / 60) + "m ago";
-        if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
-        return Math.floor(diff / 86400) + "d ago";
+  function timeAgo(ts) {
+    if (!ts) return "--";
+    var d = Date.now()/1000-ts;
+    if (d<60) return Math.floor(d)+"s ago";
+    if (d<3600) return Math.floor(d/60)+"m ago";
+    if (d<86400) return Math.floor(d/3600)+"h ago";
+    return Math.floor(d/86400)+"d ago";
+  }
+
+  function barPct(v,mn,mx) {
+    if (v==null) return 0;
+    return Math.max(0,Math.min(100,((v-mn)/(mx-mn))*100));
+  }
+
+  function regimeClass(r) {
+    return "regime-"+(r||"normal").toLowerCase();
+  }
+
+  // Color for regime: how concerning is this?
+  function regimeIconClass(regime, good) {
+    var r = (regime||"normal").toLowerCase();
+    if (r === "extreme") return "red";
+    if (r === "high") {
+      if (good === "low") return "yellow"; // high vol when low is good = warning
+      if (good === "high") return "green";  // high entry quality when high is good = great
+      return "yellow";
     }
-
-    function barPct(val, min, max) {
-        if (val === null || val === undefined) return 0;
-        return Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+    if (r === "low") {
+      if (good === "low") return "green";  // low risk when low is good = great
+      if (good === "high") return "blue";   // low entry quality when high is good = meh
+      return "blue";
     }
+    return "gray"; // normal
+  }
 
-    function regimeColor(regime) {
-        switch ((regime || "").toLowerCase()) {
-            case "low": return "#60a5fa";
-            case "normal": return "#a3a3a3";
-            case "high": return "#eab308";
-            case "extreme": return "#ef4444";
-            default: return "#525252";
-        }
-    }
+  function regimeBarColor(regime) {
+    var r = (regime||"normal").toLowerCase();
+    if (r === "extreme") return "#ef4444";
+    if (r === "high") return "#eab308";
+    if (r === "low") return "#60a5fa";
+    return "#404040";
+  }
 
-    // ── Section Toggle ────────────────────────────────────────────
-    window.toggleSection = function(name) {
-        var body = $("body-" + name);
-        var toggle = $("toggle-" + name);
-        if (body.classList.contains("collapsed")) {
-            body.classList.remove("collapsed");
-            body.style.maxHeight = body.scrollHeight + "px";
-            toggle.innerHTML = "&#9660;";
-        } else {
-            body.classList.add("collapsed");
-            toggle.innerHTML = "&#9654;";
-        }
-    };
-
-    // ── Coin Tabs ───────────────────────────────────────────────────
-    document.querySelectorAll(".coin-tab").forEach(function(tab) {
-        tab.addEventListener("click", function() {
-            document.querySelectorAll(".coin-tab").forEach(function(t) { t.classList.remove("active"); });
-            tab.classList.add("active");
-            activeCoin = tab.dataset.coin;
-            refreshConditions();
-            refreshFeatures();
-            refreshLegacy();
-        });
+  // ── Coin Tabs ──────────────────────────────────────
+  document.querySelectorAll(".coin-tab").forEach(function(tab) {
+    tab.addEventListener("click", function() {
+      document.querySelectorAll(".coin-tab").forEach(function(t){t.classList.remove("active")});
+      tab.classList.add("active");
+      activeCoin = tab.dataset.coin;
+      refresh();
     });
+  });
 
-    // ── Status Bar ──────────────────────────────────────────────────
-    function refreshStatus() {
-        if (!vis()) return;
-        api("/api/ml/status").then(function(d) {
-            if (!d) return;
-            // Satellite
-            var satDot = $("sat-dot"), satStatus = $("sat-status");
-            if (!d.db_exists) {
-                satDot.className = "stat-dot red"; satStatus.textContent = "No DB";
-            } else if (!d.satellite_enabled) {
-                satDot.className = "stat-dot red"; satStatus.textContent = "Disabled";
-            } else if (d.last_tick_time && (Date.now() / 1000 - d.last_tick_time) > 600) {
-                satDot.className = "stat-dot yellow"; satStatus.textContent = "Stale";
-            } else {
-                satDot.className = "stat-dot green"; satStatus.textContent = "Running";
-            }
-            // Conditions
-            var condDot = $("cond-dot"), condStatus = $("cond-status");
-            var condCount = d.condition_models || 0;
-            if (condCount > 0) {
-                condDot.className = "stat-dot green"; condStatus.textContent = condCount + " models";
-            } else {
-                condDot.className = "stat-dot gray"; condStatus.textContent = "None";
-            }
-            // Direction (legacy)
-            var modelDot = $("model-dot"), modelStatus = $("model-status");
-            if (d.model_loaded) {
-                modelDot.className = "stat-dot yellow"; modelStatus.textContent = "v" + d.model_version + " (shadow)";
-            } else {
-                modelDot.className = "stat-dot gray"; modelStatus.textContent = "None";
-            }
-
-            $("snap-count").textContent = (d.snapshot_count || 0).toLocaleString();
-            $("last-tick").textContent = timeAgo(d.last_tick_time);
-            $("db-size").textContent = (d.db_size_mb || 0) + " MB";
-        });
-    }
-
-    // ── Live Conditions ─────────────────────────────────────────────
-    function refreshConditions() {
-        if (!vis()) return;
-        api("/api/ml/conditions?coin=" + activeCoin).then(function(d) {
-            var container = $("cond-content");
-            var ph = $("cond-placeholder");
-            var briefingContainer = $("briefing-content");
-            var briefingPh = $("briefing-placeholder");
-
-            if (!d || (!d.conditions && !d.models.length)) {
-                ph.style.display = "flex";
-                container.querySelectorAll(".cond-grid").forEach(function(g) { g.remove(); });
-                briefingPh.style.display = "flex";
-                briefingContainer.querySelectorAll(".briefing-block").forEach(function(b) { b.remove(); });
-                $("cond-count-badge").textContent = "--";
-                $("model-count-badge").textContent = "--";
-                return;
-            }
-
-            // Render condition cards
-            var conds = d.conditions || {};
-            var predictions = conds.predictions || {};
-            var predKeys = Object.keys(predictions);
-
-            if (predKeys.length > 0) {
-                ph.style.display = "none";
-                container.querySelectorAll(".cond-grid").forEach(function(g) { g.remove(); });
-                $("cond-count-badge").textContent = predKeys.length + " predictions";
-
-                var grid = document.createElement("div");
-                grid.className = "cond-grid";
-
-                COND_ORDER.forEach(function(name) {
-                    var pred = predictions[name];
-                    if (!pred) return;
-                    var meta = COND_META[name] || { label: name, desc: "", unit: "" };
-                    var regime = (pred.regime || "normal").toLowerCase();
-                    var pctl = pred.percentile || 0;
-                    var value = pred.value;
-                    var displayVal = value !== null && value !== undefined ? value.toFixed(3) : "--";
-                    if (meta.unit) displayVal += meta.unit;
-
-                    var card = document.createElement("div");
-                    card.className = "cond-card";
-                    card.innerHTML =
-                        '<div class="cond-card-hdr">' +
-                            '<span class="cond-name">' + meta.label + '</span>' +
-                            '<span class="regime-badge regime-' + regime + '">' + regime + '</span>' +
-                        '</div>' +
-                        '<div class="cond-value">' + displayVal + '</div>' +
-                        '<div class="cond-pctl-wrap"><div class="cond-pctl-bar" style="width:' + pctl + '%;background:' + regimeColor(regime) + '"></div></div>' +
-                        '<div class="cond-desc">' + pctl + 'th percentile &mdash; ' + meta.desc + '</div>';
-                    grid.appendChild(card);
-                });
-                container.appendChild(grid);
-            } else {
-                ph.style.display = "flex";
-                container.querySelectorAll(".cond-grid").forEach(function(g) { g.remove(); });
-                $("cond-count-badge").textContent = "0";
-            }
-
-            // Render briefing text
-            var briefingText = d.conditions_text;
-            briefingContainer.querySelectorAll(".briefing-block").forEach(function(b) { b.remove(); });
-            if (briefingText) {
-                briefingPh.style.display = "none";
-                var block = document.createElement("div");
-                block.className = "briefing-block";
-                block.textContent = briefingText;
-                briefingContainer.appendChild(block);
-            } else {
-                briefingPh.style.display = "flex";
-            }
-
-            // Render model performance cards
-            var models = d.models || [];
-            var modelsContainer = $("models-content");
-            var modelsPh = $("models-placeholder");
-            modelsContainer.querySelectorAll(".model-grid").forEach(function(g) { g.remove(); });
-
-            if (models.length > 0) {
-                modelsPh.style.display = "none";
-                $("model-count-badge").textContent = models.length + " models";
-
-                var mGrid = document.createElement("div");
-                mGrid.className = "model-grid";
-
-                models.forEach(function(m) {
-                    var spearman = m.spearman || 0;
-                    var tierClass = spearman >= 0.5 ? "spearman-tier-a-plus" : spearman >= 0.3 ? "spearman-tier-a" : "spearman-tier-b";
-                    var barW = Math.min(100, spearman * 100);
-
-                    var card = document.createElement("div");
-                    card.className = "model-card";
-                    card.innerHTML =
-                        '<div class="model-card-hdr">' +
-                            '<span class="model-name">' + (m.name || "?") + '</span>' +
-                            '<span class="model-spearman ' + tierClass + '">' + spearman.toFixed(3) + '</span>' +
-                        '</div>' +
-                        '<div class="spearman-bar-wrap"><div class="spearman-bar" style="width:' + barW + '%"></div></div>' +
-                        '<div class="model-meta">' +
-                            '<div class="model-meta-row"><span class="k">MAE</span><span class="v">' + (m.mae ? m.mae.toFixed(4) : "--") + '</span></div>' +
-                            '<div class="model-meta-row"><span class="k">Samples</span><span class="v">' + (m.samples ? m.samples.toLocaleString() : "--") + '</span></div>' +
-                            '<div class="model-meta-row"><span class="k">Target</span><span class="v" style="font-family:Inter,sans-serif;font-size:0.65rem;color:#525252">' + (m.target || "--") + '</span></div>' +
-                        '</div>';
-                    mGrid.appendChild(card);
-                });
-                modelsContainer.appendChild(mGrid);
-            } else {
-                modelsPh.style.display = "flex";
-                $("model-count-badge").textContent = "--";
-            }
-        });
-    }
-
-    // ── Feature Monitor ─────────────────────────────────────────────
-    function refreshFeatures() {
-        if (!vis()) return;
-        api("/api/ml/features?coin=" + activeCoin).then(function(d) {
-            var container = $("features-content");
-            var ph = $("features-placeholder");
-            if (!d || d.error) {
-                ph.style.display = "flex";
-                container.querySelectorAll(".feature-grid").forEach(function(g) { g.remove(); });
-                return;
-            }
-            ph.style.display = "none";
-            container.querySelectorAll(".feature-grid").forEach(function(g) { g.remove(); });
-
-            var grid = document.createElement("div");
-            grid.className = "feature-grid";
-
-            GROUPS_ORDER.forEach(function(group) {
-                var groupEl = document.createElement("div");
-                groupEl.className = "feature-group";
-                groupEl.innerHTML = '<div class="group-label">' + group + '</div>';
-                var hasFeatures = false;
-
-                Object.keys(FEATURES).forEach(function(name) {
-                    var meta = FEATURES[name];
-                    if (meta.group !== group) return;
-                    hasFeatures = true;
-                    var val = d[name];
-                    var availCol = AVAIL_MAP[name];
-                    var avail = availCol ? (d[availCol] !== undefined ? d[availCol] : (val !== null && val !== undefined ? 1 : 0)) : (val !== null && val !== undefined ? 1 : 0);
-                    var pct = barPct(val, meta.min, meta.max);
-                    var barClass = "neutral";
-                    if (val !== null && val !== undefined) {
-                        if (val > meta.neutral * 1.1 + 0.01) barClass = "positive";
-                        else if (val < meta.neutral * 0.9 - 0.01) barClass = "negative";
-                    }
-
-                    var row = document.createElement("div");
-                    row.className = "feature-row";
-                    row.innerHTML =
-                        '<div class="feature-avail ' + (avail ? "on" : "off") + '"></div>' +
-                        '<div class="feature-name" title="' + name + '">' + meta.label + '</div>' +
-                        '<div class="feature-bar-wrap"><div class="feature-bar ' + barClass + '" style="width:' + pct + '%"></div></div>' +
-                        '<div class="feature-val">' + fmtVal(val, meta.fmt) + '</div>';
-                    groupEl.appendChild(row);
-                });
-
-                if (hasFeatures) grid.appendChild(groupEl);
-            });
-            container.appendChild(grid);
-        });
-    }
-
-    // ── Data Quality ────────────────────────────────────────────────
-    function refreshQuality() {
-        if (!vis()) return;
-        api("/api/ml/snapshots/stats").then(function(d) {
-            var container = $("quality-content");
-            var ph = $("quality-placeholder");
-            if (!d || d.error) {
-                ph.style.display = "flex";
-                container.querySelectorAll(".quality-grid").forEach(function(g) { g.remove(); });
-                return;
-            }
-            ph.style.display = "none";
-            container.querySelectorAll(".quality-grid").forEach(function(g) { g.remove(); });
-
-            var totalSnaps = 0;
-            Object.keys(d.coins || {}).forEach(function(c) { totalSnaps += d.coins[c].total; });
-            $("quality-badge").textContent = totalSnaps.toLocaleString() + " total";
-
-            var grid = document.createElement("div");
-            grid.className = "quality-grid";
-
-            // Snapshot counts card
-            var card1 = document.createElement("div");
-            card1.className = "quality-card";
-            card1.innerHTML = '<div class="group-label">Snapshot Counts</div>';
-            ["BTC", "ETH", "SOL"].forEach(function(coin) {
-                var info = (d.coins || {})[coin] || { total: 0, last_24h: 0 };
-                var pct24 = Math.min(100, (info.last_24h / 288) * 100);
-                var row = document.createElement("div");
-                row.className = "quality-row";
-                row.innerHTML =
-                    '<div class="quality-label">' + coin + '</div>' +
-                    '<div class="quality-bar-wrap"><div class="quality-bar" style="width:' + pct24 + '%"></div></div>' +
-                    '<div class="quality-val">' + info.total.toLocaleString() + ' (' + info.last_24h + '/24h)</div>';
-                card1.appendChild(row);
-            });
-            grid.appendChild(card1);
-
-            // Labels card
-            var card2 = document.createElement("div");
-            card2.className = "quality-card";
-            card2.innerHTML = '<div class="group-label">Labels</div>';
-            var labelPct = totalSnaps > 0 ? Math.min(100, ((d.label_count || 0) / totalSnaps) * 100) : 0;
-            var labelRow = document.createElement("div");
-            labelRow.className = "quality-row";
-            labelRow.innerHTML =
-                '<div class="quality-label">Labeled Snapshots</div>' +
-                '<div class="quality-bar-wrap"><div class="quality-bar" style="width:' + labelPct + '%"></div></div>' +
-                '<div class="quality-val">' + (d.label_count || 0).toLocaleString() + ' (' + labelPct.toFixed(1) + '%)</div>';
-            card2.appendChild(labelRow);
-            grid.appendChild(card2);
-
-            // Feature availability card
-            var card3 = document.createElement("div");
-            card3.className = "quality-card";
-            card3.innerHTML = '<div class="group-label">Feature Availability</div>';
-            var avails = d.availability_rates || {};
-            var availNames = {
-                liq_magnet_avail: "Liq Magnet",
-                oi_7d_avail: "OI 7d",
-                liq_cascade_avail: "Liq Cascade",
-                funding_zscore_avail: "Funding Z",
-                oi_funding_pressure_avail: "OI Fund Press",
-                cvd_avail: "CVD",
-                price_change_5m_avail: "Price 5m",
-                volume_avail: "Volume",
-                realized_vol_avail: "Realized Vol",
-            };
-            Object.keys(availNames).forEach(function(col) {
-                var pct = avails[col] || 0;
-                var row = document.createElement("div");
-                row.className = "quality-row";
-                row.innerHTML =
-                    '<div class="quality-label">' + availNames[col] + '</div>' +
-                    '<div class="quality-bar-wrap"><div class="quality-bar" style="width:' + pct + '%;' + (pct < 50 ? 'background:#ef4444' : pct < 80 ? 'background:#eab308' : '') + '"></div></div>' +
-                    '<div class="quality-val">' + pct.toFixed(1) + '%</div>';
-                card3.appendChild(row);
-            });
-            grid.appendChild(card3);
-
-            container.appendChild(grid);
-        });
-    }
-
-    // ── Legacy Direction ────────────────────────────────────────────
-    function refreshLegacy() {
-        if (!vis()) return;
-        api("/api/ml/predictions?coin=" + activeCoin).then(function(d) {
-            var container = $("legacy-pred");
-            container.innerHTML = "";
-            if (!d || d.error) {
-                container.innerHTML = '<div class="placeholder"><div class="placeholder-title">No direction predictions</div></div>';
-                return;
-            }
-            var signal = (d.signal || "skip").toLowerCase();
-            var badgeClass = signal === "long" ? "long" : signal === "short" ? "short" : "skip";
-            var longROE = d.predicted_long_roe;
-            var shortROE = d.predicted_short_roe;
-            container.innerHTML =
-                '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">' +
-                    '<span class="signal-badge ' + badgeClass + '">' + signal.toUpperCase() + '</span>' +
-                    '<span style="font-family:JetBrains Mono,monospace;font-size:0.8rem;color:#525252">' +
-                        'Long: ' + (longROE != null ? (longROE >= 0 ? "+" : "") + longROE.toFixed(2) + "%" : "--") +
-                        ' / Short: ' + (shortROE != null ? (shortROE >= 0 ? "+" : "") + shortROE.toFixed(2) + "%" : "--") +
-                    '</span>' +
-                '</div>';
-        });
-    }
-
-    // ── Polling ────────────────────────────────────────────────────
+  // ── Refresh All ────────────────────────────────────
+  function refresh() {
     refreshStatus();
     refreshConditions();
     refreshFeatures();
     refreshQuality();
-    refreshLegacy();
+  }
 
-    setInterval(refreshStatus, 30000);
-    setInterval(function() { refreshConditions(); refreshFeatures(); }, 60000);
-    setInterval(refreshQuality, 120000);
+  // ── Status ─────────────────────────────────────────
+  function refreshStatus() {
+    if (!vis()) return;
+    api("/api/ml/status").then(function(d) {
+      if (!d) return;
+      var satDot=$("sat-dot"), satV=$("sat-status");
+      if (!d.db_exists) { satDot.className="stat-dot off"; satV.textContent="no db"; }
+      else if (!d.satellite_enabled) { satDot.className="stat-dot off"; satV.textContent="disabled"; }
+      else if (d.last_tick_time && (Date.now()/1000-d.last_tick_time)>600) { satDot.className="stat-dot warn"; satV.textContent="stale"; }
+      else { satDot.className="stat-dot on"; satV.textContent="running"; }
 
-    document.addEventListener("visibilitychange", function() {
-        if (!document.hidden) {
-            refreshStatus();
-            refreshConditions();
-            refreshFeatures();
-            refreshQuality();
-            refreshLegacy();
-        }
+      var cDot=$("cond-dot"), cV=$("cond-status");
+      var cc = d.condition_models||0;
+      if (cc>0) { cDot.className="stat-dot on"; cV.textContent=cc+" models"; }
+      else { cDot.className="stat-dot idle"; cV.textContent="none"; }
+
+      $("snap-count").textContent=(d.snapshot_count||0).toLocaleString();
+      $("last-tick").textContent=timeAgo(d.last_tick_time);
+      $("db-size").textContent=(d.db_size_mb||0)+" MB";
     });
+  }
+
+  // ── Conditions (main panel + summary + models + briefing) ──
+  function refreshConditions() {
+    if (!vis()) return;
+    api("/api/ml/conditions?coin="+activeCoin).then(function(d) {
+      renderMarketState(d);
+      renderSummary(d);
+      renderModels(d);
+      renderBriefing(d);
+    });
+  }
+
+  function renderMarketState(d) {
+    var body=$("state-body"), empty=$("state-empty"), badge=$("state-badge");
+    var conds = d && d.conditions ? d.conditions.predictions||{} : {};
+    var keys = Object.keys(conds);
+
+    if (!keys.length) { body.innerHTML=''; body.appendChild(empty); empty.style.display="flex"; badge.textContent="waiting for data"; return; }
+
+    empty.style.display="none";
+    badge.textContent = activeCoin+" \u00B7 "+keys.length+" predictions \u00B7 "+timeAgo(d.conditions.timestamp);
+
+    var html = '';
+    COND_ORDER.forEach(function(name) {
+      var p = conds[name];
+      if (!p) return;
+      var c = CONDS[name]||{icon:"?",label:name,good:"context",what:""};
+      var regime = (p.regime||"normal").toLowerCase();
+      var pctl = p.percentile||0;
+      var iconCls = regimeIconClass(regime, c.good);
+      var val = p.value!=null ? p.value.toFixed(3) : "--";
+
+      html +=
+        '<div class="cond-row">' +
+          '<div class="cond-icon '+iconCls+'">'+c.icon+'</div>' +
+          '<div class="cond-info">' +
+            '<div class="cond-label">'+c.label+'</div>' +
+            '<div class="cond-hint">'+c.what+'</div>' +
+          '</div>' +
+          '<div class="cond-reading">' +
+            '<div><span class="cond-val">'+val+'</span><span class="cond-regime '+regimeClass(regime)+'">'+regime+'</span></div>' +
+            '<div class="cond-pctl">p'+pctl+
+              '<span class="cond-bar-wrap"><span class="cond-bar" style="width:'+pctl+'%;background:'+regimeBarColor(regime)+'"></span></span>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    });
+    body.innerHTML = html;
+  }
+
+  function renderSummary(d) {
+    var body=$("summary-body"), badge=$("summary-badge");
+    var conds = d && d.conditions ? d.conditions.predictions||{} : {};
+    if (!Object.keys(conds).length) { body.innerHTML='<div class="empty">Waiting for predictions</div>'; badge.textContent="--"; return; }
+
+    // Build a simple environment read-out
+    var vol1h = conds.vol_1h, vol4h = conds.vol_4h, eq = conds.entry_quality,
+        rng = conds.range_30m, mv = conds.move_30m, maeL = conds.mae_long,
+        maeS = conds.mae_short, ve = conds.vol_expand, vol1 = conds.volume_1h, fund = conds.funding_4h;
+
+    // Overall environment verdict
+    var signals = [];
+    if (vol1h && (vol1h.regime==="extreme"||vol1h.regime==="high")) signals.push("high-vol");
+    else if (vol1h && vol1h.regime==="low") signals.push("low-vol");
+    if (eq && eq.percentile>70) signals.push("good-entry");
+    if (maeL && maeL.regime==="extreme") signals.push("danger-long");
+    if (maeS && maeS.regime==="extreme") signals.push("danger-short");
+    if (ve && ve.value>1.3) signals.push("vol-expanding");
+
+    var verdict = "Normal conditions";
+    var verdictColor = "#737373";
+    if (signals.indexOf("danger-long")>=0 || signals.indexOf("danger-short")>=0) {
+      verdict = "High risk — extreme drawdown predicted";
+      verdictColor = "#ef4444";
+    } else if (signals.indexOf("high-vol")>=0 && signals.indexOf("good-entry")>=0) {
+      verdict = "Favorable — high vol + good entry";
+      verdictColor = "#22c55e";
+    } else if (signals.indexOf("high-vol")>=0) {
+      verdict = "Volatile — size carefully";
+      verdictColor = "#eab308";
+    } else if (signals.indexOf("good-entry")>=0) {
+      verdict = "Good entry quality";
+      verdictColor = "#22c55e";
+    } else if (signals.indexOf("low-vol")>=0) {
+      verdict = "Quiet — low vol, wait for setup";
+      verdictColor = "#60a5fa";
+    }
+    badge.textContent = signals.length ? signals.length+" signals" : "normal";
+
+    var html = '<div style="font-size:0.78rem;font-weight:600;color:'+verdictColor+';margin-bottom:10px">'+verdict+'</div>';
+
+    // Key gauges
+    var gauges = [
+      { label:"Volatility",    pred:vol1h, pctl:vol1h?vol1h.percentile:0 },
+      { label:"Entry Quality",  pred:eq,    pctl:eq?eq.percentile:0 },
+      { label:"Long Risk",      pred:maeL,  pctl:maeL?maeL.percentile:0 },
+      { label:"Short Risk",     pred:maeS,  pctl:maeS?maeS.percentile:0 },
+      { label:"Volume",         pred:vol1,  pctl:vol1?vol1.percentile:0 },
+      { label:"Vol Expansion",  pred:ve,    pctl:ve?ve.percentile:0 },
+    ];
+
+    gauges.forEach(function(g) {
+      var color = regimeBarColor(g.pred?g.pred.regime:"normal");
+      var regTxt = g.pred ? g.pred.regime : "--";
+      html +=
+        '<div class="gauge-row">' +
+          '<div class="gauge-label">'+g.label+'</div>' +
+          '<div class="gauge-track"><div class="gauge-fill" style="width:'+g.pctl+'%;background:'+color+'"></div></div>' +
+          '<div class="gauge-val" style="color:'+color+'">'+regTxt+'</div>' +
+        '</div>';
+    });
+
+    body.innerHTML = html;
+  }
+
+  function renderModels(d) {
+    var body=$("model-body"), empty=$("model-empty"), badge=$("model-badge");
+    var models = d && d.models ? d.models : [];
+    if (!models.length) { body.innerHTML=''; body.appendChild(empty); empty.style.display="flex"; badge.textContent="--"; return; }
+
+    empty.style.display="none";
+    badge.textContent = models.length+" models";
+
+    var html = '<table class="model-table"><thead><tr><th>Model</th><th>Spearman</th><th>MAE</th><th>Samples</th></tr></thead><tbody>';
+    models.forEach(function(m) {
+      var sp = m.spearman||0;
+      var cls = sp>=0.5?"sp-excellent":sp>=0.3?"sp-good":"sp-ok";
+      html += '<tr>' +
+        '<td style="color:#d4d4d4;font-family:Inter,sans-serif;font-weight:500">'+m.name+'</td>' +
+        '<td><span class="spearman-pill '+cls+'">'+sp.toFixed(3)+'</span></td>' +
+        '<td>'+(m.mae?m.mae.toFixed(4):"--")+'</td>' +
+        '<td>'+(m.samples?m.samples.toLocaleString():"--")+'</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+  }
+
+  function renderBriefing(d) {
+    var body=$("briefing-body"), empty=$("briefing-empty");
+    var text = d && d.conditions_text ? d.conditions_text : null;
+    if (!text) { body.innerHTML=''; body.appendChild(empty); empty.style.display="flex"; return; }
+    empty.style.display="none";
+    body.innerHTML = '<div class="briefing-pre">'+text.replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</div>';
+  }
+
+  // ── Features ───────────────────────────────────────
+  function refreshFeatures() {
+    if (!vis()) return;
+    api("/api/ml/features?coin="+activeCoin).then(function(d) {
+      var body=$("feat-body"), empty=$("feat-empty");
+      if (!d||d.error) { body.innerHTML=''; body.appendChild(empty); empty.style.display="flex"; return; }
+      empty.style.display="none";
+      var html = '';
+      GROUPS.forEach(function(group) {
+        html += '<div class="feat-group-label">'+group+'</div>';
+        Object.keys(FEATURES).forEach(function(name) {
+          var m = FEATURES[name];
+          if (m.g !== group) return;
+          var val = d[name];
+          var ac = AVAIL_MAP[name];
+          var avail = ac ? (d[ac]!=null?d[ac]:(val!=null?1:0)) : (val!=null?1:0);
+          var pct = barPct(val,m.mn,m.mx);
+          var cls = "neu";
+          if (val!=null) { if (val>m.n*1.1+0.01) cls="pos"; else if (val<m.n*0.9-0.01) cls="neg"; }
+          html +=
+            '<div class="feat-row">' +
+              '<div class="feat-dot '+(avail?"on":"off")+'"></div>' +
+              '<div class="feat-name" title="'+name+'">'+m.l+'</div>' +
+              '<div class="feat-bar-wrap"><div class="feat-bar '+cls+'" style="width:'+pct+'%"></div></div>' +
+              '<div class="feat-val">'+fmt(val,m.f)+'</div>' +
+            '</div>';
+        });
+      });
+      body.innerHTML = html;
+    });
+  }
+
+  // ── Data Quality ───────────────────────────────────
+  function refreshQuality() {
+    if (!vis()) return;
+    api("/api/ml/snapshots/stats").then(function(d) {
+      var body=$("quality-body"), empty=$("quality-empty"), badge=$("quality-badge");
+      if (!d||d.error) { body.innerHTML=''; body.appendChild(empty); empty.style.display="flex"; badge.textContent="--"; return; }
+      empty.style.display="none";
+
+      var total = 0;
+      Object.keys(d.coins||{}).forEach(function(c){total+=d.coins[c].total;});
+      badge.textContent = total.toLocaleString()+" snapshots";
+
+      var html = '<div class="feat-group-label">Snapshots / 24h</div>';
+      ["BTC","ETH","SOL"].forEach(function(coin) {
+        var info = (d.coins||{})[coin]||{total:0,last_24h:0};
+        var pct = Math.min(100,(info.last_24h/288)*100);
+        html +=
+          '<div class="q-row">' +
+            '<div class="q-label">'+coin+'</div>' +
+            '<div class="q-bar-wrap"><div class="q-bar" style="width:'+pct+'%"></div></div>' +
+            '<div class="q-val">'+info.last_24h+'/288 ('+info.total.toLocaleString()+')</div>' +
+          '</div>';
+      });
+
+      html += '<div class="feat-group-label" style="padding-top:10px">Labels</div>';
+      var lPct = total>0?Math.min(100,((d.label_count||0)/total)*100):0;
+      html +=
+        '<div class="q-row">' +
+          '<div class="q-label">Coverage</div>' +
+          '<div class="q-bar-wrap"><div class="q-bar" style="width:'+lPct+'%"></div></div>' +
+          '<div class="q-val">'+(d.label_count||0).toLocaleString()+' ('+lPct.toFixed(0)+'%)</div>' +
+        '</div>';
+
+      html += '<div class="feat-group-label" style="padding-top:10px">Feature Availability</div>';
+      var avails = d.availability_rates||{};
+      var an = {liq_magnet_avail:"Liq Magnet",oi_7d_avail:"OI 7d",liq_cascade_avail:"Liq Cascade",
+                funding_zscore_avail:"Funding Z",oi_funding_pressure_avail:"OI Fund",
+                cvd_avail:"CVD",price_change_5m_avail:"Price 5m",volume_avail:"Volume",realized_vol_avail:"Real Vol"};
+      Object.keys(an).forEach(function(col) {
+        var p = avails[col]||0;
+        var color = p<50?"background:#ef4444":p<80?"background:#eab308":"";
+        html +=
+          '<div class="q-row">' +
+            '<div class="q-label">'+an[col]+'</div>' +
+            '<div class="q-bar-wrap"><div class="q-bar" style="width:'+p+'%;'+color+'"></div></div>' +
+            '<div class="q-val">'+p.toFixed(1)+'%</div>' +
+          '</div>';
+      });
+
+      body.innerHTML = html;
+    });
+  }
+
+  // ── Polling ────────────────────────────────────────
+  refresh();
+  setInterval(function(){ refreshStatus(); refreshConditions(); }, 30000);
+  setInterval(function(){ refreshFeatures(); refreshQuality(); }, 120000);
+  document.addEventListener("visibilitychange", function() { if(!document.hidden) refresh(); });
+
 })();
 </script>
 </body>
