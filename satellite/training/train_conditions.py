@@ -387,7 +387,7 @@ def train_single_condition(
         training_samples=len(X),
         validation_spearman=round(avg_spearman, 4),
         validation_mae=round(avg_mae, 4),
-        xgboost_params=XGBOOST_PARAMS,
+        xgboost_params=final_params,
         percentiles=percentiles,
     )
 

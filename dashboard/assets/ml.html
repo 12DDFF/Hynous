@@ -315,32 +315,30 @@ body {
 
   // ── Feature config ─────────────────────────────────
   var FEATURES = {
-    liq_magnet_direction:   { g:"Structure",   l:"Liq Magnet Dir",    mn:-1,  mx:1,   n:0,   f:"f2" },
     oi_vs_7d_avg_ratio:     { g:"Structure",   l:"OI vs 7d Avg",     mn:0.5, mx:2,   n:1,   f:"f3" },
     liq_cascade_active:     { g:"Structure",   l:"Liq Cascade",      mn:0,   mx:1,   n:0,   f:"bool" },
     liq_1h_vs_4h_avg:       { g:"Structure",   l:"Liq 1h vs 4h",    mn:0,   mx:5,   n:1,   f:"f2" },
-    sessions_overlapping:   { g:"Structure",   l:"Sessions",         mn:0,   mx:3,   n:1,   f:"int" },
     funding_vs_30d_zscore:  { g:"Funding",     l:"Funding Z",        mn:-3,  mx:3,   n:0,   f:"f2" },
     hours_to_funding:       { g:"Funding",     l:"Hrs to Fund",      mn:0,   mx:8,   n:4,   f:"f1" },
     oi_funding_pressure:    { g:"Funding",     l:"OI Fund Press",    mn:-5,  mx:5,   n:0,   f:"f2" },
-    cvd_normalized_5m:      { g:"Magnitude",   l:"CVD Norm 5m",      mn:-1,  mx:1,   n:0,   f:"f3" },
-    price_change_5m_pct:    { g:"Magnitude",   l:"Price Chg 5m",     mn:-2,  mx:2,   n:0,   f:"pct" },
     volume_vs_1h_avg_ratio: { g:"Magnitude",   l:"Vol vs 1h",        mn:0,   mx:5,   n:1,   f:"f2" },
     realized_vol_1h:        { g:"Magnitude",   l:"Realized Vol",     mn:0,   mx:5,   n:0,   f:"f3" },
     cvd_ratio_30m:          { g:"Directional", l:"CVD Ratio 30m",    mn:-2,  mx:2,   n:0,   f:"f3" },
     cvd_acceleration:       { g:"Directional", l:"CVD Accel",        mn:-2,  mx:2,   n:0,   f:"f3" },
     price_trend_1h:         { g:"Directional", l:"Trend 1h",         mn:-3,  mx:3,   n:0,   f:"f3" },
-    close_position_5m:      { g:"Directional", l:"Close Pos 5m",     mn:-1,  mx:1,   n:0,   f:"f3" },
+    close_position_5m:      { g:"Directional", l:"Close Pos 5m",     mn:0,   mx:1,   n:0.5, f:"f3" },
     oi_price_direction:     { g:"Directional", l:"OI Price Dir",     mn:-2,  mx:2,   n:0,   f:"f3" },
     liq_imbalance_1h:       { g:"Directional", l:"Liq Imbal 1h",     mn:-1,  mx:1,   n:0,   f:"f3" },
   };
   var AVAIL_MAP = {
-    liq_magnet_direction:"liq_magnet_avail", oi_vs_7d_avg_ratio:"oi_7d_avail",
+    oi_vs_7d_avg_ratio:"oi_7d_avail",
     liq_cascade_active:"liq_cascade_avail", liq_1h_vs_4h_avg:"liq_cascade_avail",
     funding_vs_30d_zscore:"funding_zscore_avail", hours_to_funding:"funding_zscore_avail",
-    oi_funding_pressure:"oi_funding_pressure_avail", cvd_normalized_5m:"cvd_avail",
-    price_change_5m_pct:"price_change_5m_avail", volume_vs_1h_avg_ratio:"volume_avail",
-    realized_vol_1h:"realized_vol_avail", sessions_overlapping:"realized_vol_avail",
+    oi_funding_pressure:"oi_funding_pressure_avail",
+    volume_vs_1h_avg_ratio:"volume_avail", realized_vol_1h:"realized_vol_avail",
+    cvd_ratio_30m:"cvd_30m_avail", cvd_acceleration:"cvd_30m_avail",
+    price_trend_1h:"price_trend_1h_avail", close_position_5m:"close_position_avail",
+    oi_price_direction:"oi_price_dir_avail", liq_imbalance_1h:"liq_imbalance_avail",
   };
   var GROUPS = ["Structure","Funding","Magnitude","Directional"];
 
@@ -672,9 +670,11 @@ body {
 
       html += '<div class="feat-group-label" style="padding-top:10px">Feature Availability</div>';
       var avails = d.availability_rates||{};
-      var an = {liq_magnet_avail:"Liq Magnet",oi_7d_avail:"OI 7d",liq_cascade_avail:"Liq Cascade",
+      var an = {oi_7d_avail:"OI 7d",liq_cascade_avail:"Liq Cascade",
                 funding_zscore_avail:"Funding Z",oi_funding_pressure_avail:"OI Fund",
-                cvd_avail:"CVD",price_change_5m_avail:"Price 5m",volume_avail:"Volume",realized_vol_avail:"Real Vol"};
+                volume_avail:"Volume",realized_vol_avail:"Real Vol",
+                cvd_30m_avail:"CVD 30m",price_trend_1h_avail:"Trend 1h",close_position_avail:"Close Pos",
+                oi_price_dir_avail:"OI Price Dir",liq_imbalance_avail:"Liq Imbal"};
       Object.keys(an).forEach(function(col) {
         var p = avails[col]||0;
         var color = p<50?"background:#ef4444":p<80?"background:#eab308":"";

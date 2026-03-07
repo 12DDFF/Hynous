@@ -422,19 +422,22 @@ def _compute_hours_to_funding(
 
     Hyperliquid funding settles at 00:00 / 08:00 / 16:00 UTC.
     """
-    dt = datetime.fromtimestamp(now, tz=timezone.utc)
-    current_hour = dt.hour + dt.minute / 60 + dt.second / 3600
+    try:
+        dt = datetime.fromtimestamp(now, tz=timezone.utc)
+        current_hour = dt.hour + dt.minute / 60 + dt.second / 3600
 
-    next_settlement_hours = []
-    for h in cfg.funding_settlement_hours:
-        diff = h - current_hour
-        if diff < 0:
-            diff += 24
-        next_settlement_hours.append(diff)
+        next_settlement_hours = []
+        for h in cfg.funding_settlement_hours:
+            diff = h - current_hour
+            if diff < 0:
+                diff += 24
+            next_settlement_hours.append(diff)
 
-    hours_to = min(next_settlement_hours)
-    features["hours_to_funding"] = round(hours_to, 4)
-    avail["hours_to_funding_avail"] = 1
+        hours_to = min(next_settlement_hours)
+        features["hours_to_funding"] = round(hours_to, 4)
+    except Exception:
+        log.debug("Failed hours_to_funding", exc_info=True)
+        features["hours_to_funding"] = NEUTRAL_VALUES["hours_to_funding"]
 
 
 def _compute_oi_funding_pressure(

@@ -679,6 +679,9 @@ class Daemon:
         self._satellite_store = None
         self._satellite_config = None
         self._satellite_dl_conn = None
+        self._latest_predictions = {}
+        self._condition_engine = None
+        self._condition_evaluator = None
         self._update_satellite_config(False)
         logger.info("Satellite disabled at runtime")
         return True

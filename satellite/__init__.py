@@ -1,6 +1,6 @@
 """Satellite: ML feature computation engine for Hynous.
 
-Computes 12 structural core features from data-layer engines,
+Computes 14 structural features (8 magnitude + 6 directional) from data-layer engines,
 stores them in a dedicated SQLite database, and provides the
 single source of truth for feature computation across training,
 inference, and backfill.
@@ -10,7 +10,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 
 def tick(

@@ -121,7 +121,7 @@ class ConditionWakeEvaluator:
         if pctl < settings.ml_extreme_vol_pctl:
             return None
 
-        side = ctx.position_side or ""
+        side = ctx.position_side or "position"
         return ConditionAlert(
             alert_type="extreme_vol",
             coin=coin,
@@ -141,7 +141,7 @@ class ConditionWakeEvaluator:
         if value < settings.ml_vol_expansion_threshold:
             return None
 
-        side = ctx.position_side or ""
+        side = ctx.position_side or "position"
         return ConditionAlert(
             alert_type="vol_expansion",
             coin=coin,
@@ -206,7 +206,7 @@ class ConditionWakeEvaluator:
             elif ctx.position_side == "short" and short_extreme:
                 is_priority = True
 
-        side = ctx.position_side or ""
+        side = ctx.position_side or "position"
         if long_extreme and short_extreme:
             risk_side = "both"
             risk_pctl = max(mae_long.get("percentile", 90), mae_short.get("percentile", 90))
@@ -249,7 +249,7 @@ class ConditionWakeEvaluator:
         if prev == new_regime:
             return None  # no change
 
-        side = ctx.position_side or ""
+        side = ctx.position_side or "position"
         return ConditionAlert(
             alert_type="vol_regime_shift",
             coin=coin,
@@ -271,7 +271,7 @@ class ConditionWakeEvaluator:
             return None
 
         direction = "rising" if pctl >= 90 else "falling"
-        side = ctx.position_side or ""
+        side = ctx.position_side or "position"
         if ctx.is_positioned:
             # Rising funding = shorts pay longs = squeeze risk for shorts = good for longs
             # Falling funding = longs pay shorts = squeeze risk for longs = good for shorts
@@ -312,7 +312,7 @@ class ConditionWakeEvaluator:
             return None
         if vol_regime not in ("high", "extreme"):
             return None
-        if mae_long.get("regime") in ("high", "extreme") and mae_short.get("regime") in ("high", "extreme"):
+        if mae_long.get("regime") in ("high", "extreme") or mae_short.get("regime") in ("high", "extreme"):
             return None
 
         return ConditionAlert(

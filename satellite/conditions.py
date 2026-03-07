@@ -201,7 +201,7 @@ class ConditionEngine:
                     regime=regime,
                 )
             except Exception:
-                log.debug("Condition prediction failed for %s", name, exc_info=True)
+                log.warning("Condition prediction failed for %s", name, exc_info=True)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
 

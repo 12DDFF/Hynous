@@ -567,9 +567,11 @@ async def _ml_snapshots_stats(request):
             label_count = 0
         # Feature availability rates
         avail_cols = [
-            "liq_magnet_avail", "oi_7d_avail", "liq_cascade_avail",
-            "funding_zscore_avail", "oi_funding_pressure_avail", "cvd_avail",
-            "price_change_5m_avail", "volume_avail", "realized_vol_avail",
+            "oi_7d_avail", "liq_cascade_avail",
+            "funding_zscore_avail", "oi_funding_pressure_avail",
+            "volume_avail", "realized_vol_avail",
+            "cvd_30m_avail", "price_trend_1h_avail", "close_position_avail",
+            "oi_price_dir_avail", "liq_imbalance_avail",
         ]
         avail_rates = {}
         try:
