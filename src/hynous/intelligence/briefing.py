@@ -912,15 +912,15 @@ def _build_ml_section(predictions: dict[str, dict]) -> str:
                 f"  {coin}: skip (long {long_roe:+.1f}%, short {short_roe:+.1f}%){mode}"
             )
 
-    if len(lines) == 1:  # Only header, no data
-        return ""
+    has_direction = len(lines) > 1  # Got any direction signal lines
 
     # Append condition engine output
+    condition_lines = []
     for coin, pred in sorted(predictions.items()):
         conditions_text = pred.get("conditions_text")
         if conditions_text:
-            lines.append("")
-            lines.append(conditions_text)
+            condition_lines.append("")
+            condition_lines.append(conditions_text)
             # Prediction age annotation
             conditions_data = pred.get("conditions", {})
             cond_ts = conditions_data.get("timestamp")
@@ -932,8 +932,17 @@ def _build_ml_section(predictions: dict[str, dict]) -> str:
                     freshness = f"{age_s:.0f}s old"
                 else:
                     freshness = f"STALE ({age_s:.0f}s) — next tick imminent"
-                lines.append(f"  [prediction age: {freshness}]")
+                condition_lines.append(f"  [prediction age: {freshness}]")
 
+    if not has_direction and not condition_lines:
+        return ""
+
+    if not has_direction and condition_lines:
+        # No direction model — output conditions only
+        return "\n".join(condition_lines).strip()
+
+    # Both direction + conditions
+    lines.extend(condition_lines)
     return "\n".join(lines)
 
 
