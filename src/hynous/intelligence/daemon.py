@@ -1458,105 +1458,111 @@ class Daemon:
         Stores predictions to satellite.db and caches them for briefing injection.
         Optionally wakes agent on strong signals (if not in shadow mode).
         """
-        if not self._inference_engine or not self._satellite_store:
+        if not self._satellite_store:
             return
 
-        # Check kill switch
-        if self._kill_switch and not self._kill_switch.is_active:
-            logger.debug(
-                "Satellite inference skipped: kill switch active (%s)",
-                self._kill_switch.disable_reason,
-            )
-            return
-
-        # Check staleness
-        if self._kill_switch:
-            self._kill_switch.check_staleness()
-            if not self._kill_switch.is_active:
-                return
+        has_inference = bool(self._inference_engine)
 
         import json
         import time as _time
 
-        shadow = self._kill_switch.is_shadow if self._kill_switch else True
+        shadow = True
         signals = []
 
-        for coin in self._satellite_config.coins:
-            try:
-                c5m, c1m = (candles_map or {}).get(coin, (None, None))
-                result = self._inference_engine.predict(
-                    coin=coin,
-                    snapshot=self.snapshot,
-                    data_layer_db=dl_db,
-                    heatmap_engine=heatmap_adapter,
-                    order_flow_engine=flow_adapter,
-                    explain=True,
-                    candles_5m=c5m,
-                    candles_1m=c1m,
-                )
-
-                # Build SHAP top 5 JSON for storage
-                shap_json = None
-                exp = (
-                    result.explanation_long
-                    if result.signal == "long"
-                    else result.explanation_short
-                )
-                if exp is None:
-                    exp = result.explanation_long  # fallback
-                if exp and exp.top_contributors:
-                    shap_data = [
-                        {"feature": name, "value": round(val, 4), "shap": round(shap_val, 4)}
-                        for name, val, shap_val in exp.top_contributors[:5]
-                    ]
-                    shap_json = json.dumps(shap_data)
-
-                # Save prediction to DB
-                self._satellite_store.save_prediction(
-                    predicted_at=_time.time(),
-                    coin=coin,
-                    model_version=self._inference_engine._artifact.metadata.version,
-                    predicted_long_roe=result.predicted_long_roe,
-                    predicted_short_roe=result.predicted_short_roe,
-                    signal=result.signal,
-                    entry_threshold=self._inference_engine.entry_threshold,
-                    inference_time_ms=result.inference_time_ms,
-                    snapshot_id=None,
-                    shap_top5_json=shap_json,
-                )
-
-                # Update kill switch snapshot time
-                if self._kill_switch:
-                    self._kill_switch.record_snapshot_time(_time.time())
-
-                # Cache for briefing injection
-                self._latest_predictions[coin] = {
-                    "signal": result.signal,
-                    "long_roe": result.predicted_long_roe,
-                    "short_roe": result.predicted_short_roe,
-                    "confidence": result.confidence,
-                    "summary": result.summary,
-                    "inference_time_ms": result.inference_time_ms,
-                    "timestamp": _time.time(),
-                    "shadow": shadow,
-                }
-
-                # Collect actionable signals for potential wake
-                if result.signal in ("long", "short"):
-                    signals.append(result)
-
+        # --- Direction inference (only if model exists) ---
+        if has_inference:
+            # Check kill switch
+            if self._kill_switch and not self._kill_switch.is_active:
                 logger.debug(
-                    "ML inference %s: %s (long=%.1f%%, short=%.1f%%, %.1fms)%s",
-                    coin, result.signal,
-                    result.predicted_long_roe, result.predicted_short_roe,
-                    result.inference_time_ms,
-                    " [shadow]" if shadow else "",
+                    "Satellite inference skipped: kill switch active (%s)",
+                    self._kill_switch.disable_reason,
                 )
+                has_inference = False
 
-            except Exception:
-                logger.debug("Inference failed for %s", coin, exc_info=True)
+            # Check staleness
+            if has_inference and self._kill_switch:
+                self._kill_switch.check_staleness()
+                if not self._kill_switch.is_active:
+                    has_inference = False
 
-        # Run condition predictions (reuse features from tick)
+            if has_inference:
+                shadow = self._kill_switch.is_shadow if self._kill_switch else True
+                for coin in self._satellite_config.coins:
+                    try:
+                        c5m, c1m = (candles_map or {}).get(coin, (None, None))
+                        result = self._inference_engine.predict(
+                            coin=coin,
+                            snapshot=self.snapshot,
+                            data_layer_db=dl_db,
+                            heatmap_engine=heatmap_adapter,
+                            order_flow_engine=flow_adapter,
+                            explain=True,
+                            candles_5m=c5m,
+                            candles_1m=c1m,
+                        )
+
+                        # Build SHAP top 5 JSON for storage
+                        shap_json = None
+                        exp = (
+                            result.explanation_long
+                            if result.signal == "long"
+                            else result.explanation_short
+                        )
+                        if exp is None:
+                            exp = result.explanation_long  # fallback
+                        if exp and exp.top_contributors:
+                            shap_data = [
+                                {"feature": name, "value": round(val, 4), "shap": round(shap_val, 4)}
+                                for name, val, shap_val in exp.top_contributors[:5]
+                            ]
+                            shap_json = json.dumps(shap_data)
+
+                        # Save prediction to DB
+                        self._satellite_store.save_prediction(
+                            predicted_at=_time.time(),
+                            coin=coin,
+                            model_version=self._inference_engine._artifact.metadata.version,
+                            predicted_long_roe=result.predicted_long_roe,
+                            predicted_short_roe=result.predicted_short_roe,
+                            signal=result.signal,
+                            entry_threshold=self._inference_engine.entry_threshold,
+                            inference_time_ms=result.inference_time_ms,
+                            snapshot_id=None,
+                            shap_top5_json=shap_json,
+                        )
+
+                        # Update kill switch snapshot time
+                        if self._kill_switch:
+                            self._kill_switch.record_snapshot_time(_time.time())
+
+                        # Cache for briefing injection
+                        self._latest_predictions[coin] = {
+                            "signal": result.signal,
+                            "long_roe": result.predicted_long_roe,
+                            "short_roe": result.predicted_short_roe,
+                            "confidence": result.confidence,
+                            "summary": result.summary,
+                            "inference_time_ms": result.inference_time_ms,
+                            "timestamp": _time.time(),
+                            "shadow": shadow,
+                        }
+
+                        # Collect actionable signals for potential wake
+                        if result.signal in ("long", "short"):
+                            signals.append(result)
+
+                        logger.debug(
+                            "ML inference %s: %s (long=%.1f%%, short=%.1f%%, %.1fms)%s",
+                            coin, result.signal,
+                            result.predicted_long_roe, result.predicted_short_roe,
+                            result.inference_time_ms,
+                            " [shadow]" if shadow else "",
+                        )
+
+                    except Exception:
+                        logger.debug("Inference failed for %s", coin, exc_info=True)
+
+        # --- Condition predictions (always run, independent of direction model) ---
         if self._condition_engine and self._satellite_store:
             try:
                 from satellite.features import FEATURE_NAMES as _FEAT_NAMES
