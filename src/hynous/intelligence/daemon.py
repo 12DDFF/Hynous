@@ -1778,6 +1778,9 @@ class Daemon:
             # Check SL/TP/liquidation triggers with fresh prices
             events = provider.check_triggers(fresh_prices)
             for event in events:
+                event["classification"] = self._override_sl_classification(
+                    event["coin"], event["classification"],
+                )
                 self._update_daily_pnl(event["realized_pnl"])
                 self._record_trigger_close(event)
                 self._wake_for_fill(
@@ -1790,12 +1793,22 @@ class Daemon:
                 for event in events:
                     self._position_types.pop(event["coin"], None)
                 self._persist_position_types()
-                state = provider.get_user_state()
-                positions = state.get("positions", [])
-                self._prev_positions = {
-                    p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"], "leverage": p.get("leverage", 20)}
-                    for p in positions
-                }
+                # Immediately evict closed positions from cache using event data.
+                # This guarantees stale positions are removed even if get_user_state() fails.
+                # Also prevents Phase 3 from firing on already-closed positions
+                # (the ROE loop's `if not pos: continue` guard reads _prev_positions).
+                for event in events:
+                    self._prev_positions.pop(event["coin"], None)
+                # Try to get the full fresh state (also picks up any new positions)
+                try:
+                    state = provider.get_user_state()
+                    positions = state.get("positions", [])
+                    self._prev_positions = {
+                        p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"], "leverage": p.get("leverage", 20)}
+                        for p in positions
+                    }
+                except Exception as e:
+                    logger.warning("get_user_state() failed after trigger close, using event-based eviction: %s", e)
 
             # Track peak ROE + current ROE on every check (not just every 60s)
             for sym in position_syms:
@@ -1853,6 +1866,11 @@ class Daemon:
                             self._breakeven_set[sym] = True
                         else:
                             try:
+                                # Cancel existing SL before placing breakeven
+                                # (mirrors trailing stop pattern at lines 1937-1941)
+                                for t in triggers:
+                                    if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                        self._get_provider().cancel_order(sym, t["oid"])
                                 sz = pos.get("size", 0)
                                 self._get_provider().place_trigger_order(
                                     symbol=sym,
@@ -2215,6 +2233,9 @@ class Daemon:
             if hasattr(provider, "check_triggers") and self.snapshot.prices:
                 events = provider.check_triggers(self.snapshot.prices)
                 for event in events:
+                    event["classification"] = self._override_sl_classification(
+                        event["coin"], event["classification"],
+                    )
                     self._update_daily_pnl(event["realized_pnl"])
                     self._record_trigger_close(event)
                     self._wake_for_fill(
@@ -2235,8 +2256,10 @@ class Daemon:
                         for p in positions
                     }
                     # Entry detection in paper path — fires even when a close happened in the same cycle
+                    has_new_entries = False
                     for coin, curr_data in new_positions.items():
                         if coin not in self._prev_positions:
+                            has_new_entries = True
                             c_side = curr_data.get("side", "long")
                             c_lev = int(curr_data.get("leverage", 0))
                             c_entry = curr_data.get("entry_px", 0)
@@ -2247,6 +2270,8 @@ class Daemon:
                                 msg += f" @ ${c_entry:,.0f}"
                             _notify_discord_simple(msg)
                     self._prev_positions = new_positions
+                    if has_new_entries:
+                        self._refresh_trigger_cache()
                     return positions
 
             # Testnet/live flow: detect closes by comparing snapshots
@@ -2276,8 +2301,10 @@ class Daemon:
                 self._persist_position_types()
 
             # Detect new positions (entries) and send clean Discord notification
+            has_new_entries = False
             for coin, curr_data in current.items():
                 if coin not in self._prev_positions:
+                    has_new_entries = True
                     c_side = curr_data.get("side", "long")
                     c_lev = int(curr_data.get("leverage", 0))
                     c_entry = curr_data.get("entry_px", 0)
@@ -2290,6 +2317,8 @@ class Daemon:
 
             # Update snapshot
             self._prev_positions = current
+            if has_new_entries:
+                self._refresh_trigger_cache()
             return positions
 
         except Exception as e:
@@ -2350,12 +2379,13 @@ class Daemon:
         # Classify the exit
         triggers = self._tracked_triggers.get(coin, [])
         classification = self._classify_fill(coin, close_fill, triggers)
+        classification = self._override_sl_classification(coin, classification)
 
         # Update daily PnL for circuit breaker
         self._update_daily_pnl(realized_pnl)
 
-        # Record to Nous (SL/TP auto-fills aren't written by agent)
-        if classification in ("stop_loss", "take_profit", "liquidation"):
+        # Record to Nous (auto-triggered closes aren't written by agent)
+        if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop"):
             self._record_trigger_close({
                 "coin": coin, "side": side, "entry_px": entry_px,
                 "exit_px": exit_px, "realized_pnl": realized_pnl,
@@ -2535,6 +2565,21 @@ class Daemon:
                     return t.get("order_type", "manual")
 
         return "manual"
+
+    def _override_sl_classification(self, coin: str, classification: str) -> str:
+        """Refine 'stop_loss' to 'trailing_stop' or 'breakeven_stop' using daemon state.
+
+        check_triggers() and _classify_fill() only know about generic stop_loss.
+        The daemon tracks which positions have trailing/breakeven stops active,
+        so we can give a more specific classification for analytics.
+        """
+        if classification != "stop_loss":
+            return classification
+        if self._trailing_active.get(coin):
+            return "trailing_stop"
+        if self._breakeven_set.get(coin):
+            return "breakeven_stop"
+        return classification
 
     # ================================================================
     # Profit Level Monitoring

@@ -20,6 +20,7 @@ We're building a simpler sync wrapper for the intelligence layer.
 import logging
 import os
 import threading
+import time
 from typing import Optional
 
 from hyperliquid.info import Info
@@ -27,6 +28,12 @@ from hyperliquid.exchange import Exchange
 from eth_account import Account
 
 logger = logging.getLogger(__name__)
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Return True if the exception is a 429 / rate-limit response."""
+    msg = str(exc).lower()
+    return "429" in msg or "too many requests" in msg or "rate limit" in msg
 
 
 _provider: Optional["HyperliquidProvider"] = None
@@ -108,6 +115,9 @@ class HyperliquidProvider:
         # (positions/fills/orders live on the testnet chain, not mainnet)
         self._trade_info = Info(base_url=self._trade_url, skip_ws=True, timeout=self._TIMEOUT) if trade_url else self._info
         self._sz_decimals: dict[str, int] | None = None
+        # Price cache for rate-limit resilience (2s TTL)
+        self._mids_cache: dict[str, str] | None = None
+        self._mids_cache_time: float = 0.0
         if trade_url:
             logger.info("HyperliquidProvider initialized (data=%s, trade=%s)", self.MAINNET_URL, trade_url)
         else:
@@ -594,13 +604,40 @@ class HyperliquidProvider:
     # Market Data (unchanged from original)
     # ================================================================
 
+    def _fetch_all_mids(self) -> dict[str, str]:
+        """Fetch all mid prices with 1-retry on 429 and 2s TTL cache.
+
+        Multiple daemon methods call get_all_prices() within the same tick
+        cycle. Caching for 2s means they share one HTTP call. The retry
+        handles transient 429s without cascading failure to every caller.
+        """
+        now = time.time()
+        if self._mids_cache is not None and now - self._mids_cache_time < 2.0:
+            return self._mids_cache
+
+        last_exc: Exception | None = None
+        for attempt in range(2):  # 1 original + 1 retry
+            try:
+                result = self._info.all_mids()
+                self._mids_cache = result
+                self._mids_cache_time = time.time()
+                return result
+            except Exception as exc:
+                if attempt == 0 and _is_rate_limit_error(exc):
+                    last_exc = exc
+                    logger.warning("get_all_prices 429 — retrying in 1s")
+                    time.sleep(1)
+                    continue
+                raise  # Non-429 error or second attempt failed
+        raise last_exc  # Should not reach here, but safety net
+
     def get_all_prices(self) -> dict[str, float]:
         """Get current mid prices for all traded assets.
 
         Returns:
             Dict mapping symbol to price, e.g. {"BTC": 97432.5, "ETH": 3421.8}
         """
-        mids = self._info.all_mids()
+        mids = self._fetch_all_mids()
         return {symbol: float(price) for symbol, price in mids.items()}
 
     def get_price(self, symbol: str) -> float | None:
@@ -609,7 +646,7 @@ class HyperliquidProvider:
         Returns:
             Price as float, or None if symbol not found.
         """
-        mids = self._info.all_mids()
+        mids = self._fetch_all_mids()
         price_str = mids.get(symbol)
         if price_str is None:
             return None
