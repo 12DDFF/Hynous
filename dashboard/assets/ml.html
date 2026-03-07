@@ -323,8 +323,8 @@ body {
     oi_funding_pressure:    { g:"Funding",     l:"OI Fund Press",    mn:-5,  mx:5,   n:0,   f:"f2" },
     volume_vs_1h_avg_ratio: { g:"Magnitude",   l:"Vol vs 1h",        mn:0,   mx:5,   n:1,   f:"f2" },
     realized_vol_1h:        { g:"Magnitude",   l:"Realized Vol",     mn:0,   mx:5,   n:0,   f:"f3" },
-    cvd_ratio_30m:          { g:"Directional", l:"CVD Ratio 30m",    mn:-2,  mx:2,   n:0,   f:"f3" },
-    cvd_acceleration:       { g:"Directional", l:"CVD Accel",        mn:-2,  mx:2,   n:0,   f:"f3" },
+    cvd_ratio_30m:          { g:"Directional", l:"CVD Ratio 30m",    mn:-2,  mx:2,   n:0,   f:"f3", inactive:true },
+    cvd_acceleration:       { g:"Directional", l:"CVD Accel",        mn:-2,  mx:2,   n:0,   f:"f3", inactive:true },
     price_trend_1h:         { g:"Directional", l:"Trend 1h",         mn:-3,  mx:3,   n:0,   f:"f3" },
     close_position_5m:      { g:"Directional", l:"Close Pos 5m",     mn:0,   mx:1,   n:0.5, f:"f3" },
     oi_price_direction:     { g:"Directional", l:"OI Price Dir",     mn:-2,  mx:2,   n:0,   f:"f3" },
@@ -616,6 +616,7 @@ body {
         Object.keys(FEATURES).forEach(function(name) {
           var m = FEATURES[name];
           if (m.g !== group) return;
+          if (m.inactive) return;  // skip features with no data source
           var val = d[name];
           var ac = AVAIL_MAP[name];
           var avail = ac ? (d[ac]!=null?d[ac]:(val!=null?1:0)) : (val!=null?1:0);
@@ -673,7 +674,7 @@ body {
       var an = {oi_7d_avail:"OI 7d",liq_cascade_avail:"Liq Cascade",
                 funding_zscore_avail:"Funding Z",oi_funding_pressure_avail:"OI Fund",
                 volume_avail:"Volume",realized_vol_avail:"Real Vol",
-                cvd_30m_avail:"CVD 30m",price_trend_1h_avail:"Trend 1h",close_position_avail:"Close Pos",
+                price_trend_1h_avail:"Trend 1h",close_position_avail:"Close Pos",
                 oi_price_dir_avail:"OI Price Dir",liq_imbalance_avail:"Liq Imbal"};
       Object.keys(an).forEach(function(col) {
         var p = avails[col]||0;

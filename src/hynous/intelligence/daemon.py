@@ -3247,6 +3247,43 @@ class Daemon:
             return ""
         return "[Track Record]\n" + "\n".join(lines)
 
+    def _build_ml_context(self, anomalies: list) -> str:
+        """Build compact ML conditions block for scanner wakes.
+
+        Shows only high/extreme regime predictions for coins in the anomalies,
+        so the agent sees risk and opportunity signals alongside the scanner alert.
+        """
+        coins = {a.symbol for a in anomalies if a.symbol != "MARKET"}
+        if not coins or not self._latest_predictions:
+            return ""
+
+        lines = []
+        for coin in sorted(coins):
+            pred = self._latest_predictions.get(coin, {})
+            cond = pred.get("conditions", {})
+            if not cond:
+                continue
+
+            highlights = []
+            for name in ["vol_1h", "vol_4h", "range_30m", "move_30m", "mae_long",
+                         "mae_short", "entry_quality", "vol_expand", "funding_4h"]:
+                info = cond.get(name)
+                if not info:
+                    continue
+                regime = info.get("regime", "normal")
+                if regime in ("high", "extreme"):
+                    pctl = info.get("percentile", 0)
+                    val = info.get("value", 0)
+                    highlights.append(f"{name}={val:.2f} (p{pctl}, {regime})")
+
+            if highlights:
+                lines.append(f"  {coin}: {', '.join(highlights)}")
+
+        if not lines:
+            return ""
+
+        return "[ML Conditions — noteworthy]\n" + "\n".join(lines)
+
     # Validation specs per signal type — injected into scanner wake prompts.
     # Each spec teaches the agent WHAT to fetch and HOW to assess it for this
     # specific signal. Only covers the primary (first) anomaly in a multi-anomaly
@@ -3469,6 +3506,11 @@ class Daemon:
                     )
             except Exception as e:
                 logger.debug("Playbook matching failed: %s", e)
+
+        # Inject ML condition predictions for relevant coins
+        ml_block = self._build_ml_context(top)
+        if ml_block:
+            message += "\n\n" + ml_block
 
         # Inject regime context above the scanner message
         if self._regime and self._regime.label != "RANGING":
