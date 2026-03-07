@@ -12,9 +12,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
     created_at      REAL NOT NULL,
     coin            TEXT NOT NULL,
 
-    -- 12 STRUCTURAL CORE FEATURES (raw values, normalized at training time)
-    -- Liquidation mechanism (4)
-    liq_magnet_direction    REAL,
+    -- 14 FEATURES v2 (raw values, normalized at training time)
+    -- Liquidation mechanism (3)
     oi_vs_7d_avg_ratio      REAL,
     liq_cascade_active      INTEGER,
     liq_1h_vs_4h_avg        REAL,
@@ -24,25 +23,30 @@ CREATE TABLE IF NOT EXISTS snapshots (
     hours_to_funding        REAL,
     oi_funding_pressure     REAL,
 
-    -- Momentum/confirmation (3)
-    cvd_normalized_5m       REAL,
-    price_change_5m_pct     REAL,
+    -- Magnitude (2)
     volume_vs_1h_avg_ratio  REAL,
-
-    -- Context (2)
     realized_vol_1h         REAL,
-    sessions_overlapping    INTEGER,
+
+    -- Directional (6)
+    cvd_ratio_30m           REAL,
+    cvd_acceleration        REAL,
+    price_trend_1h          REAL,
+    close_position_5m       REAL,
+    oi_price_direction      REAL,
+    liq_imbalance_1h        REAL,
 
     -- Availability flags (1 per nullable feature, used as model inputs)
-    liq_magnet_avail            INTEGER NOT NULL DEFAULT 1,
     oi_7d_avail                 INTEGER NOT NULL DEFAULT 1,
     liq_cascade_avail           INTEGER NOT NULL DEFAULT 1,
     funding_zscore_avail        INTEGER NOT NULL DEFAULT 1,
     oi_funding_pressure_avail   INTEGER NOT NULL DEFAULT 1,
-    cvd_avail                   INTEGER NOT NULL DEFAULT 1,
-    price_change_5m_avail       INTEGER NOT NULL DEFAULT 1,
     volume_avail                INTEGER NOT NULL DEFAULT 1,
     realized_vol_avail          INTEGER NOT NULL DEFAULT 1,
+    cvd_30m_avail               INTEGER NOT NULL DEFAULT 1,
+    price_trend_1h_avail        INTEGER NOT NULL DEFAULT 1,
+    close_position_avail        INTEGER NOT NULL DEFAULT 1,
+    oi_price_dir_avail          INTEGER NOT NULL DEFAULT 1,
+    liq_imbalance_avail         INTEGER NOT NULL DEFAULT 1,
 
     -- Metadata
     schema_version          INTEGER NOT NULL DEFAULT 1,
@@ -195,5 +199,27 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         )
     except Exception:
         pass  # index already exists
+
+    # v3 -> v4: Add new directional feature columns (feature set v2)
+    new_feature_cols = [
+        ("cvd_ratio_30m", "REAL"),
+        ("cvd_acceleration", "REAL"),
+        ("price_trend_1h", "REAL"),
+        ("close_position_5m", "REAL"),
+        ("oi_price_direction", "REAL"),
+        ("liq_imbalance_1h", "REAL"),
+        ("cvd_30m_avail", "INTEGER NOT NULL DEFAULT 1"),
+        ("price_trend_1h_avail", "INTEGER NOT NULL DEFAULT 1"),
+        ("close_position_avail", "INTEGER NOT NULL DEFAULT 1"),
+        ("oi_price_dir_avail", "INTEGER NOT NULL DEFAULT 1"),
+        ("liq_imbalance_avail", "INTEGER NOT NULL DEFAULT 1"),
+    ]
+    for col_name, col_type in new_feature_cols:
+        try:
+            conn.execute(
+                f"ALTER TABLE snapshots ADD COLUMN {col_name} {col_type}",
+            )
+        except Exception:
+            pass  # column already exists
 
     conn.commit()

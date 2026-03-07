@@ -112,9 +112,8 @@ def reconstruct_day(
                     candles_1m=c1m,
                 )
 
-                # CVD: compute_features needs OrderFlowEngine (None in backfill).
-                # Override from trade_flow_history table instead.
-                _enrich_cvd(result, coin, snapshot_time, data_layer_db)
+                # CVD directional features now read from trade_flow_history
+                # directly inside compute_features() — no enrichment needed.
 
                 # Mark as backfill
                 result.raw_data = result.raw_data or {}

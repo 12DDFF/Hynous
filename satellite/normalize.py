@@ -26,18 +26,20 @@ log = logging.getLogger(__name__)
 
 TRANSFORM_MAP: dict[str, str] = {
     # TYPE P — Passthrough (already bounded, semantically meaningful)
-    "liq_magnet_direction": "P",    # [-1, +1]
     "liq_cascade_active": "P",      # {0, 1}
-    "cvd_normalized_5m": "P",       # [-1, +1]
-    "sessions_overlapping": "P",    # {0, 1, 2}
+    "cvd_ratio_30m": "P",           # [-1, +1], already a ratio
+    "cvd_acceleration": "P",        # [-2, +2], difference of ratios
+    "close_position_5m": "P",       # [0, 1], already bounded
+    "oi_price_direction": "P",      # {-1, 0, +1}, discrete
+    "liq_imbalance_1h": "P",        # [-1, +1], already a ratio
 
     # TYPE C — Clip only (already a z-score, don't re-normalize)
     "funding_vs_30d_zscore": "C",   # already a market z-score
 
     # TYPE Z — Z-score (normal continuous, center + scale)
     "hours_to_funding": "Z",        # 0-8, continuous
-    "price_change_5m_pct": "Z",     # %, continuous
     "realized_vol_1h": "Z",         # %, continuous
+    "price_trend_1h": "Z",          # %, continuous, directional
 
     # TYPE L — Log transform + Z-score (skewed ratios, always positive)
     "oi_vs_7d_avg_ratio": "L",      # ratio > 0, skewed right
