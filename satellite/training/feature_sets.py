@@ -246,21 +246,23 @@ MODEL_FEATURES: dict[str, list[str]] = {
     ],
 
     # --- Reversal cluster ---
+    # v5_vol_heavy won ablation: +0.1074 sp (up from 0.0996)
+    # Reversal prediction is fundamentally a volatility problem.
     "reversal_30m": [
-        "return_autocorrelation",
-        "price_trend_1h",
         "realized_vol_1h",
+        "realized_vol_4h",
         "vol_of_vol",
-        "cvd_acceleration",
-        "liq_imbalance_1h",
+        "volume_acceleration",
+        "volume_vs_1h_avg_ratio",
+        "price_trend_1h",
+        "return_autocorrelation",
         "oi_change_rate_1h",
-        "funding_vs_30d_zscore",
+        "liq_imbalance_1h",
         "body_ratio_1h",
-        "upper_wick_ratio_1h",
     ],
 
     # --- Momentum quality ---
-    # Regression: real flow-backed momentum vs hollow moves.
+    # v1_add_vol4h marginally best: +0.4435 sp (from 0.4400)
     "momentum_quality": [
         "volume_acceleration",
         "volume_vs_1h_avg_ratio",
@@ -270,6 +272,7 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "body_ratio_1h",
         "return_autocorrelation",
         "realized_vol_1h",
+        "realized_vol_4h",
         "price_trend_1h",
         "close_position_5m",
     ],
