@@ -60,6 +60,8 @@ CONDITION_TARGETS: list[ConditionTarget] = [
     ConditionTarget("vol_expand", "Future vol / current vol ratio", "target_vol_expand"),
     ConditionTarget("mae_long", "abs(worst_long_mae_30m)", "target_mae_long"),
     ConditionTarget("funding_4h", "Future funding_zscore minus current (48 ahead)", "target_funding_4h"),
+    ConditionTarget("sl_survival_03", "P(0.3% SL hit within 30m for long)", "target_sl_hit_0_3"),
+    ConditionTarget("sl_survival_05", "P(0.5% SL hit within 30m for long)", "target_sl_hit_0_5"),
 ]
 
 # ─── XGBoost Parameters (proven in v7/v8 experiments) ────────────────────────
@@ -87,8 +89,24 @@ XGBOOST_PARAMS_AGGRESSIVE = {
     "verbosity": 0,
 }
 
+# Binary classification params (logistic output, 0-1 probability)
+XGBOOST_PARAMS_BINARY = {
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "verbosity": 0,
+}
+
 # Targets that need aggressive params (ROE-scale values)
 AGGRESSIVE_TARGETS = {"range_30m", "move_30m", "mae_long", "mae_short", "entry_quality"}
+
+# Binary classification targets (use logistic objective, no target clipping)
+BINARY_TARGETS = {"sl_survival_03", "sl_survival_05"}
 
 NUM_BOOST_ROUNDS = 500
 EARLY_STOPPING_ROUNDS = 50
@@ -218,6 +236,17 @@ def build_condition_targets(rows: list[dict]) -> list[dict]:
         else:
             row["target_funding_4h"] = None
 
+        # 11-12. SL survival: did long-side MAE exceed SL threshold within 30m?
+        # MAE is in ROE% (already leveraged). SL distance in price % * leverage = ROE threshold.
+        mae_long_raw = row.get("worst_long_mae_30m")
+        if mae_long_raw is not None:
+            mae_abs = abs(mae_long_raw)
+            row["target_sl_hit_0_3"] = 1 if mae_abs >= 0.3 * 20 else 0  # 0.3% price * 20x = 6% ROE
+            row["target_sl_hit_0_5"] = 1 if mae_abs >= 0.5 * 20 else 0  # 0.5% price * 20x = 10% ROE
+        else:
+            row["target_sl_hit_0_3"] = None
+            row["target_sl_hit_0_5"] = None
+
     return rows
 
 
@@ -316,18 +345,21 @@ def train_single_condition(
         X_val, y_val = X[val_start:train_end], y_raw[val_start:train_end].copy()
         X_test, y_test = X[test_start:test_end], y_raw[test_start:test_end]
 
-        # Per-fold target clipping: compute percentiles from TRAINING data only
-        p1, p99 = np.percentile(y_train, [1, 99])
-        y_train = np.clip(y_train, p1, p99)
-        y_val = np.clip(y_val, p1, p99)
-        # DO NOT clip y_test — evaluate on raw values
+        # Per-fold target clipping (skip for binary targets — they're already 0/1)
+        is_binary = target.name in BINARY_TARGETS
+        if not is_binary:
+            p1, p99 = np.percentile(y_train, [1, 99])
+            y_train = np.clip(y_train, p1, p99)
+            y_val = np.clip(y_val, p1, p99)
+            # DO NOT clip y_test — evaluate on raw values
 
         # Select params based on target type
-        params = (
-            XGBOOST_PARAMS_AGGRESSIVE
-            if target.name in AGGRESSIVE_TARGETS
-            else XGBOOST_PARAMS
-        )
+        if is_binary:
+            params = XGBOOST_PARAMS_BINARY
+        elif target.name in AGGRESSIVE_TARGETS:
+            params = XGBOOST_PARAMS_AGGRESSIVE
+        else:
+            params = XGBOOST_PARAMS
 
         # Early stopping uses VALIDATION set, NOT test set
         dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=feature_names)
@@ -390,16 +422,19 @@ def train_single_condition(
     )
 
     # Train final model on ALL data
-    final_params = (
-        XGBOOST_PARAMS_AGGRESSIVE
-        if target.name in AGGRESSIVE_TARGETS
-        else XGBOOST_PARAMS
-    )
-    # Clip final training targets using full-dataset percentiles (no leakage concern
-    # since this model isn't evaluated — it's the production model)
+    is_binary = target.name in BINARY_TARGETS
+    if is_binary:
+        final_params = XGBOOST_PARAMS_BINARY
+    elif target.name in AGGRESSIVE_TARGETS:
+        final_params = XGBOOST_PARAMS_AGGRESSIVE
+    else:
+        final_params = XGBOOST_PARAMS
+
+    # Clip final training targets (skip for binary — already 0/1)
     y_final = y_raw.copy()
-    p1_full, p99_full = np.percentile(y_final, [1, 99])
-    y_final = np.clip(y_final, p1_full, p99_full)
+    if not is_binary:
+        p1_full, p99_full = np.percentile(y_final, [1, 99])
+        y_final = np.clip(y_final, p1_full, p99_full)
 
     dtrain_full = xgb.DMatrix(X, label=y_final, feature_names=feature_names)
     # Use median best_iteration from walk-forward as final round count

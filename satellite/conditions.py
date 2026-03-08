@@ -131,6 +131,22 @@ class MarketConditions:
                 f"({funding.value:+.2f} z-score change)"
             )
 
+        # SL survival
+        sl_03 = self.predictions.get("sl_survival_03")
+        sl_05 = self.predictions.get("sl_survival_05")
+        if sl_03 or sl_05:
+            parts = []
+            if sl_03:
+                parts.append(f"0.3%: {sl_03.value:.0%} hit risk")
+            if sl_05:
+                parts.append(f"0.5%: {sl_05.value:.0%} hit risk")
+            line = f"  SL survival (30m): {', '.join(parts)}"
+            # High-risk warning
+            high_risk = (sl_03 and sl_03.value > 0.5) or (sl_05 and sl_05.value > 0.5)
+            if high_risk:
+                line += " — tight stops likely to get hit"
+            lines.append(line)
+
         lines.append(f"  [inference: {self.inference_time_ms:.1f}ms]")
         return "\n".join(lines)
 
