@@ -200,6 +200,7 @@ def run_walkforward(
     experiment_name: str,
     is_binary: bool = False,
     embargo: int = EMBARGO_SNAPSHOTS,
+    min_train_days: int = MIN_TRAIN_DAYS,
 ) -> tuple[list[ExperimentResult], dict[str, float]]:
     """Run walk-forward validation with proper statistical safeguards.
 
@@ -221,11 +222,12 @@ def run_walkforward(
         experiment_name: For logging.
         is_binary: If True, compute AUC/Brier alongside Spearman.
         embargo: Number of snapshots to skip between train and test.
+        min_train_days: Minimum training window in days (default 60).
 
     Returns:
         Tuple of (results_list, avg_feature_importance_dict).
     """
-    min_train = MIN_TRAIN_DAYS * SNAPSHOTS_PER_DAY
+    min_train = min_train_days * SNAPSHOTS_PER_DAY
     test_window = TEST_DAYS * SNAPSHOTS_PER_DAY
     step = STEP_DAYS * SNAPSHOTS_PER_DAY
 
@@ -345,6 +347,7 @@ def run_permutation_baseline(
     experiment_name: str,
     is_binary: bool = False,
     n_runs: int = PERMUTATION_RUNS,
+    min_train_days: int = MIN_TRAIN_DAYS,
 ) -> float:
     """Run walk-forward on shuffled targets to establish null Spearman.
 
@@ -360,7 +363,7 @@ def run_permutation_baseline(
     rng = np.random.RandomState(42)
     spearmans = []
 
-    min_train = MIN_TRAIN_DAYS * SNAPSHOTS_PER_DAY
+    min_train = min_train_days * SNAPSHOTS_PER_DAY
     test_window = TEST_DAYS * SNAPSHOTS_PER_DAY
 
     # Use just the first fold for speed

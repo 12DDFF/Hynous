@@ -152,14 +152,20 @@ def main():
 
     log.info("Class balance: %.1f%% fakeouts", y.mean() * 100)
 
+    # Fakeout filters to ~19k rows (moves > 0.3% only), so use shorter
+    # training window to allow at least a few walk-forward generations
+    train_days = 45
+
     baseline = 0.0
     if not args.no_baseline:
         baseline = run_permutation_baseline(
             X, y, FEATURES, XGBOOST_BINARY, EXPERIMENT_NAME, is_binary=True,
+            min_train_days=train_days,
         )
 
     results, importance = run_walkforward(
         X, y, FEATURES, XGBOOST_BINARY, EXPERIMENT_NAME, is_binary=True,
+        min_train_days=train_days,
     )
 
     summary = summarize(EXPERIMENT_NAME, DESCRIPTION, FEATURES,
