@@ -245,21 +245,7 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "liq_total_1h_usd",
     ],
 
-    # --- Trend / Reversal cluster ---
-    # Predicts whether current trend continues or reverses.
-    "trend_continuation": [
-        "return_autocorrelation",
-        "price_trend_1h",
-        "price_trend_4h",
-        "cvd_ratio_30m",
-        "cvd_ratio_1h",
-        "volume_acceleration",
-        "oi_change_rate_1h",
-        "body_ratio_1h",
-        "upper_wick_ratio_1h",
-        "hour_sin",
-        "hour_cos",
-    ],
+    # --- Reversal cluster ---
     "reversal_30m": [
         "return_autocorrelation",
         "price_trend_1h",
@@ -271,21 +257,6 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "funding_vs_30d_zscore",
         "body_ratio_1h",
         "upper_wick_ratio_1h",
-    ],
-
-    # --- OI flush ---
-    # Predicts deleveraging events (OI drops >3% in 1h).
-    "oi_flush": [
-        "oi_vs_7d_avg_ratio",
-        "oi_change_rate_1h",
-        "oi_funding_pressure",
-        "funding_vs_30d_zscore",
-        "funding_velocity",
-        "realized_vol_1h",
-        "vol_of_vol",
-        "liq_total_1h_usd",
-        "price_trend_1h",
-        "volume_acceleration",
     ],
 
     # --- Momentum quality ---

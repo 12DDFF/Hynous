@@ -64,9 +64,7 @@ CONDITION_TARGETS: list[ConditionTarget] = [
     ConditionTarget("funding_4h", "Future funding_zscore minus current (48 ahead)", "target_funding_4h"),
     ConditionTarget("sl_survival_03", "P(0.3% SL hit within 30m for long)", "target_sl_hit_0_3"),
     ConditionTarget("sl_survival_05", "P(0.5% SL hit within 30m for long)", "target_sl_hit_0_5"),
-    ConditionTarget("trend_continuation", "P(price continues 1h trend direction in next 30m)", "target_trend_continuation"),
     ConditionTarget("reversal_30m", "P(price reverses >0.3% in next 30m)", "target_reversal_30m"),
-    ConditionTarget("oi_flush", "P(OI drops >3% in next 1h)", "target_oi_flush"),
     ConditionTarget("momentum_quality", "Volume-backed momentum ratio at i+6", "target_momentum_quality"),
 ]
 
@@ -112,7 +110,7 @@ XGBOOST_PARAMS_BINARY = {
 AGGRESSIVE_TARGETS = {"range_30m", "move_30m", "mae_long", "mae_short", "entry_quality"}
 
 # Binary classification targets (use logistic objective, no target clipping)
-BINARY_TARGETS = {"sl_survival_03", "sl_survival_05", "trend_continuation", "reversal_30m", "oi_flush"}
+BINARY_TARGETS = {"sl_survival_03", "sl_survival_05", "reversal_30m"}
 
 NUM_BOOST_ROUNDS = 500
 EARLY_STOPPING_ROUNDS = 50
