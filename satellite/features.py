@@ -35,24 +35,35 @@ log = logging.getLogger(__name__)
 
 # Canonical feature order (frozen per schema version). Must match model training.
 FEATURE_NAMES: list[str] = [
-    # Liquidation mechanism (2)
+    # Liquidation mechanism (4)
     "oi_vs_7d_avg_ratio",
     "liq_cascade_active",
     "liq_1h_vs_4h_avg",
-    # Funding mechanism (3)
+    "liq_imbalance_1h",
+    "liq_total_1h_usd",          # NEW: log10(total liq USD in 1h)
+    # Funding mechanism (4)
     "funding_vs_30d_zscore",
     "hours_to_funding",
     "oi_funding_pressure",
-    # Magnitude (2)
-    "volume_vs_1h_avg_ratio",
-    "realized_vol_1h",
-    # Directional — NEW (6)
-    "cvd_ratio_30m",
-    "cvd_acceleration",
-    "price_trend_1h",
-    "close_position_5m",
+    "funding_rate_raw",          # NEW: absolute funding rate
+    # OI dynamics (2)
+    "oi_change_rate_1h",         # NEW: raw OI % change over 1h
     "oi_price_direction",
-    "liq_imbalance_1h",
+    # Volatility (3)
+    "realized_vol_1h",
+    "realized_vol_4h",           # NEW: stdev of 1m log returns over 4h
+    "vol_of_vol",                # NEW: stdev of rolling 15min vols
+    # Volume (2)
+    "volume_vs_1h_avg_ratio",
+    "volume_acceleration",       # NEW: 5m vol / 1h avg vol
+    # Order flow / CVD (3)
+    "cvd_ratio_30m",
+    "cvd_ratio_1h",              # NEW: buy-sell imbalance over 1h
+    "cvd_acceleration",
+    # Price action (3)
+    "price_trend_1h",
+    "price_trend_4h",            # NEW: % change over 4h
+    "close_position_5m",
 ]
 
 FEATURE_COUNT = len(FEATURE_NAMES)
@@ -66,17 +77,25 @@ NEUTRAL_VALUES: dict[str, float] = {
     "oi_vs_7d_avg_ratio": 1.0,
     "liq_cascade_active": 0,
     "liq_1h_vs_4h_avg": 1.0,
+    "liq_imbalance_1h": 0.0,        # balanced
+    "liq_total_1h_usd": 0.0,        # no liquidations (log10 scale)
     "funding_vs_30d_zscore": 0.0,
     "hours_to_funding": 4.0,
     "oi_funding_pressure": 0.0,
-    "volume_vs_1h_avg_ratio": 1.0,
+    "funding_rate_raw": 0.0,         # neutral funding
+    "oi_change_rate_1h": 0.0,        # no OI change
+    "oi_price_direction": 0.0,       # no direction
     "realized_vol_1h": 0.0,
+    "realized_vol_4h": 0.0,
+    "vol_of_vol": 0.0,
+    "volume_vs_1h_avg_ratio": 1.0,
+    "volume_acceleration": 1.0,      # no acceleration
     "cvd_ratio_30m": 0.0,
+    "cvd_ratio_1h": 0.0,
     "cvd_acceleration": 0.0,
     "price_trend_1h": 0.0,
-    "close_position_5m": 0.5,       # mid-range = no signal
-    "oi_price_direction": 0.0,      # no direction
-    "liq_imbalance_1h": 0.0,        # balanced
+    "price_trend_4h": 0.0,
+    "close_position_5m": 0.5,        # mid-range = no signal
 }
 
 # Availability columns stored in satellite.db and used as model input features.
@@ -235,6 +254,42 @@ def compute_features(
     # 14. liq_imbalance_1h (from liquidation_events)
     _compute_liq_imbalance(
         coin, features, avail, raw_data, data_layer_db, now,
+    )
+
+    # ─── NEW FEATURES (v3) ────────────────────────────────────────────
+
+    # 15. liq_total_1h_usd (log10 of total liq USD)
+    _compute_liq_total(features, raw_data)
+
+    # 16. funding_rate_raw (absolute funding rate)
+    _compute_funding_rate_raw(coin, features, snapshot)
+
+    # 17. oi_change_rate_1h (raw OI % change)
+    _compute_oi_change_rate(features, raw_data)
+
+    # 18. realized_vol_4h (4h realized vol from 1m candles)
+    _compute_realized_vol_4h(
+        coin, features, avail, raw_data, data_layer_db, now,
+        candles_1m=candles_1m,
+    )
+
+    # 19. vol_of_vol (stdev of rolling 15min vols)
+    _compute_vol_of_vol(features, candles_1m=candles_1m)
+
+    # 20. volume_acceleration (5m vol spike vs 1h avg)
+    _compute_volume_acceleration(
+        coin, features, raw_data, data_layer_db, now,
+    )
+
+    # 21. cvd_ratio_1h (1h CVD)
+    _compute_cvd_1h(
+        coin, features, raw_data, data_layer_db, now,
+    )
+
+    # 22. price_trend_4h (4h price change %)
+    _compute_price_trend_4h(
+        coin, features, avail, raw_data, data_layer_db, now,
+        candles_5m=candles_5m,
     )
 
     # ─── Build result ────────────────────────────────────────────────
@@ -932,6 +987,279 @@ def _compute_liq_imbalance(
         log.debug("Failed liq_imbalance_1h for %s", coin, exc_info=True)
         features["liq_imbalance_1h"] = NEUTRAL_VALUES["liq_imbalance_1h"]
         avail["liq_imbalance_avail"] = 0
+
+
+# ─── NEW v3 Feature Computers ────────────────────────────────────────────────
+
+
+def _compute_liq_total(features: dict, raw_data: dict) -> None:
+    """liq_total_1h_usd: log10(total liquidation USD in 1h + 1).
+
+    Derived from raw_data already computed by _compute_liq_cascade.
+    log10 scale because liq sizes are heavy-tailed ($100 to $100M).
+    """
+    liq_1h = raw_data.get("liq_1h_usd", 0.0)
+    if liq_1h > 0:
+        features["liq_total_1h_usd"] = math.log10(liq_1h + 1)
+    else:
+        features["liq_total_1h_usd"] = NEUTRAL_VALUES["liq_total_1h_usd"]
+
+
+def _compute_funding_rate_raw(
+    coin: str, features: dict, snapshot: object,
+) -> None:
+    """funding_rate_raw: absolute current funding rate.
+
+    Complements funding_vs_30d_zscore which normalizes away the magnitude.
+    Raw rate tells you absolute squeeze pressure.
+    """
+    try:
+        rate = safe_float(getattr(snapshot, "funding", {}).get(coin))
+        features["funding_rate_raw"] = rate
+    except Exception:
+        features["funding_rate_raw"] = NEUTRAL_VALUES["funding_rate_raw"]
+
+
+def _compute_oi_change_rate(features: dict, raw_data: dict) -> None:
+    """oi_change_rate_1h: raw OI % change over 1h.
+
+    Derived from raw_data already computed by _compute_oi_funding_pressure.
+    Raw signal without the funding interaction — pure money flow.
+    """
+    oi_change = raw_data.get("oi_change_1h_pct", 0.0)
+    features["oi_change_rate_1h"] = oi_change
+
+
+def _compute_realized_vol_4h(
+    coin: str,
+    features: dict,
+    avail: dict,
+    raw_data: dict,
+    data_layer_db: object,
+    now: float,
+    candles_1m: list[dict] | None = None,
+) -> None:
+    """realized_vol_4h: stdev of 1m log returns * sqrt(60) * 100 over 4h.
+
+    Same calculation as realized_vol_1h but 4h window.
+    Captures structural volatility regime vs short-term spikes.
+    """
+    if not candles_1m:
+        features["realized_vol_4h"] = NEUTRAL_VALUES["realized_vol_4h"]
+        return
+
+    try:
+        cutoff_ms = (now - 4 * 3600) * 1000
+        candles_4h = [c for c in candles_1m if float(c.get("t", 0)) >= cutoff_ms]
+
+        if len(candles_4h) < 30:
+            features["realized_vol_4h"] = NEUTRAL_VALUES["realized_vol_4h"]
+            return
+
+        returns = []
+        for i in range(1, len(candles_4h)):
+            prev_close = float(candles_4h[i - 1].get("c", 0))
+            curr_close = float(candles_4h[i].get("c", 0))
+            if prev_close > 0 and curr_close > 0:
+                returns.append(math.log(curr_close / prev_close))
+
+        if len(returns) < 20:
+            features["realized_vol_4h"] = NEUTRAL_VALUES["realized_vol_4h"]
+            return
+
+        mean_ret = sum(returns) / len(returns)
+        variance = sum((r - mean_ret) ** 2 for r in returns) / len(returns)
+        features["realized_vol_4h"] = math.sqrt(variance) * math.sqrt(60) * 100
+
+    except Exception:
+        log.debug("Failed realized_vol_4h for %s", coin, exc_info=True)
+        features["realized_vol_4h"] = NEUTRAL_VALUES["realized_vol_4h"]
+
+
+def _compute_vol_of_vol(
+    features: dict,
+    candles_1m: list[dict] | None = None,
+) -> None:
+    """vol_of_vol: stdev of rolling 15min realized vols over 1h.
+
+    High vol_of_vol = regime is unstable (transitioning).
+    Low vol_of_vol = current vol regime is stable.
+    """
+    if not candles_1m or len(candles_1m) < 60:
+        features["vol_of_vol"] = NEUTRAL_VALUES["vol_of_vol"]
+        return
+
+    try:
+        # Use last 60 candles (1h of 1m candles)
+        recent = candles_1m[-60:]
+
+        # Compute 15min rolling vols (4 windows of 15 candles)
+        window_vols = []
+        for start in range(0, 60 - 14, 15):
+            window = recent[start:start + 15]
+            returns = []
+            for i in range(1, len(window)):
+                prev_c = float(window[i - 1].get("c", 0))
+                curr_c = float(window[i].get("c", 0))
+                if prev_c > 0 and curr_c > 0:
+                    returns.append(math.log(curr_c / prev_c))
+            if len(returns) >= 5:
+                mean_r = sum(returns) / len(returns)
+                var_r = sum((r - mean_r) ** 2 for r in returns) / len(returns)
+                window_vols.append(math.sqrt(var_r) * math.sqrt(60) * 100)
+
+        if len(window_vols) < 3:
+            features["vol_of_vol"] = NEUTRAL_VALUES["vol_of_vol"]
+            return
+
+        mean_vol = sum(window_vols) / len(window_vols)
+        var_vol = sum((v - mean_vol) ** 2 for v in window_vols) / len(window_vols)
+        features["vol_of_vol"] = math.sqrt(var_vol)
+
+    except Exception:
+        features["vol_of_vol"] = NEUTRAL_VALUES["vol_of_vol"]
+
+
+def _compute_volume_acceleration(
+    coin: str,
+    features: dict,
+    raw_data: dict,
+    data_layer_db: object,
+    now: float,
+) -> None:
+    """volume_acceleration: recent_5m_volume / hourly_avg_5m_volume.
+
+    >1 = sudden volume spike relative to recent hour. Detects surges.
+    """
+    try:
+        cutoff_5m = now - 300
+        cutoff_1h = now - 3600
+
+        row_5m = data_layer_db.conn.execute(
+            "SELECT SUM(volume_usd) as total FROM volume_history "
+            "WHERE coin = ? AND recorded_at >= ? AND recorded_at <= ?",
+            (coin, cutoff_5m, now),
+        ).fetchone()
+        vol_5m = safe_float(row_5m["total"]) if row_5m else 0
+
+        row_1h = data_layer_db.conn.execute(
+            "SELECT SUM(volume_usd) / 12.0 as avg_5m FROM volume_history "
+            "WHERE coin = ? AND recorded_at >= ? AND recorded_at < ?",
+            (coin, cutoff_1h, cutoff_5m),
+        ).fetchone()
+        avg_5m = safe_float(row_1h["avg_5m"]) if row_1h else 0
+
+        if avg_5m > 0 and vol_5m > 0:
+            features["volume_acceleration"] = vol_5m / avg_5m
+        else:
+            features["volume_acceleration"] = NEUTRAL_VALUES["volume_acceleration"]
+
+    except Exception:
+        log.debug("Failed volume_acceleration for %s", coin, exc_info=True)
+        features["volume_acceleration"] = NEUTRAL_VALUES["volume_acceleration"]
+
+
+def _compute_cvd_1h(
+    coin: str,
+    features: dict,
+    raw_data: dict,
+    data_layer_db: object,
+    now: float,
+) -> None:
+    """cvd_ratio_1h: (buy - sell) / (buy + sell) over 1 hour.
+
+    Same as cvd_ratio_30m but longer window — captures sustained pressure.
+    """
+    try:
+        cutoff_1h = now - 3600
+
+        rows = data_layer_db.conn.execute(
+            "SELECT buy_volume_usd, sell_volume_usd "
+            "FROM trade_flow_history "
+            "WHERE coin = ? AND recorded_at >= ? AND recorded_at <= ?",
+            (coin, cutoff_1h, now),
+        ).fetchall()
+
+        if not rows:
+            features["cvd_ratio_1h"] = NEUTRAL_VALUES["cvd_ratio_1h"]
+            return
+
+        total_buy = sum(safe_float(r["buy_volume_usd"]) for r in rows)
+        total_sell = sum(safe_float(r["sell_volume_usd"]) for r in rows)
+        total = total_buy + total_sell
+
+        if total < 1:
+            features["cvd_ratio_1h"] = 0.0
+        else:
+            features["cvd_ratio_1h"] = max(-1.0, min(1.0,
+                (total_buy - total_sell) / total
+            ))
+
+    except Exception:
+        log.debug("Failed cvd_ratio_1h for %s", coin, exc_info=True)
+        features["cvd_ratio_1h"] = NEUTRAL_VALUES["cvd_ratio_1h"]
+
+
+def _compute_price_trend_4h(
+    coin: str,
+    features: dict,
+    avail: dict,
+    raw_data: dict,
+    data_layer_db: object,
+    now: float,
+    candles_5m: list[dict] | None = None,
+) -> None:
+    """price_trend_4h: (close_now - close_4h_ago) / close_4h_ago * 100.
+
+    Structural trend context. 1h can be a retracement within a 4h trend.
+    """
+    try:
+        now_ms = now * 1000
+        target_4h_ms = (now - 4 * 3600) * 1000
+
+        if candles_5m and len(candles_5m) >= 2:
+            past_candles = [c for c in candles_5m if c["t"] <= now_ms]
+            if len(past_candles) >= 2:
+                close_now = float(past_candles[-2]["c"])
+
+                close_4h = None
+                for c in past_candles:
+                    if c["t"] <= target_4h_ms:
+                        close_4h = float(c["c"])
+                    else:
+                        break
+
+                if close_4h and close_4h > 0 and close_now > 0:
+                    features["price_trend_4h"] = (close_now - close_4h) / close_4h * 100
+                    return
+
+        # Fallback: candles_history table
+        row_now = data_layer_db.conn.execute(
+            "SELECT close FROM candles_history "
+            "WHERE coin = ? AND interval = '5m' AND open_time <= ? "
+            "ORDER BY open_time DESC LIMIT 1",
+            (coin, now),
+        ).fetchone()
+
+        row_4h = data_layer_db.conn.execute(
+            "SELECT close FROM candles_history "
+            "WHERE coin = ? AND interval = '5m' AND open_time <= ? "
+            "ORDER BY open_time DESC LIMIT 1",
+            (coin, now - 4 * 3600),
+        ).fetchone()
+
+        if row_now and row_4h:
+            close_now = safe_float(row_now["close"])
+            close_4h = safe_float(row_4h["close"])
+            if close_4h > 0 and close_now > 0:
+                features["price_trend_4h"] = (close_now - close_4h) / close_4h * 100
+                return
+
+        features["price_trend_4h"] = NEUTRAL_VALUES["price_trend_4h"]
+
+    except Exception:
+        log.debug("Failed price_trend_4h for %s", coin, exc_info=True)
+        features["price_trend_4h"] = NEUTRAL_VALUES["price_trend_4h"]
 
 
 # ─── Feature Vector Export ───────────────────────────────────────────────────

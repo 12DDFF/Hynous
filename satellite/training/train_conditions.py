@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import sqlite3
 import sys
 import time
@@ -25,6 +26,7 @@ import xgboost as xgb
 from scipy.stats import spearmanr
 
 from satellite.features import FEATURE_NAMES
+from satellite.training.feature_sets import get_features_for_model
 from satellite.training.condition_artifact import (
     ConditionArtifact,
     ConditionMetadata,
@@ -152,6 +154,300 @@ def load_snapshots_with_labels(db_path: str, coin: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def enrich_with_new_features(rows: list[dict], coin: str, data_db_path: str) -> list[dict]:
+    """Compute v3 features from data-layer DB for historical snapshots.
+
+    Historical snapshots only have the original 14 features.
+    This function bulk-computes the 8 new features from raw data tables
+    (funding_history, oi_history, volume_history, liquidation_events,
+    trade_flow_history, candles_history).
+
+    Runs in ~30s for 57k snapshots (bulk queries, not per-row).
+    """
+    conn = sqlite3.connect(data_db_path)
+    conn.row_factory = sqlite3.Row
+
+    log.info("Enriching %d rows with v3 features from %s...", len(rows), data_db_path)
+
+    # ── 1. liq_total_1h_usd: log10(total liq in 1h) ──
+    # Already have liq data in raw_data from _compute_liq_cascade,
+    # but for historical rows we need to query liquidation_events.
+    # Bulk approach: for each row, sum liqs in [created_at - 3600, created_at]
+    # We'll use a sliding window approach for efficiency.
+    log.info("  Computing liq_total_1h_usd...")
+    liq_rows = conn.execute(
+        "SELECT occurred_at, size_usd FROM liquidation_events "
+        "WHERE coin = ? ORDER BY occurred_at ASC",
+        (coin,),
+    ).fetchall()
+    liq_times = [float(r["occurred_at"]) for r in liq_rows]
+    liq_sizes = [float(r["size_usd"]) for r in liq_rows]
+
+    liq_idx = 0
+    for row in rows:
+        t = row["created_at"]
+        t_start = t - 3600
+        total_liq = 0.0
+        for j in range(len(liq_times)):
+            if liq_times[j] < t_start:
+                continue
+            if liq_times[j] > t:
+                break
+            total_liq += liq_sizes[j]
+        row["liq_total_1h_usd"] = math.log10(total_liq + 1) if total_liq > 0 else 0.0
+
+    # ── 2. funding_rate_raw ──
+    log.info("  Computing funding_rate_raw...")
+    funding_rows = conn.execute(
+        "SELECT recorded_at, rate FROM funding_history "
+        "WHERE coin = ? ORDER BY recorded_at ASC",
+        (coin,),
+    ).fetchall()
+    fund_times = [float(r["recorded_at"]) for r in funding_rows]
+    fund_rates = [float(r["rate"]) for r in funding_rows]
+
+    fidx = 0
+    for row in rows:
+        t = row["created_at"]
+        # Find most recent funding rate before t
+        rate = 0.0
+        while fidx < len(fund_times) - 1 and fund_times[fidx + 1] <= t:
+            fidx += 1
+        if fidx < len(fund_times) and fund_times[fidx] <= t:
+            rate = fund_rates[fidx]
+        row["funding_rate_raw"] = rate
+    fidx = 0  # reset for safety
+
+    # ── 3. oi_change_rate_1h ──
+    log.info("  Computing oi_change_rate_1h...")
+    oi_rows = conn.execute(
+        "SELECT recorded_at, oi_usd FROM oi_history "
+        "WHERE coin = ? ORDER BY recorded_at ASC",
+        (coin,),
+    ).fetchall()
+    oi_times = [float(r["recorded_at"]) for r in oi_rows]
+    oi_vals = [float(r["oi_usd"]) for r in oi_rows]
+
+    def _find_oi_at(target_t):
+        """Binary search for OI closest to target_t."""
+        lo, hi = 0, len(oi_times) - 1
+        best = -1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if oi_times[mid] <= target_t:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return oi_vals[best] if best >= 0 else 0.0
+
+    for row in rows:
+        t = row["created_at"]
+        oi_now = _find_oi_at(t)
+        oi_1h = _find_oi_at(t - 3600)
+        if oi_1h > 0 and oi_now > 0:
+            row["oi_change_rate_1h"] = (oi_now - oi_1h) / oi_1h * 100
+        else:
+            row["oi_change_rate_1h"] = 0.0
+
+    # ── 4. price_trend_4h ──
+    log.info("  Computing price_trend_4h...")
+    candle_rows = conn.execute(
+        "SELECT open_time, close FROM candles_history "
+        "WHERE coin = ? AND interval = '5m' ORDER BY open_time ASC",
+        (coin,),
+    ).fetchall()
+    candle_times = [float(r["open_time"]) for r in candle_rows]
+    candle_closes = [float(r["close"]) for r in candle_rows]
+
+    def _find_close_at(target_t):
+        lo, hi = 0, len(candle_times) - 1
+        best = -1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if candle_times[mid] <= target_t:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return candle_closes[best] if best >= 0 else 0.0
+
+    for row in rows:
+        t = row["created_at"]
+        close_now = _find_close_at(t)
+        close_4h = _find_close_at(t - 4 * 3600)
+        if close_4h > 0 and close_now > 0:
+            row["price_trend_4h"] = (close_now - close_4h) / close_4h * 100
+        else:
+            row["price_trend_4h"] = 0.0
+
+    # ── 5. volume_acceleration ──
+    log.info("  Computing volume_acceleration...")
+    vol_rows = conn.execute(
+        "SELECT recorded_at, volume_usd FROM volume_history "
+        "WHERE coin = ? ORDER BY recorded_at ASC",
+        (coin,),
+    ).fetchall()
+    vol_times = [float(r["recorded_at"]) for r in vol_rows]
+    vol_vals = [float(r["volume_usd"]) for r in vol_rows]
+
+    def _sum_vol_between(t_start, t_end):
+        lo, hi = 0, len(vol_times) - 1
+        # find first >= t_start
+        start_idx = len(vol_times)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if vol_times[mid] >= t_start:
+                start_idx = mid
+                hi = mid - 1
+            else:
+                lo = mid + 1
+        total = 0.0
+        for j in range(start_idx, len(vol_times)):
+            if vol_times[j] > t_end:
+                break
+            total += vol_vals[j]
+        return total
+
+    for row in rows:
+        t = row["created_at"]
+        vol_5m = _sum_vol_between(t - 300, t)
+        vol_1h = _sum_vol_between(t - 3600, t - 300)
+        avg_5m = vol_1h / 11.0 if vol_1h > 0 else 0  # 55min / 5min = 11 buckets
+        if avg_5m > 0 and vol_5m > 0:
+            row["volume_acceleration"] = vol_5m / avg_5m
+        else:
+            row["volume_acceleration"] = 1.0
+
+    # ── 6. cvd_ratio_1h ──
+    log.info("  Computing cvd_ratio_1h...")
+    tf_rows = conn.execute(
+        "SELECT recorded_at, buy_volume_usd, sell_volume_usd "
+        "FROM trade_flow_history WHERE coin = ? ORDER BY recorded_at ASC",
+        (coin,),
+    ).fetchall()
+    tf_times = [float(r["recorded_at"]) for r in tf_rows]
+    tf_buys = [float(r["buy_volume_usd"]) for r in tf_rows]
+    tf_sells = [float(r["sell_volume_usd"]) for r in tf_rows]
+
+    def _cvd_between(t_start, t_end):
+        lo, hi = 0, len(tf_times) - 1
+        start_idx = len(tf_times)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if tf_times[mid] >= t_start:
+                start_idx = mid
+                hi = mid - 1
+            else:
+                lo = mid + 1
+        total_buy, total_sell = 0.0, 0.0
+        for j in range(start_idx, len(tf_times)):
+            if tf_times[j] > t_end:
+                break
+            total_buy += tf_buys[j]
+            total_sell += tf_sells[j]
+        return total_buy, total_sell
+
+    for row in rows:
+        t = row["created_at"]
+        buy, sell = _cvd_between(t - 3600, t)
+        total = buy + sell
+        if total < 1:
+            row["cvd_ratio_1h"] = 0.0
+        else:
+            row["cvd_ratio_1h"] = max(-1.0, min(1.0, (buy - sell) / total))
+
+    # ── 7. realized_vol_4h (from 5m candles — approx) ──
+    log.info("  Computing realized_vol_4h...")
+    for row in rows:
+        t = row["created_at"]
+        # Find candles in [t-4h, t]
+        t_start = t - 4 * 3600
+        lo, hi = 0, len(candle_times) - 1
+        start_idx = len(candle_times)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if candle_times[mid] >= t_start:
+                start_idx = mid
+                hi = mid - 1
+            else:
+                lo = mid + 1
+
+        closes = []
+        for j in range(start_idx, len(candle_times)):
+            if candle_times[j] > t:
+                break
+            closes.append(candle_closes[j])
+
+        if len(closes) < 10:
+            row["realized_vol_4h"] = 0.0
+            continue
+
+        returns = []
+        for i in range(1, len(closes)):
+            if closes[i - 1] > 0 and closes[i] > 0:
+                returns.append(math.log(closes[i] / closes[i - 1]))
+
+        if len(returns) < 5:
+            row["realized_vol_4h"] = 0.0
+            continue
+
+        mean_r = sum(returns) / len(returns)
+        var_r = sum((r - mean_r) ** 2 for r in returns) / len(returns)
+        # Scale: 5m candles, so sqrt(12) to annualize to 1h equivalent, * 100 for %
+        row["realized_vol_4h"] = math.sqrt(var_r) * math.sqrt(12) * 100
+
+    # ── 8. vol_of_vol (from 5m candles — approx using 15min windows) ──
+    log.info("  Computing vol_of_vol...")
+    for row in rows:
+        t = row["created_at"]
+        t_start = t - 3600
+        lo, hi = 0, len(candle_times) - 1
+        start_idx = len(candle_times)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if candle_times[mid] >= t_start:
+                start_idx = mid
+                hi = mid - 1
+            else:
+                lo = mid + 1
+
+        closes = []
+        for j in range(start_idx, len(candle_times)):
+            if candle_times[j] > t:
+                break
+            closes.append(candle_closes[j])
+
+        if len(closes) < 12:
+            row["vol_of_vol"] = 0.0
+            continue
+
+        # 15min windows (3 candles each for 5m data)
+        window_vols = []
+        for ws in range(0, len(closes) - 2, 3):
+            window = closes[ws:ws + 3]
+            rets = []
+            for i in range(1, len(window)):
+                if window[i - 1] > 0 and window[i] > 0:
+                    rets.append(math.log(window[i] / window[i - 1]))
+            if len(rets) >= 2:
+                mr = sum(rets) / len(rets)
+                vr = sum((r - mr) ** 2 for r in rets) / len(rets)
+                window_vols.append(math.sqrt(vr) * math.sqrt(12) * 100)
+
+        if len(window_vols) < 3:
+            row["vol_of_vol"] = 0.0
+            continue
+
+        mv = sum(window_vols) / len(window_vols)
+        vv = sum((v - mv) ** 2 for v in window_vols) / len(window_vols)
+        row["vol_of_vol"] = math.sqrt(vv)
+
+    conn.close()
+    log.info("  Enrichment complete — %d rows enriched", len(rows))
+    return rows
+
+
 # ─── Target Builders ─────────────────────────────────────────────────────────
 
 def build_condition_targets(rows: list[dict]) -> list[dict]:
@@ -262,7 +558,7 @@ def _safe_get(rows: list[dict], idx: int, key: str):
 def train_single_condition(
     rows: list[dict],
     target: ConditionTarget,
-    feature_names: list[str],
+    feature_names: list[str] | None,
     output_dir: Path,
 ) -> dict:
     """Train one condition model with walk-forward validation.
@@ -270,12 +566,18 @@ def train_single_condition(
     Args:
         rows: All snapshots with targets built (from build_condition_targets).
         target: The condition target definition.
-        feature_names: List of feature column names.
+        feature_names: List of feature column names. If None, uses per-model
+            feature set from feature_sets.py.
         output_dir: Base artifacts directory (e.g. artifacts/conditions/).
 
     Returns:
         Dict with training results (avg_spearman, avg_mae, generation_count).
     """
+    # Use per-model feature set if not explicitly provided
+    if feature_names is None:
+        feature_names = get_features_for_model(target.name)
+    log.info("  Feature set for %s: %d features", target.name, len(feature_names))
+
     target_col = target.build_fn_name  # e.g. "target_vol_1h"
 
     # Filter to rows with valid target and features
@@ -492,6 +794,7 @@ def train_all_conditions(
     output_dir: str,
     coin: str = "BTC",
     targets: list[str] | None = None,
+    data_db_path: str | None = None,
 ) -> list[dict]:
     """Train all condition models for a coin.
 
@@ -499,7 +802,9 @@ def train_all_conditions(
         db_path: Path to satellite.db.
         output_dir: Path to artifacts/conditions/ directory.
         coin: Coin to train on (default "BTC").
-        targets: Optional list of target names to train (default: all 10).
+        targets: Optional list of target names to train (default: all 12).
+        data_db_path: Path to data-layer DB (for computing v3 features).
+            If None, new features will use neutral/zero values.
 
     Returns:
         List of per-model training results.
@@ -515,6 +820,12 @@ def train_all_conditions(
         log.error("No labeled snapshots found for %s", coin)
         return []
 
+    # Enrich with v3 features from data-layer DB
+    if data_db_path:
+        rows = enrich_with_new_features(rows, coin, data_db_path)
+    else:
+        log.warning("No --data-db provided. New features will use neutral values.")
+
     log.info("Building condition targets...")
     rows = build_condition_targets(rows)
 
@@ -524,7 +835,6 @@ def train_all_conditions(
         active_targets = [t for t in CONDITION_TARGETS if t.name in targets]
         log.info("Training subset: %s", [t.name for t in active_targets])
 
-    feature_names = list(FEATURE_NAMES)
     results = []
 
     for target in active_targets:
@@ -532,7 +842,8 @@ def train_all_conditions(
         log.info("Training: %s — %s", target.name, target.description)
         log.info("=" * 60)
 
-        result = train_single_condition(rows, target, feature_names, output_path)
+        # Each model gets its own curated feature set (from feature_sets.py)
+        result = train_single_condition(rows, target, None, output_path)
         results.append(result)
 
     # Summary
@@ -572,7 +883,11 @@ def main():
     )
     parser.add_argument(
         "--targets", nargs="+", default=None,
-        help="Specific targets to train (default: all 10)",
+        help="Specific targets to train (default: all 12)",
+    )
+    parser.add_argument(
+        "--data-db", default=None,
+        help="Path to data-layer DB for v3 features (e.g. storage/hynous-data.db)",
     )
     parser.add_argument(
         "--verbose", "-v", action="store_true",
@@ -587,7 +902,7 @@ def main():
         datefmt="%H:%M:%S",
     )
 
-    train_all_conditions(args.db, args.output, args.coin, args.targets)
+    train_all_conditions(args.db, args.output, args.coin, args.targets, args.data_db)
 
 
 if __name__ == "__main__":

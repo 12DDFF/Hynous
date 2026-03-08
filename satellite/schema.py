@@ -262,4 +262,23 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     except Exception:
         pass
 
+    # v5 -> v6: Add v3 feature columns (per-model feature sets)
+    v3_feature_cols = [
+        ("liq_total_1h_usd", "REAL"),
+        ("funding_rate_raw", "REAL"),
+        ("oi_change_rate_1h", "REAL"),
+        ("realized_vol_4h", "REAL"),
+        ("vol_of_vol", "REAL"),
+        ("volume_acceleration", "REAL"),
+        ("cvd_ratio_1h", "REAL"),
+        ("price_trend_4h", "REAL"),
+    ]
+    for col_name, col_type in v3_feature_cols:
+        try:
+            conn.execute(
+                f"ALTER TABLE snapshots ADD COLUMN {col_name} {col_type}",
+            )
+        except Exception:
+            pass  # column already exists
+
     conn.commit()
