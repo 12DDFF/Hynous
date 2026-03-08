@@ -25,7 +25,6 @@ Usage:
 """
 
 import logging
-import math
 import sys
 
 import numpy as np
@@ -40,14 +39,12 @@ from satellite.experiments.harness import (
     save_report,
     get_standard_args,
     XGBOOST_BINARY,
-    MIN_TRAIN_DAYS,
-    SNAPSHOTS_PER_DAY,
 )
 
 log = logging.getLogger(__name__)
 
 EXPERIMENT_NAME = "liq_cascade_incoming"
-DESCRIPTION = "Predict major liquidation cascade in next 1h (binary, 75th pctl)"
+DESCRIPTION = "Predict liquidation activity in next 1h (binary, any liq > 0)"
 
 LOOK_1H = 12
 
@@ -77,18 +74,13 @@ XGBOOST_BINARY_RARE = {
 
 
 def build_targets(rows: list[dict]) -> list[dict]:
-    """Add cascade target using expanding-window 95th percentile.
+    """Add cascade target: will there be liquidation activity in the next 1h?
 
-    For each row i:
-    1. Compute liq_total_1h_usd at i+12 (1h ahead)
-    2. Compute 95th percentile of liq_total_1h_usd from all data[:i]
-    3. Target = 1 if future liq exceeds threshold, else 0
+    Target = 1 if liq_total_1h_usd at i+12 > 0 (any liq in next hour).
+    Target = 0 if no liq activity.
 
-    We use the feature value (liq_total_1h_usd is a feature computed from
-    raw liq data) rather than re-querying raw data.
-
-    Uses 75th percentile (not 95th) because liq data is sparse —
-    95th pctl was all zeros for most expanding windows.
+    Simpler than percentile thresholds because BTC liq data is sparse
+    (~1700 events across 58k snapshots).
     """
     n = len(rows)
 
@@ -105,26 +97,12 @@ def build_targets(rows: list[dict]) -> list[dict]:
             continue
 
         future_liq = liqs[future_idx]
-
-        # Expanding window: only use past data with non-zero liqs
-        past_liqs = [v for v in liqs[:i] if v > 0]
-        if len(past_liqs) < 50:
-            rows[i]["target_liq_cascade"] = None
-            continue
-
-        p75 = float(np.percentile(past_liqs, 75))
-
-        # Must have meaningful threshold
-        if p75 < 0.01:
-            rows[i]["target_liq_cascade"] = None
-            continue
-
-        rows[i]["target_liq_cascade"] = 1 if future_liq > p75 else 0
+        rows[i]["target_liq_cascade"] = 1 if future_liq > 0 else 0
 
     cascade_count = sum(1 for r in rows if r.get("target_liq_cascade") == 1)
     total = sum(1 for r in rows if r.get("target_liq_cascade") is not None)
     if total > 0:
-        log.info("Cascade rate: %d / %d = %.1f%%",
+        log.info("Liq activity rate: %d / %d = %.1f%%",
                  cascade_count, total, 100 * cascade_count / total)
 
     return rows

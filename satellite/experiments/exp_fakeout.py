@@ -2,8 +2,8 @@
 
 Predicts: Is the current move a fakeout that will reverse within 30m?
 Features: Microstructure + flow + vol signals.
-Label: Binary — 1 if a >0.3% move in the last 5m is reversed (price returns
-       within 0.1% of pre-move level) within 30 minutes.
+Label: Binary — 1 if a >0.3% 1h move's opposite-side 30m ROE exceeds the
+       same-side ROE (reversal stronger than continuation).
 
 Why it should work: Fakeouts are the #1 loss source for the agent. Real
 breakouts have: high volume, aligned CVD, strong body ratios, rising OI.
@@ -46,11 +46,10 @@ from satellite.experiments.harness import (
 log = logging.getLogger(__name__)
 
 EXPERIMENT_NAME = "fakeout_detector"
-DESCRIPTION = "Predict whether a recent >0.3% move reverses within 30m (binary)"
+DESCRIPTION = "Predict whether a >0.3% move reversal exceeds continuation in 30m (binary)"
 
 LOOK_30M = 6
-MOVE_THRESHOLD = 0.5   # Minimum move to trigger evaluation (%)
-REVERSAL_THRESHOLD = 0.5  # Opposite-side ROE must exceed this to count as reversal
+MOVE_THRESHOLD = 0.3   # Minimum |price_trend_1h| to trigger evaluation (%)
 
 FEATURES = [
     "return_autocorrelation",
@@ -75,17 +74,12 @@ def build_targets(rows: list[dict]) -> list[dict]:
     """Add fakeout target.
 
     A fakeout is defined as:
-    1. At snapshot i, price has moved >0.3% in 1h (abs(price_trend_1h) > 0.3)
-    2. Within the next 30m (i+1 to i+6), the price_trend_1h at some future
-       snapshot shows the move has been largely reversed.
+    1. At snapshot i, price has moved >MOVE_THRESHOLD% in 1h
+    2. The opposite-side 30m ROE exceeds the same-side 30m ROE
+       (i.e., the reversal was stronger than the continuation)
 
-    We detect reversal by checking if the opposite-side ROE label exceeds
-    the move threshold — meaning price moved back past the starting point.
-
-    Specifically: if price_trend_1h > 0.3% (bullish move), fakeout = 1 if
-    best_short_roe_30m_gross > MOVE_THRESHOLD (price fell back hard).
-    If price_trend_1h < -0.3% (bearish move), fakeout = 1 if
-    best_long_roe_30m_gross > MOVE_THRESHOLD.
+    If price_trend_1h > 0 (bullish move), fakeout = 1 if short_roe > long_roe.
+    If price_trend_1h < 0 (bearish move), fakeout = 1 if long_roe > short_roe.
     """
     for row in rows:
         trend = row.get("price_trend_1h")
@@ -102,11 +96,11 @@ def build_targets(rows: list[dict]) -> list[dict]:
             continue
 
         if trend > 0:
-            # Bullish move — fakeout if shorts profit (price reversed down)
-            row["target_fakeout"] = 1 if short_roe > REVERSAL_THRESHOLD else 0
+            # Bullish move — fakeout if reversal > continuation
+            row["target_fakeout"] = 1 if short_roe > long_roe else 0
         else:
-            # Bearish move — fakeout if longs profit (price reversed up)
-            row["target_fakeout"] = 1 if long_roe > REVERSAL_THRESHOLD else 0
+            # Bearish move — fakeout if reversal > continuation
+            row["target_fakeout"] = 1 if long_roe > short_roe else 0
 
     fakeout_count = sum(1 for r in rows if r.get("target_fakeout") == 1)
     total = sum(1 for r in rows if r.get("target_fakeout") is not None)
