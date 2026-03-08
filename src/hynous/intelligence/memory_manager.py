@@ -356,6 +356,11 @@ class MemoryManager:
                 logger.warning("Compression expanded input — using fallback")
                 return _fallback_compress(exchange)
 
+            # Quality gate: verify compression preserved key entities
+            if not _compression_quality_check(formatted, summary):
+                logger.warning("Compression quality check failed — using fallback")
+                return _fallback_compress(exchange)
+
             return summary
 
         except LitellmAPIError as e:
@@ -540,6 +545,63 @@ def _format_exchange(exchange: list[dict]) -> str:
                 lines.append(f"AGENT: {content}")
 
     return "\n".join(lines)
+
+
+def _compression_quality_check(source: str, summary: str) -> bool:
+    """Verify compression preserved key entities from the source.
+
+    Checks that trading symbols and significant numbers from the source
+    appear in the summary. A compression that drops all symbols or all
+    numbers is likely hallucinated or too lossy.
+
+    Returns True if quality is acceptable.
+    """
+    import re
+
+    source_upper = source.upper()
+    summary_upper = summary.upper()
+
+    # Check trading symbols — at least one source symbol should survive
+    known = ["BTC", "ETH", "SOL", "DOGE", "ARB", "OP", "AVAX", "LINK",
+             "SUI", "SEI", "WIF", "PEPE", "BONK", "JUP", "TIA", "INJ"]
+    source_symbols = [s for s in known if s in source_upper]
+    if source_symbols:
+        preserved = [s for s in source_symbols if s in summary_upper]
+        if not preserved:
+            logger.debug(
+                "Quality gate: summary dropped all symbols (%s)",
+                ", ".join(source_symbols),
+            )
+            return False
+
+    # Check numbers — extract significant numbers (prices, percentages)
+    source_numbers = set(re.findall(r"\d+\.?\d*%?", source))
+    if len(source_numbers) >= 3:
+        summary_numbers = set(re.findall(r"\d+\.?\d*%?", summary))
+        overlap = source_numbers & summary_numbers
+        # At least 15% of source numbers should appear in summary
+        if len(overlap) < max(1, len(source_numbers) * 0.15):
+            logger.debug(
+                "Quality gate: summary preserved only %d/%d numbers",
+                len(overlap), len(source_numbers),
+            )
+            return False
+
+    # Check for direction consistency in trade contexts
+    for direction_pair in [("LONG", "SHORT"), ("BUY", "SELL")]:
+        src_has_a = direction_pair[0] in source_upper
+        src_has_b = direction_pair[1] in source_upper
+        sum_has_a = direction_pair[0] in summary_upper
+        sum_has_b = direction_pair[1] in summary_upper
+        # If source mentions only one direction, summary shouldn't flip it
+        if src_has_a and not src_has_b and sum_has_b and not sum_has_a:
+            logger.debug("Quality gate: direction flipped (%s → %s)", direction_pair[0], direction_pair[1])
+            return False
+        if src_has_b and not src_has_a and sum_has_a and not sum_has_b:
+            logger.debug("Quality gate: direction flipped (%s → %s)", direction_pair[1], direction_pair[0])
+            return False
+
+    return True
 
 
 def _fallback_compress(exchange: list[dict]) -> Optional[str]:

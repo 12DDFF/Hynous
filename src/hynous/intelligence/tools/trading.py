@@ -784,6 +784,22 @@ def handle_execute_trade(
         warnings=_warnings if _warnings else None,
     )
 
+    # --- Pre-mortem check (Haiku sanity check before execution) ---
+    try:
+        from ..coach import Coach
+        coach = Coach(config)
+        market_ctx = coach._build_pre_mortem_context(symbol, side)
+        pre_mortem_warning = coach.pre_mortem(
+            symbol=symbol, side=side, leverage=leverage,
+            stop_loss=stop_loss, take_profit=take_profit,
+            confidence=confidence, reasoning=reasoning,
+            market_context=market_ctx,
+        )
+        if pre_mortem_warning:
+            _warnings.append(f"Pre-mortem: {pre_mortem_warning}")
+    except Exception as e:
+        logger.debug("Pre-mortem check skipped: %s", e)
+
     # --- Set leverage if specified ---
     if leverage is not None:
         _lev_start = time.monotonic()

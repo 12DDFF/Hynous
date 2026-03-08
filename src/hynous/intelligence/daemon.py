@@ -3507,24 +3507,13 @@ class Daemon:
             except Exception as e:
                 logger.debug("Playbook matching failed: %s", e)
 
-        # Inject ML condition predictions for relevant coins
-        ml_block = self._build_ml_context(top)
-        if ml_block:
-            message += "\n\n" + ml_block
-
-        # Inject regime context above the scanner message
-        if self._regime and self._regime.label != "RANGING":
-            from .regime import format_regime_line
-            regime_line = format_regime_line(self._regime, compact=True)
-            message = f"[{regime_line}]\n\n" + message
-
         # Inject historical context above the scanner message
         track_record = self._build_historical_context(top)
         if track_record:
             message = track_record + "\n\n" + message
 
         response = self._wake_agent(
-            message, max_coach_cycles=0, max_tokens=1200,
+            message, max_coach_cycles=1, max_tokens=1200,
             source="daemon:scanner",
         )
         # Snapshot immediately — another chat() call would reset _last_tool_calls
@@ -4278,6 +4267,17 @@ class Daemon:
             if errors > 0:
                 logger.warning("Consolidation: %d error(s) during cycle", errors)
 
+            # Refresh promoted lessons cache after consolidation
+            try:
+                from .prompts.builder import refresh_promoted_lessons
+                count = refresh_promoted_lessons()
+                if count > 0:
+                    # Rebuild system prompt so agent picks up new lessons
+                    self.agent.rebuild_system_prompt()
+                    logger.info("Promoted lessons refreshed (%d) — system prompt rebuilt", count)
+            except Exception as e:
+                logger.debug("Promoted lessons refresh failed: %s", e)
+
         except Exception as e:
             logger.warning("Consolidation cycle failed: %s", e)
 
@@ -4918,7 +4918,23 @@ class Daemon:
                 except Exception as e:
                     logger.error("Coach sharpen failed: %s", e)
 
-            # === 3b. Position awareness block (every wake) ===
+            # === Source-aware context tiers ===
+            _FULL_CONTEXT = {"daemon:scanner", "daemon:ml_conditions", "daemon:review", "daemon:manual"}
+            _POSITION_CONTEXT = {"daemon:profit", "daemon:watchpoint", "daemon:fill"}
+            needs_full = source in _FULL_CONTEXT
+            needs_positions = needs_full or source in _POSITION_CONTEXT
+
+            # Strip briefing + code questions for non-full-context wakes
+            if not needs_full:
+                briefing_text = ""
+                code_questions = []
+                haiku_questions = []
+
+            # Strip warnings for lightweight wakes (phantom, memory, conflict, learning)
+            if not needs_full and not needs_positions:
+                warnings_text = ""
+
+            # === 3b. Position awareness block ===
             position_block = ""
             if self._prev_positions:
                 pos_lines = []
@@ -4952,18 +4968,12 @@ class Daemon:
                         f" | {en_f} -> {px_f}"
                         f" | ROE: {p_roe:+.1f}% (peak {p_peak:+.1f}%){p_hold}{p_fade}"
                     )
-                if pos_lines:
+                if pos_lines and needs_positions:
                     position_block = (
-                        "[YOUR OPEN POSITIONS — manage these before anything else]\n"
+                        "[YOUR OPEN POSITIONS]\n"
                         + "\n".join(pos_lines)
-                        + "\nIf any position is profitable, decide NOW: close, trail stop, or hold with clear reason."
+                        + "\nIf any position is profitable, consider whether to close, trail stop, or hold."
                     )
-
-            # === 3c. Regime context (zero cost, already computed) ===
-            regime_block = ""
-            if self._regime and self._regime.label != "RANGING":
-                from .regime import format_regime_line
-                regime_block = format_regime_line(self._regime, compact=False)
 
             # === 4. Assemble wake message ===
             parts = []
@@ -4974,8 +4984,6 @@ class Daemon:
                 parts.append("[Consider — do NOT list these in your response, just let them inform your thinking]\n" + "\n".join(f"- {q}" for q in all_q))
             if warnings_text:
                 parts.append(warnings_text)
-            if regime_block:
-                parts.append(regime_block)
             if position_block:
                 parts.append(position_block)
             parts.append(message)  # Original wake message

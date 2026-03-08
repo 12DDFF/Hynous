@@ -34,8 +34,12 @@ logger = logging.getLogger(__name__)
 # MODULE CONSTANTS (not in YAML — see Decision 6)
 # ============================================================
 
-# How far back to look for source episodes
-_LOOKBACK_DAYS = 14
+# Default lookback — adaptive logic may extend this
+_LOOKBACK_DAYS_DEFAULT = 14
+_LOOKBACK_DAYS_MAX = 30
+_LOOKBACK_DAYS_MIN = 7
+# If fewer than this many episodes found, extend lookback
+_MIN_EPISODES_FOR_ANALYSIS = 8
 
 # Minimum episodes in a group before we analyze it.
 # Below this, there isn't enough data for meaningful cross-episode patterns.
@@ -208,10 +212,29 @@ class ConsolidationEngine:
     def _fetch_recent_episodes(self, nous) -> list[dict]:
         """Fetch recent ACTIVE source-section nodes for consolidation.
 
-        Queries each source subtype separately because list_nodes()
-        only accepts a single subtype filter. Merges results.
+        Uses adaptive lookback: starts at 14 days, extends to 30 if too few
+        episodes found (low-activity periods), shrinks to 7 if plenty found
+        (high-frequency trading). This ensures consolidation has enough data
+        for meaningful patterns without over-indexing on stale episodes.
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(days=_LOOKBACK_DAYS)
+        lookback = _LOOKBACK_DAYS_DEFAULT
+        all_episodes = self._fetch_episodes_for_window(nous, lookback)
+
+        # Adaptive: extend if too few episodes
+        if len(all_episodes) < _MIN_EPISODES_FOR_ANALYSIS and lookback < _LOOKBACK_DAYS_MAX:
+            lookback = _LOOKBACK_DAYS_MAX
+            all_episodes = self._fetch_episodes_for_window(nous, lookback)
+            if len(all_episodes) >= _MIN_EPISODES_FOR_ANALYSIS:
+                logger.info(
+                    "Consolidation: extended lookback to %dd (%d episodes)",
+                    lookback, len(all_episodes),
+                )
+
+        return all_episodes
+
+    def _fetch_episodes_for_window(self, nous, days: int) -> list[dict]:
+        """Fetch episodes within a given lookback window."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         created_after = cutoff.isoformat()
 
         all_episodes: list[dict] = []
@@ -569,12 +592,16 @@ def _build_analysis_prompt(group_key: str, episodes: list[dict]) -> str:
     """Build the user prompt for Haiku pattern extraction.
 
     Formats each episode as a compact summary with key data points.
+    Trade closes include outcome tags (WIN/LOSS, ROE%, MFE/MAE) for
+    pattern extraction to correlate conditions with results.
     """
     lines = [
         f"## {len(episodes)} episodes for {group_key}",
         "",
         "Analyze these episodes for recurring patterns. "
-        "Each episode is a memory from my trading activity.",
+        "Each episode is a memory from my trading activity. "
+        "Trade closes include outcome data (WIN/LOSS, ROE%) — use this to find "
+        "which conditions correlate with wins vs losses.",
         "",
     ]
 
@@ -585,12 +612,17 @@ def _build_analysis_prompt(group_key: str, episodes: list[dict]) -> str:
             subtype = subtype[7:]
         date = (ep.get("provenance_created_at", "") or "")[:16]  # YYYY-MM-DDTHH:MM
 
-        # Get body text
+        # Get body text and signals
         body = ep.get("content_body", "") or ""
+        outcome_tag = ""
         if body.startswith("{"):
             try:
                 parsed = json.loads(body)
                 body = parsed.get("text", body) or body
+                # Extract outcome data from trade_close signals
+                signals = parsed.get("signals", {})
+                if signals and subtype == "trade_close":
+                    outcome_tag = _format_outcome_tag(signals)
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -598,12 +630,45 @@ def _build_analysis_prompt(group_key: str, episodes: list[dict]) -> str:
         if len(body) > 500:
             body = body[:497] + "..."
 
-        lines.append(f"**Episode {i}** [{subtype}] ({date}): {title}")
+        header = f"**Episode {i}** [{subtype}] ({date}): {title}"
+        if outcome_tag:
+            header += f" {outcome_tag}"
+        lines.append(header)
         if body:
             lines.append(f"  {body}")
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _format_outcome_tag(signals: dict) -> str:
+    """Format a compact outcome tag from trade_close signals.
+
+    Example: [WIN +23.5% ROE | MFE +35.2% | macro | 10x]
+    """
+    parts = []
+    lev_return = signals.get("lev_return_pct", 0)
+    if lev_return >= 0:
+        parts.append(f"WIN +{lev_return:.1f}% ROE")
+    else:
+        parts.append(f"LOSS {lev_return:.1f}% ROE")
+
+    mfe = signals.get("mfe_pct", 0)
+    mae = signals.get("mae_pct", 0)
+    if mfe > 0:
+        parts.append(f"MFE +{mfe:.1f}%")
+    if mae < 0:
+        parts.append(f"MAE {mae:.1f}%")
+
+    trade_type = signals.get("trade_type", "")
+    if trade_type:
+        parts.append(trade_type)
+
+    lev = signals.get("leverage", 0)
+    if lev:
+        parts.append(f"{lev}x")
+
+    return f"[{' | '.join(parts)}]" if parts else ""
 
 
 def _parse_pattern_output(text: str) -> tuple[str | None, str | None]:

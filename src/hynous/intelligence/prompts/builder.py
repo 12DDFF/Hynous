@@ -7,7 +7,22 @@ Based on storm-011 (persona) and storm-010 (trading knowledge).
 Optimized: tool usage details live in tool schemas (3,700 tokens).
 System prompt focuses on IDENTITY (soul), RULES (behavior), and
 MEMORY (how the living memory system works). ~1,200 tokens total.
+
+Promoted lessons: high-conviction lessons from consolidation are
+injected as "hard-earned rules" — structural learning beyond retrieval.
 """
+
+import logging
+import time
+import threading
+
+_logger = logging.getLogger(__name__)
+
+# --- Promoted Lessons Cache ---
+_promoted_lessons: list[str] = []
+_promoted_lessons_lock = threading.Lock()
+_promoted_lessons_last_refresh: float = 0
+_PROMOTED_LESSONS_TTL = 3600  # 1 hour cache
 
 
 # --- Soul ---
@@ -260,6 +275,101 @@ Every 5 minutes, my ML engine predicts 10 market conditions:
 These are CONDITIONS, not direction calls. I decide direction from market analysis. ML tells me the environment I'm trading in. High vol + good entry quality + manageable drawdown = green light. Low vol + poor entry + extreme drawdown risk = sit on hands."""
 
 
+def refresh_promoted_lessons() -> int:
+    """Fetch high-conviction lessons from Nous and cache them.
+
+    Called by the daemon after consolidation cycles. Lessons qualify
+    for promotion if they have >= 5 source edges (confirmed across
+    multiple episodes). Max 5 lessons to keep prompt concise.
+
+    Returns the number of lessons cached.
+    """
+    global _promoted_lessons, _promoted_lessons_last_refresh
+    try:
+        from ...nous.client import get_client
+        nous = get_client()
+
+        # Fetch lesson and playbook nodes
+        lessons = []
+        for subtype in ["custom:lesson", "custom:playbook"]:
+            try:
+                nodes = nous.list_nodes(
+                    subtype=subtype,
+                    lifecycle="ACTIVE",
+                    limit=20,
+                )
+                lessons.extend(nodes)
+            except Exception:
+                continue
+
+        if not lessons:
+            return 0
+
+        # Score by edge count (more source episodes = higher conviction)
+        scored = []
+        for node in lessons:
+            node_id = node.get("id")
+            if not node_id:
+                continue
+            try:
+                edges = nous.get_edges(node_id, direction="out")
+                gen_edges = [e for e in edges if e.get("type") == "generalizes"]
+                if len(gen_edges) >= 5:
+                    title = node.get("content_title", "")
+                    body = node.get("content_body", "")
+                    # For playbooks, extract text from JSON body
+                    if body.startswith("{"):
+                        try:
+                            import json
+                            parsed = json.loads(body)
+                            body = parsed.get("text", body)
+                        except Exception:
+                            pass
+                    # Truncate body for prompt injection
+                    if len(body) > 200:
+                        body = body[:197] + "..."
+                    scored.append((len(gen_edges), title, body))
+            except Exception:
+                continue
+
+        # Sort by edge count descending, take top 5
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top = scored[:5]
+
+        with _promoted_lessons_lock:
+            _promoted_lessons = [
+                f"- **{title}** ({count} trades): {body}"
+                for count, title, body in top
+            ]
+            _promoted_lessons_last_refresh = time.time()
+
+        _logger.info("Promoted lessons refreshed: %d cached", len(_promoted_lessons))
+        return len(_promoted_lessons)
+
+    except Exception as e:
+        _logger.debug("Promoted lessons refresh failed: %s", e)
+        return 0
+
+
+def get_promoted_lessons_block() -> str:
+    """Get the promoted lessons section for system prompt injection.
+
+    Returns empty string if no lessons qualify or cache is empty.
+    """
+    with _promoted_lessons_lock:
+        if not _promoted_lessons:
+            return ""
+        lines = _promoted_lessons[:]
+
+    return (
+        "## Hard-Earned Rules\n\n"
+        "These patterns emerged from my own trading history — confirmed across "
+        "multiple trades by my consolidation engine. I treat these as structural "
+        "knowledge, not suggestions.\n\n"
+        + "\n".join(lines)
+    )
+
+
 def _model_label(model_id: str) -> str:
     """Extract a clean label from a model ID (e.g. 'openrouter/x-ai/grok-4.1-fast' → 'Grok 4.1 Fast')."""
     # Strip provider prefix
@@ -296,5 +406,10 @@ def build_system_prompt(context: dict | None = None) -> str:
     # Add execution mode (static — doesn't change during runtime)
     if context and "execution_mode" in context:
         parts.insert(1, f"## Mode\n\nI'm trading in **{context['execution_mode']}** mode.")
+
+    # Inject promoted lessons (high-conviction patterns from consolidation)
+    lessons_block = get_promoted_lessons_block()
+    if lessons_block:
+        parts.append(lessons_block)
 
     return "\n\n---\n\n".join(parts)
