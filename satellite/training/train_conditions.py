@@ -64,6 +64,10 @@ CONDITION_TARGETS: list[ConditionTarget] = [
     ConditionTarget("funding_4h", "Future funding_zscore minus current (48 ahead)", "target_funding_4h"),
     ConditionTarget("sl_survival_03", "P(0.3% SL hit within 30m for long)", "target_sl_hit_0_3"),
     ConditionTarget("sl_survival_05", "P(0.5% SL hit within 30m for long)", "target_sl_hit_0_5"),
+    ConditionTarget("trend_continuation", "P(price continues 1h trend direction in next 30m)", "target_trend_continuation"),
+    ConditionTarget("reversal_30m", "P(price reverses >0.3% in next 30m)", "target_reversal_30m"),
+    ConditionTarget("oi_flush", "P(OI drops >3% in next 1h)", "target_oi_flush"),
+    ConditionTarget("momentum_quality", "Volume-backed momentum ratio at i+6", "target_momentum_quality"),
 ]
 
 # ─── XGBoost Parameters (proven in v7/v8 experiments) ────────────────────────
@@ -108,7 +112,7 @@ XGBOOST_PARAMS_BINARY = {
 AGGRESSIVE_TARGETS = {"range_30m", "move_30m", "mae_long", "mae_short", "entry_quality"}
 
 # Binary classification targets (use logistic objective, no target clipping)
-BINARY_TARGETS = {"sl_survival_03", "sl_survival_05"}
+BINARY_TARGETS = {"sl_survival_03", "sl_survival_05", "trend_continuation", "reversal_30m", "oi_flush"}
 
 NUM_BOOST_ROUNDS = 500
 EARLY_STOPPING_ROUNDS = 50
@@ -443,6 +447,143 @@ def enrich_with_new_features(rows: list[dict], coin: str, data_db_path: str) -> 
         vv = sum((v - mv) ** 2 for v in window_vols) / len(window_vols)
         row["vol_of_vol"] = math.sqrt(vv)
 
+    # ── 9. return_autocorrelation (from 5m candles) ──
+    log.info("  Computing return_autocorrelation...")
+    for row in rows:
+        t = row["created_at"]
+        t_start = t - 3600
+        lo, hi = 0, len(candle_times) - 1
+        start_idx = len(candle_times)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if candle_times[mid] >= t_start:
+                start_idx = mid
+                hi = mid - 1
+            else:
+                lo = mid + 1
+
+        closes = []
+        for j in range(start_idx, len(candle_times)):
+            if candle_times[j] > t:
+                break
+            closes.append(candle_closes[j])
+
+        if len(closes) < 8:
+            row["return_autocorrelation"] = 0.0
+            continue
+
+        log_returns = []
+        for k in range(1, len(closes)):
+            if closes[k - 1] > 0 and closes[k] > 0:
+                log_returns.append(math.log(closes[k] / closes[k - 1]))
+
+        if len(log_returns) < 4:
+            row["return_autocorrelation"] = 0.0
+            continue
+
+        r1 = log_returns[:-1]
+        r2 = log_returns[1:]
+        n_r = len(r1)
+        m1 = sum(r1) / n_r
+        m2 = sum(r2) / n_r
+        cov = sum((r1[ii] - m1) * (r2[ii] - m2) for ii in range(n_r)) / n_r
+        s1 = math.sqrt(sum((x - m1) ** 2 for x in r1) / n_r)
+        s2 = math.sqrt(sum((x - m2) ** 2 for x in r2) / n_r)
+        if s1 < 1e-12 or s2 < 1e-12:
+            row["return_autocorrelation"] = 0.0
+        else:
+            row["return_autocorrelation"] = max(-1.0, min(1.0, cov / (s1 * s2)))
+
+    # ── 10-11. body_ratio_1h + upper_wick_ratio_1h (from 5m candles) ──
+    log.info("  Computing body_ratio_1h + upper_wick_ratio_1h...")
+    # Need OHLC data — re-query candles with all fields
+    candle_ohlc = conn.execute(
+        "SELECT open_time, open, high, low, close FROM candles_history "
+        "WHERE coin = ? AND interval = '5m' ORDER BY open_time ASC",
+        (coin,),
+    ).fetchall()
+    co_times = [float(r["open_time"]) for r in candle_ohlc]
+    co_opens = [float(r["open"]) for r in candle_ohlc]
+    co_highs = [float(r["high"]) for r in candle_ohlc]
+    co_lows = [float(r["low"]) for r in candle_ohlc]
+    co_closes = [float(r["close"]) for r in candle_ohlc]
+
+    for row in rows:
+        t = row["created_at"]
+        t_start = t - 3600
+        lo, hi = 0, len(co_times) - 1
+        start_idx = len(co_times)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if co_times[mid] >= t_start:
+                start_idx = mid
+                hi = mid - 1
+            else:
+                lo = mid + 1
+
+        body_ratios = []
+        wick_ratios = []
+        for j in range(start_idx, len(co_times)):
+            if co_times[j] > t:
+                break
+            h_val = co_highs[j]
+            l_val = co_lows[j]
+            rng = h_val - l_val
+            if rng <= 0:
+                continue
+            body_ratios.append(abs(co_closes[j] - co_opens[j]) / rng)
+            wick_ratios.append((h_val - max(co_opens[j], co_closes[j])) / rng)
+
+        if len(body_ratios) >= 6:
+            row["body_ratio_1h"] = sum(body_ratios) / len(body_ratios)
+            row["upper_wick_ratio_1h"] = sum(wick_ratios) / len(wick_ratios)
+        else:
+            row["body_ratio_1h"] = 0.5
+            row["upper_wick_ratio_1h"] = 0.5
+
+    # ── 12. funding_velocity (current - 8h ago) ──
+    log.info("  Computing funding_velocity...")
+    for row in rows:
+        t = row["created_at"]
+        t_8h = t - 8 * 3600
+        # Find current rate (reuse fund_times/fund_rates from earlier)
+        curr_rate = 0.0
+        past_rate = 0.0
+        # Binary search for current
+        lo_f, hi_f = 0, len(fund_times) - 1
+        best_c = -1
+        while lo_f <= hi_f:
+            mid = (lo_f + hi_f) // 2
+            if fund_times[mid] <= t:
+                best_c = mid
+                lo_f = mid + 1
+            else:
+                hi_f = mid - 1
+        if best_c >= 0:
+            curr_rate = fund_rates[best_c]
+        # Binary search for 8h ago
+        lo_f, hi_f = 0, len(fund_times) - 1
+        best_p = -1
+        while lo_f <= hi_f:
+            mid = (lo_f + hi_f) // 2
+            if fund_times[mid] <= t_8h:
+                best_p = mid
+                lo_f = mid + 1
+            else:
+                hi_f = mid - 1
+        if best_p >= 0:
+            past_rate = fund_rates[best_p]
+        row["funding_velocity"] = curr_rate - past_rate
+
+    # ── 13-14. hour_sin + hour_cos (from timestamp) ──
+    log.info("  Computing hour_sin + hour_cos...")
+    for row in rows:
+        t = row["created_at"]
+        dt = datetime.fromtimestamp(t, tz=timezone.utc)
+        hour_frac = dt.hour + dt.minute / 60 + dt.second / 3600
+        row["hour_sin"] = math.sin(2 * math.pi * hour_frac / 24)
+        row["hour_cos"] = math.cos(2 * math.pi * hour_frac / 24)
+
     conn.close()
     log.info("  Enrichment complete — %d rows enriched", len(rows))
     return rows
@@ -542,6 +683,50 @@ def build_condition_targets(rows: list[dict]) -> list[dict]:
         else:
             row["target_sl_hit_0_3"] = None
             row["target_sl_hit_0_5"] = None
+
+        # 13. trend_continuation: does price continue in current 1h direction?
+        trend_1h = row.get("price_trend_1h")
+        if trend_1h is not None and long_roe is not None and short_roe is not None:
+            if trend_1h > 0:
+                # Bullish trend — continuation if long ROE is positive
+                row["target_trend_continuation"] = 1 if long_roe > 0 else 0
+            elif trend_1h < 0:
+                # Bearish trend — continuation if short ROE is positive
+                row["target_trend_continuation"] = 1 if short_roe > 0 else 0
+            else:
+                row["target_trend_continuation"] = None  # no trend to continue
+        else:
+            row["target_trend_continuation"] = None
+
+        # 14. reversal_30m: does price reverse >0.3% in opposite direction?
+        if trend_1h is not None and long_roe is not None and short_roe is not None:
+            if trend_1h > 0:
+                # Bullish — reversal if short side moved >0.3%
+                row["target_reversal_30m"] = 1 if short_roe > 0.3 else 0
+            elif trend_1h < 0:
+                # Bearish — reversal if long side moved >0.3%
+                row["target_reversal_30m"] = 1 if long_roe > 0.3 else 0
+            else:
+                row["target_reversal_30m"] = None
+        else:
+            row["target_reversal_30m"] = None
+
+        # 15. oi_flush: does OI drop >3% in the next 1h?
+        future_oi = _safe_get(rows, i + LOOK_1H, "oi_vs_7d_avg_ratio")
+        current_oi = row.get("oi_vs_7d_avg_ratio")
+        if future_oi is not None and current_oi is not None and current_oi > 0:
+            oi_drop_pct = (current_oi - future_oi) / current_oi * 100
+            row["target_oi_flush"] = 1 if oi_drop_pct > 3 else 0
+        else:
+            row["target_oi_flush"] = None
+
+        # 16. momentum_quality: abs(cvd_ratio_30m) * volume_vs_1h_avg_ratio at i+6
+        future_cvd = _safe_get(rows, i + LOOK_30M, "cvd_ratio_30m")
+        future_vol = _safe_get(rows, i + LOOK_30M, "volume_vs_1h_avg_ratio")
+        if future_cvd is not None and future_vol is not None:
+            row["target_momentum_quality"] = abs(future_cvd) * future_vol
+        else:
+            row["target_momentum_quality"] = None
 
     return rows
 

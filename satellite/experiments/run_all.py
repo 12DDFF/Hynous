@@ -22,6 +22,12 @@ EXPERIMENTS = [
     "exp_exit_model",
     "exp_funding_flip",
     "exp_vol_regime_shift",
+    "exp_best_side",
+    "exp_liq_cascade",
+    "exp_fakeout",
+    "exp_asymmetric_risk",
+    "exp_exit_timing",
+    "exp_squeeze",
 ]
 
 
@@ -29,6 +35,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run all ML experiments")
     parser.add_argument("--db", default="storage/satellite.db")
     parser.add_argument("--coin", default="BTC")
+    parser.add_argument("--data-db", default=None, help="Path to data-layer DB for v3+v4 feature enrichment")
     parser.add_argument("--only", default=None, help="Comma-separated experiment names to run")
     parser.add_argument("--no-baseline", action="store_true", help="Skip permutation baselines (faster)")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -50,6 +57,7 @@ def main():
     print("ML EXPERIMENT SUITE")
     print(f"DB: {args.db}  |  Coin: {args.coin}")
     print(f"Running: {len(experiments)} experiments")
+    print(f"Data DB: {args.data_db or 'NONE (v3+v4 features will be neutral)'}")
     print(f"Permutation baseline: {'SKIP' if args.no_baseline else 'ENABLED'}")
     print("=" * 70 + "\n")
 
@@ -68,6 +76,8 @@ def main():
                 "--db", args.db,
                 "--coin", args.coin,
             ]
+            if args.data_db:
+                sys.argv.extend(["--data-db", args.data_db])
             if args.verbose:
                 sys.argv.append("-v")
             if args.no_baseline:

@@ -281,4 +281,25 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         except Exception:
             pass  # column already exists
 
+    # v6 -> v7: Add v4 feature columns (microstructure, funding velocity, time encoding)
+    v4_feature_cols = [
+        ("return_autocorrelation", "REAL"),
+        ("body_ratio_1h", "REAL"),
+        ("upper_wick_ratio_1h", "REAL"),
+        ("funding_velocity", "REAL"),
+        ("hour_sin", "REAL"),
+        ("hour_cos", "REAL"),
+        ("return_autocorr_avail", "INTEGER NOT NULL DEFAULT 1"),
+        ("body_ratio_avail", "INTEGER NOT NULL DEFAULT 1"),
+        ("upper_wick_avail", "INTEGER NOT NULL DEFAULT 1"),
+        ("funding_velocity_avail", "INTEGER NOT NULL DEFAULT 1"),
+    ]
+    for col_name, col_type in v4_feature_cols:
+        try:
+            conn.execute(
+                f"ALTER TABLE snapshots ADD COLUMN {col_name} {col_type}",
+            )
+        except Exception:
+            pass  # column already exists
+
     conn.commit()

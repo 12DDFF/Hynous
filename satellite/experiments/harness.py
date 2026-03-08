@@ -583,12 +583,26 @@ def save_report(summary: ExperimentSummary, output_dir: str = "satellite/experim
     log.info("Results saved to %s", path)
 
 
+def enrich_snapshots(rows: list[dict], coin: str, data_db_path: str) -> list[dict]:
+    """Enrich snapshot rows with v3+v4 features from data-layer DB.
+
+    Delegates to train_conditions.enrich_with_new_features which computes
+    all 14 derived features (v3: liq_total, funding_rate_raw, oi_change_rate,
+    price_trend_4h, volume_acceleration, cvd_ratio_1h, realized_vol_4h,
+    vol_of_vol; v4: return_autocorrelation, body_ratio_1h, upper_wick_ratio_1h,
+    funding_velocity, hour_sin, hour_cos).
+    """
+    from satellite.training.train_conditions import enrich_with_new_features
+    return enrich_with_new_features(rows, coin, data_db_path)
+
+
 def get_standard_args():
     """Create standard argparse for experiments."""
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default="storage/satellite.db", help="Path to satellite.db")
     parser.add_argument("--coin", default="BTC", help="Coin to train on")
+    parser.add_argument("--data-db", default=None, help="Path to data-layer DB for v3+v4 feature enrichment")
     parser.add_argument("--no-baseline", action="store_true", help="Skip permutation baseline (faster)")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser

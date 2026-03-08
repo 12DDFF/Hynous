@@ -131,6 +131,33 @@ class MarketConditions:
                 f"({funding.value:+.2f} z-score change)"
             )
 
+        # Trend / Reversal
+        trend = self.predictions.get("trend_continuation")
+        reversal = self.predictions.get("reversal_30m")
+        if trend:
+            action = "chase" if trend.value > 0.55 else "fade" if trend.value < 0.45 else "neutral"
+            lines.append(
+                f"  Trend continuation: {trend.value:.0%} likely — {action}"
+            )
+        if reversal:
+            lines.append(f"  Reversal risk (30m): {reversal.value:.0%}")
+
+        # OI flush
+        oi_flush = self.predictions.get("oi_flush")
+        if oi_flush:
+            line = f"  OI flush risk: {oi_flush.value:.0%}"
+            if oi_flush.value > 0.5:
+                line += " — deleveraging likely"
+            lines.append(line)
+
+        # Momentum quality
+        momentum = self.predictions.get("momentum_quality")
+        if momentum:
+            quality = "real" if momentum.value > 0.5 else "hollow" if momentum.value < 0.2 else "moderate"
+            lines.append(
+                f"  Momentum quality: {quality} ({momentum.value:.2f})"
+            )
+
         # SL survival
         sl_03 = self.predictions.get("sl_survival_03")
         sl_05 = self.predictions.get("sl_survival_05")

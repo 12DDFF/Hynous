@@ -64,6 +64,15 @@ FEATURE_NAMES: list[str] = [
     "price_trend_1h",
     "price_trend_4h",            # NEW: % change over 4h
     "close_position_5m",
+    # Microstructure (3)
+    "return_autocorrelation",    # NEW: autocorr of 5m log returns over 1h
+    "body_ratio_1h",             # NEW: avg |close-open|/(high-low) over 1h
+    "upper_wick_ratio_1h",       # NEW: avg (high-max(o,c))/(high-low) over 1h
+    # Funding dynamics (1)
+    "funding_velocity",          # NEW: current_rate - rate_8h_ago
+    # Time encoding (2)
+    "hour_sin",                  # NEW: sin(2*pi*hour/24)
+    "hour_cos",                  # NEW: cos(2*pi*hour/24)
 ]
 
 FEATURE_COUNT = len(FEATURE_NAMES)
@@ -96,6 +105,12 @@ NEUTRAL_VALUES: dict[str, float] = {
     "price_trend_1h": 0.0,
     "price_trend_4h": 0.0,
     "close_position_5m": 0.5,        # mid-range = no signal
+    "return_autocorrelation": 0.0,   # no autocorrelation
+    "body_ratio_1h": 0.5,            # mid-range body ratio
+    "upper_wick_ratio_1h": 0.5,      # mid-range wick ratio
+    "funding_velocity": 0.0,         # no funding change
+    "hour_sin": 0.0,                 # midnight
+    "hour_cos": 1.0,                 # midnight (cos(0)=1)
 }
 
 # Availability columns stored in satellite.db and used as model input features.
@@ -291,6 +306,20 @@ def compute_features(
         coin, features, avail, raw_data, data_layer_db, now,
         candles_5m=candles_5m,
     )
+
+    # ─── NEW FEATURES (v4) ────────────────────────────────────────────
+
+    # 23. return_autocorrelation (autocorr of 5m log returns over 1h)
+    _compute_return_autocorrelation(features, avail, candles_5m=candles_5m, now=now)
+
+    # 24-25. body_ratio_1h + upper_wick_ratio_1h (candle structure)
+    _compute_candle_ratios(features, avail, candles_5m=candles_5m, now=now)
+
+    # 26. funding_velocity (rate change over 8h)
+    _compute_funding_velocity(coin, features, avail, data_layer_db, now)
+
+    # 27-28. hour_sin + hour_cos (cyclical time encoding)
+    _compute_hour_encoding(features, now)
 
     # ─── Build result ────────────────────────────────────────────────
 
@@ -1260,6 +1289,178 @@ def _compute_price_trend_4h(
     except Exception:
         log.debug("Failed price_trend_4h for %s", coin, exc_info=True)
         features["price_trend_4h"] = NEUTRAL_VALUES["price_trend_4h"]
+
+
+# ─── NEW v4 Feature Computers ────────────────────────────────────────────────
+
+
+def _compute_return_autocorrelation(
+    features: dict,
+    avail: dict,
+    candles_5m: list[dict] | None = None,
+    now: float = 0,
+) -> None:
+    """return_autocorrelation: corr(returns[:-1], returns[1:]) over 1h of 5m candles.
+
+    Positive = trending (momentum). Negative = mean-reverting.
+    """
+    try:
+        if not candles_5m or len(candles_5m) < 13:
+            features["return_autocorrelation"] = NEUTRAL_VALUES["return_autocorrelation"]
+            avail["return_autocorr_avail"] = 0
+            return
+
+        now_ms = now * 1000 if now else float("inf")
+        cutoff_ms = (now - 3600) * 1000 if now else 0
+        recent = [c for c in candles_5m if c["t"] <= now_ms and c["t"] >= cutoff_ms]
+
+        if len(recent) < 12:
+            # Fall back to last 12 candles
+            recent = candles_5m[-12:]
+
+        closes = []
+        for c in recent:
+            cl = float(c.get("c", 0))
+            if cl > 0:
+                closes.append(cl)
+
+        if len(closes) < 8:
+            features["return_autocorrelation"] = NEUTRAL_VALUES["return_autocorrelation"]
+            avail["return_autocorr_avail"] = 0
+            return
+
+        log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+
+        if len(log_returns) < 4:
+            features["return_autocorrelation"] = NEUTRAL_VALUES["return_autocorrelation"]
+            avail["return_autocorr_avail"] = 0
+            return
+
+        r1 = log_returns[:-1]
+        r2 = log_returns[1:]
+        n = len(r1)
+        mean1 = sum(r1) / n
+        mean2 = sum(r2) / n
+
+        cov = sum((r1[i] - mean1) * (r2[i] - mean2) for i in range(n)) / n
+        std1 = math.sqrt(sum((x - mean1) ** 2 for x in r1) / n)
+        std2 = math.sqrt(sum((x - mean2) ** 2 for x in r2) / n)
+
+        if std1 < 1e-12 or std2 < 1e-12:
+            features["return_autocorrelation"] = 0.0
+        else:
+            features["return_autocorrelation"] = max(-1.0, min(1.0, cov / (std1 * std2)))
+        avail["return_autocorr_avail"] = 1
+
+    except Exception:
+        features["return_autocorrelation"] = NEUTRAL_VALUES["return_autocorrelation"]
+        avail["return_autocorr_avail"] = 0
+
+
+def _compute_candle_ratios(
+    features: dict,
+    avail: dict,
+    candles_5m: list[dict] | None = None,
+    now: float = 0,
+) -> None:
+    """body_ratio_1h and upper_wick_ratio_1h from 12 candles (1h of 5m).
+
+    body_ratio = avg |close-open| / (high-low). High = conviction candles.
+    upper_wick = avg (high - max(open,close)) / (high-low). High = selling at highs.
+    """
+    try:
+        if not candles_5m or len(candles_5m) < 12:
+            features["body_ratio_1h"] = NEUTRAL_VALUES["body_ratio_1h"]
+            features["upper_wick_ratio_1h"] = NEUTRAL_VALUES["upper_wick_ratio_1h"]
+            avail["body_ratio_avail"] = 0
+            avail["upper_wick_avail"] = 0
+            return
+
+        now_ms = now * 1000 if now else float("inf")
+        cutoff_ms = (now - 3600) * 1000 if now else 0
+        recent = [c for c in candles_5m if c["t"] <= now_ms and c["t"] >= cutoff_ms]
+        if len(recent) < 12:
+            recent = candles_5m[-12:]
+
+        body_ratios = []
+        wick_ratios = []
+        for c in recent:
+            o = float(c.get("o", 0))
+            h = float(c.get("h", 0))
+            l = float(c.get("l", 0))
+            cl = float(c.get("c", 0))
+            rng = h - l
+            if rng <= 0 or h <= 0:
+                continue
+            body_ratios.append(abs(cl - o) / rng)
+            wick_ratios.append((h - max(o, cl)) / rng)
+
+        if len(body_ratios) < 6:
+            features["body_ratio_1h"] = NEUTRAL_VALUES["body_ratio_1h"]
+            features["upper_wick_ratio_1h"] = NEUTRAL_VALUES["upper_wick_ratio_1h"]
+            avail["body_ratio_avail"] = 0
+            avail["upper_wick_avail"] = 0
+            return
+
+        features["body_ratio_1h"] = sum(body_ratios) / len(body_ratios)
+        features["upper_wick_ratio_1h"] = sum(wick_ratios) / len(wick_ratios)
+        avail["body_ratio_avail"] = 1
+        avail["upper_wick_avail"] = 1
+
+    except Exception:
+        features["body_ratio_1h"] = NEUTRAL_VALUES["body_ratio_1h"]
+        features["upper_wick_ratio_1h"] = NEUTRAL_VALUES["upper_wick_ratio_1h"]
+        avail["body_ratio_avail"] = 0
+        avail["upper_wick_avail"] = 0
+
+
+def _compute_funding_velocity(
+    coin: str,
+    features: dict,
+    avail: dict,
+    data_layer_db: object,
+    now: float,
+) -> None:
+    """funding_velocity: current_rate - rate_8h_ago. Direction of funding movement."""
+    try:
+        current_row = data_layer_db.conn.execute(
+            "SELECT rate FROM funding_history "
+            "WHERE coin = ? AND recorded_at <= ? "
+            "ORDER BY recorded_at DESC LIMIT 1",
+            (coin, now),
+        ).fetchone()
+
+        past_row = data_layer_db.conn.execute(
+            "SELECT rate FROM funding_history "
+            "WHERE coin = ? AND recorded_at <= ? "
+            "ORDER BY recorded_at DESC LIMIT 1",
+            (coin, now - 8 * 3600),
+        ).fetchone()
+
+        if current_row and past_row:
+            current_rate = safe_float(current_row["rate"])
+            past_rate = safe_float(past_row["rate"])
+            features["funding_velocity"] = current_rate - past_rate
+            avail["funding_velocity_avail"] = 1
+        else:
+            features["funding_velocity"] = NEUTRAL_VALUES["funding_velocity"]
+            avail["funding_velocity_avail"] = 0
+
+    except Exception:
+        features["funding_velocity"] = NEUTRAL_VALUES["funding_velocity"]
+        avail["funding_velocity_avail"] = 0
+
+
+def _compute_hour_encoding(features: dict, now: float) -> None:
+    """hour_sin and hour_cos: cyclical time-of-day encoding.
+
+    sin/cos pair encodes the 24h cycle without discontinuity at midnight.
+    Always available (pure math from timestamp).
+    """
+    dt = datetime.fromtimestamp(now, tz=timezone.utc)
+    hour_frac = dt.hour + dt.minute / 60 + dt.second / 3600
+    features["hour_sin"] = math.sin(2 * math.pi * hour_frac / 24)
+    features["hour_cos"] = math.cos(2 * math.pi * hour_frac / 24)
 
 
 # ─── Feature Vector Export ───────────────────────────────────────────────────
