@@ -98,6 +98,8 @@ MIN_TRAIN_DAYS = 60
 TEST_DAYS = 14
 STEP_DAYS = 7
 SNAPSHOTS_PER_DAY = 288  # 24h * 60min / 5min
+EMBARGO_SNAPSHOTS = 48   # 4h gap between train and test (matches longest look-ahead)
+VAL_FRACTION = 0.20      # 20% of training window used for early stopping
 
 
 # ─── Data Loading ────────────────────────────────────────────────────────────
@@ -273,27 +275,52 @@ def train_single_condition(
         [[row[f] for f in feature_names] for row in valid_rows],
         dtype=np.float32,
     )
-    y = np.array(
+    y_raw = np.array(
         [row[target_col] for row in valid_rows],
         dtype=np.float32,
     )
 
-    # Clip extreme targets
-    p1, p99 = np.percentile(y, [1, 99])
-    y = np.clip(y, p1, p99)
+    # NOTE: target clipping is done PER-FOLD below to prevent future percentile leakage.
+    # The raw y is kept for the final model training.
 
     # Walk-forward validation
+    #
+    # Split structure per generation:
+    #   [===== TRAIN =====][= VAL =][/// EMBARGO ///][==== TEST ====]
+    #
+    # - TRAIN: model learns from this data
+    # - VAL: last 20% of train window, used for early stopping only
+    # - EMBARGO: 48 snapshots (4h) dead zone, prevents label leakage from
+    #   overlapping forward-looking windows (vol_4h uses 48 snapshots ahead)
+    # - TEST: evaluation only, model NEVER sees these labels
     min_train = MIN_TRAIN_DAYS * SNAPSHOTS_PER_DAY
     test_window = TEST_DAYS * SNAPSHOTS_PER_DAY
     step = STEP_DAYS * SNAPSHOTS_PER_DAY
+    embargo = EMBARGO_SNAPSHOTS
+    val_fraction = VAL_FRACTION
 
     results = []
 
-    for gen, test_start in enumerate(range(min_train, len(X) - test_window, step)):
+    for gen, train_end in enumerate(range(min_train, len(X) - embargo - test_window, step)):
+        test_start = train_end + embargo
         test_end = test_start + test_window
 
-        X_train, y_train = X[:test_start], y[:test_start]
-        X_test, y_test = X[test_start:test_end], y[test_start:test_end]
+        if test_end > len(X):
+            break
+
+        # Split train into train + validation for early stopping
+        val_size = max(int(train_end * val_fraction), SNAPSHOTS_PER_DAY)
+        val_start = train_end - val_size
+
+        X_train, y_train = X[:val_start], y_raw[:val_start].copy()
+        X_val, y_val = X[val_start:train_end], y_raw[val_start:train_end].copy()
+        X_test, y_test = X[test_start:test_end], y_raw[test_start:test_end]
+
+        # Per-fold target clipping: compute percentiles from TRAINING data only
+        p1, p99 = np.percentile(y_train, [1, 99])
+        y_train = np.clip(y_train, p1, p99)
+        y_val = np.clip(y_val, p1, p99)
+        # DO NOT clip y_test — evaluate on raw values
 
         # Select params based on target type
         params = (
@@ -302,23 +329,28 @@ def train_single_condition(
             else XGBOOST_PARAMS
         )
 
-        # Train XGBoost with early stopping
+        # Early stopping uses VALIDATION set, NOT test set
         dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=feature_names)
+        dval = xgb.DMatrix(X_val, label=y_val, feature_names=feature_names)
         dtest = xgb.DMatrix(X_test, label=y_test, feature_names=feature_names)
 
         model = xgb.train(
             params,
             dtrain,
             num_boost_round=NUM_BOOST_ROUNDS,
-            evals=[(dtest, "test")],
+            evals=[(dval, "val")],
             early_stopping_rounds=EARLY_STOPPING_ROUNDS,
             verbose_eval=False,
         )
 
+        # Evaluate on UNTOUCHED test set
         y_pred = model.predict(dtest)
 
-        # Evaluate
-        sp, _ = spearmanr(y_test, y_pred)
+        # Metrics with p-value
+        sp, sp_pval = spearmanr(y_test, y_pred)
+        if np.isnan(sp):
+            sp = 0.0
+            sp_pval = 1.0
         mae = float(np.mean(np.abs(y_test - y_pred)))
         centered_dir = 100 * float(np.mean(
             np.sign(y_test - np.mean(y_test)) == np.sign(y_pred - np.mean(y_pred))
@@ -327,14 +359,19 @@ def train_single_condition(
         results.append({
             "generation": gen,
             "spearman": round(sp, 4),
+            "spearman_pval": round(float(sp_pval), 6),
             "mae": round(mae, 4),
             "centered_dir": round(centered_dir, 1),
             "rounds": model.best_iteration + 1 if hasattr(model, "best_iteration") else NUM_BOOST_ROUNDS,
+            "train_size": len(X_train),
+            "val_size": len(X_val),
+            "test_size": len(X_test),
         })
 
         log.info(
-            "  Gen %d: centered=%.1f%% spearman=%.4f mae=%.4f rounds=%d",
-            gen, centered_dir, sp, mae, results[-1]["rounds"],
+            "  Gen %d: sp=%.4f (p=%.4f)  mae=%.4f  dir=%.1f%%  rounds=%d  (train=%d, val=%d, test=%d)",
+            gen, sp, sp_pval, mae, centered_dir,
+            results[-1]["rounds"], len(X_train), len(X_val), len(X_test),
         )
 
     if not results:
@@ -358,7 +395,13 @@ def train_single_condition(
         if target.name in AGGRESSIVE_TARGETS
         else XGBOOST_PARAMS
     )
-    dtrain_full = xgb.DMatrix(X, label=y, feature_names=feature_names)
+    # Clip final training targets using full-dataset percentiles (no leakage concern
+    # since this model isn't evaluated — it's the production model)
+    y_final = y_raw.copy()
+    p1_full, p99_full = np.percentile(y_final, [1, 99])
+    y_final = np.clip(y_final, p1_full, p99_full)
+
+    dtrain_full = xgb.DMatrix(X, label=y_final, feature_names=feature_names)
     # Use median best_iteration from walk-forward as final round count
     median_rounds = int(np.median([r["rounds"] for r in results]))
     final_model = xgb.train(
