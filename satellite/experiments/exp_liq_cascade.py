@@ -47,7 +47,7 @@ from satellite.experiments.harness import (
 log = logging.getLogger(__name__)
 
 EXPERIMENT_NAME = "liq_cascade_incoming"
-DESCRIPTION = "Predict major liquidation cascade in next 1h (binary, 95th pctl)"
+DESCRIPTION = "Predict major liquidation cascade in next 1h (binary, 75th pctl)"
 
 LOOK_1H = 12
 
@@ -86,9 +86,11 @@ def build_targets(rows: list[dict]) -> list[dict]:
 
     We use the feature value (liq_total_1h_usd is a feature computed from
     raw liq data) rather than re-querying raw data.
+
+    Uses 75th percentile (not 95th) because liq data is sparse —
+    95th pctl was all zeros for most expanding windows.
     """
     n = len(rows)
-    min_history = MIN_TRAIN_DAYS * SNAPSHOTS_PER_DAY
 
     # Pre-extract liq values
     liqs = []
@@ -97,10 +99,6 @@ def build_targets(rows: list[dict]) -> list[dict]:
         liqs.append(val if val is not None else 0.0)
 
     for i in range(n):
-        if i < min_history:
-            rows[i]["target_liq_cascade"] = None
-            continue
-
         future_idx = i + LOOK_1H
         if future_idx >= n:
             rows[i]["target_liq_cascade"] = None
@@ -108,20 +106,20 @@ def build_targets(rows: list[dict]) -> list[dict]:
 
         future_liq = liqs[future_idx]
 
-        # Expanding window: percentile from past data only
+        # Expanding window: only use past data with non-zero liqs
         past_liqs = [v for v in liqs[:i] if v > 0]
-        if len(past_liqs) < 100:
+        if len(past_liqs) < 50:
             rows[i]["target_liq_cascade"] = None
             continue
 
-        p95 = float(np.percentile(past_liqs, 95))
+        p75 = float(np.percentile(past_liqs, 75))
 
-        # Must have meaningful threshold (not all zeros)
-        if p95 < 0.1:
+        # Must have meaningful threshold
+        if p75 < 0.01:
             rows[i]["target_liq_cascade"] = None
             continue
 
-        rows[i]["target_liq_cascade"] = 1 if future_liq > p95 else 0
+        rows[i]["target_liq_cascade"] = 1 if future_liq > p75 else 0
 
     cascade_count = sum(1 for r in rows if r.get("target_liq_cascade") == 1)
     total = sum(1 for r in rows if r.get("target_liq_cascade") is not None)

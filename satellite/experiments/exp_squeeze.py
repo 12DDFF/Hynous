@@ -57,7 +57,7 @@ DESCRIPTION = "Predict squeeze event (price rips >1% against crowded side) in 1h
 
 LOOK_1H = 12
 SQUEEZE_MOVE = 1.0      # Min price move to qualify as squeeze (%)
-MIN_FUNDING_Z = 0.5     # Min |funding_zscore| to evaluate
+MIN_FUNDING_Z = 0.3     # Min |funding_zscore| to evaluate
 
 FEATURES = [
     "funding_vs_30d_zscore",

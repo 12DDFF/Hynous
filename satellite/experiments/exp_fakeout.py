@@ -49,8 +49,8 @@ EXPERIMENT_NAME = "fakeout_detector"
 DESCRIPTION = "Predict whether a recent >0.3% move reverses within 30m (binary)"
 
 LOOK_30M = 6
-MOVE_THRESHOLD = 0.3   # Minimum move to trigger evaluation (%)
-REVERSAL_THRESHOLD = 0.1  # Price returns within this % of pre-move level
+MOVE_THRESHOLD = 0.5   # Minimum move to trigger evaluation (%)
+REVERSAL_THRESHOLD = 0.5  # Opposite-side ROE must exceed this to count as reversal
 
 FEATURES = [
     "return_autocorrelation",
