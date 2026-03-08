@@ -77,6 +77,10 @@ def main():
             mod.main()
 
             sys.argv = original_argv
+        except SystemExit:
+            log.warning("Experiment %s called sys.exit — skipping", exp_name)
+            sys.argv = original_argv
+            continue
         except Exception:
             log.exception("Experiment %s FAILED", exp_name)
             continue
