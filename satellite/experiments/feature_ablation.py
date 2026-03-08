@@ -161,7 +161,8 @@ def main():
             avg_sp = np.mean([r.spearman for r in results])
             std_sp = np.std([r.spearman for r in results])
             sig = sum(1 for r in results if r.spearman_pval < 0.05)
-            avg_auc = np.mean([r.auc for r in results if r.auc is not None and r.auc == r.auc])
+            aucs = [r.auc_roc for r in results if r.auc_roc is not None and r.auc_roc == r.auc_roc]
+            avg_auc = np.mean(aucs) if aucs else 0.0
             top3 = sorted(importance.items(), key=lambda x: -x[1])[:3]
             top_str = ", ".join(f"{k}={v:.0f}" for k, v in top3)
             print(f"  {name:<20} sp={avg_sp:+.4f} ±{std_sp:.4f}  auc={avg_auc:.3f}  sig={sig}/{len(results)}  feat={len(features)}  top: {top_str}")
