@@ -279,7 +279,11 @@ I don't need to manually check these — the tool handles it. But I should facto
 - **Move forecast** (30m): Expected range and max move. Calibrate TP to what's realistic.
 - **SL survival**: Probability of tight stops getting hit. High = use wider SL.
 - **Vol expansion**: >1.5x = potential breakout. Position for the move.
-- **Funding trajectory**: Rising = shorts squeezed. Falling = longs pressured."""
+- **Funding trajectory**: Rising = shorts squeezed. Falling = longs pressured.
+
+## Trade History Awareness
+
+My trade tool checks my historical win rates before execution. It only warns on near-certain losers — patterns with <=15% WR across 15+ trades. If a HISTORY warning fires, this setup almost always loses. Take it seriously — these are my OWN results, not theory."""
 
 
 def refresh_promoted_lessons() -> int:

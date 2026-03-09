@@ -126,6 +126,9 @@ class TradingSettings:
     ml_regime_shift_wake: bool = True         # Wake on vol regime transitions
     ml_funding_extreme_wake: bool = False     # Wake on extreme funding (OFF — noisy)
 
+    # --- Trade History Warnings ---
+    trade_history_warnings: bool = True       # Warn on near-certain loser patterns from Nous trade history
+
 
 _lock = threading.Lock()
 _cached: TradingSettings | None = None

@@ -921,6 +921,19 @@ def handle_execute_trade(
                         f"within 30min. Tight stops in this environment get hunted."
                     )
 
+    # --- Trade history pattern warnings ---
+    if ts.trade_history_warnings:
+        try:
+            from ..trade_history import get_trade_warnings
+            _hour = datetime.now(timezone.utc).hour
+            _hist_warnings = get_trade_warnings(
+                symbol=symbol, side=side, confidence=confidence,
+                reasoning=reasoning or "", hour=_hour,
+            )
+            _warnings.extend(_hist_warnings)
+        except Exception as e:
+            logger.debug("Trade history warnings skipped: %s", e)
+
     # --- Validation summary span ---
     _record_trade_span(
         "execute_trade", "validation", True,
@@ -1760,6 +1773,13 @@ def handle_close_position(
         _strengthen_trade_edge(entry_node_id, close_node_id)
         # Issue 5: update playbook metrics if this trade followed a playbook
         _update_playbook_metrics(entry_node_id, pnl_pct > 0)
+
+    # Invalidate trade history cache so next trade picks up new stats
+    try:
+        from ..trade_history import invalidate_cache
+        invalidate_cache()
+    except Exception:
+        pass
 
     _record_trade_span(
         "close_position", "memory_store",
