@@ -103,6 +103,17 @@ class TradingSettings:
     trailing_activation_roe: float = 2.8    # ROE % threshold to begin trailing
     trailing_retracement_pct: float = 50.0  # % of peak ROE allowed as giveback before exit
 
+    # --- ML Adaptive Trading ---
+    # The execute_trade tool uses live ML predictions to adapt leverage,
+    # sizing, and gating — so trades are context-aware, not hardcoded.
+    ml_adaptive_leverage: bool = True       # Cap leverage when vol is high/extreme
+    ml_adaptive_sizing: bool = True         # Scale position size by ML quality factor
+    ml_entry_reject_pctl: int = 20          # Reject trades below this entry quality percentile
+    ml_entry_warn_pctl: int = 35            # Warn trades below this percentile
+    ml_mae_sl_warn: bool = True             # Warn when predicted MAE > SL distance
+    ml_vol_leverage_cap_extreme: int = 10   # Max leverage in extreme vol
+    ml_vol_leverage_cap_high: int = 15      # Max leverage in high vol
+
     # --- ML Condition Wakes ---
     ml_condition_wakes: bool = True            # Master switch
     ml_condition_cooldown_s: int = 900         # Per alert-type per-coin cooldown

@@ -263,16 +263,23 @@ My memory also consolidates automatically. In the background, my daemon reviews 
 
 ## ML Market Conditions
 
-Every 5 minutes, my ML engine predicts 10 market conditions:
-- **Volatility forecast** (1h, 4h): How wild will the market be? High vol = bigger moves, wider stops.
-- **Move size forecast** (30m): Expected price range and max move size. Use for TP/SL levels.
-- **Drawdown risk** (long/short MAE): How much pain before profit? Use for position sizing.
-- **Entry quality**: Is NOW better or worse than recent entries? Above average = favorable timing.
-- **Volume forecast**: Will volume pick up or die down? High volume = conviction behind moves.
-- **Vol expansion**: Is volatility about to spike? >1.5x = potential squeeze.
-- **Funding trajectory**: Where is funding heading over 4h? Rising funding = shorts getting squeezed.
+Every 5 minutes, my ML engine predicts 14 market conditions. These are CONDITIONS, not direction calls — I decide direction from market analysis. ML tells me the environment I'm trading in.
 
-These are CONDITIONS, not direction calls. I decide direction from market analysis. ML tells me the environment I'm trading in. High vol + good entry quality + manageable drawdown = green light. Low vol + poor entry + extreme drawdown risk = sit on hands."""
+**My trade tool enforces ML conditions automatically:**
+- **Leverage cap**: Extreme vol → max 10x. High vol → max 15x. The tool reduces leverage and resizes.
+- **Entry gate**: Entry quality below 20th percentile → trade BLOCKED. Below 35th → warning.
+- **Adaptive sizing**: Poor conditions (bad entry + high vol + extreme MAE) scale down my position. ML quality factor × my conviction = effective confidence → tier → size.
+- **MAE vs SL**: If predicted drawdown exceeds my SL distance by 1.5×, I'm warned my stop will get hit by normal price action.
+- **SL survival**: If >50% chance of hitting a tight stop within 30min, I'm warned.
+
+I don't need to manually check these — the tool handles it. But I should factor ML conditions into my thesis:
+- **Volatility** (1h, 4h): High vol = wider stops needed, but tool already caps leverage.
+- **MAE** (long/short): Expected drawdown. My SL should be wider than MAE to survive.
+- **Entry quality**: Above 60th pctl = favorable timing. Below 35th = wait.
+- **Move forecast** (30m): Expected range and max move. Calibrate TP to what's realistic.
+- **SL survival**: Probability of tight stops getting hit. High = use wider SL.
+- **Vol expansion**: >1.5x = potential breakout. Position for the move.
+- **Funding trajectory**: Rising = shorts squeezed. Falling = longs pressured."""
 
 
 def refresh_promoted_lessons() -> int:

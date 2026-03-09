@@ -937,12 +937,52 @@ def _build_ml_section(predictions: dict[str, dict]) -> str:
     if not has_direction and not condition_lines:
         return ""
 
+    # Add actionable warnings based on conditions
+    warning_lines = []
+    for coin, pred in sorted(predictions.items()):
+        cond = pred.get("conditions", {})
+        if not cond:
+            continue
+
+        entry = cond.get("entry_quality", {})
+        vol = cond.get("vol_1h", {})
+        mae_l = cond.get("mae_long", {})
+        mae_s = cond.get("mae_short", {})
+        sl03 = cond.get("sl_survival_03", {})
+
+        ep = entry.get("percentile", 50)
+        vr = vol.get("regime", "normal")
+
+        cautions = []
+        if ep < 25:
+            cautions.append(f"entry quality {ep}th pctl (POOR)")
+        if vr in ("extreme", "high"):
+            cautions.append(f"vol {vr.upper()}")
+        if mae_l.get("regime") == "extreme":
+            cautions.append(f"long MAE {mae_l.get('value', 0):.1f}%")
+        if mae_s.get("regime") == "extreme":
+            cautions.append(f"short MAE {mae_s.get('value', 0):.1f}%")
+        if sl03.get("value", 0) > 0.6:
+            cautions.append(f"tight SL {sl03['value']:.0%} hit risk")
+
+        if cautions:
+            warning_lines.append(
+                f"  >> {coin} CAUTION: {', '.join(cautions)} — "
+                f"tool will auto-adjust leverage/sizing"
+            )
+
     if not has_direction and condition_lines:
         # No direction model — output conditions only
-        return "\n".join(condition_lines).strip()
+        result = "\n".join(condition_lines).strip()
+        if warning_lines:
+            result += "\n" + "\n".join(warning_lines)
+        return result
 
     # Both direction + conditions
     lines.extend(condition_lines)
+    if warning_lines:
+        lines.append("")
+        lines.extend(warning_lines)
     return "\n".join(lines)
 
 

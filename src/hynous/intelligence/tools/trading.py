@@ -117,6 +117,26 @@ def _get_trading_provider():
     return provider, config
 
 
+def _get_ml_conditions(symbol: str) -> dict | None:
+    """Get latest ML condition predictions for a symbol from daemon cache.
+
+    Returns the conditions dict or None if unavailable/stale (>10min).
+    """
+    try:
+        from ..daemon import get_active_daemon
+        daemon = get_active_daemon()
+        if not daemon or not hasattr(daemon, '_latest_predictions'):
+            return None
+        pred = daemon._latest_predictions.get(symbol, {})
+        conditions = pred.get("conditions", {})
+        cond_ts = conditions.get("timestamp", 0)
+        if time.time() - cond_ts > 600:
+            return None
+        return conditions if conditions else None
+    except Exception:
+        return None
+
+
 def _check_trading_allowed(is_new_entry: bool = True, symbol: str | None = None) -> str | None:
     """Check if trading is currently allowed by the daemon's guardrails.
 
@@ -510,6 +530,31 @@ def handle_execute_trade(
     ts = get_trading_settings()
     _warnings: list[str] = []
 
+    # --- Fetch ML conditions (used for adaptive leverage, sizing, gating) ---
+    ml_cond = _get_ml_conditions(symbol.upper())
+
+    # --- ML: Entry quality gate (early reject on terrible conditions) ---
+    if ml_cond:
+        _entry = ml_cond.get("entry_quality", {})
+        _entry_pctl = _entry.get("percentile", 50)
+        if _entry_pctl < ts.ml_entry_reject_pctl:
+            _record_trade_span(
+                "execute_trade", "ml_gate", False,
+                f"Blocked: entry quality {_entry_pctl}th pctl < {ts.ml_entry_reject_pctl}",
+                symbol=symbol,
+            )
+            return (
+                f"ML BLOCKED: Entry quality is {_entry_pctl}th percentile — "
+                f"historically poor timing for entries. "
+                f"Current value: {_entry.get('value', 0):.2f} ({_entry.get('regime', '?')}). "
+                f"Wait for better conditions or set a watchpoint."
+            )
+        if _entry_pctl < ts.ml_entry_warn_pctl:
+            _warnings.append(
+                f"ML: Entry quality is below average ({_entry_pctl}th percentile, "
+                f"value={_entry.get('value', 0):.2f}). Consider waiting."
+            )
+
     # --- Micro trade enforcement ---
     if trade_type == "micro":
         pass  # No confidence cap — micros size by conviction like any trade
@@ -530,6 +575,29 @@ def handle_execute_trade(
         return f"Error: leverage is required and must be at least {ts.macro_leverage_min}x."
     if trade_type == "micro" and leverage < ts.micro_leverage:
         leverage = ts.micro_leverage
+
+    # --- ML: Vol-adaptive leverage cap ---
+    if ml_cond and ts.ml_adaptive_leverage:
+        _vol = ml_cond.get("vol_1h", {})
+        _vol_regime = _vol.get("regime", "normal")
+        _vol_val = _vol.get("value", 0)
+        _vol_pctl = _vol.get("percentile", 50)
+
+        if _vol_regime == "extreme" and leverage > ts.ml_vol_leverage_cap_extreme:
+            _old_lev = leverage
+            leverage = ts.ml_vol_leverage_cap_extreme
+            _warnings.append(
+                f"ML: Leverage {_old_lev}x → {leverage}x — volatility is EXTREME "
+                f"(vol_1h={_vol_val:.2f}, {_vol_pctl}th pctl). "
+                f"High leverage in extreme vol = catastrophic drawdown risk."
+            )
+        elif _vol_regime == "high" and leverage > ts.ml_vol_leverage_cap_high:
+            _old_lev = leverage
+            leverage = ts.ml_vol_leverage_cap_high
+            _warnings.append(
+                f"ML: Leverage {_old_lev}x → {leverage}x — volatility is HIGH "
+                f"(vol_1h={_vol_val:.2f}, {_vol_pctl}th pctl)."
+            )
 
     # --- Get current price (needed for sizing) ---
     try:
@@ -587,6 +655,65 @@ def handle_execute_trade(
         else:
             recommended_margin = portfolio * (ts.tier_speculative_margin_pct / 100)
             tier = "Speculative"
+
+        # --- ML: Adaptive sizing (scale by ML quality factor) ---
+        if ml_cond and ts.ml_adaptive_sizing:
+            _ml_factor = 1.0
+            _ml_reasons = []
+
+            _entry = ml_cond.get("entry_quality", {})
+            _ep = _entry.get("percentile", 50)
+            if _ep < 40:
+                _ml_factor *= 0.7
+                _ml_reasons.append(f"entry={_ep}th pctl")
+
+            _vol = ml_cond.get("vol_1h", {})
+            _vr = _vol.get("regime", "normal")
+            if _vr == "extreme":
+                _ml_factor *= 0.6
+                _ml_reasons.append("vol=EXTREME")
+            elif _vr == "high":
+                _ml_factor *= 0.8
+                _ml_reasons.append("vol=HIGH")
+
+            _mae_key = "mae_long" if is_buy else "mae_short"
+            _mae = ml_cond.get(_mae_key, {})
+            if _mae.get("regime") == "extreme":
+                _ml_factor *= 0.7
+                _ml_reasons.append(f"MAE={_mae.get('value', 0):.1f}%")
+
+            _ml_factor = max(0.4, min(1.0, _ml_factor))
+
+            if _ml_factor < 0.95:
+                _effective_conf = confidence * _ml_factor
+                if _effective_conf < ts.tier_pass_threshold:
+                    return (
+                        f"ML BLOCKED: Poor conditions reduce effective conviction to "
+                        f"{_effective_conf:.0%} (below {ts.tier_pass_threshold:.0%} minimum).\n"
+                        f"  Your conviction: {confidence:.0%} × ML quality: {_ml_factor:.0%} "
+                        f"= {_effective_conf:.0%}\n"
+                        f"  Issues: {', '.join(_ml_reasons)}\n"
+                        f"Wait for better conditions or increase conviction."
+                    )
+
+                # Re-tier with adjusted confidence
+                _old_tier = tier
+                if _effective_conf >= 0.8:
+                    recommended_margin = portfolio * (ts.tier_high_margin_pct / 100)
+                    tier = "High"
+                elif _effective_conf >= 0.6:
+                    recommended_margin = portfolio * (ts.tier_medium_margin_pct / 100)
+                    tier = "Medium"
+                else:
+                    recommended_margin = portfolio * (ts.tier_speculative_margin_pct / 100)
+                    tier = "Speculative"
+
+                if tier != _old_tier:
+                    _warnings.append(
+                        f"ML: Sizing {_old_tier} → {tier} "
+                        f"(ML quality {_ml_factor:.0%} × conviction {confidence:.0%} "
+                        f"= {_effective_conf:.0%}). Reasons: {', '.join(_ml_reasons)}."
+                    )
 
         # Auto-size from conviction — conviction always drives sizing
         size_usd = recommended_margin * leverage
@@ -767,6 +894,32 @@ def handle_execute_trade(
                 f"Warning: {portfolio_risk_pct:.1f}% of portfolio at risk at stop "
                 f"(${loss_at_stop:,.0f} / ${portfolio:,.0f}). Target: under {ts.portfolio_risk_cap_warn:.0f}%."
             )
+
+    # --- ML: MAE vs SL coherence warning ---
+    if ml_cond and ts.ml_mae_sl_warn and sl_distance_pct > 0:
+        _mae_key = "mae_long" if is_buy else "mae_short"
+        _mae = ml_cond.get(_mae_key, {})
+        _mae_pct = _mae.get("value", 0)
+        _sl_pct = sl_distance_pct * 100
+        if _mae_pct > 0 and _mae_pct > _sl_pct * 1.5:
+            _warnings.append(
+                f"ML: Predicted {side} drawdown is {_mae_pct:.1f}% but SL is only "
+                f"{_sl_pct:.2f}% away — stop will likely get hit by normal price action. "
+                f"Widen SL to >= {_mae_pct:.1f}% or reduce leverage."
+            )
+
+    # --- ML: SL survival warning ---
+    if ml_cond and sl_distance_pct > 0:
+        _sl_pct = sl_distance_pct * 100
+        for _sl_model, _sl_thresh in [("sl_survival_03", 0.3), ("sl_survival_05", 0.5)]:
+            if _sl_pct <= _sl_thresh * 1.5:  # Only check if SL is near this threshold
+                _sl_data = ml_cond.get(_sl_model, {})
+                _hit_prob = _sl_data.get("value", 0)
+                if _hit_prob > 0.5:
+                    _warnings.append(
+                        f"ML: {_hit_prob:.0%} chance of hitting a {_sl_thresh}% stop "
+                        f"within 30min. Tight stops in this environment get hunted."
+                    )
 
     # --- Validation summary span ---
     _record_trade_span(
