@@ -963,22 +963,15 @@ class Daemon:
 
     def _loop_inner(self):
         """Actual daemon loop (wrapped by _loop for crash protection)."""
-        import sys
-        print("[hynous] _loop_inner starting", file=sys.stderr, flush=True)
         # Startup health check — verify Nous is reachable
         self._check_health(startup=True)
-        print("[hynous] health check done", file=sys.stderr, flush=True)
         # Seed clusters if none exist
         self._seed_clusters()
 
         # Initial data fetch
-        print("[hynous] starting initial polls", file=sys.stderr, flush=True)
         self._poll_prices()
-        print("[hynous] prices done", file=sys.stderr, flush=True)
         self._poll_derivatives()
-        print("[hynous] derivatives done", file=sys.stderr, flush=True)
         self._init_position_tracking()
-        print(f"[hynous] positions init done: {len(self._prev_positions)} positions", file=sys.stderr, flush=True)
         self._last_review = time.time()
         self._last_curiosity_check = time.time()
         self._last_decay_cycle = time.time()
@@ -999,8 +992,6 @@ class Daemon:
                 name="hynous-ws-prices",
             ).start()
             logger.info("WS price feed thread launched")
-            import sys
-            print(f"[hynous] WS thread launched, positions={len(self._prev_positions)}", file=sys.stderr, flush=True)
 
         while self._running:
             try:
@@ -1244,23 +1235,11 @@ class Daemon:
             "subscription": {"type": "allMids"},
         })
 
-        def _ws_diag(msg):
-            """Temporary diagnostic — writes to /tmp/ws-diag.log. Remove after verification."""
-            try:
-                _diag_path = "/opt/hynous/storage/ws-diag.log"
-                with open(_diag_path, "a") as f:
-                    f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
-            except Exception:
-                pass
-
         def on_open(ws):
             ws.send(sub_msg)
             self._ws_connected = True
             self._ws_last_msg = time.time()
             logger.info("WS price feed connected")
-            _ws_diag("CONNECTED to allMids")
-            import sys
-            print("[hynous] WS price feed connected", file=sys.stderr, flush=True)
 
         def on_message(ws, raw):
             try:
@@ -1312,24 +1291,8 @@ class Daemon:
         """
         ws_age = time.time() - self._ws_last_msg if self._ws_last_msg else float("inf")
         if self._ws_prices and ws_age < 30:
-            # Log WS health every 60s (diagnostic — remove once verified)
-            _now = time.time()
-            if not hasattr(self, '_ws_diag_last') or _now - self._ws_diag_last > 60:
-                self._ws_diag_last = _now
-                try:
-                    _diag_path = "/opt/hynous/storage/ws-diag.log"
-                    with open(_diag_path, "a") as f:
-                        f.write(f"{time.strftime('%H:%M:%S')} WS OK: {len(self._ws_prices)} coins, age={ws_age:.1f}s, BTC={self._ws_prices.get('BTC', 0):.1f}\n")
-                except Exception:
-                    pass
             return self._ws_prices
         # WS unavailable or stale — fall back to REST
-        try:
-            _diag_path = Path(__file__).parent.parent.parent.parent / "storage" / "ws-diag.log"
-            with open(_diag_path, "a") as f:
-                f.write(f"{time.strftime('%H:%M:%S')} FALLBACK REST: ws_prices={len(self._ws_prices)}, age={ws_age:.1f}s\n")
-        except Exception:
-            pass
         return self._get_provider().get_all_prices()
 
     def _poll_derivatives(self):
