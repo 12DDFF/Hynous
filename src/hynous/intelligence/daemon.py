@@ -963,15 +963,22 @@ class Daemon:
 
     def _loop_inner(self):
         """Actual daemon loop (wrapped by _loop for crash protection)."""
+        import sys
+        print("[hynous] _loop_inner starting", file=sys.stderr, flush=True)
         # Startup health check — verify Nous is reachable
         self._check_health(startup=True)
+        print("[hynous] health check done", file=sys.stderr, flush=True)
         # Seed clusters if none exist
         self._seed_clusters()
 
         # Initial data fetch
+        print("[hynous] starting initial polls", file=sys.stderr, flush=True)
         self._poll_prices()
+        print("[hynous] prices done", file=sys.stderr, flush=True)
         self._poll_derivatives()
+        print("[hynous] derivatives done", file=sys.stderr, flush=True)
         self._init_position_tracking()
+        print(f"[hynous] positions init done: {len(self._prev_positions)} positions", file=sys.stderr, flush=True)
         self._last_review = time.time()
         self._last_curiosity_check = time.time()
         self._last_decay_cycle = time.time()
