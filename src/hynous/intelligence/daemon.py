@@ -992,6 +992,8 @@ class Daemon:
                 name="hynous-ws-prices",
             ).start()
             logger.info("WS price feed thread launched")
+            import sys
+            print(f"[hynous] WS thread launched, positions={len(self._prev_positions)}", file=sys.stderr, flush=True)
 
         while self._running:
             try:
@@ -1250,6 +1252,8 @@ class Daemon:
             self._ws_last_msg = time.time()
             logger.info("WS price feed connected")
             _ws_diag("CONNECTED to allMids")
+            import sys
+            print("[hynous] WS price feed connected", file=sys.stderr, flush=True)
 
         def on_message(ws, raw):
             try:
