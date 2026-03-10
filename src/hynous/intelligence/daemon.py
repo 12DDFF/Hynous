@@ -1240,6 +1240,8 @@ class Daemon:
             self._ws_connected = True
             self._ws_last_msg = time.time()
             logger.info("WS price feed connected")
+            import sys
+            print("[WS-DIAG] WS price feed connected to allMids", file=sys.stderr, flush=True)
 
         def on_message(ws, raw):
             try:
@@ -1291,8 +1293,16 @@ class Daemon:
         """
         ws_age = time.time() - self._ws_last_msg if self._ws_last_msg else float("inf")
         if self._ws_prices and ws_age < 30:
+            # Log WS health every 60s (diagnostic — remove once verified)
+            _now = time.time()
+            if not hasattr(self, '_ws_diag_last') or _now - self._ws_diag_last > 60:
+                self._ws_diag_last = _now
+                import sys
+                print(f"[WS-DIAG] Using WS prices: {len(self._ws_prices)} coins, age={ws_age:.1f}s, BTC={self._ws_prices.get('BTC', 0):.1f}", file=sys.stderr, flush=True)
             return self._ws_prices
         # WS unavailable or stale — fall back to REST
+        import sys
+        print(f"[WS-DIAG] FALLBACK to REST: ws_prices={len(self._ws_prices)}, age={ws_age:.1f}s", file=sys.stderr, flush=True)
         return self._get_provider().get_all_prices()
 
     def _poll_derivatives(self):
