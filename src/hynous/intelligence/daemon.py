@@ -544,6 +544,11 @@ class Daemon:
             except Exception:
                 logger.debug("Condition wake evaluator init failed", exc_info=True)
 
+        # WebSocket price feed — sub-second prices for trigger checks
+        self._ws_prices: dict[str, float] = {}   # coin → latest mid price from WS
+        self._ws_connected: bool = False          # True while WS is receiving data
+        self._ws_last_msg: float = 0.0            # Timestamp of last WS message (health check)
+
         # Stats
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
@@ -979,6 +984,15 @@ class Daemon:
         self._load_phantoms()
         self._load_daily_pnl()
 
+        # Launch WebSocket price feed for ultra-fast trigger checks
+        if self.config.daemon.ws_price_feed:
+            threading.Thread(
+                target=self._run_ws_price_feed,
+                daemon=True,
+                name="hynous-ws-prices",
+            ).start()
+            logger.info("WS price feed thread launched")
+
         while self._running:
             try:
                 now = time.time()
@@ -1142,8 +1156,10 @@ class Daemon:
                 log_event(DaemonEvent("error", "Loop error", str(e)))
                 logger.error("Daemon loop error: %s", e)
 
-            # Sleep between checks — 10s granularity
-            time.sleep(10)
+            # 1s granularity — WS provides sub-second prices, trigger checks
+            # need frequent evaluation for reliable mechanical exits at 20x leverage.
+            # All other operations are timer-gated and unaffected by faster looping.
+            time.sleep(1)
 
     # ================================================================
     # Tier 1: Data Polling (Zero Tokens)
@@ -1202,6 +1218,82 @@ class Daemon:
                 self._last_phantom_check = time.time()
         except Exception as e:
             logger.debug("Price poll failed: %s", e)
+
+    def _run_ws_price_feed(self):
+        """Background thread: subscribe to Hyperliquid allMids WebSocket.
+
+        Maintains self._ws_prices with sub-second price updates.
+        Auto-reconnects on disconnect with 5s delay.
+        Falls back silently — if WS is down, _fast_trigger_check uses REST.
+        """
+        import websocket as _ws_lib
+        import json as _json
+
+        url = "wss://api.hyperliquid.xyz/ws"
+        sub_msg = _json.dumps({
+            "method": "subscribe",
+            "subscription": {"type": "allMids"},
+        })
+
+        def on_open(ws):
+            ws.send(sub_msg)
+            self._ws_connected = True
+            self._ws_last_msg = time.time()
+            logger.info("WS price feed connected")
+
+        def on_message(ws, raw):
+            try:
+                data = _json.loads(raw)
+                if data.get("channel") == "allMids":
+                    mids = data["data"]["mids"]
+                    # Atomic dict replacement — GIL-safe, no lock needed
+                    self._ws_prices = {k: float(v) for k, v in mids.items()}
+                    self._ws_last_msg = time.time()
+            except Exception as e:
+                logger.debug("WS price parse error: %s", e)
+
+        def on_close(ws, close_status_code=None, close_msg=None):
+            self._ws_connected = False
+            logger.warning("WS price feed disconnected")
+
+        def on_error(ws, err):
+            logger.warning("WS price feed error: %s", err)
+
+        while self._running:
+            try:
+                ws = _ws_lib.WebSocketApp(
+                    url,
+                    on_open=on_open,
+                    on_message=on_message,
+                    on_close=on_close,
+                    on_error=on_error,
+                )
+                # run_forever blocks until disconnect. ping keeps connection alive.
+                ws.run_forever(ping_interval=30, ping_timeout=10)
+            except Exception as e:
+                logger.warning("WS price feed crashed: %s", e)
+
+            self._ws_connected = False
+            if not self._running:
+                break
+            # Reconnect delay — interruptible via short sleeps
+            for _ in range(10):  # 10 * 0.5s = 5s max
+                if not self._running:
+                    break
+                time.sleep(0.5)
+
+    def _get_prices_with_ws_fallback(self) -> dict[str, float]:
+        """Get prices from WS if available and fresh, otherwise fall back to REST.
+
+        WS prices are considered fresh if last message was within 30 seconds.
+        This is the single price source for _fast_trigger_check and _wake_agent
+        price refresh — ensures consistent fallback behavior.
+        """
+        ws_age = time.time() - self._ws_last_msg if self._ws_last_msg else float("inf")
+        if self._ws_prices and ws_age < 30:
+            return self._ws_prices
+        # WS unavailable or stale — fall back to REST
+        return self._get_provider().get_all_prices()
 
     def _poll_derivatives(self):
         """Fetch funding, OI from Hyperliquid + fear/greed from Coinglass. Zero tokens."""
@@ -1900,7 +1992,7 @@ class Daemon:
             # Fetch fresh prices only for symbols with open positions
             position_syms = list(self._prev_positions.keys())
             fresh_prices = {}
-            all_mids = provider.get_all_prices()
+            all_mids = self._get_prices_with_ws_fallback()
             for sym in position_syms:
                 if sym in all_mids:
                     fresh_prices[sym] = all_mids[sym]
@@ -4859,7 +4951,7 @@ class Daemon:
             if price_age > 15:
                 try:
                     provider = self._get_provider()
-                    fresh_prices = provider.get_all_prices()
+                    fresh_prices = self._get_prices_with_ws_fallback()
                     for sym in self.config.execution.symbols:
                         if sym in fresh_prices:
                             self.snapshot.prices[sym] = fresh_prices[sym]

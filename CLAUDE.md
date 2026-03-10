@@ -32,7 +32,7 @@ hynous/
 │   ├── discord/         # Discord bot (chat relay, notifications, stats)
 │   └── core/            # Shared utilities (config, types, tracing)
 ├── dashboard/           # Reflex UI (10 pages, 4 standalone HTML visualizations)
-├── satellite/           # ML feature engine (12 features, XGBoost, walk-forward)
+├── satellite/           # ML feature engine (28 features, 14 condition models, XGBoost, walk-forward)
 ├── data-layer/          # Standalone data collection service
 ├── nous-server/         # TypeScript memory system monorepo
 ├── config/              # YAML configuration (default.yaml, theme.yaml)
@@ -145,9 +145,10 @@ cd nous-server && pnpm test
 - `ARCHITECTURE.md` — System overview, component responsibilities, data flows
 - `docs/README.md` — Central documentation hub
 - `docs/integration.md` — Cross-system data flows (satellite ↔ data-layer ↔ daemon)
+- `docs/revisions/trade-mechanism-debug/` — 5 fix guides for mechanical exit bugs (implemented)
 - `docs/archive/` — Completed revision guides (all resolved, kept for reference)
 - Each major directory has its own `README.md`
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-03-09

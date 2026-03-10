@@ -46,7 +46,7 @@
        │  ┌─────────────────────┐ ┌──────────────────────────────┐
        │  │   NOUS API (TS)     │ │     SATELLITE (Python)       │
        │  │  Hono :3100         │ │  ML feature engine           │
-       │  │                     │ │  12 structural features      │
+       │  │                     │ │  28 structural features      │
        │  │  • SSA retrieval    │ │  Training + inference        │
        │  │  • Two-phase cogn.  │ │  Reads from data-layer DB    │
        │  │  • FSRS decay       │ └──────────────┬───────────────┘
@@ -102,6 +102,7 @@ The LLM agent that thinks, reasons, and acts.
 | `memory_tracker.py` | In-process audit log of all Nous writes per chat cycle (creates, archives, deletes) |
 | `consolidation.py` | Cross-episode generalization: clusters related episodes, extracts patterns via LLM, creates knowledge/playbook nodes |
 | `playbook_matcher.py` | Procedural memory: loads playbook nodes, evaluates structured trigger conditions against scanner anomalies |
+| `trade_history.py` | Trade history analyzer: learns from Nous trade memory, computes per-pattern win rates, warns on weak setups |
 
 ### `src/hynous/nous/` -- The Memory Client
 
@@ -204,12 +205,14 @@ Run with: `cd dashboard && reflex run`
 
 ### `satellite/` -- The Feature Engine
 
-ML feature computation engine. Computes 12 structural core features from data-layer engines, stores them in a dedicated SQLite database.
+ML feature computation and condition prediction engine. Computes 28 structural features from data-layer engines, trains per-model curated feature subsets, and runs 14 condition models for real-time market state prediction.
 
 | Module | Responsibility |
 |--------|----------------|
 | `__init__.py` | `tick()` entry point -- called by daemon every 300s after `_poll_derivatives()` |
-| `features.py` | Feature computation (SINGLE SOURCE OF TRUTH -- training, inference, and backfill all use this) |
+| `features.py` | Feature computation -- 28 features across 9 categories (SINGLE SOURCE OF TRUTH for training, inference, backfill) |
+| `conditions.py` | `ConditionEngine` -- loads condition model artifacts, runs all 14 predictions in ~10ms |
+| `condition_alerts.py` | Alert generation from condition predictions (regime transitions, extremes) |
 | `config.py` | SatelliteConfig dataclass |
 | `schema.py` | Database schema definitions |
 | `store.py` | SQLite persistence (satellite.db) |
@@ -218,7 +221,8 @@ ML feature computation engine. Computes 12 structural core features from data-la
 | `inference.py` | Real-time inference from trained models |
 | `monitor.py` | Feature drift and health monitoring |
 | `safety.py` | Safety checks and guardrails |
-| `training/` | Training pipeline (train.py, walkforward.py, explain.py, artifact.py, pipeline.py) |
+| `training/` | Training pipeline (train.py, walkforward.py, explain.py, artifact.py, pipeline.py, train_conditions.py, validate_conditions.py, feature_sets.py, condition_artifact.py) |
+| `experiments/` | Experiment framework -- 12 experiment scripts with shared harness, feature ablation |
 | `artemis/` | Advanced analysis (layer2.py, pipeline.py, profiler.py, reconstruct.py, seeder.py) |
 | `tests/` | 6 test modules |
 
@@ -594,6 +598,14 @@ Mechanical exit system (2026-03-05): trailing stops (activate at 2.8% ROE, 50% r
 
 Agent trade memory (2026-03-05): in-memory deque of recent trade closes injected into briefing, with Nous fallback for cold starts. **IMPLEMENTED.**
 
+### `docs/revisions/trade-mechanism-debug/`
+
+Trade mechanism debug (2026-03-06): 6 bugs + 1 systemic issue in the mechanical exit system. 5 fix guides covering stale position/trigger caches after 429, Phase 3 backup close safety, 429 rate-limit resilience for HyperliquidProvider, trailing stop / breakeven exit classification, and cancel-before-place for breakeven SL. Key finding: PaperProvider delegates all price reads to mainnet HTTP — 429s affect paper mode too. Phase 3 preserved as legitimate Phase 2 failure backup. **IMPLEMENTED.**
+
+### `docs/revisions/ws-price-feed/`
+
+WebSocket price feed (2026-03-09): daemon subscribes to Hyperliquid `allMids` WebSocket feed in a background thread (`hynous-ws-prices`). Prices update sub-second and are consumed by `_fast_trigger_check()` via `_get_prices_with_ws_fallback()`. Falls back to REST if WS is down or stale (>30s). Main loop sleep reduced from 10s to 1s for responsive mechanical exits. Config: `daemon.ws_price_feed: true`. **IMPLEMENTED.**
+
 ---
 
 ## For Future Agents
@@ -601,7 +613,7 @@ Agent trade memory (2026-03-05): in-memory deque of recent trade closes injected
 When working on this codebase:
 
 1. **Check docs/archive/ first** -- contains documented issues and their resolutions (formerly `revisions/`)
-2. **All revisions complete** -- Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning, memory sections, brain visualization, portfolio tracking, ML wiring, mechanical exits, real-time price data, and agent trade memory are all fully implemented (see docs/archive/ and docs/revisions/)
+2. **Most revisions complete** -- Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning, memory sections, brain visualization, portfolio tracking, ML wiring, mechanical exits, real-time price data, agent trade memory, trade mechanism debug, and WS price feed are all fully implemented
 4. **Check existing patterns** -- Don't reinvent, extend
 5. **Keep modules focused** -- One responsibility per file
 6. **Update this doc** -- If you change architecture, document it
@@ -611,4 +623,4 @@ When working on this codebase:
 
 ---
 
-Last updated: 2026-03-05
+Last updated: 2026-03-09

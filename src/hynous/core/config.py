@@ -133,6 +133,8 @@ class DaemonConfig:
     trailing_retracement_pct: float = 50.0          # % of peak ROE to give back before stop fires (50% = trail at half peak)
     # Candle-based peak tracking (enhances MFE/MAE accuracy)
     candle_peak_tracking_enabled: bool = True       # Use 1m candle high/low for peak/trough tracking
+    # WebSocket price feed (sub-second prices for trigger checks)
+    ws_price_feed: bool = True               # Enable WS allMids feed for _fast_trigger_check
 
 
 @dataclass
@@ -322,6 +324,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
             phantom_check_interval=daemon_raw.get("phantom_check_interval", 1800),
             phantom_max_age_seconds=daemon_raw.get("phantom_max_age_seconds", 14400),
             playbook_cache_ttl=daemon_raw.get("playbook_cache_ttl", 1800),
+            ws_price_feed=daemon_raw.get("ws_price_feed", True),
         ),
         scanner=ScannerConfig(
             enabled=scanner_raw.get("enabled", True),

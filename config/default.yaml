@@ -58,6 +58,8 @@ daemon:
   trailing_retracement_pct: 50.0       # % of peak ROE to give back before exit
   # Candle-based peak tracking (enhances MFE/MAE for trailing stop accuracy)
   candle_peak_tracking_enabled: true
+  # WebSocket price feed (sub-second prices for mechanical exits)
+  ws_price_feed: true                 # allMids WS feed for _fast_trigger_check
 
 # Market scanner (anomaly detection across ALL Hyperliquid pairs)
 scanner:

@@ -14,7 +14,7 @@ Hynous is a personal crypto intelligence system with an autonomous LLM trading a
 | [CLAUDE.md](../CLAUDE.md) | Agent instructions for working in this codebase |
 | [config/README.md](../config/README.md) | Configuration reference (`default.yaml`, `theme.yaml`) |
 | [integration.md](./integration.md) | Cross-system data flows (daemon, satellite, data-layer, dashboard) |
-| [revisions/](./revisions/) | Recent revision guides (3 tracks, all implemented) |
+| [revisions/](./revisions/) | Recent revision guides (all implemented: 3 mechanical tracks + trade debug + WS price feed) |
 | [archive/](./archive/) | Historical revision guides (all completed) |
 | [documentation-updating/](./documentation-updating/) | Current documentation audit and update tracking |
 
@@ -41,7 +41,7 @@ Hynous is a personal crypto intelligence system with an autonomous LLM trading a
 
 | Document | Contents |
 |----------|----------|
-| [satellite/README.md](../satellite/README.md) | ML feature computation engine, 12 structural features |
+| [satellite/README.md](../satellite/README.md) | ML feature computation engine, 28 structural features, 14 condition models |
 | [satellite/training/README.md](../satellite/training/README.md) | Model training pipeline |
 | [satellite/artemis/README.md](../satellite/artemis/README.md) | Historical data backfill from Artemis |
 
@@ -95,19 +95,39 @@ Key conventions:
 - New tools go in `src/hynous/intelligence/tools/` AND must be added to `prompts/builder.py` TOOL_STRATEGY
 - New pages go in `dashboard/dashboard/pages/` and are registered in `dashboard.py`
 - Config changes go in `config/default.yaml` and are modeled in `src/hynous/core/config.py`
-- All revisions are complete. Historical guides in `docs/archive/`, recent guides in `docs/revisions/`.
+- Completed revisions in `docs/archive/`, active revision guides in `docs/revisions/`.
 
 ---
 
-## Recent Revisions (2026-03-05)
+## Recent Revisions
 
-Implementation guides in [revisions/](./revisions/) — all implemented:
+### Implemented (2026-03-05)
 
 | Track | Description |
 |-------|-------------|
 | [mechanical-exits/](./revisions/mechanical-exits/) | Trailing stops, breakeven stops, stop-tightening lockout, MFE/MAE tracking |
 | [realtime-price-data/](./revisions/realtime-price-data/) | 1-minute candle high/low enhancement for MFE/MAE tracking |
 | [agent-trade-memory/](./revisions/agent-trade-memory/) | Recent trade closes injected into briefing (deque + Nous fallback) |
+
+### Implemented (2026-03-09)
+
+| Track | Description |
+|-------|-------------|
+| [ws-price-feed/](./revisions/ws-price-feed/) | `allMids` WebSocket feed in daemon — sub-second prices for mechanical exits, 1s loop, REST fallback |
+
+### Implemented — Trade Mechanism Debug (2026-03-06)
+
+6 bugs + 1 systemic issue in the mechanical exit system. All 5 fixes implemented:
+
+| Guide | Bug(s) | Summary |
+|-------|--------|---------|
+| [fix-01](./revisions/trade-mechanism-debug/fix-01-T1-T3-stale-cache-phase3.md) | T1 (+T3 resolved) | Event-based eviction for stale `_prev_positions` after 429; Phase 3 preserved as Phase 2 failure backup |
+| [fix-02](./revisions/trade-mechanism-debug/fix-02-B1-stale-trigger-cache.md) | B1 | Refresh trigger cache on new position entry detection |
+| [fix-03](./revisions/trade-mechanism-debug/fix-03-S1-429-rate-limit-resilience.md) | S1 | Retry + 2s TTL cache on `get_all_prices()` in HyperliquidProvider |
+| [fix-04](./revisions/trade-mechanism-debug/fix-04-T2-B2-exit-classification.md) | T2 + B2 | Classification override: trailing_stop / breakeven_stop instead of generic stop_loss |
+| [fix-05](./revisions/trade-mechanism-debug/fix-05-B3-cancel-before-place.md) | B3 | Cancel existing SL before placing breakeven SL |
+
+See [trade-mechanism-debug/README.md](./revisions/trade-mechanism-debug/README.md) for the full bug analysis.
 
 ---
 
@@ -131,4 +151,4 @@ See [archive/README.md](./archive/README.md) for a complete index.
 
 ---
 
-Last updated: 2026-03-05
+Last updated: 2026-03-09
