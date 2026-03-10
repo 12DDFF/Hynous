@@ -1238,7 +1238,8 @@ class Daemon:
         def _ws_diag(msg):
             """Temporary diagnostic — writes to /tmp/ws-diag.log. Remove after verification."""
             try:
-                with open("/tmp/ws-diag.log", "a") as f:
+                _diag_path = "/opt/hynous/storage/ws-diag.log"
+                with open(_diag_path, "a") as f:
                     f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
             except Exception:
                 pass
@@ -1305,14 +1306,16 @@ class Daemon:
             if not hasattr(self, '_ws_diag_last') or _now - self._ws_diag_last > 60:
                 self._ws_diag_last = _now
                 try:
-                    with open("/tmp/ws-diag.log", "a") as f:
+                    _diag_path = "/opt/hynous/storage/ws-diag.log"
+                    with open(_diag_path, "a") as f:
                         f.write(f"{time.strftime('%H:%M:%S')} WS OK: {len(self._ws_prices)} coins, age={ws_age:.1f}s, BTC={self._ws_prices.get('BTC', 0):.1f}\n")
                 except Exception:
                     pass
             return self._ws_prices
         # WS unavailable or stale — fall back to REST
         try:
-            with open("/tmp/ws-diag.log", "a") as f:
+            _diag_path = Path(__file__).parent.parent.parent.parent / "storage" / "ws-diag.log"
+            with open(_diag_path, "a") as f:
                 f.write(f"{time.strftime('%H:%M:%S')} FALLBACK REST: ws_prices={len(self._ws_prices)}, age={ws_age:.1f}s\n")
         except Exception:
             pass
