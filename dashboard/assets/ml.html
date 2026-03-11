@@ -307,8 +307,10 @@ body {
 (function() {
   "use strict";
 
-  var B = location.port === "3000"
-    ? location.origin.replace(":3000", ":8000")
+  var _pm = { "3000": "8000", "3001": "8001" };
+  var _bp = _pm[location.port] || null;
+  var B = _bp
+    ? location.origin.replace(":" + location.port, ":" + _bp)
     : location.origin.replace("://", "://api.");
 
   var activeCoin = "BTC";

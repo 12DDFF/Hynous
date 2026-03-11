@@ -437,13 +437,14 @@
     // ---- Configuration ----
     // Proxy through the Reflex backend (API server).
     // Local dev: port swap 3000→8000. Production: api. subdomain.
-    const _backendOrigin = location.port === '3000'
-      ? location.origin.replace(':3000', ':8000')
+    // Port mapping: frontend → backend (3000→8000, 3001→8001)
+    const _portMap = { '3000': '8000', '3001': '8001' };
+    const _backendPort = _portMap[location.port] || null;
+    const _backendOrigin = _backendPort
+      ? location.origin.replace(':' + location.port, ':' + _backendPort)
       : location.origin.replace('://', '://api.');
     const NOUS_URLS = [
       `${_backendOrigin}/api/nous/graph`,
-      'http://localhost:3100/v1/graph',
-      'http://127.0.0.1:3100/v1/graph',
     ];
 
     const COLORS = {

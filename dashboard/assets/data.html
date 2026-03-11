@@ -502,9 +502,11 @@
 (function() {
   'use strict';
 
-  // Detect backend URL: local dev uses port swap, production uses api. subdomain
-  const B = location.port === '3000'
-    ? location.origin.replace(':3000', ':8000')
+  // Detect backend URL: port mapping (3000→8000, 3001→8001)
+  const _pm = { '3000': '8000', '3001': '8001' };
+  const _bp = _pm[location.port] || null;
+  const B = _bp
+    ? location.origin.replace(':' + location.port, ':' + _bp)
     : location.origin.replace('://', '://api.');
   let coin = 'BTC';
   let hlpCollapsed = false;
