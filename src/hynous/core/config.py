@@ -126,6 +126,8 @@ class DaemonConfig:
     breakeven_stop_enabled: bool = True            # Auto-move SL to entry buffer once fees are cleared
     breakeven_buffer_micro_pct: float = 0.07       # Price % buffer above entry (long) / below (short) — micro (equals round-trip fee → nets ~0%)
     breakeven_buffer_macro_pct: float = 0.07       # Same for macro — true breakeven regardless of trade type
+    capital_breakeven_enabled: bool = True         # Layer 1: move SL to entry when ROE > threshold
+    capital_breakeven_roe: float = 0.5             # Fixed ROE % threshold (not fee-proportional)
     taker_fee_pct: float = 0.07                    # Round-trip taker fee as % of notional (drives fee BE calc)
     # Trailing stop (mechanical exit — no agent involvement)
     trailing_stop_enabled: bool = True              # Master switch for trailing stop system

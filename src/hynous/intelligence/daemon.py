@@ -335,6 +335,7 @@ class Daemon:
         self._trough_roe: dict[str, float] = {}   # coin → min ROE % seen during hold (MAE, negative = drawdown)
         self._current_roe: dict[str, float] = {}   # coin → latest computed ROE % (updated every 10s)
         self._breakeven_set: dict[str, bool] = {}  # coin → True once breakeven SL placed this hold
+        self._capital_be_set: dict[str, bool] = {}  # coin → True once capital-breakeven SL placed this hold
         self._small_wins_exited: dict[str, bool] = {}  # coin → True once small-wins exit fired
         self._small_wins_tp_placed: dict[str, bool] = {}  # coin → True once exchange TP order placed
         self._trailing_active: dict[str, bool] = {}   # coin → True once trail is engaged
@@ -2061,7 +2062,87 @@ class Daemon:
                 if roe_pct < self._trough_roe.get(sym, 0):
                     self._trough_roe[sym] = roe_pct
 
-                # Breakeven stop: check every 10s with fresh price (not just 60s)
+                # Breakeven stop: two-layer capital + fee protection system
+                # ── Layer 1: Capital-breakeven — protect capital, accept fee loss ──
+                # Activates at a low fixed ROE threshold. SL moves to entry price.
+                # Worst case: exit costs the taker fee (~0.7% ROE at 20x).
+                # This is the safety net — catches trades that never reach fee-BE.
+                if (
+                    self.config.daemon.capital_breakeven_enabled
+                    and not self._capital_be_set.get(sym)
+                    and not self._breakeven_set.get(sym)  # Skip if fee-BE already set (tighter)
+                ):
+                    capital_be_threshold = self.config.daemon.capital_breakeven_roe
+                    if roe_pct >= capital_be_threshold:
+                        is_long = (side == "long")
+                        # SL at exactly entry price — no buffer (we accept the fee loss)
+                        capital_be_price = entry_px
+
+                        # Check if existing SL is already tighter than entry
+                        triggers = self._tracked_triggers.get(sym, [])
+                        has_tighter_sl = any(
+                            t.get("order_type") == "stop_loss" and (
+                                (is_long and t.get("trigger_px", 0) >= capital_be_price) or
+                                (not is_long and 0 < t.get("trigger_px", 0) <= capital_be_price)
+                            )
+                            for t in triggers
+                        )
+                        if has_tighter_sl:
+                            self._capital_be_set[sym] = True
+                        else:
+                            # Save old SL for rollback on failure
+                            old_sl_info = None
+                            for t in triggers:
+                                if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                    old_sl_info = (t["oid"], t.get("trigger_px"))
+                                    break
+
+                            try:
+                                # Cancel existing SL
+                                for t in triggers:
+                                    if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                        self._get_provider().cancel_order(sym, t["oid"])
+
+                                # Place capital-breakeven SL at entry price
+                                sz = pos.get("size", 0)
+                                self._get_provider().place_trigger_order(
+                                    symbol=sym,
+                                    is_buy=(side != "long"),
+                                    sz=sz,
+                                    trigger_px=capital_be_price,
+                                    tpsl="sl",
+                                )
+                                self._refresh_trigger_cache()
+                                self._capital_be_set[sym] = True
+                                logger.info(
+                                    "Capital-breakeven SET: %s %s | SL @ $%,.2f (entry) | ROE %+.1f%% >= %.1f%% threshold",
+                                    sym, side, capital_be_price, roe_pct, capital_be_threshold,
+                                )
+                                log_event(DaemonEvent(
+                                    "profit", f"capital_breakeven: {sym} {side}",
+                                    f"SL @ ${capital_be_price:,.2f} (entry) | ROE {roe_pct:+.1f}%",
+                                ))
+                            except Exception as cbe_err:
+                                logger.warning("Capital-breakeven failed for %s: %s", sym, cbe_err)
+                                # Rollback: restore old SL if placement failed
+                                if old_sl_info:
+                                    try:
+                                        self._get_provider().place_trigger_order(
+                                            symbol=sym,
+                                            is_buy=(side != "long"),
+                                            sz=pos.get("size", 0),
+                                            trigger_px=old_sl_info[1],
+                                            tpsl="sl",
+                                        )
+                                        self._refresh_trigger_cache()
+                                    except Exception:
+                                        logger.error(
+                                            "CRITICAL: Failed to restore old SL for %s after capital-BE failure", sym,
+                                        )
+
+                # ── Layer 2: Fee-breakeven — tighten SL to cover fees ──────────
+                # Activates when ROE covers round-trip fee. SL moves to entry + buffer.
+                # Worst case: ~$0 net. This is the upgrade from capital-BE.
                 if (
                     self.config.daemon.breakeven_stop_enabled
                     and not self._breakeven_set.get(sym)
@@ -2092,43 +2173,56 @@ class Daemon:
                         if has_good_sl:
                             self._breakeven_set[sym] = True
                         else:
+                            # Save old SL for rollback
+                            old_sl_info = None
+                            for t in triggers:
+                                if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                    old_sl_info = (t["oid"], t.get("trigger_px"))
+                                    break
+
                             try:
-                                # Cancel existing SL before placing breakeven
-                                # (mirrors trailing stop pattern at lines 1937-1941)
+                                # Cancel existing SL before placing fee-breakeven
                                 for t in triggers:
                                     if t.get("order_type") == "stop_loss" and t.get("oid"):
                                         self._get_provider().cancel_order(sym, t["oid"])
                                 sz = pos.get("size", 0)
                                 self._get_provider().place_trigger_order(
                                     symbol=sym,
-                                    is_buy=(side != "long"),  # long → SELL stop; short → BUY stop
+                                    is_buy=(side != "long"),
                                     sz=sz,
                                     trigger_px=be_price,
                                     tpsl="sl",
                                 )
+                                self._refresh_trigger_cache()  # Fix Bug A: was missing
                                 self._breakeven_set[sym] = True
+                                # Also mark capital-BE as set (fee-BE is strictly tighter)
+                                self._capital_be_set[sym] = True
                                 type_label = f"{trade_type} {leverage}x"
-                                be_wake = (
-                                    f"[DAEMON — Breakeven Stop Set: {sym} {side.upper()} ({type_label})]\n\n"
-                                    f"{sym} {side.upper()} cleared fee break-even "
-                                    f"(ROE: {roe_pct:+.1f}% ≥ {fee_be_roe:.1f}% at {leverage}x). "
-                                    f"I placed a stop-loss at ${be_price:,.2f} "
-                                    f"({buffer_pct * 100:.2f}% buffer from entry ${entry_px:,.2f}).\n\n"
-                                    f"This trade is now risk-free. The SL is mechanical — do not remove it "
-                                    f"without a specific reason. Acknowledge and share your current plan for this position."
-                                )
-                                response = self._wake_agent(
-                                    be_wake, priority=False, max_coach_cycles=0,
-                                    max_tokens=512, source="daemon:breakeven",
+                                logger.info(
+                                    "Fee-breakeven SET: %s %s (%s) | SL @ $%,.2f | ROE %+.1f%% >= %.1f%%",
+                                    sym, side, type_label, be_price, roe_pct, fee_be_roe,
                                 )
                                 log_event(DaemonEvent(
-                                    "profit", f"breakeven_stop: {sym} {side}",
-                                    f"BE SL @ ${be_price:,.2f} | ROE {roe_pct:+.1f}%",
+                                    "profit", f"fee_breakeven: {sym} {side}",
+                                    f"SL @ ${be_price:,.2f} | ROE {roe_pct:+.1f}%",
                                 ))
-                                if response:
-                                    _queue_and_persist("System", f"Breakeven stop: {sym}", response)
                             except Exception as be_err:
-                                logger.warning("Breakeven stop failed for %s: %s", sym, be_err)
+                                logger.warning("Fee-breakeven failed for %s: %s", sym, be_err)
+                                # Rollback: restore old SL if placement failed
+                                if old_sl_info:
+                                    try:
+                                        self._get_provider().place_trigger_order(
+                                            symbol=sym,
+                                            is_buy=(side != "long"),
+                                            sz=pos.get("size", 0),
+                                            trigger_px=old_sl_info[1],
+                                            tpsl="sl",
+                                        )
+                                        self._refresh_trigger_cache()
+                                    except Exception:
+                                        logger.error(
+                                            "CRITICAL: Failed to restore old SL for %s after fee-BE failure", sym,
+                                        )
 
                 # ── Trailing Stop: mechanical exit, no agent involvement ──────────
                 # Activates once ROE exceeds threshold. Trails at configured
@@ -2364,6 +2458,48 @@ class Daemon:
                             "MFE corrected by candle: %s %s | %.1f%% → %.1f%% (+%.1f%%)",
                             sym, side, old_peak, best_roe, best_roe - old_peak,
                         )
+
+                    # Re-evaluate capital-breakeven if candle shows threshold was crossed.
+                    # A wick above the threshold (even sub-second) earns entry-price protection.
+                    # Only capital-BE — fee-BE requires sustained price above threshold.
+                    if (
+                        self.config.daemon.capital_breakeven_enabled
+                        and not self._capital_be_set.get(sym)
+                        and not self._breakeven_set.get(sym)
+                    ):
+                        capital_threshold = self.config.daemon.capital_breakeven_roe
+                        if best_roe >= capital_threshold:
+                            is_long = (side == "long")
+                            try:
+                                triggers_for_sym = self._tracked_triggers.get(sym, [])
+                                has_tighter = any(
+                                    t.get("order_type") == "stop_loss" and (
+                                        (is_long and t.get("trigger_px", 0) >= entry_px) or
+                                        (not is_long and 0 < t.get("trigger_px", 0) <= entry_px)
+                                    )
+                                    for t in triggers_for_sym
+                                )
+                                if not has_tighter:
+                                    for t in triggers_for_sym:
+                                        if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                            self._get_provider().cancel_order(sym, t["oid"])
+                                    self._get_provider().place_trigger_order(
+                                        symbol=sym,
+                                        is_buy=(side != "long"),
+                                        sz=self._prev_positions.get(sym, {}).get("size", 0),
+                                        trigger_px=entry_px,
+                                        tpsl="sl",
+                                    )
+                                    self._refresh_trigger_cache()
+                                    self._capital_be_set[sym] = True
+                                    logger.info(
+                                        "Capital-BE from candle: %s %s | candle peak ROE %.1f%% >= %.1f%%",
+                                        sym, side, best_roe, capital_threshold,
+                                    )
+                                else:
+                                    self._capital_be_set[sym] = True
+                            except Exception as cbe_candle_err:
+                                logger.debug("Candle capital-BE failed for %s: %s", sym, cbe_candle_err)
 
                 if worst_roe < self._trough_roe.get(sym, 0):
                     old_trough = self._trough_roe.get(sym, 0)
@@ -2612,7 +2748,7 @@ class Daemon:
         self._update_daily_pnl(realized_pnl)
 
         # Record to Nous (auto-triggered closes aren't written by agent)
-        if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop"):
+        if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop", "capital_breakeven_stop"):
             self._record_trigger_close({
                 "coin": coin, "side": side, "entry_px": entry_px,
                 "exit_px": exit_px, "realized_pnl": realized_pnl,
@@ -2806,6 +2942,8 @@ class Daemon:
             return "trailing_stop"
         if self._breakeven_set.get(coin):
             return "breakeven_stop"
+        if self._capital_be_set.get(coin):
+            return "capital_breakeven_stop"
         return classification
 
     # ================================================================
@@ -2965,6 +3103,7 @@ class Daemon:
                 if prev_side and prev_side != side:
                     self._profit_alerts.pop(coin, None)
                     self._breakeven_set.pop(coin, None)         # New position — re-evaluate breakeven
+                    self._capital_be_set.pop(coin, None)        # New position — re-evaluate capital-BE
                     self._small_wins_exited.pop(coin, None)    # New hold — re-arm small wins
                     self._small_wins_tp_placed.pop(coin, None) # New hold — re-arm TP order
                     self._peak_roe.pop(coin, None)             # New hold — reset MFE
@@ -3028,6 +3167,9 @@ class Daemon:
             for coin in list(self._breakeven_set):
                 if coin not in open_coins:
                     del self._breakeven_set[coin]
+            for coin in list(self._capital_be_set):
+                if coin not in open_coins:
+                    del self._capital_be_set[coin]
             for coin in list(self._small_wins_exited):
                 if coin not in open_coins:
                     del self._small_wins_exited[coin]
