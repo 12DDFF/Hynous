@@ -128,7 +128,6 @@ class DaemonConfig:
     breakeven_buffer_macro_pct: float = 0.07       # Same for macro — true breakeven regardless of trade type
     capital_breakeven_enabled: bool = True         # Layer 1: move SL to entry when ROE > threshold
     capital_breakeven_roe: float = 0.5             # Fixed ROE % threshold (not fee-proportional)
-    taker_fee_pct: float = 0.07                    # Round-trip taker fee as % of notional (drives fee BE calc)
     # Trailing stop (mechanical exit — no agent involvement)
     trailing_stop_enabled: bool = True              # Master switch for trailing stop system
     trailing_activation_roe: float = 2.8            # ROE % to activate trailing (modeled optimum)
@@ -170,7 +169,6 @@ class ScannerConfig:
     # Peak reversion detector (mirrors DaemonConfig thresholds — scanner has its own ScannerConfig)
     peak_reversion_threshold_micro: float = 0.40  # Giveback fraction to fire peak_reversion for micro
     peak_reversion_threshold_macro: float = 0.50  # Giveback fraction to fire peak_reversion for macro
-    taker_fee_pct: float = 0.07                    # Round-trip taker fee % (for fee break-even gating)
 
 
 @dataclass
@@ -323,6 +321,15 @@ def load_config(config_path: Optional[str] = None) -> Config:
             max_open_positions=daemon_raw.get("max_open_positions", 3),
             max_wakes_per_hour=daemon_raw.get("max_wakes_per_hour", 6),
             wake_cooldown_seconds=daemon_raw.get("wake_cooldown_seconds", 120),
+            breakeven_stop_enabled=daemon_raw.get("breakeven_stop_enabled", True),
+            breakeven_buffer_micro_pct=daemon_raw.get("breakeven_buffer_micro_pct", 0.07),
+            breakeven_buffer_macro_pct=daemon_raw.get("breakeven_buffer_macro_pct", 0.07),
+            capital_breakeven_enabled=daemon_raw.get("capital_breakeven_enabled", True),
+            capital_breakeven_roe=daemon_raw.get("capital_breakeven_roe", 0.5),
+            trailing_stop_enabled=daemon_raw.get("trailing_stop_enabled", True),
+            candle_peak_tracking_enabled=daemon_raw.get("candle_peak_tracking_enabled", True),
+            peak_reversion_threshold_micro=daemon_raw.get("peak_reversion_threshold_micro", 0.40),
+            peak_reversion_threshold_macro=daemon_raw.get("peak_reversion_threshold_macro", 0.50),
             phantom_check_interval=daemon_raw.get("phantom_check_interval", 1800),
             phantom_max_age_seconds=daemon_raw.get("phantom_max_age_seconds", 14400),
             playbook_cache_ttl=daemon_raw.get("playbook_cache_ttl", 1800),
@@ -348,6 +355,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
             position_adverse_threshold=scanner_raw.get("position_adverse_threshold", 0.40),
             news_poll_enabled=scanner_raw.get("news_poll_enabled", True),
             news_wake_max_age_minutes=scanner_raw.get("news_wake_max_age_minutes", 30),
+            peak_reversion_threshold_micro=scanner_raw.get("peak_reversion_threshold_micro", 0.40),
+            peak_reversion_threshold_macro=scanner_raw.get("peak_reversion_threshold_macro", 0.50),
         ),
         discord=DiscordConfig(
             enabled=discord_raw.get("enabled", False),

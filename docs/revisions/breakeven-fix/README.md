@@ -1,6 +1,6 @@
 # Breakeven System Fix — Two-Layer Capital + Fee Protection
 
-> **Status:** Planned
+> **Status:** In Progress — Code implemented (commit `5224ade`, 2026-03-10), validation pending
 > **Priority:** Critical
 > **Depends on:** WS price feed (implemented), mechanical exits (implemented), trade mechanism debug (5 fixes implemented)
 
@@ -868,6 +868,57 @@ If fee-BE fires (ROE crossed the higher threshold), the fee-BE SL is strictly ti
 ### Why does candle peak re-evaluation only trigger capital-BE?
 
 Fee-breakeven requires sustained price above the threshold (the 1s live loop catches this). A sub-second wick captured by candles is too volatile for fee-BE — the price was above the threshold for less than a second. But capital-BE is a safety net: if the trade was ever directionally correct enough to cross 0.5% ROE (even briefly), it deserves entry-price protection.
+
+---
+
+## Implementation Status (2026-03-11)
+
+### Completed
+
+All 8 code changes from the implementation guide have been implemented:
+
+1. **Config fields** — `capital_breakeven_enabled`, `capital_breakeven_roe` in `DaemonConfig` + `default.yaml`
+2. **State dictionary** — `_capital_be_set` initialized in `__init__`
+3. **Two-layer breakeven block** — Capital-BE (0.5% threshold, SL at entry) + Fee-BE (fee-proportional, SL at entry + buffer). Both fully mechanical (no `_wake_agent()`), with `_refresh_trigger_cache()` after placement, and rollback on failure.
+4. **SL classification** — `_override_sl_classification()` handles `capital_breakeven_stop`
+5. **State cleanup** — Side-flip and position-close cleanup both handle `_capital_be_set`
+6. **Event eviction** — No change needed (existing cleanup handles it)
+7. **Trigger close classification** — Flows through automatically
+8. **Candle peak re-evaluation** — `_update_peaks_from_candles()` triggers capital-BE when candle peak crosses threshold
+
+All 3 bundled bug fixes applied:
+- **Bug A:** `_refresh_trigger_cache()` added after every SL placement in both BE blocks
+- **Bug B:** No `_wake_agent()` in either breakeven block (fully mechanical)
+- **Bug C:** Rollback try-except wraps every cancel-then-place sequence
+
+Tests: `tests/unit/test_breakeven_fix.py` created with test coverage.
+
+### Known Issue: State Persistence on Daemon Restart
+
+**Critical vulnerability identified but NOT yet fixed:**
+
+All daemon state dicts (`_peak_roe`, `_trailing_stop_px`, `_trailing_active`, `_breakeven_set`, `_capital_be_set`) are in-memory only. On daemon restart (deployment, crash, systemd restart):
+
+1. `_peak_roe` resets to 0 → trailing stop computes trail from a much lower "peak"
+2. `_trailing_stop_px` resets to 0 → `should_update = True` on first check, even if new trail is WORSE
+3. Both flags reset → breakeven re-evaluation fires, but the "has_tighter_sl" check should prevent degradation
+
+**Specific risk with trailing stop after restart:**
+- Pre-restart: peak ROE = +10%, trail SL at +5% ROE price
+- Post-restart: `_peak_roe` starts at current ROE (say +3%), trail = 3% × 0.5 = 1.5%, floored at 1.4%
+- `_trailing_stop_px` is 0 → `should_update = True` → CANCELS the +5% SL and replaces with +1.4% SL
+- The SL just got 3.6% ROE worse
+
+**Paper provider mitigation:** `pos.sl_px` IS persisted to `paper-state.json`. `check_triggers()` runs BEFORE the trailing stop update in `_fast_trigger_check()`. So if price already dropped below the persisted SL, the position closes correctly. The vulnerability only manifests when the daemon restarts while the price is still ABOVE the trailing stop level.
+
+**Live provider mitigation:** Exchange-side SL orders persist independently. But the daemon's trailing stop update code would still cancel and re-place with a worse level.
+
+### Next Steps (2026-03-12)
+
+1. **Investigate March 11 trade failures** — HYPE LONG peaked +10.4%, exited -5.18%. Check VPS daemon logs, paper-state.json, and deployment timing to determine root cause.
+2. **Fix state persistence** — Persist `_peak_roe`, `_trailing_stop_px`, `_trailing_active`, `_breakeven_set`, `_capital_be_set` to disk (same pattern as `_position_types`). On restart, load from disk so trailing stops don't degrade.
+3. **Add restart-safe trailing stop** — Before updating trailing SL after restart, check if the existing SL (from trigger cache) is already tighter than the computed trail. If so, adopt the existing SL level into `_trailing_stop_px` instead of overwriting.
+4. **Validate on paper** — Run multiple trades through the full lifecycle (entry → capital-BE → fee-BE → trailing → exit) without daemon restarts, then WITH a restart mid-trade.
 
 ---
 

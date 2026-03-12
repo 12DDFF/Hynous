@@ -473,7 +473,7 @@ class TestDaemonNonBlocking(unittest.TestCase):
             'hynous.intelligence.daemon', fromlist=['Daemon']
         )
         import inspect
-        src = inspect.getsource(daemon_module.Daemon._loop)
+        src = inspect.getsource(daemon_module.Daemon._loop_inner)
         # Must reference _decay_thread and threading.Thread
         self.assertIn('_decay_thread', src)
         self.assertIn('hynous-decay', src)
@@ -484,7 +484,7 @@ class TestDaemonNonBlocking(unittest.TestCase):
             'hynous.intelligence.daemon', fromlist=['Daemon']
         )
         import inspect
-        src = inspect.getsource(daemon_module.Daemon._loop)
+        src = inspect.getsource(daemon_module.Daemon._loop_inner)
         self.assertIn('"hynous-decay"', src)
 
     def test_decay_skip_when_thread_alive(self):
@@ -551,7 +551,7 @@ class TestDaemonNonBlocking(unittest.TestCase):
             'hynous.intelligence.daemon', fromlist=['Daemon']
         )
         import inspect
-        src = inspect.getsource(daemon_module.Daemon._loop)
+        src = inspect.getsource(daemon_module.Daemon._loop_inner)
         self.assertIn('"hynous-conflicts"', src)
 
     def test_conflict_skip_when_thread_alive(self):
@@ -584,7 +584,7 @@ class TestDaemonNonBlocking(unittest.TestCase):
             'hynous.intelligence.daemon', fromlist=['Daemon']
         )
         import inspect
-        src = inspect.getsource(daemon_module.Daemon._loop)
+        src = inspect.getsource(daemon_module.Daemon._loop_inner)
         self.assertIn('"hynous-backfill"', src)
 
     def test_backfill_skip_when_thread_alive(self):
@@ -612,12 +612,12 @@ class TestDaemonNonBlocking(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_skip_log_message_in_loop_source(self):
-        """_loop source must contain all three 'still running' skip messages."""
+        """_loop_inner source must contain all three 'still running' skip messages."""
         daemon_module = __import__(
             'hynous.intelligence.daemon', fromlist=['Daemon']
         )
         import inspect
-        src = inspect.getsource(daemon_module.Daemon._loop)
+        src = inspect.getsource(daemon_module.Daemon._loop_inner)
         self.assertIn('Decay cycle still running', src)
         self.assertIn('Conflict check still running', src)
         self.assertIn('Embedding backfill still running', src)
