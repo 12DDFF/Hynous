@@ -115,6 +115,24 @@ Key conventions:
 |-------|-------------|
 | [ws-price-feed/](./revisions/ws-price-feed/) | `allMids` WebSocket feed in daemon — sub-second prices for mechanical exits, 1s loop, REST fallback |
 
+### Implemented (2026-03-11)
+
+| Track | Description |
+|-------|-------------|
+| [breakeven-fix/](./revisions/breakeven-fix/) | Two-layer capital + fee breakeven system + Round 2 bug fixes (9 bugs: A–I covering rollback, ghost-state persistence, classification, taker_fee_pct unification, load_config wiring) |
+
+### In Progress (2026-03-11)
+
+| Track | Description | Status |
+|-------|-------------|--------|
+| [llm-lookahead-trade/](./revisions/llm-lookahead-trade/) | Pre-staged trade directives — decouple LLM decision from execution, daemon fires entries mechanically | Concept stage |
+
+### Planned
+
+| Track | Description |
+|-------|-------------|
+| [ws-migration/](./revisions/ws-migration/) | Replace all REST polling with WebSocket subscriptions — zero rate limit reads |
+
 ### Implemented — Trade Mechanism Debug (2026-03-06)
 
 6 bugs + 1 systemic issue in the mechanical exit system. All 5 fixes implemented:
@@ -151,4 +169,4 @@ See [archive/README.md](./archive/README.md) for a complete index.
 
 ---
 
-Last updated: 2026-03-09
+Last updated: 2026-03-11 (breakeven-fix Round 2 complete)

@@ -1210,6 +1210,7 @@ class MarketScanner:
 
         Normal entry-zone dips (peak never cleared fees) are silently ignored.
         """
+        from ..core.trading_settings import get_trading_settings
         results = []
         now = time.time()
 
@@ -1223,7 +1224,7 @@ class MarketScanner:
             trade_type = d.get("trade_type", "macro")
             side       = d.get("side", "long")
 
-            fee_be_roe = self.config.taker_fee_pct * leverage
+            fee_be_roe = get_trading_settings().taker_fee_pct * leverage
 
             # Ignore peaks that never cleared fees — not a missed profit scenario
             if peak < fee_be_roe:

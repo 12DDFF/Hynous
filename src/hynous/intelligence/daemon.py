@@ -335,6 +335,7 @@ class Daemon:
         self._trough_roe: dict[str, float] = {}   # coin → min ROE % seen during hold (MAE, negative = drawdown)
         self._current_roe: dict[str, float] = {}   # coin → latest computed ROE % (updated every 10s)
         self._breakeven_set: dict[str, bool] = {}  # coin → True once breakeven SL placed this hold
+        self._capital_be_set: dict[str, bool] = {}  # coin → True once capital-breakeven SL placed this hold
         self._small_wins_exited: dict[str, bool] = {}  # coin → True once small-wins exit fired
         self._small_wins_tp_placed: dict[str, bool] = {}  # coin → True once exchange TP order placed
         self._trailing_active: dict[str, bool] = {}   # coin → True once trail is engaged
@@ -1940,6 +1941,8 @@ class Daemon:
 
             # Load persisted position types first (survives restarts)
             self._load_position_types()
+            # Load trailing stop state (prevents SL degradation on restart)
+            self._load_mechanical_state()
 
             # Infer position types for any remaining unregistered positions
             for coin, data in self._prev_positions.items():
@@ -2026,6 +2029,16 @@ class Daemon:
                 # (the ROE loop's `if not pos: continue` guard reads _prev_positions).
                 for event in events:
                     self._prev_positions.pop(event["coin"], None)
+                # Clear trailing stop state for closed coins and persist immediately.
+                # Without this, mechanical_state.json retains ghost data. A new same-coin
+                # position opened before _check_profit_levels() runs (up to 60s away) would
+                # inherit stale trailing_active=True and a wrong trail price on restart.
+                _closed_coins = {event["coin"] for event in events}
+                for _coin in _closed_coins:
+                    self._trailing_active.pop(_coin, None)
+                    self._trailing_stop_px.pop(_coin, None)
+                    self._peak_roe.pop(_coin, None)
+                self._persist_mechanical_state()
                 # Try to get the full fresh state (also picks up any new positions)
                 try:
                     state = provider.get_user_state()
@@ -2061,12 +2074,92 @@ class Daemon:
                 if roe_pct < self._trough_roe.get(sym, 0):
                     self._trough_roe[sym] = roe_pct
 
-                # Breakeven stop: check every 10s with fresh price (not just 60s)
+                # Breakeven stop: two-layer capital + fee protection system
+                # ── Layer 1: Capital-breakeven — protect capital, accept fee loss ──
+                # Activates at a low fixed ROE threshold. SL moves to entry price.
+                # Worst case: exit costs the taker fee (~0.7% ROE at 20x).
+                # This is the safety net — catches trades that never reach fee-BE.
+                if (
+                    self.config.daemon.capital_breakeven_enabled
+                    and not self._capital_be_set.get(sym)
+                    and not self._breakeven_set.get(sym)  # Skip if fee-BE already set (tighter)
+                ):
+                    capital_be_threshold = self.config.daemon.capital_breakeven_roe
+                    if roe_pct >= capital_be_threshold:
+                        is_long = (side == "long")
+                        # SL at exactly entry price — no buffer (we accept the fee loss)
+                        capital_be_price = entry_px
+
+                        # Check if existing SL is already tighter than entry
+                        triggers = self._tracked_triggers.get(sym, [])
+                        has_tighter_sl = any(
+                            t.get("order_type") == "stop_loss" and (
+                                (is_long and t.get("trigger_px", 0) >= capital_be_price) or
+                                (not is_long and 0 < t.get("trigger_px", 0) <= capital_be_price)
+                            )
+                            for t in triggers
+                        )
+                        if has_tighter_sl:
+                            self._capital_be_set[sym] = True
+                        else:
+                            # Save old SL for rollback on failure
+                            old_sl_info = None
+                            for t in triggers:
+                                if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                    old_sl_info = (t["oid"], t.get("trigger_px"))
+                                    break
+
+                            try:
+                                # Cancel existing SL
+                                for t in triggers:
+                                    if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                        self._get_provider().cancel_order(sym, t["oid"])
+
+                                # Place capital-breakeven SL at entry price
+                                sz = pos.get("size", 0)
+                                self._get_provider().place_trigger_order(
+                                    symbol=sym,
+                                    is_buy=(side != "long"),
+                                    sz=sz,
+                                    trigger_px=capital_be_price,
+                                    tpsl="sl",
+                                )
+                                self._refresh_trigger_cache()
+                                self._capital_be_set[sym] = True
+                                logger.info(
+                                    "Capital-breakeven SET: %s %s | SL @ $%,.2f (entry) | ROE %+.1f%% >= %.1f%% threshold",
+                                    sym, side, capital_be_price, roe_pct, capital_be_threshold,
+                                )
+                                log_event(DaemonEvent(
+                                    "profit", f"capital_breakeven: {sym} {side}",
+                                    f"SL @ ${capital_be_price:,.2f} (entry) | ROE {roe_pct:+.1f}%",
+                                ))
+                            except Exception as cbe_err:
+                                logger.warning("Capital-breakeven failed for %s: %s", sym, cbe_err)
+                                # Rollback: restore old SL if placement failed
+                                if old_sl_info:
+                                    try:
+                                        self._get_provider().place_trigger_order(
+                                            symbol=sym,
+                                            is_buy=(side != "long"),
+                                            sz=pos.get("size", 0),
+                                            trigger_px=old_sl_info[1],
+                                            tpsl="sl",
+                                        )
+                                        self._refresh_trigger_cache()
+                                    except Exception:
+                                        logger.error(
+                                            "CRITICAL: Failed to restore old SL for %s after capital-BE failure", sym,
+                                        )
+
+                # ── Layer 2: Fee-breakeven — tighten SL to cover fees ──────────
+                # Activates when ROE covers round-trip fee. SL moves to entry + buffer.
+                # Worst case: ~$0 net. This is the upgrade from capital-BE.
                 if (
                     self.config.daemon.breakeven_stop_enabled
                     and not self._breakeven_set.get(sym)
                 ):
-                    fee_be_roe = self.config.daemon.taker_fee_pct * leverage
+                    fee_be_roe = get_trading_settings().taker_fee_pct * leverage
                     if roe_pct >= fee_be_roe:
                         type_info = self.get_position_type(sym)
                         trade_type = type_info["type"]
@@ -2092,43 +2185,56 @@ class Daemon:
                         if has_good_sl:
                             self._breakeven_set[sym] = True
                         else:
+                            # Save old SL for rollback
+                            old_sl_info = None
+                            for t in triggers:
+                                if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                    old_sl_info = (t["oid"], t.get("trigger_px"))
+                                    break
+
                             try:
-                                # Cancel existing SL before placing breakeven
-                                # (mirrors trailing stop pattern at lines 1937-1941)
+                                # Cancel existing SL before placing fee-breakeven
                                 for t in triggers:
                                     if t.get("order_type") == "stop_loss" and t.get("oid"):
                                         self._get_provider().cancel_order(sym, t["oid"])
                                 sz = pos.get("size", 0)
                                 self._get_provider().place_trigger_order(
                                     symbol=sym,
-                                    is_buy=(side != "long"),  # long → SELL stop; short → BUY stop
+                                    is_buy=(side != "long"),
                                     sz=sz,
                                     trigger_px=be_price,
                                     tpsl="sl",
                                 )
+                                self._refresh_trigger_cache()  # Fix Bug A: was missing
                                 self._breakeven_set[sym] = True
+                                # Also mark capital-BE as set (fee-BE is strictly tighter)
+                                self._capital_be_set[sym] = True
                                 type_label = f"{trade_type} {leverage}x"
-                                be_wake = (
-                                    f"[DAEMON — Breakeven Stop Set: {sym} {side.upper()} ({type_label})]\n\n"
-                                    f"{sym} {side.upper()} cleared fee break-even "
-                                    f"(ROE: {roe_pct:+.1f}% ≥ {fee_be_roe:.1f}% at {leverage}x). "
-                                    f"I placed a stop-loss at ${be_price:,.2f} "
-                                    f"({buffer_pct * 100:.2f}% buffer from entry ${entry_px:,.2f}).\n\n"
-                                    f"This trade is now risk-free. The SL is mechanical — do not remove it "
-                                    f"without a specific reason. Acknowledge and share your current plan for this position."
-                                )
-                                response = self._wake_agent(
-                                    be_wake, priority=False, max_coach_cycles=0,
-                                    max_tokens=512, source="daemon:breakeven",
+                                logger.info(
+                                    "Fee-breakeven SET: %s %s (%s) | SL @ $%,.2f | ROE %+.1f%% >= %.1f%%",
+                                    sym, side, type_label, be_price, roe_pct, fee_be_roe,
                                 )
                                 log_event(DaemonEvent(
-                                    "profit", f"breakeven_stop: {sym} {side}",
-                                    f"BE SL @ ${be_price:,.2f} | ROE {roe_pct:+.1f}%",
+                                    "profit", f"fee_breakeven: {sym} {side}",
+                                    f"SL @ ${be_price:,.2f} | ROE {roe_pct:+.1f}%",
                                 ))
-                                if response:
-                                    _queue_and_persist("System", f"Breakeven stop: {sym}", response)
                             except Exception as be_err:
-                                logger.warning("Breakeven stop failed for %s: %s", sym, be_err)
+                                logger.warning("Fee-breakeven failed for %s: %s", sym, be_err)
+                                # Rollback: restore old SL if placement failed
+                                if old_sl_info:
+                                    try:
+                                        self._get_provider().place_trigger_order(
+                                            symbol=sym,
+                                            is_buy=(side != "long"),
+                                            sz=pos.get("size", 0),
+                                            trigger_px=old_sl_info[1],
+                                            tpsl="sl",
+                                        )
+                                        self._refresh_trigger_cache()
+                                    except Exception:
+                                        logger.error(
+                                            "CRITICAL: Failed to restore old SL for %s after fee-BE failure", sym,
+                                        )
 
                 # ── Trailing Stop: mechanical exit, no agent involvement ──────────
                 # Activates once ROE exceeds threshold. Trails at configured
@@ -2147,6 +2253,7 @@ class Daemon:
                         # Phase 1: Check if trail should activate
                         if not self._trailing_active.get(sym) and roe_pct >= activation_roe:
                             self._trailing_active[sym] = True
+                            self._persist_mechanical_state()
                             logger.info(
                                 "Trailing stop ACTIVATED: %s %s | ROE %.1f%% >= %.1f%% threshold",
                                 sym, side, roe_pct, activation_roe,
@@ -2158,7 +2265,7 @@ class Daemon:
                             trail_roe = peak * (1.0 - retracement_pct)
 
                             # Floor: never trail below breakeven (fee break-even ROE)
-                            fee_be_roe = self.config.daemon.taker_fee_pct * leverage
+                            fee_be_roe = ts.taker_fee_pct * leverage
                             trail_roe = max(trail_roe, fee_be_roe)
 
                             # Convert trail ROE to price
@@ -2176,11 +2283,21 @@ class Daemon:
                                 should_update = (new_trail_px < old_trail_px) if old_trail_px > 0 else True
 
                             if should_update:
-                                self._trailing_stop_px[sym] = new_trail_px
-                                # Update the paper provider's SL to match
+                                # Update the paper provider's SL to match.
+                                # NOTE: _trailing_stop_px is updated INSIDE the try block, only
+                                # after successful placement. This prevents a silent state gap
+                                # where the code believes a SL is placed when it is not.
+                                #
+                                # Bug A fix: save old SL before cancel so we can roll back if
+                                # placement fails after cancel succeeds (position with NO SL).
+                                triggers = self._tracked_triggers.get(sym, [])
+                                old_sl_info = None
+                                for t in triggers:
+                                    if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                        old_sl_info = (t["oid"], t.get("trigger_px"))
+                                        break
                                 try:
                                     # Cancel existing SL first, then place new one
-                                    triggers = self._tracked_triggers.get(sym, [])
                                     for t in triggers:
                                         if t.get("order_type") == "stop_loss" and t.get("oid"):
                                             self._get_provider().cancel_order(sym, t["oid"])
@@ -2193,13 +2310,46 @@ class Daemon:
                                     )
                                     # Refresh trigger cache so check_triggers sees the new SL
                                     self._refresh_trigger_cache()
+                                    # Update in-memory state AFTER confirmed successful placement
+                                    self._trailing_stop_px[sym] = new_trail_px
+                                    self._persist_mechanical_state()
                                     if old_trail_px > 0:
                                         logger.info(
                                             "Trailing stop UPDATED: %s %s | $%,.2f → $%,.2f (peak ROE %.1f%%, trail ROE %.1f%%)",
                                             sym, side, old_trail_px, new_trail_px, peak, trail_roe,
                                         )
                                 except Exception as trail_err:
-                                    logger.warning("Trailing stop update failed for %s: %s", sym, trail_err)
+                                    _err = str(trail_err).lower()
+                                    if "no position" in _err or "no open position" in _err:
+                                        # Position already closed — evict stale zombie state immediately
+                                        # rather than waiting up to 60s for _check_positions() cleanup
+                                        logger.warning(
+                                            "Trailing stop update: position gone for %s, clearing zombie state",
+                                            sym,
+                                        )
+                                        self._prev_positions.pop(sym, None)
+                                        self._trailing_active.pop(sym, None)
+                                        self._trailing_stop_px.pop(sym, None)
+                                        self._peak_roe.pop(sym, None)
+                                    else:
+                                        logger.warning("Trailing stop update failed for %s: %s", sym, trail_err)
+                                        # Rollback: re-place old SL if cancel succeeded before placement failed.
+                                        # Without this, the position has ZERO stop-loss protection.
+                                        if old_sl_info:
+                                            try:
+                                                self._get_provider().place_trigger_order(
+                                                    symbol=sym,
+                                                    is_buy=(side != "long"),
+                                                    sz=pos.get("size", 0),
+                                                    trigger_px=old_sl_info[1],
+                                                    tpsl="sl",
+                                                )
+                                                self._refresh_trigger_cache()
+                                            except Exception:
+                                                logger.error(
+                                                    "CRITICAL: Failed to restore old SL for %s after trail update failure",
+                                                    sym,
+                                                )
 
                         # Phase 3: Check if trailing stop is HIT
                         # This is a backup — paper provider's check_triggers() catches it too,
@@ -2243,17 +2393,36 @@ class Daemon:
                                         self._position_types.pop(sym, None)
                                         self._persist_position_types()
                                         self._prev_positions.pop(sym, None)
+                                        self._trailing_active.pop(sym, None)
+                                        self._trailing_stop_px.pop(sym, None)
+                                        self._peak_roe.pop(sym, None)
+                                        # Bug F fix: persist after Phase 3 closes the position.
+                                        # Without this, the cleared trailing state is never written
+                                        # to disk — a restart reloads it and re-fires Phase 3.
+                                        self._persist_mechanical_state()
                                         try:
                                             self._get_provider().cancel_all_orders(sym)
                                         except Exception:
                                             pass
                                     except Exception as trail_close_err:
-                                        logger.warning("Trailing stop close failed for %s: %s", sym, trail_close_err)
+                                        _err = str(trail_close_err).lower()
+                                        if "no open position" in _err or "no position" in _err:
+                                            # Position already gone — evict zombie state immediately
+                                            logger.warning(
+                                                "Trailing stop close: position gone for %s, clearing zombie state",
+                                                sym,
+                                            )
+                                            self._prev_positions.pop(sym, None)
+                                            self._trailing_active.pop(sym, None)
+                                            self._trailing_stop_px.pop(sym, None)
+                                            self._peak_roe.pop(sym, None)
+                                        else:
+                                            logger.warning("Trailing stop close failed for %s: %s", sym, trail_close_err)
 
                 # Small Wins Mode: mechanical exit at configured ROE target (no agent decision)
                 ts = get_trading_settings()
                 if ts.small_wins_mode and not self._small_wins_exited.get(sym):
-                    fee_be_roe = self.config.daemon.taker_fee_pct * leverage
+                    fee_be_roe = ts.taker_fee_pct * leverage
                     # Floor: always require at least fee BE + 0.1% so we actually net a profit
                     exit_roe = max(ts.small_wins_roe_pct, fee_be_roe + 0.1)
                     if roe_pct >= exit_roe:
@@ -2364,6 +2533,53 @@ class Daemon:
                             "MFE corrected by candle: %s %s | %.1f%% → %.1f%% (+%.1f%%)",
                             sym, side, old_peak, best_roe, best_roe - old_peak,
                         )
+                    # Bug E fix: persist when trailing is active — peak drives trail price.
+                    # Without this, an updated peak (that would tighten the trail) is lost on
+                    # restart, letting the trail fall back to a looser position.
+                    if self._trailing_active.get(sym):
+                        self._persist_mechanical_state()
+
+                    # Re-evaluate capital-breakeven if candle shows threshold was crossed.
+                    # A wick above the threshold (even sub-second) earns entry-price protection.
+                    # Only capital-BE — fee-BE requires sustained price above threshold.
+                    if (
+                        self.config.daemon.capital_breakeven_enabled
+                        and not self._capital_be_set.get(sym)
+                        and not self._breakeven_set.get(sym)
+                    ):
+                        capital_threshold = self.config.daemon.capital_breakeven_roe
+                        if best_roe >= capital_threshold:
+                            is_long = (side == "long")
+                            try:
+                                triggers_for_sym = self._tracked_triggers.get(sym, [])
+                                has_tighter = any(
+                                    t.get("order_type") == "stop_loss" and (
+                                        (is_long and t.get("trigger_px", 0) >= entry_px) or
+                                        (not is_long and 0 < t.get("trigger_px", 0) <= entry_px)
+                                    )
+                                    for t in triggers_for_sym
+                                )
+                                if not has_tighter:
+                                    for t in triggers_for_sym:
+                                        if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                            self._get_provider().cancel_order(sym, t["oid"])
+                                    self._get_provider().place_trigger_order(
+                                        symbol=sym,
+                                        is_buy=(side != "long"),
+                                        sz=self._prev_positions.get(sym, {}).get("size", 0),
+                                        trigger_px=entry_px,
+                                        tpsl="sl",
+                                    )
+                                    self._refresh_trigger_cache()
+                                    self._capital_be_set[sym] = True
+                                    logger.info(
+                                        "Capital-BE from candle: %s %s | candle peak ROE %.1f%% >= %.1f%%",
+                                        sym, side, best_roe, capital_threshold,
+                                    )
+                                else:
+                                    self._capital_be_set[sym] = True
+                            except Exception as cbe_candle_err:
+                                logger.debug("Candle capital-BE failed for %s: %s", sym, cbe_candle_err)
 
                 if worst_roe < self._trough_roe.get(sym, 0):
                     old_trough = self._trough_roe.get(sym, 0)
@@ -2612,7 +2828,7 @@ class Daemon:
         self._update_daily_pnl(realized_pnl)
 
         # Record to Nous (auto-triggered closes aren't written by agent)
-        if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop"):
+        if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop", "capital_breakeven_stop"):
             self._record_trigger_close({
                 "coin": coin, "side": side, "entry_px": entry_px,
                 "exit_px": exit_px, "realized_pnl": realized_pnl,
@@ -2802,10 +3018,15 @@ class Daemon:
         """
         if classification != "stop_loss":
             return classification
-        if self._trailing_active.get(coin):
-            return "trailing_stop"
+        # Bug G fix: require both _trailing_active AND _trailing_stop_px to confirm "trailing_stop".
+        # _trailing_active is set in Phase 1 (activation), but _trailing_stop_px is only set in
+        # Phase 2 (after successful SL placement). If Phase 2 failed, the trail SL was never placed
+        # and classifying as "trailing_stop" would be wrong — fall through to breakeven checks.
+        if self._trailing_active.get(coin) and self._trailing_stop_px.get(coin): return "trailing_stop"
         if self._breakeven_set.get(coin):
             return "breakeven_stop"
+        if self._capital_be_set.get(coin):
+            return "capital_breakeven_stop"
         return classification
 
     # ================================================================
@@ -2881,7 +3102,7 @@ class Daemon:
                 ):
                     ts_tp = get_trading_settings()
                     if ts_tp.small_wins_mode:
-                        fee_be_tp = self.config.daemon.taker_fee_pct * leverage
+                        fee_be_tp = ts_tp.taker_fee_pct * leverage
                         exit_roe_tp = max(ts_tp.small_wins_roe_pct, fee_be_tp + 0.1)
                         # TP price: convert ROE target → price move → absolute price
                         price_move_pct = exit_roe_tp / leverage / 100
@@ -2912,7 +3133,7 @@ class Daemon:
                 if not self._small_wins_exited.get(coin):
                     ts_sw = get_trading_settings()
                     if ts_sw.small_wins_mode:
-                        fee_be_roe_sw = self.config.daemon.taker_fee_pct * leverage
+                        fee_be_roe_sw = ts_sw.taker_fee_pct * leverage
                         exit_roe_sw = max(ts_sw.small_wins_roe_pct, fee_be_roe_sw + 0.1)
                         if roe_pct >= exit_roe_sw:
                             try:
@@ -2965,12 +3186,17 @@ class Daemon:
                 if prev_side and prev_side != side:
                     self._profit_alerts.pop(coin, None)
                     self._breakeven_set.pop(coin, None)         # New position — re-evaluate breakeven
+                    self._capital_be_set.pop(coin, None)        # New position — re-evaluate capital-BE
                     self._small_wins_exited.pop(coin, None)    # New hold — re-arm small wins
                     self._small_wins_tp_placed.pop(coin, None) # New hold — re-arm TP order
                     self._peak_roe.pop(coin, None)             # New hold — reset MFE
                     self._trough_roe.pop(coin, None)           # New hold — reset MAE
                     self._trailing_active.pop(coin, None)      # New hold — re-arm trailing
                     self._trailing_stop_px.pop(coin, None)     # New hold — clear trail price
+                    # Bug C fix: persist after side-flip trailing state cleanup so the cleared
+                    # state reaches disk. Without this, a daemon restart loads stale trail state
+                    # onto the new (opposite-side) position and Phase 3 fires immediately.
+                    self._persist_mechanical_state()
                 self._profit_sides[coin] = side
 
                 if coin not in self._profit_alerts:
@@ -3028,6 +3254,9 @@ class Daemon:
             for coin in list(self._breakeven_set):
                 if coin not in open_coins:
                     del self._breakeven_set[coin]
+            for coin in list(self._capital_be_set):
+                if coin not in open_coins:
+                    del self._capital_be_set[coin]
             for coin in list(self._small_wins_exited):
                 if coin not in open_coins:
                     del self._small_wins_exited[coin]
@@ -3037,12 +3266,20 @@ class Daemon:
             for coin in list(self._trough_roe):
                 if coin not in open_coins:
                     del self._trough_roe[coin]
+            # Bug D fix: track whether any trailing state was evicted so we persist exactly once.
+            # Without this persist, stale entries survive in mechanical_state.json across restarts
+            # and ghost-fire Phase 3 on the next same-coin position.
+            _cleaned_trailing = False
             for coin in list(self._trailing_active):
                 if coin not in open_coins:
                     del self._trailing_active[coin]
+                    _cleaned_trailing = True
             for coin in list(self._trailing_stop_px):
                 if coin not in open_coins:
                     del self._trailing_stop_px[coin]
+                    _cleaned_trailing = True
+            if _cleaned_trailing:
+                self._persist_mechanical_state()
 
         except Exception as e:
             logger.debug("Profit level check failed: %s", e)
@@ -4183,6 +4420,70 @@ class Daemon:
                     logger.info("Loaded %d position types from disk", loaded)
         except Exception as e:
             logger.debug("Failed to load position types: %s", e)
+
+    def _persist_mechanical_state(self) -> None:
+        """Persist trailing stop state to disk so restarts don't degrade active SLs.
+
+        Saves _peak_roe, _trailing_stop_px, and _trailing_active.
+        On restart, _load_mechanical_state() restores these filtered to open positions.
+        This prevents the trailing stop from treating a restart as a fresh position
+        (old_trail_px=0 → should_update=True → cancels good SL and places worse one).
+        """
+        try:
+            import json as _json
+            path = self.config.project_root / "storage" / "mechanical_state.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            from ..core.persistence import _atomic_write
+            data = {
+                "peak_roe": self._peak_roe,
+                "trailing_stop_px": self._trailing_stop_px,
+                "trailing_active": self._trailing_active,
+            }
+            _atomic_write(path, _json.dumps(data))
+        except Exception as e:
+            logger.debug("Failed to persist mechanical state: %s", e)
+
+    def _load_mechanical_state(self) -> None:
+        """Load trailing stop state from disk on startup.
+
+        Only restores state for symbols that are currently open positions
+        (checked against _prev_positions). State for closed positions is
+        discarded — if a position closed while the daemon was down, its
+        state is irrelevant.
+
+        Must be called AFTER _init_position_tracking() so _prev_positions
+        is already populated with live positions.
+        """
+        try:
+            import json as _json
+            path = self.config.project_root / "storage" / "mechanical_state.json"
+            if not path.exists():
+                return
+            saved = _json.loads(path.read_text())
+            open_syms = set(self._prev_positions.keys())
+
+            restored = 0
+            for sym, val in saved.get("peak_roe", {}).items():
+                if sym in open_syms:
+                    self._peak_roe[sym] = val
+                    restored += 1
+            for sym, val in saved.get("trailing_stop_px", {}).items():
+                if sym in open_syms:
+                    self._trailing_stop_px[sym] = val
+            for sym, val in saved.get("trailing_active", {}).items():
+                if sym in open_syms:
+                    self._trailing_active[sym] = val
+
+            if restored:
+                logger.info(
+                    "Restored mechanical state for %d position(s) from disk "
+                    "(peak_roe=%s, trailing_active=%s)",
+                    restored,
+                    {k: f"{v:.1f}%" for k, v in self._peak_roe.items()},
+                    dict(self._trailing_active),
+                )
+        except Exception as e:
+            logger.debug("Failed to load mechanical state: %s", e)
 
     def _persist_daily_pnl(self):
         """Save daily PnL + counters to disk (survives restarts)."""

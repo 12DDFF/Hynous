@@ -115,6 +115,63 @@ Then `systemctl restart caddy`. Caddy auto-provisions HTTPS.
 
 Or just use the Discord bot — it's your main mobile interface anyway.
 
+## Test Instance
+
+A second Hynous instance for A/B testing (e.g., breakeven disabled vs enabled for ML metrics). Shares the data layer with production. All 4 services fit with ~860MB free RAM.
+
+```
+┌─────────────┬──────────────────────┬───────────────────────────┐
+│             │      Production      │           Test            │
+├─────────────┼──────────────────────┼───────────────────────────┤
+│ Dashboard   │ :3000                │ :3001                     │
+├─────────────┼──────────────────────┼───────────────────────────┤
+│ Backend API │ :8000                │ :8001                     │
+├─────────────┼──────────────────────┼───────────────────────────┤
+│ Nous        │ :3100                │ :3101 (fresh empty DB)    │
+├─────────────┼──────────────────────┼───────────────────────────┤
+│ Data Layer  │ :8100                │ shared                    │
+├─────────────┼──────────────────────┼───────────────────────────┤
+│ Path        │ /opt/hynous          │ /opt/hynous-test          │
+├─────────────┼──────────────────────┼───────────────────────────┤
+│ Storage     │ /opt/hynous/storage/ │ /opt/hynous-test/storage/ │
+├─────────────┼──────────────────────┼───────────────────────────┤
+│ Services    │ hynous + nous        │ hynous-test + nous-test   │
+├─────────────┼──────────────────────┼───────────────────────────┤
+│ Discord     │ enabled              │ disabled                  │
+└─────────────┴──────────────────────┴───────────────────────────┘
+```
+
+### Managing the Test Instance
+
+```bash
+# Start
+ssh vps "sudo systemctl start hynous-test nous-test"
+
+# Restart
+ssh vps "sudo systemctl restart hynous-test"
+
+# Stop (free RAM when not testing)
+ssh vps "sudo systemctl stop hynous-test nous-test"
+```
+
+### Deploying Changes
+
+```bash
+# Deploy to test instance
+ssh vps "cd /opt/hynous-test && sudo -u hynous git pull && sudo systemctl restart hynous-test"
+
+# Promote test to production (after validating)
+git checkout main && git merge test-env && git push origin main
+ssh vps "cd /opt/hynous && sudo -u hynous git pull && sudo systemctl restart hynous"
+```
+
+### Branch Mapping
+
+- `main` branch → `/opt/hynous` (production, ports 3000/8000/3100)
+- `test-env` branch → `/opt/hynous-test` (testing, ports 3001/8001/3101)
+
+Test services are **disabled** (won't auto-start on reboot) so they don't eat RAM when not in use. Start manually when needed.
+
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-03-10

@@ -349,7 +349,7 @@ class TestTO3TieredTruncation:
         """_STALE_TRUNCATION dict must exist with tiered limits."""
         from src.hynous.intelligence.agent import _STALE_TRUNCATION
         assert isinstance(_STALE_TRUNCATION, dict)
-        assert len(_STALE_TRUNCATION) == 26
+        assert len(_STALE_TRUNCATION) == 28
 
     def test_default_stale_limit_is_800(self):
         """_DEFAULT_STALE_LIMIT must be 800 (backward compat for unknown tools)."""
