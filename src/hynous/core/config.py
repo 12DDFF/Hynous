@@ -23,7 +23,7 @@ def _find_project_root() -> Path:
 
 @dataclass
 class AgentConfig:
-    model: str = "openrouter/anthropic/claude-sonnet-4-5-20250929"  # OpenRouter: 1 key, all models
+    model: str = "openrouter/anthropic/claude-sonnet-4-6"  # OpenRouter: 1 key, all models
     max_tokens: int = 2048
     temperature: float = 0.7
 
@@ -275,7 +275,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
         hyperliquid_private_key=os.environ.get("HYPERLIQUID_PRIVATE_KEY", ""),
         agent=AgentConfig(
-            model=agent_raw.get("model", "openrouter/anthropic/claude-sonnet-4-5-20250929"),
+            model=agent_raw.get("model", "openrouter/anthropic/claude-sonnet-4-6"),
             max_tokens=agent_raw.get("max_tokens", 2048),
             temperature=agent_raw.get("temperature", 0.7),
         ),

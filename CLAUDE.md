@@ -99,7 +99,7 @@ CRYPTOCOMPARE_API_KEY=...           # News feed (optional)
 | Branch | Purpose | VPS Path | Deploys to |
 |--------|---------|----------|------------|
 | `main` | **Production** — live trading agent | `/opt/hynous` | Ports 3000/8000/3100 |
-| `test` | **Testing** — experimental changes | `/opt/hynous-test` | Ports 3001/8001/3101 |
+| `test-env` | **Testing** — experimental changes | `/opt/hynous-test` | Ports 3001/8001/3101 |
 
 **Rules:**
 - **NEVER push experimental/untested code to `main`.** Production runs on `main`.
@@ -110,9 +110,9 @@ CRYPTOCOMPARE_API_KEY=...           # News feed (optional)
 **Deploy workflow:**
 ```bash
 # Deploy to TEST
-git checkout test
+git checkout test-env
 # ... make changes ...
-git push origin test
+git push origin test-env
 ssh vps "cd /opt/hynous-test && sudo -u hynous git pull && sudo systemctl restart hynous-test"
 
 # Promote to PRODUCTION (after verifying on test)
@@ -188,9 +188,10 @@ cd nous-server && pnpm test
 - `docs/README.md` — Central documentation hub
 - `docs/integration.md` — Cross-system data flows (satellite ↔ data-layer ↔ daemon)
 - `docs/revisions/trade-mechanism-debug/` — 5 fix guides for mechanical exit bugs (implemented)
+- `docs/revisions/breakeven-fix/` — Two-layer breakeven system + Round 2 bugs A–I (implemented)
 - `docs/archive/` — Completed revision guides (all resolved, kept for reference)
 - Each major directory has its own `README.md`
 
 ---
 
-Last updated: 2026-03-09
+Last updated: 2026-03-12

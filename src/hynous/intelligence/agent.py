@@ -82,7 +82,7 @@ class Agent:
     """LLM-powered agent with Hynous persona and tool access.
 
     Uses LiteLLM for multi-provider support (Claude, GPT-4, DeepSeek, etc.).
-    Provider is selected via the model config string (e.g. "anthropic/claude-sonnet-4-5-20250929").
+    Provider is selected via the model config string (e.g. "anthropic/claude-sonnet-4-6").
     """
 
     def __init__(

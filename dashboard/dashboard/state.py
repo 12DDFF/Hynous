@@ -131,7 +131,7 @@ _MODEL_OPTIONS: list[tuple[str, str]] = [
     # Anthropic
     ("Claude Opus 4.6", "openrouter/anthropic/claude-opus-4.6"),
     ("Claude Opus 4.5", "openrouter/anthropic/claude-opus-4.5"),
-    ("Claude Sonnet 4.5", "openrouter/anthropic/claude-sonnet-4-5-20250929"),
+    ("Claude Sonnet 4.6", "openrouter/anthropic/claude-sonnet-4-6"),
     ("Claude Haiku 4.5", "openrouter/anthropic/claude-haiku-4-5-20251001"),
     # OpenAI — GPT-5.2
     ("GPT-5.2 Pro", "openrouter/openai/gpt-5.2-pro"),
@@ -2427,7 +2427,7 @@ class AppState(rx.State):
         )
 
     # === Model Selection ===
-    selected_model: str = "openrouter/anthropic/claude-sonnet-4-5-20250929"
+    selected_model: str = "openrouter/anthropic/claude-sonnet-4-6"
     selected_sub_model: str = "openrouter/anthropic/claude-haiku-4-5-20251001"
 
     @rx.var

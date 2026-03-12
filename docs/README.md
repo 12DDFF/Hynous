@@ -115,7 +115,7 @@ Key conventions:
 |-------|-------------|
 | [ws-price-feed/](./revisions/ws-price-feed/) | `allMids` WebSocket feed in daemon — sub-second prices for mechanical exits, 1s loop, REST fallback |
 
-### Implemented (2026-03-11)
+### Implemented (2026-03-12)
 
 | Track | Description |
 |-------|-------------|
@@ -169,4 +169,4 @@ See [archive/README.md](./archive/README.md) for a complete index.
 
 ---
 
-Last updated: 2026-03-11 (breakeven-fix Round 2 complete)
+Last updated: 2026-03-12 (breakeven-fix Round 2 deployed, all 655 tests passing)

@@ -126,11 +126,13 @@ daemon:
   playbook_cache_ttl: 1800         # Playbook matcher cache refresh (seconds)
 ```
 
-`DaemonConfig` also has keys not present in the YAML (loaded from dataclass defaults): `phantom_check_interval` (1800), `phantom_max_age_seconds` (14400), `peak_reversion_threshold_micro` (0.40), `peak_reversion_threshold_macro` (0.50), `breakeven_stop_enabled` (true), `breakeven_buffer_micro_pct` (0.10), `breakeven_buffer_macro_pct` (0.30), `taker_fee_pct` (0.07).
+`DaemonConfig` also has keys not present in the YAML (loaded from dataclass defaults): `phantom_check_interval` (1800), `phantom_max_age_seconds` (14400). The following fields ARE in the YAML and are now wired through `load_config()` (fixed in breakeven-fix Round 2, Bug I): `peak_reversion_threshold_micro` (0.40), `peak_reversion_threshold_macro` (0.50), `breakeven_stop_enabled` (true), `breakeven_buffer_micro_pct` (0.07), `breakeven_buffer_macro_pct` (0.07), `capital_breakeven_enabled` (true), `capital_breakeven_roe` (0.5), `trailing_stop_enabled` (true), `candle_peak_tracking_enabled` (true). Note: `taker_fee_pct` was removed from `DaemonConfig` (now lives in `TradingSettings` only — use `get_trading_settings().taker_fee_pct`).
 
 ### `scanner` -> `ScannerConfig`
 
 Market scanner — anomaly detection across all Hyperliquid pairs. Includes macro detectors (price spikes, funding extremes, OI surges, liquidation cascades), micro/L2 detectors (book imbalance flips, momentum bursts, adverse book signals), and news integration (CryptoCompare polling).
+
+`ScannerConfig` has two additional fields wired through `load_config()` (fixed in breakeven-fix Round 2, Bug I): `peak_reversion_threshold_micro` (0.40) and `peak_reversion_threshold_macro` (0.50). `taker_fee_pct` was removed from `ScannerConfig` — scanner now reads from `get_trading_settings().taker_fee_pct`.
 
 ```yaml
 scanner:
@@ -307,4 +309,4 @@ print(config.execution.mode)
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-03-12

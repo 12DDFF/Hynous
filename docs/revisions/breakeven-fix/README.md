@@ -1,6 +1,6 @@
 # Breakeven System Fix — Two-Layer Capital + Fee Protection
 
-> **Status:** In Progress — Code implemented (commit `5224ade`, 2026-03-10), validation pending
+> **Status:** IMPLEMENTED — Round 1 (commit `5224ade`, 2026-03-10) + Round 2 bugs A–I (commit `5f3c47c`, 2026-03-12)
 > **Priority:** Critical
 > **Depends on:** WS price feed (implemented), mechanical exits (implemented), trade mechanism debug (5 fixes implemented)
 
@@ -893,33 +893,28 @@ All 3 bundled bug fixes applied:
 
 Tests: `tests/unit/test_breakeven_fix.py` created with test coverage.
 
-### Known Issue: State Persistence on Daemon Restart
+### State Persistence — FIXED in Round 2
 
-**Critical vulnerability identified but NOT yet fixed:**
+State persistence was the primary vulnerability identified after Round 1. **Fixed by Round 2 bugs B–F.**
 
-All daemon state dicts (`_peak_roe`, `_trailing_stop_px`, `_trailing_active`, `_breakeven_set`, `_capital_be_set`) are in-memory only. On daemon restart (deployment, crash, systemd restart):
+`_persist_mechanical_state()` writes `_peak_roe`, `_trailing_active`, `_trailing_stop_px` to `storage/mechanical_state.json`. `_load_mechanical_state()` restores on startup filtered by open positions.
 
-1. `_peak_roe` resets to 0 → trailing stop computes trail from a much lower "peak"
-2. `_trailing_stop_px` resets to 0 → `should_update = True` on first check, even if new trail is WORSE
-3. Both flags reset → breakeven re-evaluation fires, but the "has_tighter_sl" check should prevent degradation
+Round 2 added `_persist_mechanical_state()` calls at every state transition:
+- **Bug B** — after position-close eviction (clears closed coin state, persists immediately)
+- **Bug C** — after side-flip cleanup (persist before marking new side)
+- **Bug D** — after stale trailing cleanup loop (conditional persist)
+- **Bug E** — after `_update_peaks_from_candles()` peak update
+- **Bug F** — after Phase 3 success pop block
 
-**Specific risk with trailing stop after restart:**
-- Pre-restart: peak ROE = +10%, trail SL at +5% ROE price
-- Post-restart: `_peak_roe` starts at current ROE (say +3%), trail = 3% × 0.5 = 1.5%, floored at 1.4%
-- `_trailing_stop_px` is 0 → `should_update = True` → CANCELS the +5% SL and replaces with +1.4% SL
-- The SL just got 3.6% ROE worse
+**Remaining notes:**
+- `_breakeven_set` and `_capital_be_set` are NOT persisted to disk — but the "has_tighter_sl" check in both BE blocks prevents SL degradation on restart (the existing SL at entry price is already tighter than a re-evaluation would place)
+- `_trailing_stop_px` IS persisted — the restart-safe trailing vulnerability (cancelling +5% SL and replacing with +1.4%) is now fixed
 
-**Paper provider mitigation:** `pos.sl_px` IS persisted to `paper-state.json`. `check_triggers()` runs BEFORE the trailing stop update in `_fast_trigger_check()`. So if price already dropped below the persisted SL, the position closes correctly. The vulnerability only manifests when the daemon restarts while the price is still ABOVE the trailing stop level.
+### Next Steps
 
-**Live provider mitigation:** Exchange-side SL orders persist independently. But the daemon's trailing stop update code would still cancel and re-place with a worse level.
-
-### Next Steps (2026-03-12)
-
-1. **Investigate March 11 trade failures** — HYPE LONG peaked +10.4%, exited -5.18%. Check VPS daemon logs, paper-state.json, and deployment timing to determine root cause.
-2. **Fix state persistence** — Persist `_peak_roe`, `_trailing_stop_px`, `_trailing_active`, `_breakeven_set`, `_capital_be_set` to disk (same pattern as `_position_types`). On restart, load from disk so trailing stops don't degrade.
-3. **Add restart-safe trailing stop** — Before updating trailing SL after restart, check if the existing SL (from trigger cache) is already tighter than the computed trail. If so, adopt the existing SL level into `_trailing_stop_px` instead of overwriting.
-4. **Validate on paper** — Run multiple trades through the full lifecycle (entry → capital-BE → fee-BE → trailing → exit) without daemon restarts, then WITH a restart mid-trade.
+1. **Validate on paper** — Run multiple trades through the full lifecycle (entry → capital-BE → fee-BE → trailing → exit) without daemon restarts, then WITH a restart mid-trade.
+2. **Live trading** — Once paper validation is complete, flip `execution.mode` to `live_confirm`.
 
 ---
 
-Last updated: 2026-03-11
+Last updated: 2026-03-12

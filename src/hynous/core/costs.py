@@ -54,7 +54,7 @@ def _save(data: dict) -> None:
 def _model_label(model: str) -> str:
     """Convert a full model ID to a short display label.
 
-    'openrouter/anthropic/claude-sonnet-4-5-20250929' → 'claude-sonnet-4-5'
+    'openrouter/anthropic/claude-sonnet-4-6' → 'claude-sonnet-4-5'
     'openrouter/x-ai/grok-4.1-fast' → 'grok-4.1-fast'
     """
     # Strip openrouter/ prefix

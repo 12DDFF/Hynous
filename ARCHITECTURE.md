@@ -290,13 +290,19 @@ User sees Hynous response
 ```
 daemon.py (continuous loop)
     │
+    ├── _fast_trigger_check() (every 1s — WS prices via _get_prices_with_ws_fallback())
+    │     ├── check_triggers() → SL/TP fill detection
+    │     ├── Capital-breakeven (Layer 1, 0.5% ROE → SL at entry price)
+    │     ├── Fee-breakeven (Layer 2, fee-proportional ROE → SL at entry + buffer)
+    │     └── Trailing stop (Phase 1/2/3, 2.8% ROE activation, 50% retracement trail)
+    │
     ├── _poll_prices() (every 60s)
     │     ├── scanner.py (macro anomaly detection across all pairs)
     │     └── L2 book + 5m candle polling (micro detectors)
     │
     ├── _poll_derivatives() (every 300s)
     │     ├── Funding, OI, sentiment data
-    │     ├── satellite.tick() → compute 12 features → satellite.db
+    │     ├── satellite.tick() → compute 28 features → satellite.db
     │     └── news polling (CryptoCompare)
     │
     ├── _check_positions() → fill detection → _wake_for_fill()
@@ -606,6 +612,30 @@ Trade mechanism debug (2026-03-06): 6 bugs + 1 systemic issue in the mechanical 
 
 WebSocket price feed (2026-03-09): daemon subscribes to Hyperliquid `allMids` WebSocket feed in a background thread (`hynous-ws-prices`). Prices update sub-second and are consumed by `_fast_trigger_check()` via `_get_prices_with_ws_fallback()`. Falls back to REST if WS is down or stale (>30s). Main loop sleep reduced from 10s to 1s for responsive mechanical exits. Config: `daemon.ws_price_feed: true`. **IMPLEMENTED.**
 
+### `docs/revisions/breakeven-fix/`
+
+Two-layer capital + fee breakeven system (2026-03-10) + Round 2 bug fixes (2026-03-12). **IMPLEMENTED.**
+
+**Round 1 — Two-layer redesign:**
+- Capital-breakeven (Layer 1): fixed 0.5% ROE threshold, SL at entry price, accepts fee loss (~0.7% ROE at 20x)
+- Fee-breakeven (Layer 2): fee-proportional threshold (1.4% at 20x), SL at entry + 0.07% buffer, nets ~$0
+- Both layers: fully mechanical (no `_wake_agent()`), rollback on failure, `_refresh_trigger_cache()` after placement
+- Candle peak tracking re-evaluates capital-BE on wick detection
+- 3 bundled bug fixes: A (missing cache refresh), B (blocking wake removed), C (cancel-replace rollback)
+
+**Round 2 — 9 bugs fixed (mechanical-exit-fixes-2.md):**
+- **A** (Phase 2 trail rollback): save/restore old SL info on trail update failure
+- **B** (ghost-state persistence): separate `_closed_coins` loop + unconditional `_persist_mechanical_state()` on close eviction
+- **C** (side-flip persist): `_persist_mechanical_state()` inside side-flip cleanup block
+- **D** (cleanup loop persist): conditional `_persist_mechanical_state()` after stale trailing cleanup
+- **E** (candle peak persist): `_persist_mechanical_state()` after `_update_peaks_from_candles()` updates peak
+- **F** (Phase 3 success persist): `_persist_mechanical_state()` after Phase 3 pop block
+- **G** (classification one-liner): trailing check as single-line condition + return
+- **H** (`taker_fee_pct` unification): all 6 daemon.py + scanner.py references → `get_trading_settings().taker_fee_pct`; field removed from `DaemonConfig` and `ScannerConfig`
+- **I** (load_config wiring): 9 `DaemonConfig` fields + 2 `ScannerConfig` fields that existed in YAML + dataclass but were never wired through constructor
+
+State persistence: `_persist_mechanical_state()` writes `_peak_roe`, `_trailing_active`, `_trailing_stop_px` to `storage/mechanical_state.json`; `_load_mechanical_state()` restores on startup (filtered by open positions). All 655 unit tests pass.
+
 ---
 
 ## For Future Agents
@@ -613,7 +643,7 @@ WebSocket price feed (2026-03-09): daemon subscribes to Hyperliquid `allMids` We
 When working on this codebase:
 
 1. **Check docs/archive/ first** -- contains documented issues and their resolutions (formerly `revisions/`)
-2. **Most revisions complete** -- Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning, memory sections, brain visualization, portfolio tracking, ML wiring, mechanical exits, real-time price data, agent trade memory, trade mechanism debug, and WS price feed are all fully implemented
+2. **Most revisions complete** -- Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning, memory sections, brain visualization, portfolio tracking, ML wiring, mechanical exits, real-time price data, agent trade memory, trade mechanism debug, WS price feed, and breakeven-fix (Round 1 + Round 2) are all fully implemented
 4. **Check existing patterns** -- Don't reinvent, extend
 5. **Keep modules focused** -- One responsibility per file
 6. **Update this doc** -- If you change architecture, document it
@@ -623,4 +653,4 @@ When working on this codebase:
 
 ---
 
-Last updated: 2026-03-09
+Last updated: 2026-03-12
