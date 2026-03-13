@@ -199,7 +199,7 @@ class SatelliteStore:
             FROM snapshots s
             LEFT JOIN snapshot_labels sl ON s.snapshot_id = sl.snapshot_id
             WHERE s.coin = ? AND s.created_at < ? AND sl.snapshot_id IS NULL
-            ORDER BY s.created_at ASC
+            ORDER BY s.created_at DESC
             """,
             (coin, cutoff),
         ).fetchall()
