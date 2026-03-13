@@ -293,6 +293,7 @@ class Daemon:
         self._consolidation_thread: threading.Thread | None = None
         self._curiosity_thread: threading.Thread | None = None
         self._review_thread: threading.Thread | None = None
+        self._labeler_thread: threading.Thread | None = None
 
         # Per-node cooldown for fading memory alerts (node_id → last alert timestamp).
         # Prevents the same WEAK node from triggering a wake on every 6h decay cycle.
@@ -315,6 +316,7 @@ class Daemon:
         self._last_health_check: float = 0
         self._last_embedding_backfill: float = 0
         self._last_consolidation: float = 0
+        self._last_labeler_run: float = 0
 
         # Nous health state
         self._nous_healthy: bool = True
@@ -561,6 +563,8 @@ class Daemon:
         self.conflict_checks: int = 0
         self.health_checks: int = 0
         self.embedding_backfills: int = 0
+        self.labeler_runs: int = 0
+        self.snapshots_labeled_total: int = 0
         self.polls: int = 0
         self._review_count: int = 0
 
@@ -886,6 +890,15 @@ class Daemon:
                 "prices": dict(self.snapshot.prices),
                 "fear_greed": self.snapshot.fear_greed,
             },
+            "ws": {
+                "connected": self._ws_connected,
+                "last_msg_age": round(time.time() - self._ws_last_msg, 1) if self._ws_last_msg else None,
+                "price_count": len(self._ws_prices),
+            },
+            "labeler": {
+                "runs": self.labeler_runs,
+                "labeled_total": self.snapshots_labeled_total,
+            },
             "regime": {
                 "label": self._regime.label if self._regime else "UNKNOWN",
                 "score": round(self._regime.score, 2) if self._regime else 0,
@@ -982,6 +995,7 @@ class Daemon:
         self._last_health_check = time.time()
         self._last_embedding_backfill = time.time()
         self._last_consolidation = time.time()
+        self._last_labeler_run = time.time() - self.config.daemon.labeler_interval + 300  # First run after 5min warmup
         self._last_fill_check = time.time()
         self._last_phantom_check = time.time()
         self._load_phantoms()
@@ -994,7 +1008,7 @@ class Daemon:
                 daemon=True,
                 name="hynous-ws-prices",
             ).start()
-            logger.info("WS price feed thread launched")
+            logger.warning("WS price feed thread launched")
 
         while self._running:
             try:
@@ -1015,6 +1029,16 @@ class Daemon:
                 # SL/TP must fire promptly — can't wait 60s between checks.
                 # Fetches fresh prices only for position symbols (1 cheap API call).
                 self._fast_trigger_check()
+
+                # 1a-ter. WS health monitor — detect stale connections
+                if self.config.daemon.ws_price_feed and self._ws_connected:
+                    ws_age = now - self._ws_last_msg if self._ws_last_msg else float("inf")
+                    if ws_age > 60:
+                        logger.warning(
+                            "WS price feed stale (last msg %.0fs ago), forcing fallback to REST",
+                            ws_age,
+                        )
+                        self._ws_connected = False
 
                 # 1a-bis. Candle-based peak tracking (every 60s) for open positions
                 # Catches MFE/MAE extremes missed by 10s polling gaps.
@@ -1178,6 +1202,24 @@ class Daemon:
                     else:
                         logger.debug("Consolidation still running — skipping interval")
 
+                # 11. Satellite labeling — outcome labels for ML validation (default every 1 hour)
+                # Labels snapshots that are 4h+ old with ground-truth ROE outcomes.
+                # Without this, condition model predictions cannot be validated.
+                if (
+                    self._satellite_store
+                    and now - self._last_labeler_run >= self.config.daemon.labeler_interval
+                ):
+                    self._last_labeler_run = now
+                    if self._labeler_thread is None or not self._labeler_thread.is_alive():
+                        self._labeler_thread = threading.Thread(
+                            target=self._run_labeler,
+                            daemon=True,
+                            name="hynous-labeler",
+                        )
+                        self._labeler_thread.start()
+                    else:
+                        logger.debug("Labeler still running — skipping interval")
+
             except Exception as e:
                 log_event(DaemonEvent("error", "Loop error", str(e)))
                 logger.error("Daemon loop error: %s", e)
@@ -1249,10 +1291,21 @@ class Daemon:
         """Background thread: subscribe to Hyperliquid allMids WebSocket.
 
         Maintains self._ws_prices with sub-second price updates.
-        Auto-reconnects on disconnect with 5s delay.
+        Auto-reconnects on disconnect with exponential backoff (5s → 60s cap).
         Falls back silently — if WS is down, _fast_trigger_check uses REST.
         """
-        import websocket as _ws_lib
+        # Use WARNING level for WS lifecycle — INFO is filtered in production
+        logger.warning("WS price feed thread starting...")
+
+        try:
+            import websocket as _ws_lib
+        except ImportError:
+            logger.error(
+                "websocket-client not installed — WS price feed disabled. "
+                "Install with: pip install websocket-client"
+            )
+            return  # Exit thread permanently — don't loop on ImportError
+
         import json as _json
 
         url = "wss://api.hyperliquid.xyz/ws"
@@ -1261,11 +1314,15 @@ class Daemon:
             "subscription": {"type": "allMids"},
         })
 
+        reconnect_delay = 5  # Exponential backoff: 5 → 10 → 20 → 40 → 60 cap
+
         def on_open(ws):
+            nonlocal reconnect_delay
             ws.send(sub_msg)
             self._ws_connected = True
             self._ws_last_msg = time.time()
-            logger.info("WS price feed connected")
+            reconnect_delay = 5  # Reset backoff on successful connect
+            logger.warning("WS price feed connected (%d prices)", len(self._ws_prices) or 0)
 
         def on_message(ws, raw):
             try:
@@ -1280,13 +1337,14 @@ class Daemon:
 
         def on_close(ws, close_status_code=None, close_msg=None):
             self._ws_connected = False
-            logger.warning("WS price feed disconnected")
+            logger.warning("WS price feed disconnected (code=%s)", close_status_code)
 
         def on_error(ws, err):
             logger.warning("WS price feed error: %s", err)
 
         while self._running:
             try:
+                logger.warning("WS price feed connecting to %s...", url)
                 ws = _ws_lib.WebSocketApp(
                     url,
                     on_open=on_open,
@@ -1302,11 +1360,14 @@ class Daemon:
             self._ws_connected = False
             if not self._running:
                 break
-            # Reconnect delay — interruptible via short sleeps
-            for _ in range(10):  # 10 * 0.5s = 5s max
+
+            logger.warning("WS reconnecting in %ds...", reconnect_delay)
+            for _ in range(int(reconnect_delay * 2)):  # 0.5s increments for interruptibility
                 if not self._running:
                     break
                 time.sleep(0.5)
+
+            reconnect_delay = min(reconnect_delay * 2, 60)  # Cap at 60s
 
     def _get_prices_with_ws_fallback(self) -> dict[str, float]:
         """Get prices from WS if available and fresh, otherwise fall back to REST.
@@ -1693,10 +1754,11 @@ class Daemon:
         if self._condition_engine and self._satellite_store:
             try:
                 from satellite.features import FEATURE_NAMES as _FEAT_NAMES
-                for coin in self._satellite_config.coins:
-                    latest = self._satellite_store.get_latest_snapshot(coin)
-                    if not latest:
-                        continue
+                # Only predict for BTC — models are trained on BTC data only.
+                # Applying BTC-calibrated percentiles to ETH/SOL produces misleading regimes.
+                coin = "BTC"
+                latest = self._satellite_store.get_latest_snapshot(coin)
+                if latest:
                     features = {name: latest.get(name, 0.0) for name in _FEAT_NAMES}
                     conditions = self._condition_engine.predict(coin, features)
                     if coin not in self._latest_predictions:
@@ -4892,6 +4954,89 @@ class Daemon:
 
         except Exception as e:
             logger.warning("Embedding backfill failed: %s", e)
+
+    def _run_labeler(self):
+        """Label unlabeled satellite snapshots with ground-truth outcome data.
+
+        Runs in a background thread. For each unlabeled snapshot (4h+ old),
+        fetches 5m candles covering +4h forward and computes ROE/MAE labels.
+        Rate-limited by batch_size and inter-fetch delay to avoid 429s.
+        """
+        if not self._satellite_store:
+            return
+
+        try:
+            from satellite.labeler import compute_labels, save_labels
+
+            coins = self._satellite_config.coins if self._satellite_config else ["BTC", "ETH", "SOL"]
+            batch_size = self.config.daemon.labeler_batch_size
+            leverage = self.config.hyperliquid.default_leverage
+            total_labeled = 0
+
+            for coin in coins:
+                if not self._running:
+                    break
+
+                unlabeled = self._satellite_store.get_unlabeled_snapshots(coin)
+                batch = unlabeled[:batch_size]
+
+                for snap in batch:
+                    if not self._running:
+                        break
+                    try:
+                        start = snap["created_at"] - 300  # include entry candle
+                        end = snap["created_at"] + 14400 + 300  # +4h +5min buffer
+
+                        candles = self._labeler_candle_fetcher(coin, start, end)
+                        if not candles:
+                            continue
+
+                        result = compute_labels(
+                            snapshot_id=snap["snapshot_id"],
+                            entry_time=snap["created_at"],
+                            coin=coin,
+                            candles=candles,
+                            leverage=leverage,
+                        )
+
+                        if result:
+                            save_labels(self._satellite_store, result)
+                            total_labeled += 1
+
+                        # Rate limit: 0.5s between candle fetches to avoid 429s
+                        time.sleep(0.5)
+
+                    except Exception:
+                        logger.debug(
+                            "Labeling failed for %s snapshot %s",
+                            coin, snap["snapshot_id"], exc_info=True,
+                        )
+
+            self.labeler_runs += 1
+            self.snapshots_labeled_total += total_labeled
+
+            if total_labeled:
+                logger.warning("Labeler: labeled %d snapshots", total_labeled)
+                log_event(DaemonEvent(
+                    "labeler", "Snapshot labeling",
+                    f"{total_labeled} snapshots labeled",
+                ))
+            else:
+                logger.debug("Labeler: no snapshots to label")
+
+        except Exception as e:
+            logger.warning("Labeler run failed: %s", e)
+
+    def _labeler_candle_fetcher(self, coin: str, start_time: float, end_time: float) -> list[dict]:
+        """Candle fetcher adapter for the labeler.
+
+        Converts seconds-based timestamps to milliseconds for the provider API.
+        Returns 5m candles sorted ascending.
+        """
+        provider = self._get_provider()
+        start_ms = int(start_time * 1000)
+        end_ms = int(end_time * 1000)
+        return provider.get_candles(coin, "5m", start_ms, end_ms)
 
     def _check_conflicts(self):
         """Poll the Nous contradiction queue for pending conflicts.

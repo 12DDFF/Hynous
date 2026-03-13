@@ -136,6 +136,9 @@ class DaemonConfig:
     candle_peak_tracking_enabled: bool = True       # Use 1m candle high/low for peak/trough tracking
     # WebSocket price feed (sub-second prices for trigger checks)
     ws_price_feed: bool = True               # Enable WS allMids feed for _fast_trigger_check
+    # Satellite labeling (outcome labels for ML validation)
+    labeler_interval: int = 3600             # Seconds between labeling runs (1 hour)
+    labeler_batch_size: int = 50             # Max snapshots to label per coin per run
 
 
 @dataclass
@@ -334,6 +337,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
             phantom_max_age_seconds=daemon_raw.get("phantom_max_age_seconds", 14400),
             playbook_cache_ttl=daemon_raw.get("playbook_cache_ttl", 1800),
             ws_price_feed=daemon_raw.get("ws_price_feed", True),
+            labeler_interval=daemon_raw.get("labeler_interval", 3600),
+            labeler_batch_size=daemon_raw.get("labeler_batch_size", 50),
         ),
         scanner=ScannerConfig(
             enabled=scanner_raw.get("enabled", True),

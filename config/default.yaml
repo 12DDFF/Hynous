@@ -63,6 +63,9 @@ daemon:
   candle_peak_tracking_enabled: true
   # WebSocket price feed (sub-second prices for mechanical exits)
   ws_price_feed: true                 # allMids WS feed for _fast_trigger_check
+  # Satellite labeling (outcome labels for ML validation)
+  labeler_interval: 3600              # Snapshot outcome labeling interval (seconds, 1 hour)
+  labeler_batch_size: 50              # Max snapshots per coin per run (rate limit protection)
 
 # Market scanner (anomaly detection across ALL Hyperliquid pairs)
 scanner:
