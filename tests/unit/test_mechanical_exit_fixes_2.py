@@ -172,7 +172,7 @@ class TestBugBCheckTriggersCleanup:
         """_persist_mechanical_state must be called in the events block."""
         source = _fast_trigger_check_source()
         events_block_start = source.find("if events:")
-        events_block = source[events_block_start:events_block_start + 1500]
+        events_block = source[events_block_start:events_block_start + 2000]
         assert "_persist_mechanical_state()" in events_block, \
             "_persist_mechanical_state must be called in the if events: block"
 
@@ -183,7 +183,7 @@ class TestBugBCheckTriggersCleanup:
         """
         source = _fast_trigger_check_source()
         events_block_start = source.find("if events:")
-        events_block = source[events_block_start:events_block_start + 1500]
+        events_block = source[events_block_start:events_block_start + 2000]
         idx_persist = events_block.find("_persist_mechanical_state()")
         idx_get_user_state = events_block.find("provider.get_user_state()")
         assert idx_persist != -1, "_persist_mechanical_state must exist in events block"

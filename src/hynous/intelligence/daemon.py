@@ -291,6 +291,8 @@ class Daemon:
         self._conflict_thread: threading.Thread | None = None
         self._backfill_thread: threading.Thread | None = None
         self._consolidation_thread: threading.Thread | None = None
+        self._curiosity_thread: threading.Thread | None = None
+        self._review_thread: threading.Thread | None = None
 
         # Per-node cooldown for fading memory alerts (node_id → last alert timestamp).
         # Prevents the same WEAK node from triggering a wake on every 6h decay cycle.
@@ -1042,7 +1044,12 @@ class Daemon:
                     self._data_changed = False
                     triggered = self._check_watchpoints()
                     for wp in triggered:
-                        self._wake_for_watchpoint(wp)
+                        threading.Thread(
+                            target=self._wake_for_watchpoint,
+                            args=(wp,),
+                            daemon=True,
+                            name="hynous-wake-wp",
+                        ).start()
 
                 # 3b. Market scanner anomaly detection (runs after each data refresh)
                 if self._scanner:
@@ -1072,9 +1079,19 @@ class Daemon:
                         logger.debug("Scanner detect failed: %s", e)
 
                 # 4. Curiosity check (default every 15 min)
+                # Runs in a background thread — includes LLM call (learning session),
+                # cannot block _fast_trigger_check().
                 if now - self._last_curiosity_check >= self.config.daemon.curiosity_check_interval:
                     self._last_curiosity_check = now
-                    self._check_curiosity()
+                    if self._curiosity_thread is None or not self._curiosity_thread.is_alive():
+                        self._curiosity_thread = threading.Thread(
+                            target=self._check_curiosity,
+                            daemon=True,
+                            name="hynous-curiosity",
+                        )
+                        self._curiosity_thread.start()
+                    else:
+                        logger.debug("Curiosity check still running — skipping interval")
 
                 # 5. Periodic review (1h weekdays, 2h weekends)
                 review_interval = self.config.daemon.periodic_interval
@@ -1082,7 +1099,15 @@ class Daemon:
                     review_interval *= 2
                 if now - self._last_review >= review_interval:
                     self._last_review = now
-                    self._wake_for_review()
+                    if self._review_thread is None or not self._review_thread.is_alive():
+                        self._review_thread = threading.Thread(
+                            target=self._wake_for_review,
+                            daemon=True,
+                            name="hynous-wake-review",
+                        )
+                        self._review_thread.start()
+                    else:
+                        logger.debug("Review wake still running — skipping interval")
 
                 # 6. FSRS batch decay (default every 6 hours)
                 # Runs in a background thread — can take seconds with thousands of
@@ -1480,8 +1505,14 @@ class Daemon:
                     logger.debug("Satellite inference failed", exc_info=True)
 
                 # Evaluate ML conditions for active wakes
+                # Runs in a background thread — includes LLM call,
+                # cannot block _fast_trigger_check().
                 try:
-                    self._wake_for_conditions()
+                    threading.Thread(
+                        target=self._wake_for_conditions,
+                        daemon=True,
+                        name="hynous-wake-conditions",
+                    ).start()
                 except Exception:
                     logger.debug("Condition wake evaluation failed", exc_info=True)
             except Exception:
@@ -1705,12 +1736,13 @@ class Daemon:
                     + "\n".join(summary_parts)
                     + "\n\nModel detected actionable signal. Evaluate and decide."
                 )
-                self._wake_agent(
-                    msg,
-                    source="daemon:ml_signal",
-                    max_tokens=1536,
-                    max_coach_cycles=0,
-                )
+                threading.Thread(
+                    target=self._wake_agent,
+                    args=(msg,),
+                    kwargs={"source": "daemon:ml_signal", "max_tokens": 1536, "max_coach_cycles": 0},
+                    daemon=True,
+                    name="hynous-wake-ml-signal",
+                ).start()
 
     def _fetch_satellite_candles(self, coin: str) -> tuple[list[dict], list[dict]]:
         """Fetch 5m and 1m candles for satellite features.
@@ -2013,11 +2045,14 @@ class Daemon:
                 )
                 self._update_daily_pnl(event["realized_pnl"])
                 self._record_trigger_close(event)
-                self._wake_for_fill(
-                    event["coin"], event["side"], event["entry_px"],
-                    event["exit_px"], event["realized_pnl"],
-                    event["classification"],
-                )
+                threading.Thread(
+                    target=self._wake_for_fill,
+                    args=(event["coin"], event["side"], event["entry_px"],
+                          event["exit_px"], event["realized_pnl"],
+                          event["classification"]),
+                    daemon=True,
+                    name="hynous-wake-fill",
+                ).start()
 
             if events:
                 for event in events:
@@ -2038,6 +2073,8 @@ class Daemon:
                     self._trailing_active.pop(_coin, None)
                     self._trailing_stop_px.pop(_coin, None)
                     self._peak_roe.pop(_coin, None)
+                    self._capital_be_set.pop(_coin, None)
+                    self._breakeven_set.pop(_coin, None)
                 self._persist_mechanical_state()
                 # Try to get the full fresh state (also picks up any new positions)
                 try:
@@ -2550,16 +2587,28 @@ class Daemon:
                         capital_threshold = self.config.daemon.capital_breakeven_roe
                         if best_roe >= capital_threshold:
                             is_long = (side == "long")
-                            try:
-                                triggers_for_sym = self._tracked_triggers.get(sym, [])
-                                has_tighter = any(
-                                    t.get("order_type") == "stop_loss" and (
-                                        (is_long and t.get("trigger_px", 0) >= entry_px) or
-                                        (not is_long and 0 < t.get("trigger_px", 0) <= entry_px)
-                                    )
-                                    for t in triggers_for_sym
+                            # Pure dict lookups — moved outside try so old_sl_info_candle
+                            # can be saved before any cancel happens (mirrors _fast_trigger_check).
+                            triggers_for_sym = self._tracked_triggers.get(sym, [])
+                            has_tighter = any(
+                                t.get("order_type") == "stop_loss" and (
+                                    (is_long and t.get("trigger_px", 0) >= entry_px) or
+                                    (not is_long and 0 < t.get("trigger_px", 0) <= entry_px)
                                 )
-                                if not has_tighter:
+                                for t in triggers_for_sym
+                            )
+                            if has_tighter:
+                                self._capital_be_set[sym] = True
+                            else:
+                                # Save old SL for rollback — cancel can succeed before place
+                                # fails, leaving position with NO stop-loss. Same pattern as
+                                # _fast_trigger_check capital-BE block.
+                                old_sl_info_candle = None
+                                for t in triggers_for_sym:
+                                    if t.get("order_type") == "stop_loss" and t.get("oid"):
+                                        old_sl_info_candle = (t["oid"], t.get("trigger_px"))
+                                        break
+                                try:
                                     for t in triggers_for_sym:
                                         if t.get("order_type") == "stop_loss" and t.get("oid"):
                                             self._get_provider().cancel_order(sym, t["oid"])
@@ -2576,10 +2625,23 @@ class Daemon:
                                         "Capital-BE from candle: %s %s | candle peak ROE %.1f%% >= %.1f%%",
                                         sym, side, best_roe, capital_threshold,
                                     )
-                                else:
-                                    self._capital_be_set[sym] = True
-                            except Exception as cbe_candle_err:
-                                logger.debug("Candle capital-BE failed for %s: %s", sym, cbe_candle_err)
+                                except Exception as cbe_candle_err:
+                                    logger.warning("Candle capital-BE failed for %s: %s", sym, cbe_candle_err)
+                                    # Rollback: restore old SL if placement failed
+                                    if old_sl_info_candle:
+                                        try:
+                                            self._get_provider().place_trigger_order(
+                                                symbol=sym,
+                                                is_buy=(side != "long"),
+                                                sz=self._prev_positions.get(sym, {}).get("size", 0),
+                                                trigger_px=old_sl_info_candle[1],
+                                                tpsl="sl",
+                                            )
+                                            self._refresh_trigger_cache()
+                                        except Exception:
+                                            logger.error(
+                                                "CRITICAL: Failed to restore old SL for %s after candle capital-BE failure", sym,
+                                            )
 
                 if worst_roe < self._trough_roe.get(sym, 0):
                     old_trough = self._trough_roe.get(sym, 0)
@@ -3295,7 +3357,12 @@ class Daemon:
         if now - last < cooldown:
             return
         alerts[tier] = now
-        self._wake_for_profit(coin, side, entry_px, mark_px, roe_pct, tier, trade_type)
+        threading.Thread(
+            target=self._wake_for_profit,
+            args=(coin, side, entry_px, mark_px, roe_pct, tier, trade_type),
+            daemon=True,
+            name="hynous-wake-profit",
+        ).start()
 
     def _wake_for_profit(
         self, coin: str, side: str, entry_px: float,

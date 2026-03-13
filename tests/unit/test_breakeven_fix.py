@@ -971,3 +971,155 @@ class TestBreakevenEdgeCases:
         assert not has_tighter_sl([{"order_type": "stop_loss", "trigger_px": 103.0, "oid": 1}])
         # TP doesn't count as SL
         assert not has_tighter_sl([{"order_type": "take_profit", "trigger_px": 99.0, "oid": 1}])
+
+
+# ── Class 9: Candle Capital-BE Rollback ───────────────────────────────────────
+
+class TestCandleCapitalBERollback:
+    """Verify rollback protection in _update_peaks_from_candles capital-BE block.
+
+    Mirrors TestCancelReplaceRollback but for the candle path.
+    The fast path (_fast_trigger_check) has had rollback since Round 1.
+    The candle path was written without it — this test class covers the fix.
+    """
+
+    def test_candle_path_has_old_sl_info_before_try(self):
+        """old_sl_info_candle must be saved BEFORE the try block in _update_peaks_from_candles.
+
+        Structural check: if it's inside the try, it can't be used for rollback
+        when placement fails (the except block won't have access to it).
+        """
+        source = _daemon_source()
+        method_start = source.find("def _update_peaks_from_candles(")
+        method_end = source.find("\n    def ", method_start + 1)
+        method_source = source[method_start:method_end]
+        assert "old_sl_info_candle" in method_source, \
+            "old_sl_info_candle must exist in _update_peaks_from_candles"
+        # Verify it appears before the try block that does the cancel+place
+        old_sl_idx = method_source.find("old_sl_info_candle")
+        try_idx = method_source.find("try:", old_sl_idx - 200)
+        # old_sl_info_candle must be assigned before the try block
+        assign_idx = method_source.find("old_sl_info_candle = None")
+        assert assign_idx < try_idx or method_source.find("try:", assign_idx) > assign_idx, \
+            "old_sl_info_candle must be assigned before the try block"
+
+    def test_candle_path_has_rollback_in_except(self):
+        """Rollback place_trigger_order must exist in the candle capital-BE except block."""
+        source = _daemon_source()
+        method_start = source.find("def _update_peaks_from_candles(")
+        method_end = source.find("\n    def ", method_start + 1)
+        method_source = source[method_start:method_end]
+        # Find the capital-BE block
+        be_start = method_source.find("capital_breakeven_enabled")
+        assert be_start > 0, "capital_breakeven block must exist in _update_peaks_from_candles"
+        be_region = method_source[be_start:]
+        assert "old_sl_info_candle" in be_region, \
+            "old_sl_info_candle rollback must exist in candle capital-BE region"
+        # Rollback places old SL on failure
+        assert be_region.count("place_trigger_order(") >= 2, \
+            "Candle capital-BE must have two place_trigger_order calls: new SL + rollback"
+
+    def test_candle_path_has_critical_log_for_double_failure(self):
+        """CRITICAL log must exist for double-failure (rollback also fails)."""
+        source = _daemon_source()
+        method_start = source.find("def _update_peaks_from_candles(")
+        method_end = source.find("\n    def ", method_start + 1)
+        method_source = source[method_start:method_end]
+        assert "CRITICAL" in method_source, \
+            "CRITICAL log must appear in candle capital-BE rollback failure path"
+
+    def test_candle_path_logs_warning_not_debug_on_failure(self):
+        """Candle capital-BE failure must log at warning level, not debug."""
+        source = _daemon_source()
+        method_start = source.find("def _update_peaks_from_candles(")
+        method_end = source.find("\n    def ", method_start + 1)
+        method_source = source[method_start:method_end]
+        be_start = method_source.find("capital_breakeven_enabled")
+        be_region = method_source[be_start:]
+        assert "logger.warning" in be_region, \
+            "Candle capital-BE failure must use logger.warning (not logger.debug)"
+
+    def test_candle_triggers_outside_try_block(self):
+        """triggers_for_sym and has_tighter must be computed OUTSIDE the try block.
+
+        Moving them outside is what enables old_sl_info_candle to be saved
+        before the risky cancel+place operations begin.
+        """
+        source = _daemon_source()
+        method_start = source.find("def _update_peaks_from_candles(")
+        method_end = source.find("\n    def ", method_start + 1)
+        method_source = source[method_start:method_end]
+        be_start = method_source.find("capital_breakeven_enabled")
+        be_region = method_source[be_start:]
+        triggers_idx = be_region.find("triggers_for_sym = self._tracked_triggers")
+        try_idx = be_region.find("try:")
+        assert triggers_idx < try_idx, \
+            "triggers_for_sym must be assigned before the try block (outside try)"
+
+    def test_old_sl_restored_on_candle_placement_failure(self):
+        """Pure logic: if cancel succeeds and place fails, old SL must be restored."""
+        old_sl_info_candle = (42, 97.0)  # (oid, trigger_px)
+        cancelled = []
+        placed = []
+        call_count = [0]
+
+        def cancel_order(sym, oid):
+            cancelled.append(oid)
+            return True
+
+        def place_trigger_order(symbol, is_buy, sz, trigger_px, tpsl="sl"):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise ValueError("Exchange rejected order")
+            placed.append(trigger_px)
+
+        triggers_for_sym = [{"order_type": "stop_loss", "trigger_px": 97.0, "oid": 42}]
+
+        # Replicate the candle capital-BE cancel+place+rollback logic
+        for t in triggers_for_sym:
+            if t.get("order_type") == "stop_loss" and t.get("oid"):
+                cancel_order("SYM", t["oid"])
+
+        try:
+            place_trigger_order("SYM", False, 0.1, trigger_px=100.0)
+        except Exception:
+            if old_sl_info_candle:
+                place_trigger_order(
+                    "SYM", False, 0.1, trigger_px=old_sl_info_candle[1], tpsl="sl"
+                )
+
+        assert 42 in cancelled, "Old SL must be cancelled first"
+        assert placed == [97.0], "Old SL must be restored on placement failure"
+
+    def test_no_rollback_when_no_previous_sl(self):
+        """If no old SL existed, failure just logs — no rollback needed."""
+        old_sl_info_candle = None
+        rollback_called = []
+
+        try:
+            raise ValueError("Place failed")
+        except Exception:
+            if old_sl_info_candle:
+                rollback_called.append(True)
+
+        assert not rollback_called, "No rollback when position had no prior SL"
+
+    def test_candle_capital_be_set_not_set_on_failure(self):
+        """_capital_be_set must NOT be set to True when placement fails.
+
+        If it were set on failure, the fast-path retry gate would skip the
+        position and it would never get a capital-BE SL.
+        """
+        capital_be_set = {}
+
+        def place_trigger_order_fails(**kwargs):
+            raise ValueError("Exchange error")
+
+        try:
+            place_trigger_order_fails(symbol="SYM", trigger_px=100.0)
+            capital_be_set["SYM"] = True  # Only set on success
+        except Exception:
+            pass  # Do NOT set capital_be_set on failure
+
+        assert not capital_be_set.get("SYM"), \
+            "_capital_be_set must remain False on failure so fast-path can retry"

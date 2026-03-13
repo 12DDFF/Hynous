@@ -115,11 +115,11 @@ Key conventions:
 |-------|-------------|
 | [ws-price-feed/](./revisions/ws-price-feed/) | `allMids` WebSocket feed in daemon — sub-second prices for mechanical exits, 1s loop, REST fallback |
 
-### Implemented (2026-03-12)
+### Implemented (2026-03-12, updated 2026-03-13)
 
 | Track | Description |
 |-------|-------------|
-| [breakeven-fix/](./revisions/breakeven-fix/) | Two-layer capital + fee breakeven system + Round 2 bug fixes (9 bugs: A–I covering rollback, ghost-state persistence, classification, taker_fee_pct unification, load_config wiring) |
+| [breakeven-fix/](./revisions/breakeven-fix/) | Two-layer capital + fee breakeven system + Round 2 bug fixes (9 bugs A–I) + Round 3 (stale flag cleanup, background wake threads to unblock `_fast_trigger_check`). **Both layers DISABLED** for ML testing — re-enable via `capital_breakeven_enabled` / `breakeven_stop_enabled` in `default.yaml`. |
 
 ### In Progress (2026-03-11)
 
@@ -169,4 +169,4 @@ See [archive/README.md](./archive/README.md) for a complete index.
 
 ---
 
-Last updated: 2026-03-12 (breakeven-fix Round 2 deployed, all 655 tests passing)
+Last updated: 2026-03-13 (breakeven Round 3 deployed: stale flag fix + background wakes, breakeven DISABLED for ML testing, 662 tests passing)

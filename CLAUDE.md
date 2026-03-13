@@ -188,10 +188,10 @@ cd nous-server && pnpm test
 - `docs/README.md` — Central documentation hub
 - `docs/integration.md` — Cross-system data flows (satellite ↔ data-layer ↔ daemon)
 - `docs/revisions/trade-mechanism-debug/` — 5 fix guides for mechanical exit bugs (implemented)
-- `docs/revisions/breakeven-fix/` — Two-layer breakeven system + Round 2 bugs A–I (implemented)
+- `docs/revisions/breakeven-fix/` — Two-layer breakeven system + Round 3 (stale flag fix, background wakes). **Both layers DISABLED** for ML testing — re-enable in `config/default.yaml`.
 - `docs/archive/` — Completed revision guides (all resolved, kept for reference)
 - Each major directory has its own `README.md`
 
 ---
 
-Last updated: 2026-03-12
+Last updated: 2026-03-13

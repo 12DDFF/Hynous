@@ -50,9 +50,10 @@ daemon:
   wake_cooldown_seconds: 120         # Min seconds between non-priority wakes
   playbook_cache_ttl: 1800           # Playbook matcher cache refresh interval (seconds, 30 min)
   # Peak profit protection
+  breakeven_stop_enabled: false          # DISABLED — codeveloper testing ML predictions (2026-03-13)
   breakeven_buffer_micro_pct: 0.07   # Price % buffer for breakeven stop (matches round-trip fee)
   breakeven_buffer_macro_pct: 0.07   # Same for macro trades
-  capital_breakeven_enabled: true
+  capital_breakeven_enabled: false       # DISABLED — codeveloper testing ML predictions (2026-03-13)
   capital_breakeven_roe: 0.5              # Fixed ROE % — SL moves to entry price when hit
   # Trailing stop (mechanical exit — no agent involvement)
   trailing_stop_enabled: true          # Master switch
