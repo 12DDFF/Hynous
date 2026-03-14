@@ -244,14 +244,6 @@ class ConditionEngine:
 
                 value = artifact.predict(feature_values, feature_names)
 
-                # MAE models output vol-normalized ratios. Multiply by current vol
-                # to get actual drawdown in ROE%. This reverses the normalization
-                # done during training (target = abs(mae) / realized_vol_1h).
-                if name in ("mae_long", "mae_short"):
-                    current_vol = features.get("realized_vol_1h", 0.0)
-                    if current_vol > 0.01:
-                        value = value * current_vol
-
                 # Track for online recalibration
                 buf = self._rolling_preds.get(name)
                 if buf is not None:
