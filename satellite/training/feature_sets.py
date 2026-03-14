@@ -81,20 +81,22 @@ FULL_FEATURES: list[str] = [
 
 MODEL_FEATURES: dict[str, list[str]] = {
     # --- Volatility cluster ---
-    # Predict future volatility. v1 features only (100% availability).
+    # Predict future volatility. Need vol history + volume catalysts + structure.
+    # Vol models benefit from vol/volume dynamics, not crowding signals.
+    # Keep v1 features that are vol-relevant (100% available).
     "vol_1h": [
-        "realized_vol_1h",
-        "volume_vs_1h_avg_ratio",
-        "oi_vs_7d_avg_ratio",
-        "price_trend_1h",
-        "hours_to_funding",
-        "funding_vs_30d_zscore",
-        "liq_cascade_active",
-        "liq_1h_vs_4h_avg",
-        "liq_imbalance_1h",
-        "oi_price_direction",
-        "oi_funding_pressure",
-        "cvd_ratio_30m",
+        "realized_vol_1h",          # Current vol (strongest predictor — vol is persistent)
+        "volume_vs_1h_avg_ratio",   # Volume spikes precede vol expansion
+        "oi_vs_7d_avg_ratio",       # High OI = more liq cascades = vol amplifier
+        "price_trend_1h",           # Trending markets have different vol profiles
+        "hours_to_funding",         # Vol clusters around funding settlement
+        "cvd_ratio_30m",            # Directional flow predicts breakout vol
+        "liq_cascade_active",       # Active cascade = vol spike in progress
+        "liq_1h_vs_4h_avg",        # Liq acceleration = building vol pressure
+        "liq_imbalance_1h",        # One-sided liqs = directional vol
+        "oi_funding_pressure",      # OI × funding = squeeze vol potential
+        "funding_vs_30d_zscore",    # Extreme funding = reversion vol
+        "oi_price_direction",       # Crowded positioning = snap-back vol risk
     ],
     "vol_4h": [
         "realized_vol_1h",
@@ -102,13 +104,13 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "oi_vs_7d_avg_ratio",
         "price_trend_1h",
         "hours_to_funding",
-        "funding_vs_30d_zscore",
+        "cvd_ratio_30m",
         "liq_cascade_active",
         "liq_1h_vs_4h_avg",
         "liq_imbalance_1h",
-        "oi_price_direction",
         "oi_funding_pressure",
-        "cvd_ratio_30m",
+        "funding_vs_30d_zscore",
+        "oi_price_direction",
     ],
     "vol_expand": [
         "realized_vol_1h",
@@ -244,37 +246,41 @@ MODEL_FEATURES: dict[str, list[str]] = {
     ],
 
     # --- Funding model ---
-    # Predicts funding trajectory. v1 features only.
+    # Predicts funding rate trajectory over 4h. Needs funding context + OI pressure
+    # + indirect flow signals. cvd_acceleration (100% avail) was in original set
+    # and is critical — CVD flow direction predicts funding shifts.
     "funding_4h": [
-        "funding_vs_30d_zscore",
-        "hours_to_funding",
-        "oi_funding_pressure",
-        "oi_vs_7d_avg_ratio",
-        "liq_1h_vs_4h_avg",
-        "realized_vol_1h",
-        "volume_vs_1h_avg_ratio",
-        "price_trend_1h",
-        "cvd_ratio_30m",
-        "liq_cascade_active",
-        "oi_price_direction",
-        "liq_imbalance_1h",
+        "funding_vs_30d_zscore",    # Current funding relative to history (mean reversion)
+        "hours_to_funding",         # Time to next settlement (structural timing)
+        "oi_funding_pressure",      # OI growth × funding = directional pressure
+        "oi_vs_7d_avg_ratio",       # OI magnitude = more positions paying/receiving funding
+        "liq_1h_vs_4h_avg",        # Liq acceleration changes funding dynamics
+        "realized_vol_1h",          # High vol → funding spikes
+        "volume_vs_1h_avg_ratio",   # Volume surges shift funding
+        "price_trend_1h",           # Trending price moves funding directionally
+        "cvd_ratio_30m",            # Buy/sell flow predicts which side pays
+        "cvd_acceleration",         # Flow acceleration (100% available, was in original)
+        "liq_imbalance_1h",        # One-sided liqs shift funding balance
+        "oi_price_direction",       # OI flowing into winners = crowding = funding pressure
     ],
 
     # --- Volume model ---
-    # Predicts future volume. v1 features only.
+    # Predicts future volume intensity. Needs volume history + catalysts that
+    # drive volume (vol spikes, liqs, funding events, flow).
+    # cvd_acceleration (100% avail) was in original — flow momentum predicts volume.
     "volume_1h": [
-        "volume_vs_1h_avg_ratio",
-        "realized_vol_1h",
-        "oi_vs_7d_avg_ratio",
-        "hours_to_funding",
-        "cvd_ratio_30m",
-        "price_trend_1h",
-        "funding_vs_30d_zscore",
-        "liq_cascade_active",
-        "liq_1h_vs_4h_avg",
-        "oi_price_direction",
-        "oi_funding_pressure",
-        "liq_imbalance_1h",
+        "volume_vs_1h_avg_ratio",   # Current volume (strongest — volume is persistent)
+        "realized_vol_1h",          # Vol and volume are correlated
+        "oi_vs_7d_avg_ratio",       # High OI = more activity = more volume
+        "hours_to_funding",         # Volume spikes near funding settlement
+        "cvd_ratio_30m",            # Directional flow drives volume
+        "cvd_acceleration",         # Flow momentum (100% available, was in original)
+        "price_trend_1h",           # Trending markets have higher volume
+        "liq_cascade_active",       # Liq cascades cause volume spikes
+        "liq_1h_vs_4h_avg",        # Liq acceleration = building volume pressure
+        "funding_vs_30d_zscore",    # Extreme funding attracts attention = volume
+        "oi_price_direction",       # Crowding drives activity
+        "liq_imbalance_1h",        # One-sided liqs = forced volume
     ],
 
     # --- Reversal cluster ---
