@@ -896,16 +896,20 @@ def handle_execute_trade(
             )
 
     # --- ML: MAE vs SL coherence warning ---
-    if ml_cond and ts.ml_mae_sl_warn and sl_distance_pct > 0:
+    # MAE predictions are in ROE% (leveraged). SL distance is in price% (unleveraged).
+    # Must convert to same units before comparing.
+    if ml_cond and ts.ml_mae_sl_warn and sl_distance_pct > 0 and leverage:
         _mae_key = "mae_long" if is_buy else "mae_short"
         _mae = ml_cond.get(_mae_key, {})
-        _mae_pct = _mae.get("value", 0)
-        _sl_pct = sl_distance_pct * 100
-        if _mae_pct > 0 and _mae_pct > _sl_pct * 1.5:
+        _mae_roe = _mae.get("value", 0)  # ROE% (e.g., 5.7% at 20x = 0.285% price)
+        _mae_price_pct = _mae_roe / leverage  # Convert to price%
+        _sl_price_pct = sl_distance_pct * 100
+        if _mae_price_pct > 0 and _mae_price_pct > _sl_price_pct * 1.2:
             _warnings.append(
-                f"ML: Predicted {side} drawdown is {_mae_pct:.1f}% but SL is only "
-                f"{_sl_pct:.2f}% away — stop will likely get hit by normal price action. "
-                f"Widen SL to >= {_mae_pct:.1f}% or reduce leverage."
+                f"ML: Predicted {side} drawdown is {_mae_price_pct:.2f}% price "
+                f"({_mae_roe:.1f}% ROE at {leverage}x) but SL is only "
+                f"{_sl_price_pct:.2f}% away — stop will likely get hit. "
+                f"Widen SL to >= {_mae_price_pct:.2f}%."
             )
 
     # --- ML: SL survival warning ---

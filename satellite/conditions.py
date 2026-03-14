@@ -108,9 +108,9 @@ class MarketConditions:
         if mae_long or mae_short:
             parts = []
             if mae_long:
-                parts.append(f"long drawdown ~{mae_long.value:.1f}%")
+                parts.append(f"long drawdown ~{mae_long.value:.1f}% ROE")
             if mae_short:
-                parts.append(f"short drawdown ~{mae_short.value:.1f}%")
+                parts.append(f"short drawdown ~{mae_short.value:.1f}% ROE")
             lines.append(f"  Risk: {', '.join(parts)}")
 
         # Entry quality
