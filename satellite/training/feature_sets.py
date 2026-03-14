@@ -148,7 +148,10 @@ MODEL_FEATURES: dict[str, list[str]] = {
     ],
 
     # --- Risk cluster ---
-    # These predict drawdown/SL risk. Need vol + liquidation + trend context.
+    # Predicts max drawdown (MAE) for long/short entries. Needs vol + crowding + liq context.
+    # Previous version was a vol proxy (Spearman +0.33 in high vol, +0.06 in low vol).
+    # Added crowding signals (OI, liq cascade, funding pressure) to capture WHY drawdowns
+    # happen beyond just "vol is high." All v1 features (100% data availability).
     "mae_long": [
         "realized_vol_1h",
         "realized_vol_4h",
@@ -160,6 +163,13 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "volume_vs_1h_avg_ratio",
         "cvd_ratio_30m",
         "funding_vs_30d_zscore",
+        # Crowding signals (v2 additions)
+        "oi_vs_7d_avg_ratio",       # Elevated OI = more forced exits on dips
+        "liq_cascade_active",       # Active cascade = amplified drawdowns
+        "oi_price_direction",       # OI flowing with/against price
+        "hours_to_funding",         # Near settlement = forced exit pressure
+        "funding_velocity",         # Funding direction change rate
+        "liq_1h_vs_4h_avg",        # Liquidation acceleration
     ],
     "mae_short": [
         "realized_vol_1h",
@@ -172,6 +182,13 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "volume_vs_1h_avg_ratio",
         "cvd_ratio_30m",
         "funding_vs_30d_zscore",
+        # Crowding signals (v2 additions)
+        "oi_vs_7d_avg_ratio",
+        "liq_cascade_active",
+        "oi_price_direction",
+        "hours_to_funding",
+        "funding_velocity",
+        "liq_1h_vs_4h_avg",
     ],
     # SL survival: uses only v1 features (available in all 60K+ snapshots).
     # v3 features (vol_of_vol, volume_acceleration, etc.) only exist in ~2K recent rows,

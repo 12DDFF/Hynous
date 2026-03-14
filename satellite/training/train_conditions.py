@@ -647,21 +647,30 @@ def build_condition_targets(rows: list[dict]) -> list[dict]:
         else:
             row["target_entry_quality"] = None
 
-        # 7. mae_short: abs(worst_short_mae_30m)
+        # 7. mae_short: vol-normalized drawdown magnitude
+        # Normalized by current realized vol so model learns "extra risk beyond vol"
+        # instead of just "vol is high → drawdown is big". At inference, multiply
+        # prediction by current vol to get actual drawdown in ROE%.
         mae_s = row.get("worst_short_mae_30m")
-        row["target_mae_short"] = abs(mae_s) if mae_s is not None else None
+        current_vol = row.get("realized_vol_1h")
+        if mae_s is not None and current_vol is not None and current_vol > 0.01:
+            row["target_mae_short"] = abs(mae_s) / current_vol
+        else:
+            row["target_mae_short"] = None
 
         # 8. vol_expand: future_vol / current_vol ratio
         future_vol = _safe_get(rows, i + LOOK_1H, "realized_vol_1h")
-        current_vol = row.get("realized_vol_1h")
         if future_vol is not None and current_vol is not None and current_vol > 1e-8:
             row["target_vol_expand"] = future_vol / current_vol
         else:
             row["target_vol_expand"] = None
 
-        # 9. mae_long: abs(worst_long_mae_30m)
+        # 9. mae_long: vol-normalized drawdown magnitude (same as mae_short)
         mae_l = row.get("worst_long_mae_30m")
-        row["target_mae_long"] = abs(mae_l) if mae_l is not None else None
+        if mae_l is not None and current_vol is not None and current_vol > 0.01:
+            row["target_mae_long"] = abs(mae_l) / current_vol
+        else:
+            row["target_mae_long"] = None
 
         # 10. funding_4h: future_funding_zscore - current_funding_zscore
         future_funding = _safe_get(rows, i + LOOK_4H, "funding_vs_30d_zscore")
