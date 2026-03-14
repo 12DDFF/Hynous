@@ -162,14 +162,13 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "volume_vs_1h_avg_ratio",
         "cvd_ratio_30m",
         "funding_vs_30d_zscore",
-        # Crowding signals
-        "oi_vs_7d_avg_ratio",       # Elevated OI = more forced exits on dips
-        "liq_cascade_active",       # Active cascade = amplified drawdowns
-        "oi_price_direction",       # OI flowing with/against price
-        "hours_to_funding",         # Near settlement = forced exit pressure
-        "liq_1h_vs_4h_avg",        # Liquidation acceleration
-        "oi_funding_pressure",      # OI growth × funding interaction
-        "funding_rate_raw",         # Absolute funding (long bias = long squeeze risk)
+        "oi_vs_7d_avg_ratio",
+        "liq_cascade_active",
+        "oi_price_direction",
+        "hours_to_funding",
+        "liq_1h_vs_4h_avg",
+        "oi_funding_pressure",
+        "hour_sin",
     ],
     "mae_short": [
         "realized_vol_1h",
@@ -178,14 +177,13 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "volume_vs_1h_avg_ratio",
         "cvd_ratio_30m",
         "funding_vs_30d_zscore",
-        # Crowding signals
         "oi_vs_7d_avg_ratio",
         "liq_cascade_active",
         "oi_price_direction",
         "hours_to_funding",
         "liq_1h_vs_4h_avg",
         "oi_funding_pressure",
-        "funding_rate_raw",
+        "hour_sin",
     ],
     # SL survival: uses only v1 features (available in all 60K+ snapshots).
     # v3 features (vol_of_vol, volume_acceleration, etc.) only exist in ~2K recent rows,
