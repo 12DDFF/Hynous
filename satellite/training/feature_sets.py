@@ -122,29 +122,37 @@ MODEL_FEATURES: dict[str, list[str]] = {
 
     # --- Move/Range cluster ---
     # These predict how much price will move. Need vol + direction + momentum.
+    # Range/Move: predicts total price movement in next 30m.
+    # v3 sparse features (realized_vol_4h, volume_acceleration, cvd_acceleration,
+    # oi_change_rate_1h) replaced with v1 crowding signals (same approach that
+    # improved MAE from Spearman 0.13→0.30).
     "range_30m": [
         "realized_vol_1h",
-        "realized_vol_4h",
         "volume_vs_1h_avg_ratio",
-        "volume_acceleration",
         "price_trend_1h",
         "cvd_ratio_30m",
-        "cvd_acceleration",
         "oi_vs_7d_avg_ratio",
-        "oi_change_rate_1h",
         "funding_vs_30d_zscore",
+        "liq_cascade_active",
+        "oi_price_direction",
+        "hours_to_funding",
+        "liq_1h_vs_4h_avg",
+        "liq_imbalance_1h",
+        "oi_funding_pressure",
     ],
     "move_30m": [
         "realized_vol_1h",
-        "realized_vol_4h",
         "volume_vs_1h_avg_ratio",
-        "volume_acceleration",
         "price_trend_1h",
         "cvd_ratio_30m",
-        "cvd_acceleration",
         "oi_vs_7d_avg_ratio",
-        "oi_change_rate_1h",
         "funding_vs_30d_zscore",
+        "liq_cascade_active",
+        "oi_price_direction",
+        "hours_to_funding",
+        "liq_1h_vs_4h_avg",
+        "liq_imbalance_1h",
+        "oi_funding_pressure",
     ],
 
     # --- Risk cluster ---
@@ -212,18 +220,22 @@ MODEL_FEATURES: dict[str, list[str]] = {
     ],
 
     # --- Entry quality ---
-    # Predicts whether NOW is better than recent entries. Needs flow + momentum.
+    # Predicts whether NOW is better than recent entries. Needs flow + crowding.
+    # v3 sparse features (cvd_ratio_1h, cvd_acceleration, close_position_5m,
+    # volume_acceleration) replaced with v1 crowding signals.
     "entry_quality": [
         "cvd_ratio_30m",
-        "cvd_ratio_1h",
-        "cvd_acceleration",
         "price_trend_1h",
-        "close_position_5m",
         "volume_vs_1h_avg_ratio",
-        "volume_acceleration",
         "realized_vol_1h",
-        "oi_price_direction",
         "funding_vs_30d_zscore",
+        "oi_vs_7d_avg_ratio",
+        "oi_price_direction",
+        "liq_cascade_active",
+        "liq_imbalance_1h",
+        "hours_to_funding",
+        "liq_1h_vs_4h_avg",
+        "oi_funding_pressure",
     ],
 
     # --- Funding model ---
