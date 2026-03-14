@@ -152,43 +152,40 @@ MODEL_FEATURES: dict[str, list[str]] = {
     # Previous version was a vol proxy (Spearman +0.33 in high vol, +0.06 in low vol).
     # Added crowding signals (OI, liq cascade, funding pressure) to capture WHY drawdowns
     # happen beyond just "vol is high." All v1 features (100% data availability).
-    # v1 features only (100% availability in 60K+ snapshots).
-    # oi_change_rate_1h and funding_velocity are v3 (only 2-3% available) — excluded.
+    # v1 features ONLY (100% availability in 60K+ snapshots).
+    # v3 features (realized_vol_4h, price_trend_4h, liq_total_1h_usd,
+    # oi_change_rate_1h, funding_velocity) only have 2-4% coverage — excluded.
     "mae_long": [
         "realized_vol_1h",
-        "realized_vol_4h",
         "price_trend_1h",
-        "price_trend_4h",
-        "liq_total_1h_usd",
         "liq_imbalance_1h",
         "volume_vs_1h_avg_ratio",
         "cvd_ratio_30m",
         "funding_vs_30d_zscore",
-        # Crowding signals (v2 additions)
+        # Crowding signals
         "oi_vs_7d_avg_ratio",       # Elevated OI = more forced exits on dips
         "liq_cascade_active",       # Active cascade = amplified drawdowns
         "oi_price_direction",       # OI flowing with/against price
         "hours_to_funding",         # Near settlement = forced exit pressure
         "liq_1h_vs_4h_avg",        # Liquidation acceleration
         "oi_funding_pressure",      # OI growth × funding interaction
+        "funding_rate_raw",         # Absolute funding (long bias = long squeeze risk)
     ],
     "mae_short": [
         "realized_vol_1h",
-        "realized_vol_4h",
         "price_trend_1h",
-        "price_trend_4h",
-        "liq_total_1h_usd",
         "liq_imbalance_1h",
         "volume_vs_1h_avg_ratio",
         "cvd_ratio_30m",
         "funding_vs_30d_zscore",
-        # Crowding signals (v2 additions)
+        # Crowding signals
         "oi_vs_7d_avg_ratio",
         "liq_cascade_active",
         "oi_price_direction",
         "hours_to_funding",
         "liq_1h_vs_4h_avg",
         "oi_funding_pressure",
+        "funding_rate_raw",
     ],
     # SL survival: uses only v1 features (available in all 60K+ snapshots).
     # v3 features (vol_of_vol, volume_acceleration, etc.) only exist in ~2K recent rows,
