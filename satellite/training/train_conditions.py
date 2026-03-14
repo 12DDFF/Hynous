@@ -840,7 +840,18 @@ def train_single_condition(
 
         # Select params based on target type
         if is_binary:
-            params = XGBOOST_PARAMS_BINARY
+            params = dict(XGBOOST_PARAMS_BINARY)  # copy — scale_pos_weight varies per fold
+            pos = float(np.sum(y_train == 1))
+            neg = float(np.sum(y_train == 0))
+            if pos > 0:
+                params["scale_pos_weight"] = neg / pos
+            pos_rate = pos / (pos + neg) if (pos + neg) > 0 else 0
+            if pos_rate < 0.05 or pos_rate > 0.95:
+                log.warning(
+                    "  Gen %d: extreme imbalance (pos_rate=%.1f%%) — skipping fold",
+                    gen, pos_rate * 100,
+                )
+                continue
         elif target.name in AGGRESSIVE_TARGETS:
             params = XGBOOST_PARAMS_AGGRESSIVE
         else:
@@ -909,7 +920,18 @@ def train_single_condition(
     # Train final model on ALL data
     is_binary = target.name in BINARY_TARGETS
     if is_binary:
-        final_params = XGBOOST_PARAMS_BINARY
+        final_params = dict(XGBOOST_PARAMS_BINARY)  # copy for scale_pos_weight
+        pos = float(np.sum(y_raw == 1))
+        neg = float(np.sum(y_raw == 0))
+        if pos > 0:
+            final_params["scale_pos_weight"] = neg / pos
+        pos_rate = pos / (pos + neg) if (pos + neg) > 0 else 0
+        if pos_rate < 0.05 or pos_rate > 0.95:
+            log.warning(
+                "Skipping final model %s: extreme imbalance (pos_rate=%.1f%%)",
+                target.name, pos_rate * 100,
+            )
+            return {"name": target.name, "status": "skipped", "reason": "extreme_imbalance"}
     elif target.name in AGGRESSIVE_TARGETS:
         final_params = XGBOOST_PARAMS_AGGRESSIVE
     else:

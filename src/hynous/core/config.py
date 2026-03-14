@@ -139,6 +139,9 @@ class DaemonConfig:
     # Satellite labeling (outcome labels for ML validation)
     labeler_interval: int = 3600             # Seconds between labeling runs (1 hour)
     labeler_batch_size: int = 50             # Max snapshots to label per coin per run
+    # Condition model validation (automated live accuracy checks)
+    validation_interval: int = 86400         # Seconds between validation runs (24 hours)
+    validation_days: int = 7                 # Days of history to validate against
 
 
 @dataclass
@@ -339,6 +342,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
             ws_price_feed=daemon_raw.get("ws_price_feed", True),
             labeler_interval=daemon_raw.get("labeler_interval", 3600),
             labeler_batch_size=daemon_raw.get("labeler_batch_size", 50),
+            validation_interval=daemon_raw.get("validation_interval", 86400),
+            validation_days=daemon_raw.get("validation_days", 7),
         ),
         scanner=ScannerConfig(
             enabled=scanner_raw.get("enabled", True),

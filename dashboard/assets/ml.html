@@ -358,10 +358,8 @@ body {
     funding_4h:    { icon:"F",  label:"Funding Trend",         good:"context",what:"Where is funding heading? Rising = shorts get squeezed." },
     sl_survival_03:{ icon:"\u26D4",label:"SL Risk (0.3%)",       good:"low",    what:"Probability a tight 0.3% stop-loss gets hit within 30min. High = widen your stop." },
     sl_survival_05:{ icon:"\u26D4",label:"SL Risk (0.5%)",       good:"low",    what:"Probability a 0.5% stop-loss gets hit within 30min. High = dangerous for tight stops." },
-    reversal_30m:{ icon:"\u21A9",label:"Reversal Risk (30m)",  good:"low",    what:"Probability of a >0.3% reversal in next 30min. High = trend exhaustion." },
-    momentum_quality:{ icon:"M", label:"Momentum Quality",     good:"high",   what:"Volume-backed momentum. High = real flow behind moves. Low = hollow." },
   };
-  var COND_ORDER = ["vol_1h","vol_4h","range_30m","move_30m","volume_1h","entry_quality","mae_short","vol_expand","mae_long","funding_4h","sl_survival_03","sl_survival_05","reversal_30m","momentum_quality"];
+  var COND_ORDER = ["vol_1h","vol_4h","range_30m","move_30m","volume_1h","entry_quality","mae_short","vol_expand","mae_long","funding_4h","sl_survival_03","sl_survival_05"];
 
   // ── Helpers ─────────────────────────────────────────
   function vis() { return !document.hidden; }

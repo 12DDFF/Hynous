@@ -294,6 +294,7 @@ class Daemon:
         self._curiosity_thread: threading.Thread | None = None
         self._review_thread: threading.Thread | None = None
         self._labeler_thread: threading.Thread | None = None
+        self._validation_thread: threading.Thread | None = None
 
         # Per-node cooldown for fading memory alerts (node_id → last alert timestamp).
         # Prevents the same WEAK node from triggering a wake on every 6h decay cycle.
@@ -317,6 +318,8 @@ class Daemon:
         self._last_embedding_backfill: float = 0
         self._last_consolidation: float = 0
         self._last_labeler_run: float = 0
+        self._last_validation_run: float = 0
+        self._latest_validation_results: list[dict] = []
 
         # Nous health state
         self._nous_healthy: bool = True
@@ -899,6 +902,10 @@ class Daemon:
                 "runs": self.labeler_runs,
                 "labeled_total": self.snapshots_labeled_total,
             },
+            "validation": {
+                "last_run": self._last_validation_run,
+                "results_count": len(self._latest_validation_results),
+            },
             "regime": {
                 "label": self._regime.label if self._regime else "UNKNOWN",
                 "score": round(self._regime.score, 2) if self._regime else 0,
@@ -996,6 +1003,7 @@ class Daemon:
         self._last_embedding_backfill = time.time()
         self._last_consolidation = time.time()
         self._last_labeler_run = time.time() - self.config.daemon.labeler_interval + 300  # First run after 5min warmup
+        self._last_validation_run = time.time() - self.config.daemon.validation_interval + 3600  # First run after 1h warmup
         self._last_fill_check = time.time()
         self._last_phantom_check = time.time()
         self._load_phantoms()
@@ -1219,6 +1227,23 @@ class Daemon:
                         self._labeler_thread.start()
                     else:
                         logger.debug("Labeler still running — skipping interval")
+
+                # 12. Condition model validation — daily live accuracy check
+                if (
+                    self._satellite_store
+                    and self._condition_engine
+                    and now - self._last_validation_run >= self.config.daemon.validation_interval
+                ):
+                    self._last_validation_run = now
+                    if self._validation_thread is None or not self._validation_thread.is_alive():
+                        self._validation_thread = threading.Thread(
+                            target=self._run_validation,
+                            daemon=True,
+                            name="hynous-validation",
+                        )
+                        self._validation_thread.start()
+                    else:
+                        logger.debug("Validation still running — skipping interval")
 
             except Exception as e:
                 log_event(DaemonEvent("error", "Loop error", str(e)))
@@ -5037,6 +5062,72 @@ class Daemon:
         start_ms = int(start_time * 1000)
         end_ms = int(end_time * 1000)
         return provider.get_candles(coin, "5m", start_ms, end_ms)
+
+    def _run_validation(self):
+        """Run live validation of condition models and log results.
+
+        Compares stored predictions against actual outcomes (labels).
+        Logs per-model Spearman correlation at WARNING level for visibility.
+        Saves results to storage/validation_results.json for inspection.
+        """
+        try:
+            from satellite.training.validate_conditions import validate_live
+
+            db_path = str(self.config.project_root / self.config.satellite.db_path)
+            days = self.config.daemon.validation_days
+
+            results = validate_live(db_path=db_path, coin="BTC", days=days)
+            if not results:
+                logger.debug("Validation: no joinable data yet")
+                return
+
+            self._latest_validation_results = results
+
+            # Log summary at WARNING level so it's visible in production
+            for r in results:
+                if r.get("status") != "success":
+                    continue
+                sp = r.get("spearman", 0)
+                da = r.get("centered_dir_pct", 50)
+                n = r.get("samples", 0)
+                if sp > 0.3 and da > 55:
+                    status = "GOOD"
+                elif sp > 0.15 or da > 52:
+                    status = "WEAK"
+                else:
+                    status = "BROKEN"
+                logger.warning(
+                    "Validation %s: Spearman=%+.3f DirAcc=%.1f%% [%s] (%d samples)",
+                    r["name"], sp, da, status, n,
+                )
+
+            # Persist results for dashboard/inspection (atomic write)
+            import json as _json
+            import tempfile
+            import os
+            results_path = self.config.project_root / "storage" / "validation_results.json"
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", dir=results_path.parent,
+                suffix=".tmp", delete=False,
+            )
+            _json.dump({
+                "coin": "BTC",
+                "timestamp": time.time(),
+                "days": days,
+                "results": results,
+            }, tmp, indent=2)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            tmp.close()
+            os.replace(tmp.name, str(results_path))
+
+            log_event(DaemonEvent(
+                "validation", "ML model validation",
+                f"{sum(1 for r in results if r.get('status') == 'success')} models validated",
+            ))
+
+        except Exception as e:
+            logger.warning("Validation run failed: %s", e)
 
     def _check_conflicts(self):
         """Poll the Nous contradiction queue for pending conflicts.

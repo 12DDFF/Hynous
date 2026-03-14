@@ -165,17 +165,21 @@ class ConditionArtifact:
         prediction = self.model.predict(dmatrix)
         return float(prediction[0])
 
-    def get_regime(self, value: float) -> tuple[str, int]:
-        """Map a predicted value to a regime label using training percentiles.
+    def get_regime(
+        self, value: float, override_percentiles: dict[str, float] | None = None,
+    ) -> tuple[str, int]:
+        """Map a predicted value to a regime label using percentiles.
 
         Args:
             value: Predicted value from the model.
+            override_percentiles: Optional rolling percentiles to use instead
+                of static training-set percentiles (online recalibration).
 
         Returns:
             Tuple of (regime_label, percentile_rank).
             regime_label is one of: "low", "normal", "high", "extreme".
         """
-        pcts = self.metadata.percentiles
+        pcts = override_percentiles or self.metadata.percentiles
         if not pcts:
             return "normal", 50
 

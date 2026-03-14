@@ -66,6 +66,9 @@ daemon:
   # Satellite labeling (outcome labels for ML validation)
   labeler_interval: 3600              # Snapshot outcome labeling interval (seconds, 1 hour)
   labeler_batch_size: 50              # Max snapshots per coin per run (rate limit protection)
+  # Condition model validation (automated live accuracy checks)
+  validation_interval: 86400          # Live validation interval (seconds, 24 hours)
+  validation_days: 7                  # Days of data to validate against
 
 # Market scanner (anomaly detection across ALL Hyperliquid pairs)
 scanner:

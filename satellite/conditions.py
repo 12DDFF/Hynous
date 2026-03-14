@@ -11,12 +11,21 @@ Usage:
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import numpy as np
 
 from satellite.training.condition_artifact import ConditionArtifact
 
 log = logging.getLogger(__name__)
+
+# Models confirmed broken via live validation (zero predictive power).
+# reversal_30m: tautological target, BinaryAcc = base rate (92%), Spearman +0.022
+# momentum_quality: Spearman 0.075, DirAcc 50% = coin flip
+# They still exist as artifacts but are skipped during inference.
+DISABLED_MODELS: set[str] = {"reversal_30m", "momentum_quality"}
 
 
 @dataclass
@@ -189,11 +198,24 @@ class ConditionEngine:
                 continue
             if not (model_dir / "model.json").exists():
                 continue
+            if model_dir.name in DISABLED_MODELS:
+                log.info("Skipping disabled condition model: %s", model_dir.name)
+                continue
             try:
                 artifact = ConditionArtifact.load(model_dir)
                 self._artifacts[artifact.metadata.name] = artifact
             except Exception:
                 log.warning("Failed to load condition model: %s", model_dir.name, exc_info=True)
+
+        # Rolling prediction buffer for online percentile recalibration.
+        # Training-set percentiles drift as market regime changes — this tracks
+        # recent predictions and recomputes percentiles every 500 predictions.
+        self._rolling_preds: dict[str, deque] = {
+            name: deque(maxlen=2000)  # ~7 days at 5min intervals
+            for name in self._artifacts
+        }
+        self._rolling_pcts: dict[str, dict[str, float]] = {}
+        self._pred_count: int = 0
 
         log.info(
             "ConditionEngine loaded %d models: %s",
@@ -221,7 +243,15 @@ class ConditionEngine:
                 feature_values = [features.get(f, 0.0) for f in feature_names]
 
                 value = artifact.predict(feature_values, feature_names)
-                regime, percentile = artifact.get_regime(value)
+
+                # Track for online recalibration
+                buf = self._rolling_preds.get(name)
+                if buf is not None:
+                    buf.append(value)
+
+                # Use rolling percentiles if available, else training percentiles
+                rolling = self._rolling_pcts.get(name)
+                regime, percentile = artifact.get_regime(value, override_percentiles=rolling)
 
                 predictions[name] = ConditionPrediction(
                     name=name,
@@ -232,6 +262,11 @@ class ConditionEngine:
             except Exception:
                 log.warning("Condition prediction failed for %s", name, exc_info=True)
 
+        # Periodic recalibration of percentiles from recent predictions
+        self._pred_count += 1
+        if self._pred_count % 500 == 0:
+            self._recalibrate()
+
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
         return MarketConditions(
@@ -239,6 +274,25 @@ class ConditionEngine:
             timestamp=time.time(),
             predictions=predictions,
             inference_time_ms=elapsed_ms,
+        )
+
+    def _recalibrate(self):
+        """Recompute regime percentiles from recent live predictions.
+
+        Replaces static training-set percentiles with rolling estimates
+        so regime labels stay calibrated as market conditions shift.
+        """
+        for name, buf in self._rolling_preds.items():
+            if len(buf) < 200:
+                continue
+            arr = np.array(buf)
+            self._rolling_pcts[name] = {
+                f"p{p}": float(np.percentile(arr, p))
+                for p in [10, 25, 50, 75, 90, 95]
+            }
+        log.info(
+            "Recalibrated percentiles for %d models from %d recent predictions",
+            len(self._rolling_pcts), self._pred_count,
         )
 
     @property
