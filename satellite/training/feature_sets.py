@@ -81,43 +81,48 @@ FULL_FEATURES: list[str] = [
 
 MODEL_FEATURES: dict[str, list[str]] = {
     # --- Volatility cluster ---
-    # These predict future volatility. Heavy on vol + volume + OI dynamics.
+    # Predict future volatility. v1 features only (100% availability).
     "vol_1h": [
         "realized_vol_1h",
-        "realized_vol_4h",
-        "vol_of_vol",
         "volume_vs_1h_avg_ratio",
-        "volume_acceleration",
         "oi_vs_7d_avg_ratio",
-        "oi_change_rate_1h",
         "price_trend_1h",
         "hours_to_funding",
-        "liq_total_1h_usd",
+        "funding_vs_30d_zscore",
+        "liq_cascade_active",
+        "liq_1h_vs_4h_avg",
+        "liq_imbalance_1h",
+        "oi_price_direction",
+        "oi_funding_pressure",
+        "cvd_ratio_30m",
     ],
     "vol_4h": [
         "realized_vol_1h",
-        "realized_vol_4h",
-        "vol_of_vol",
         "volume_vs_1h_avg_ratio",
-        "volume_acceleration",
         "oi_vs_7d_avg_ratio",
-        "oi_change_rate_1h",
         "price_trend_1h",
-        "price_trend_4h",
         "hours_to_funding",
+        "funding_vs_30d_zscore",
+        "liq_cascade_active",
+        "liq_1h_vs_4h_avg",
         "liq_imbalance_1h",
-        "liq_total_1h_usd",
+        "oi_price_direction",
+        "oi_funding_pressure",
+        "cvd_ratio_30m",
     ],
     "vol_expand": [
         "realized_vol_1h",
-        "realized_vol_4h",
-        "vol_of_vol",
         "volume_vs_1h_avg_ratio",
-        "volume_acceleration",
         "hours_to_funding",
         "price_trend_1h",
         "cvd_ratio_30m",
-        "oi_change_rate_1h",
+        "funding_vs_30d_zscore",
+        "oi_vs_7d_avg_ratio",
+        "liq_cascade_active",
+        "liq_1h_vs_4h_avg",
+        "oi_price_direction",
+        "oi_funding_pressure",
+        "liq_imbalance_1h",
     ],
 
     # --- Move/Range cluster ---
@@ -239,35 +244,37 @@ MODEL_FEATURES: dict[str, list[str]] = {
     ],
 
     # --- Funding model ---
-    # Predicts funding trajectory. Needs funding + OI + indirect helpers.
+    # Predicts funding trajectory. v1 features only.
     "funding_4h": [
         "funding_vs_30d_zscore",
-        "funding_rate_raw",
-        "funding_velocity",
         "hours_to_funding",
         "oi_funding_pressure",
         "oi_vs_7d_avg_ratio",
-        "oi_change_rate_1h",
         "liq_1h_vs_4h_avg",
         "realized_vol_1h",
         "volume_vs_1h_avg_ratio",
         "price_trend_1h",
-        "cvd_acceleration",
+        "cvd_ratio_30m",
+        "liq_cascade_active",
+        "oi_price_direction",
+        "liq_imbalance_1h",
     ],
 
     # --- Volume model ---
-    # Predicts future volume. Needs volume history + catalysts.
+    # Predicts future volume. v1 features only.
     "volume_1h": [
         "volume_vs_1h_avg_ratio",
-        "volume_acceleration",
         "realized_vol_1h",
         "oi_vs_7d_avg_ratio",
-        "oi_change_rate_1h",
         "hours_to_funding",
         "cvd_ratio_30m",
-        "cvd_acceleration",
         "price_trend_1h",
-        "liq_total_1h_usd",
+        "funding_vs_30d_zscore",
+        "liq_cascade_active",
+        "liq_1h_vs_4h_avg",
+        "oi_price_direction",
+        "oi_funding_pressure",
+        "liq_imbalance_1h",
     ],
 
     # --- Reversal cluster ---
