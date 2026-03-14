@@ -168,7 +168,6 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "hours_to_funding",
         "liq_1h_vs_4h_avg",
         "oi_funding_pressure",
-        "hour_sin",
     ],
     "mae_short": [
         "realized_vol_1h",
@@ -183,7 +182,6 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "hours_to_funding",
         "liq_1h_vs_4h_avg",
         "oi_funding_pressure",
-        "hour_sin",
     ],
     # SL survival: uses only v1 features (available in all 60K+ snapshots).
     # v3 features (vol_of_vol, volume_acceleration, etc.) only exist in ~2K recent rows,
