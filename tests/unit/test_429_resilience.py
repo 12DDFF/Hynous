@@ -149,7 +149,7 @@ class TestRetryLogic:
 
 
 class TestProviderMethodsUseFetchAllMids:
-    """Verify get_all_prices and get_price delegate to _fetch_all_mids."""
+    """Verify get_all_prices uses _fetch_all_mids (REST fallback) and get_price delegates to get_all_prices."""
 
     def test_get_all_prices_uses_fetch(self):
         """get_all_prices must call _fetch_all_mids, not _info.all_mids directly."""
@@ -158,21 +158,26 @@ class TestProviderMethodsUseFetchAllMids:
 
         source = inspect.getsource(HyperliquidProvider.get_all_prices)
         assert "_fetch_all_mids" in source, (
-            "get_all_prices must use _fetch_all_mids (cached + retry)"
+            "get_all_prices must use _fetch_all_mids (cached + retry) as REST fallback"
         )
         assert "_info.all_mids" not in source, (
             "get_all_prices must not call _info.all_mids directly"
         )
 
-    def test_get_price_uses_fetch(self):
-        """get_price must call _fetch_all_mids, not _info.all_mids directly."""
+    def test_get_price_delegates_to_get_all_prices(self):
+        """get_price must delegate to get_all_prices(), not call _fetch_all_mids() directly.
+
+        Calling _fetch_all_mids() directly bypasses the WS cache — 10 call sites across
+        6 files would silently remain REST-only. get_price() must go through get_all_prices()
+        so all callers benefit from the WS cache automatically.
+        """
         import inspect
         from hynous.data.providers.hyperliquid import HyperliquidProvider
 
         source = inspect.getsource(HyperliquidProvider.get_price)
-        assert "_fetch_all_mids" in source, (
-            "get_price must use _fetch_all_mids (cached + retry)"
+        assert "get_all_prices()" in source, (
+            "get_price must call get_all_prices() to use WS cache (not _fetch_all_mids directly)"
         )
-        assert "_info.all_mids" not in source, (
-            "get_price must not call _info.all_mids directly"
+        assert "_fetch_all_mids" not in source, (
+            "get_price must NOT call _fetch_all_mids directly — bypasses WS cache"
         )

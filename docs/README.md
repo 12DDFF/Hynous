@@ -109,11 +109,11 @@ Key conventions:
 | [realtime-price-data/](./revisions/realtime-price-data/) | 1-minute candle high/low enhancement for MFE/MAE tracking |
 | [agent-trade-memory/](./revisions/agent-trade-memory/) | Recent trade closes injected into briefing (deque + Nous fallback) |
 
-### Implemented (2026-03-09)
+### Implemented (2026-03-09, superseded by ws-migration)
 
 | Track | Description |
 |-------|-------------|
-| [ws-price-feed/](./revisions/ws-price-feed/) | `allMids` WebSocket feed in daemon — sub-second prices for mechanical exits, 1s loop, REST fallback |
+| [ws-price-feed/](./revisions/ws-price-feed/) | `allMids` WebSocket feed — **superseded by ws-migration** (allMids now managed by `ws_feeds.py` alongside l2Book and activeAssetCtx) |
 
 ### Implemented (2026-03-12, updated 2026-03-13)
 
@@ -127,11 +127,11 @@ Key conventions:
 |-------|-------------|--------|
 | [llm-lookahead-trade/](./revisions/llm-lookahead-trade/) | Pre-staged trade directives — decouple LLM decision from execution, daemon fires entries mechanically | Concept stage |
 
-### Planned
+### Implemented (2026-03-14) — Phase 1
 
 | Track | Description |
 |-------|-------------|
-| [ws-migration/](./revisions/ws-migration/) | Replace all REST polling with WebSocket subscriptions — zero rate limit reads |
+| [ws-migration/](./revisions/ws-migration/) | Phase 1: Market data WS (`allMids`, `l2Book`, `activeAssetCtx`) via `ws_feeds.py`. Provider-level WS-first reads with REST fallback. Daemon WS code removed. 690 tests passing. Phase 2 (account data) planned for live trading. |
 
 ### Implemented — Trade Mechanism Debug (2026-03-06)
 
@@ -169,4 +169,4 @@ See [archive/README.md](./archive/README.md) for a complete index.
 
 ---
 
-Last updated: 2026-03-13 (breakeven Round 3 deployed: stale flag fix + background wakes, breakeven DISABLED for ML testing, 662 tests passing)
+Last updated: 2026-03-14 (WS migration Phase 1 deployed: market data WS via ws_feeds.py, 690 tests passing)

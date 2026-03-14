@@ -6,7 +6,7 @@ Exchange class for order execution on testnet/mainnet.
 
 Key decisions:
 - Uses SDK's Info class directly (synchronous) — our agent.chat() is sync
-- skip_ws=True — we only need REST queries, no WebSocket overhead
+- skip_ws=True on SDK Info — we manage our own WS feeds via ws_feeds.py
 - All prices from SDK come as strings — we convert to float here
 - All SDK timestamps are in milliseconds — callers pass ms, we return ms
 - Singleton pattern to avoid re-initializing the SDK per tool call
@@ -26,6 +26,8 @@ from typing import Optional
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
 from eth_account import Account
+
+from hynous.data.providers.ws_feeds import MarketDataFeed
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +120,8 @@ class HyperliquidProvider:
         # Price cache for rate-limit resilience (2s TTL)
         self._mids_cache: dict[str, str] | None = None
         self._mids_cache_time: float = 0.0
+        # WebSocket market data feed (started by daemon via start_ws())
+        self._market_feed: MarketDataFeed | None = None
         if trade_url:
             logger.info("HyperliquidProvider initialized (data=%s, trade=%s)", self.MAINNET_URL, trade_url)
         else:
@@ -142,6 +146,43 @@ class HyperliquidProvider:
             timeout=self._TIMEOUT,
         )
         logger.info("Exchange initialized for %s (url=%s)", self._wallet.address, self._trade_url)
+
+    # ================================================================
+    # WebSocket Market Data Feed
+    # ================================================================
+
+    def start_ws(self, coins: list[str]):
+        """Start WebSocket market data feed. Called once by daemon on startup.
+
+        Args:
+            coins: List of coin symbols to subscribe to for L2 and asset context.
+                  allMids always subscribes to all coins regardless.
+        """
+        if self._market_feed is not None:
+            return  # Already started
+        self._market_feed = MarketDataFeed(coins=coins)
+        self._market_feed.start()
+
+    def stop_ws(self):
+        """Stop WebSocket feed. Called on daemon shutdown."""
+        if self._market_feed:
+            self._market_feed.stop()
+            self._market_feed = None
+
+    @property
+    def ws_health(self) -> dict | None:
+        """Return WS health for status reporting. None if WS not started."""
+        if not self._market_feed:
+            return None
+        h = self._market_feed.get_health()
+        return {
+            "connected": h.connected,
+            "last_msg_age": h.last_msg_age,
+            "price_count": h.price_count,
+            "l2_book_coins": h.l2_book_coins,
+            "asset_ctx_coins": h.asset_ctx_coins,
+            "reconnect_count": h.reconnect_count,
+        }
 
     @property
     def can_trade(self) -> bool:
@@ -636,13 +677,17 @@ class HyperliquidProvider:
         raise last_exc  # Should not reach here, but safety net
 
     def get_all_prices(self) -> dict[str, float]:
-        """Get current mid prices for all traded assets.
+        """Get current mid prices for all traded assets. Uses WS if available and fresh, else REST.
 
         Returns:
             Dict mapping symbol to price, e.g. {"BTC": 97432.5, "ETH": 3421.8}
         """
-        mids = self._fetch_all_mids()
-        return {symbol: float(price) for symbol, price in mids.items()}
+        if self._market_feed:
+            ws_prices = self._market_feed.get_prices()
+            if ws_prices:
+                return ws_prices
+        # REST fallback
+        return {symbol: float(price) for symbol, price in self._fetch_all_mids().items()}
 
     def get_price(self, symbol: str) -> float | None:
         """Get current mid price for a single symbol.
@@ -650,11 +695,8 @@ class HyperliquidProvider:
         Returns:
             Price as float, or None if symbol not found.
         """
-        mids = self._fetch_all_mids()
-        price_str = mids.get(symbol)
-        if price_str is None:
-            return None
-        return float(price_str)
+        prices = self.get_all_prices()  # Uses WS cache if available
+        return prices.get(symbol)
 
     def get_candles(
         self,
@@ -691,13 +733,20 @@ class HyperliquidProvider:
         return candles
 
     def get_l2_book(self, symbol: str) -> dict | None:
-        """Get L2 orderbook snapshot (up to 20 levels per side).
+        """Get L2 orderbook snapshot. Uses WS if available and fresh, else REST.
 
         Returns:
             Dict with keys: bids, asks, best_bid, best_ask, mid_price, spread.
             Each bid/ask is a list of {price, size, orders} dicts.
             Or None if error.
         """
+        # WS-first: check if we have a fresh WS-fed book
+        if self._market_feed:
+            ws_book = self._market_feed.get_l2_book(symbol)
+            if ws_book:
+                return ws_book
+
+        # REST fallback (existing code unchanged below this point)
         try:
             raw = self._info.l2_snapshot(symbol)
         except Exception as e:
@@ -788,7 +837,36 @@ class HyperliquidProvider:
         return fills
 
     def get_multi_asset_contexts(self, symbols: list[str]) -> dict[str, dict]:
-        """Get context for multiple symbols in a single API call.
+        """Get asset contexts for multiple symbols. WS-first, REST fallback.
+
+        Returns dict mapping symbol → context dict.
+        """
+        result = {}
+        missing = []
+
+        # Try WS cache first for each symbol
+        if self._market_feed:
+            for sym in symbols:
+                ws_ctx = self._market_feed.get_asset_ctx(sym)
+                if ws_ctx:
+                    result[sym] = ws_ctx
+                else:
+                    missing.append(sym)
+        else:
+            missing = list(symbols)
+
+        # REST fallback for any symbols not in WS cache
+        if missing:
+            try:
+                rest_result = self._rest_get_multi_asset_contexts(missing)
+                result.update(rest_result)
+            except Exception:
+                pass  # Caller handles missing symbols
+
+        return result
+
+    def _rest_get_multi_asset_contexts(self, symbols: list[str]) -> dict[str, dict]:
+        """Get context for multiple symbols in a single REST API call.
 
         Unlike get_asset_context() which fetches all assets per symbol,
         this calls the API once and extracts data for all requested symbols.
@@ -839,12 +917,19 @@ class HyperliquidProvider:
         return result
 
     def get_asset_context(self, symbol: str) -> dict | None:
-        """Get current context for an asset (funding, OI, volume, etc.).
+        """Get current context for an asset. Uses WS if available and fresh, else REST.
 
         Returns:
             Dict with keys: funding, open_interest, day_volume, mark_price, prev_day_price.
             Or None if symbol not found in the universe.
         """
+        # WS-first: check if we have a fresh WS-fed context
+        if self._market_feed:
+            ws_ctx = self._market_feed.get_asset_ctx(symbol)
+            if ws_ctx:
+                return ws_ctx
+
+        # REST fallback (existing code unchanged below this point)
         meta_and_ctxs = self._info.meta_and_asset_ctxs()
         meta = meta_and_ctxs[0]
         ctxs = meta_and_ctxs[1]

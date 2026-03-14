@@ -1,8 +1,8 @@
 # WebSocket Migration — Replace REST Polling with Streaming
 
-> **Status:** Planned
+> **Status:** Phase 1 Implemented (2026-03-14) — Market data WS (`allMids`, `l2Book`, `activeAssetCtx`). Phase 2 Planned — Account data WS.
 > **Priority:** High
-> **Depends on:** WS price feed (implemented — `allMids` only), breakeven/trailing stop fixes (in progress)
+> **Depends on:** WS price feed (superseded — allMids now part of this migration)
 
 ---
 
@@ -10,7 +10,7 @@
 
 The daemon makes ~15 distinct REST calls to Hyperliquid per loop cycle. At 1s loop frequency with two VPS instances sharing one IP, this burns through rate limits fast. HTTP 429s cascade across all systems — position tracking goes blind, SL/TP triggers stop firing, and MFE/MAE tracking gaps appear.
 
-The current `allMids` WebSocket feed (implemented in `daemon._run_ws_price_feed()`) proves the pattern works. This revision extends it to replace all remaining REST reads with WebSocket subscriptions.
+The original `allMids` WebSocket feed (formerly in `daemon._run_ws_price_feed()`) proved the pattern works. Phase 1 extended it to a centralized `MarketDataFeed` class in `src/hynous/data/providers/ws_feeds.py` managing multiple channels (`allMids`, `l2Book`, `activeAssetCtx`) on one connection. Phase 2 will add account data channels.
 
 ## Core Principle
 
@@ -136,24 +136,24 @@ These eliminate the most frequent REST calls and fix the stale-cache class of bu
 
 ## Architecture Notes
 
-### Existing Pattern to Follow
+### Implemented Architecture (Phase 1)
 
-The `allMids` WS feed in `daemon._run_ws_price_feed()` established the pattern:
-- Background thread with auto-reconnect (5s delay)
-- Data written to `self._ws_prices` dict
-- Consumer reads via `_get_prices_with_ws_fallback()` — WS if fresh (<30s), else REST
-- Thread runs as `daemon=True`, named `hynous-ws-prices`
+WS management moved from daemon to provider layer. `MarketDataFeed` in `ws_feeds.py` manages one WS connection with multiple channel subscriptions. Provider methods check WS cache first (<30s freshness), REST fallback. Daemon starts WS via `provider.start_ws(coins)`.
 
-The same fallback pattern should apply to all new WS channels: WS primary, REST fallback if WS is stale or disconnected.
+- Background thread with auto-reconnect (exponential backoff 5→60s)
+- Per-channel state dicts (atomically replaced, GIL-safe)
+- `get_prices()`, `get_l2_book(coin)`, `get_asset_ctx(coin)` — return `None` if stale
+- Provider methods transparently use WS or REST — callers unaware
 
-### Key Files to Modify
+### Files Modified (Phase 1)
 
 | File | Changes |
 |------|---------|
-| `src/hynous/intelligence/daemon.py` | New WS subscription threads, replace polling with WS-fed state |
-| `src/hynous/data/providers/hyperliquid.py` | WS connection manager, channel subscriptions, state dicts |
-| `src/hynous/data/providers/paper.py` | Paper provider needs to consume WS prices for `check_triggers()` |
-| `src/hynous/core/config.py` | WS config fields (enable/disable per channel, reconnect settings) |
+| `src/hynous/data/providers/ws_feeds.py` | **NEW** — `MarketDataFeed` class, 3 channel handlers, reconnect, health |
+| `src/hynous/data/providers/hyperliquid.py` | WS-first reads on `get_all_prices`, `get_price`, `get_l2_book`, `get_asset_context`, `get_multi_asset_contexts`; `start_ws`/`stop_ws`/`ws_health` |
+| `src/hynous/data/providers/paper.py` | 3 passthrough methods (`start_ws`, `stop_ws`, `ws_health`) |
+| `src/hynous/intelligence/daemon.py` | Removed `_run_ws_price_feed`, `_get_prices_with_ws_fallback`, WS state vars; added `_update_ws_coins`, provider-based WS startup |
+| `tests/unit/test_ws_price_feed.py` | 49 tests covering all WS interfaces |
 
 ### Connection Strategy
 
@@ -186,13 +186,19 @@ Recommendation: **Two connections** — one for market data (`allMids`, `l2Book`
 
 ---
 
-## Open Questions
+## Open Questions (Resolved)
 
-1. **Thread model:** One manager thread dispatching to handlers, or one thread per WS connection?
-2. **State consistency:** How to handle partial WS updates vs the atomic snapshots REST provides?
-3. **Testing:** How to mock WS streams in paper mode for unit tests?
-4. **Gradual rollout:** Migrate one channel at a time with REST fallback, or big-bang?
-5. **Data layer integration:** Should the data layer service also migrate its position_poller and hlp_tracker to WS?
+1. **Thread model:** Single manager thread per connection, dispatching to channel handlers via `on_message`. ✅
+2. **State consistency:** Atomic dict replacement (GIL-safe). Each channel has independent staleness tracking. ✅
+3. **Testing:** 49 unit tests using source inspection + direct state injection. No WS mocking needed. ✅
+4. **Gradual rollout:** Phase 1 (market data) shipped first. Phase 2 (account data) deferred to live trading. ✅
+5. **Data layer integration:** Separate concern — data-layer already has its own WS (trade_stream, l2_subscriber). Not affected. ✅
+
+## Open Questions (Phase 2)
+
+1. **Account data WS endpoint:** Mainnet vs testnet — `_trade_info` may point to a different server.
+2. **`clearinghouseState` in paper mode:** Paper positions don't exist on-chain. Account WS only useful for live.
+3. **`_refresh_trigger_cache()` elimination:** 13 manual call sites can be deleted once `openOrders` WS feeds `_tracked_triggers` automatically.
 
 ---
 
@@ -200,9 +206,10 @@ Recommendation: **Two connections** — one for market data (`allMids`, `l2Book`
 
 - [Hyperliquid WS Subscriptions Docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket/subscriptions)
 - [Python SDK WebSocket Manager](https://github.com/hyperliquid-dex/hyperliquid-python-sdk/blob/master/hyperliquid/websocket_manager.py)
-- Existing implementation: `daemon._run_ws_price_feed()` (daemon.py ~1220-1284)
-- Related revision: `docs/revisions/ws-price-feed/` (allMids WS — implemented 2026-03-09)
+- Implementation: `src/hynous/data/providers/ws_feeds.py` (MarketDataFeed class)
+- Implementation guide: `docs/revisions/ws-migration/implementation-guide.md`
+- Superseded revision: `docs/revisions/ws-price-feed/` (allMids-only WS — now part of this migration)
 
 ---
 
-Last updated: 2026-03-10
+Last updated: 2026-03-14

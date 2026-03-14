@@ -147,6 +147,19 @@ class PaperProvider:
     def _get_sz_decimals(self, symbol: str) -> int:
         return self._real._get_sz_decimals(symbol)
 
+    def start_ws(self, coins: list[str]):
+        """Pass through to real provider."""
+        self._real.start_ws(coins)
+
+    def stop_ws(self):
+        """Pass through to real provider."""
+        self._real.stop_ws()
+
+    @property
+    def ws_health(self) -> dict | None:
+        """Pass through to real provider."""
+        return self._real.ws_health
+
     # ================================================================
     # Account Reads — Simulated from Internal State
     # ================================================================

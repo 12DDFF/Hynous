@@ -1,9 +1,9 @@
 # WebSocket Price Feed — Daemon Real-Time Price Upgrade
 
-> **Status:** Implemented
+> **Status:** Superseded by [ws-migration](../ws-migration/) (2026-03-14)
 > **Priority:** High
-> **Scope:** ~80 lines new code, 2 line changes, 1 new background thread, no breaking changes
-> **Files affected:** `daemon.py`, `config.py`, `default.yaml`, `pyproject.toml`
+> **Note:** The `allMids` WS feed originally lived in `daemon._run_ws_price_feed()`. It has been migrated to `src/hynous/data/providers/ws_feeds.py` as part of the broader WS migration, which added `l2Book` and `activeAssetCtx` channels. The daemon no longer manages WS connections directly — the provider layer handles all WS state.
+> **Original scope:** ~80 lines new code, 1 new background thread (now in ws_feeds.py)
 
 ---
 

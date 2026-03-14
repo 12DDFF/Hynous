@@ -396,7 +396,52 @@ The daemon is the central orchestrator. It polls market data from Hyperliquid, p
 | 8 | Context Snapshot <-- multiple | Mixed (HTTP, in-memory) | `build_snapshot()` | Every `chat()` call |
 | 9 | Settings Page --> JSON --> consumers | File I/O | `trading_settings.json` | On save |
 | 10 | Discord Bot <--> Agent | Shared Python singleton | `agent.chat()` + `notify()` | On message / wake |
+| 11 | Provider <-- Hyperliquid WS | WebSocket | `ws_feeds.py` → `allMids`, `l2Book`, `activeAssetCtx` | Sub-second streaming |
 
 ---
 
-Last updated: 2026-03-05
+## Flow 11: Provider <-- Hyperliquid WebSocket (Market Data Feed)
+
+**What**: `MarketDataFeed` in `ws_feeds.py` maintains a single WS connection to `wss://api.hyperliquid.xyz/ws`, subscribing to `allMids`, `l2Book` (per tracked coin), and `activeAssetCtx` (per tracked coin). Data is cached in atomic dicts and consumed by provider methods (`get_all_prices`, `get_l2_book`, `get_asset_context`) with 30s staleness gating and REST fallback.
+
+**Code path**:
+1. Daemon calls `provider.start_ws(coins)` on startup
+2. `HyperliquidProvider.start_ws()` creates `MarketDataFeed(coins)` and calls `.start()`
+3. Background thread connects to WS, subscribes to channels
+4. `on_message` callback routes to `_handle_all_mids`, `_handle_l2_book`, `_handle_asset_ctx`
+5. Handlers transform WS data to provider format and atomically replace state dicts
+6. Provider read methods (e.g., `get_all_prices()`) check WS cache first; if stale (>30s), fall through to REST
+
+**Channels**:
+- `allMids` — all mid prices, updated per block (~0.4s). Consumed by `get_all_prices()`, `get_price()`.
+- `l2Book` — L2 orderbook per coin, updated every ~0.5s. Consumed by `get_l2_book()`.
+- `activeAssetCtx` — funding, OI, volume per coin, real-time. Consumed by `get_asset_context()`, `get_multi_asset_contexts()`.
+
+**Not WS-fed** (stays REST):
+- `get_candles()` — historical ranges, WS only provides current candle
+- `get_all_asset_contexts()` — full 200+ coin universe for scanner, impractical via WS
+- All write operations — `market_open`, `market_close`, `order`, `cancel`
+
+```
+  Hyperliquid WS                    ws_feeds.py              HyperliquidProvider
+  wss://api.hyperliquid.xyz/ws          │                           │
+       │                                │                           │
+       │  allMids push (sub-second)     │                           │
+       │ ─────────────────────────────► │  _prices dict             │
+       │                                │                           │
+       │  l2Book push (~500ms)          │                           │
+       │ ─────────────────────────────► │  _l2_books dict           │
+       │                                │                           │
+       │  activeAssetCtx push (real-time)                           │
+       │ ─────────────────────────────► │  _asset_ctxs dict         │
+       │                                │                           │
+       │                                │  get_prices() ──────────► │  get_all_prices()
+       │                                │  get_l2_book("BTC") ────► │  get_l2_book()
+       │                                │  get_asset_ctx("BTC") ──► │  get_asset_context()
+       │                                │                           │
+       │                                │  (returns None if stale)  │  REST fallback
+```
+
+---
+
+Last updated: 2026-03-14

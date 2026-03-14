@@ -27,7 +27,7 @@ Hynous is a personal crypto intelligence system with an autonomous LLM trading a
 hynous/
 ├── src/hynous/          # Main Python application
 │   ├── intelligence/    # Agent brain (agent, daemon, scanner, tools, prompts)
-│   ├── data/            # Market data providers (6 providers)
+│   ├── data/            # Market data providers (6 providers + WS feed manager)
 │   ├── nous/            # Python HTTP client for Nous API
 │   ├── discord/         # Discord bot (chat relay, notifications, stats)
 │   └── core/            # Shared utilities (config, types, tracing)
@@ -189,9 +189,10 @@ cd nous-server && pnpm test
 - `docs/integration.md` — Cross-system data flows (satellite ↔ data-layer ↔ daemon)
 - `docs/revisions/trade-mechanism-debug/` — 5 fix guides for mechanical exit bugs (implemented)
 - `docs/revisions/breakeven-fix/` — Two-layer breakeven system + Round 3 (stale flag fix, background wakes). **Both layers DISABLED** for ML testing — re-enable in `config/default.yaml`.
+- `docs/revisions/ws-migration/` — WebSocket migration: Phase 1 (market data) implemented. `allMids`, `l2Book`, `activeAssetCtx` via `ws_feeds.py`. Phase 2 (account data) planned for live trading.
 - `docs/archive/` — Completed revision guides (all resolved, kept for reference)
 - Each major directory has its own `README.md`
 
 ---
 
-Last updated: 2026-03-13
+Last updated: 2026-03-14

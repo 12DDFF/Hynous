@@ -123,8 +123,9 @@ Market data from external sources.
 
 | Module | Responsibility |
 |--------|----------------|
-| `providers/` | Data source wrappers (6 providers) |
-| `hyperliquid.py` | Hyperliquid API (prices, funding, positions, execution) |
+| `providers/` | Data source wrappers (6 providers + WS feed manager) |
+| `hyperliquid.py` | Hyperliquid API (WS-first market data reads, REST execution) |
+| `ws_feeds.py` | WebSocket feed manager — `MarketDataFeed` class manages `allMids`, `l2Book`, `activeAssetCtx` channels on one connection with REST fallback |
 | `paper.py` | Paper trading simulator (local order matching) |
 | `coinglass.py` | Coinglass API (derivatives data: OI, liquidations, funding) |
 | `cryptocompare.py` | CryptoCompare API (news feed, sentiment) |
@@ -290,7 +291,7 @@ User sees Hynous response
 ```
 daemon.py (continuous loop)
     │
-    ├── _fast_trigger_check() (every 1s — WS prices via _get_prices_with_ws_fallback())
+    ├── _fast_trigger_check() (every 1s — WS prices via provider.get_all_prices(), WS-first)
     │     ├── check_triggers() → SL/TP fill detection
     │     ├── Capital-breakeven (Layer 1, 0.5% ROE → SL at entry price)
     │     ├── Fee-breakeven (Layer 2, fee-proportional ROE → SL at entry + buffer)
@@ -412,6 +413,7 @@ Large content (LLM messages, responses, injected context) is stored via SHA256 c
 | UI Framework | Reflex | Python-native, compiles to React |
 | Memory System | Nous (TypeScript) via HTTP | Too complex to reimplement, ~5ms overhead acceptable |
 | LLM | LiteLLM via OpenRouter | Multi-provider (Claude, GPT-4, DeepSeek, etc.), single API key |
+| Market Data | WS-first via `ws_feeds.py` | Sub-second prices/L2/contexts, REST fallback if stale (>30s) |
 | Agent-Hydra | Direct import | Zero overhead, same Python process |
 | Agent-Nous | HTTP API | Nous is TypeScript, clean separation |
 | Agent-Discord | Shared singleton | Same Agent instance, background thread with own event loop |
@@ -610,7 +612,11 @@ Trade mechanism debug (2026-03-06): 6 bugs + 1 systemic issue in the mechanical 
 
 ### `docs/revisions/ws-price-feed/`
 
-WebSocket price feed (2026-03-09): daemon subscribes to Hyperliquid `allMids` WebSocket feed in a background thread (`hynous-ws-prices`). Prices update sub-second and are consumed by `_fast_trigger_check()` via `_get_prices_with_ws_fallback()`. Falls back to REST if WS is down or stale (>30s). Main loop sleep reduced from 10s to 1s for responsive mechanical exits. Config: `daemon.ws_price_feed: true`. **IMPLEMENTED.**
+WebSocket price feed (2026-03-09): originally implemented as `daemon._run_ws_price_feed()` for `allMids` only. **SUPERSEDED** by `docs/revisions/ws-migration/` (2026-03-14) — allMids now managed by `MarketDataFeed` in `ws_feeds.py` alongside `l2Book` and `activeAssetCtx`. Daemon no longer manages WS directly.
+
+### `docs/revisions/ws-migration/`
+
+WebSocket migration Phase 1 (2026-03-14): market data WS via `src/hynous/data/providers/ws_feeds.py`. `MarketDataFeed` class manages `allMids`, `l2Book`, `activeAssetCtx` channels on one connection. Provider methods (`get_all_prices`, `get_price`, `get_l2_book`, `get_asset_context`, `get_multi_asset_contexts`) check WS cache first (<30s fresh), REST fallback. Daemon WS code removed (~120 lines). Phase 2 (account data: `clearinghouseState`, `openOrders`, `userFills`) planned for live trading. **PHASE 1 IMPLEMENTED.** 690 tests passing.
 
 ### `docs/revisions/breakeven-fix/`
 
@@ -653,4 +659,4 @@ When working on this codebase:
 
 ---
 
-Last updated: 2026-03-12
+Last updated: 2026-03-14

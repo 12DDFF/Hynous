@@ -9,8 +9,9 @@
 ```
 data/
 ├── providers/
-│   ├── hyperliquid.py     # Exchange data + order execution (Hyperliquid SDK)
+│   ├── hyperliquid.py     # Exchange data + order execution (Hyperliquid SDK, WS-first reads)
 │   ├── paper.py           # Paper trading simulator (wraps HyperliquidProvider)
+│   ├── ws_feeds.py        # WebSocket feed manager (allMids, l2Book, activeAssetCtx)
 │   ├── coinglass.py       # Cross-exchange derivatives data (Coinglass API v4)
 │   ├── cryptocompare.py   # Crypto news articles (CryptoCompare News API v2)
 │   ├── hynous_data.py     # HTTP client for hynous-data service (liquidations, whales, order flow)
@@ -23,11 +24,11 @@ data/
 
 ## Providers
 
-All providers follow the singleton pattern via a module-level `get_provider()` (or `get_client()`) function. All are synchronous, using `requests.Session` for connection reuse.
+All providers follow the singleton pattern via a module-level `get_provider()` (or `get_client()`) function. REST methods are synchronous, using `requests.Session` for connection reuse. Market data reads (`get_all_prices`, `get_l2_book`, `get_asset_context`, `get_multi_asset_contexts`) are WS-first with REST fallback — managed by `MarketDataFeed` in `ws_feeds.py`.
 
 ### HyperliquidProvider (`hyperliquid.py`)
 
-The primary provider. Wraps the Hyperliquid Python SDK for both market data reads (always mainnet) and order execution (mainnet, testnet, or paper mode).
+The primary provider. Wraps the Hyperliquid Python SDK for both market data reads (always mainnet) and order execution (mainnet, testnet, or paper mode). Market data reads are WS-first (via `MarketDataFeed` in `ws_feeds.py`) with REST fallback if WS is stale (>30s). Write operations always use REST.
 
 **Market Data Methods:**
 
@@ -68,6 +69,8 @@ The primary provider. Wraps the Hyperliquid Python SDK for both market data read
 - Mode is controlled by `config.execution.mode`: `"paper"`, `"testnet"`, or `"live"`
 - Private key: `HYPERLIQUID_PRIVATE_KEY` env var
 - Data reads always use mainnet regardless of mode
+- Market data reads use WS-first (`ws_feeds.py`) with REST fallback
+- `start_ws(coins)` called by daemon on startup; `stop_ws()` on shutdown
 - Exchange is lazily initialized only when a private key is available
 
 **Singleton:** `get_provider(config)` returns `PaperProvider` (paper mode) or `HyperliquidProvider` (testnet/live).
@@ -84,7 +87,7 @@ Drop-in replacement for `HyperliquidProvider` that simulates all trading operati
 - Persists state to `storage/paper-state.json` (survives restarts)
 - `reset_paper_stats()` marks a new session boundary for stats filtering
 
-All data methods (`get_price`, `get_candles`, `get_l2_book`, etc.) pass through to the real `HyperliquidProvider`.
+All data methods (`get_price`, `get_candles`, `get_l2_book`, etc.) pass through to the real `HyperliquidProvider`. WS methods (`start_ws`, `stop_ws`, `ws_health`) also pass through.
 
 ---
 
@@ -180,4 +183,4 @@ Real-time web search via the Perplexity Sonar API. Gives the agent access to cur
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-03-14
