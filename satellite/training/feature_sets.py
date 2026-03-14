@@ -152,6 +152,8 @@ MODEL_FEATURES: dict[str, list[str]] = {
     # Previous version was a vol proxy (Spearman +0.33 in high vol, +0.06 in low vol).
     # Added crowding signals (OI, liq cascade, funding pressure) to capture WHY drawdowns
     # happen beyond just "vol is high." All v1 features (100% data availability).
+    # v1 features only (100% availability in 60K+ snapshots).
+    # oi_change_rate_1h and funding_velocity are v3 (only 2-3% available) — excluded.
     "mae_long": [
         "realized_vol_1h",
         "realized_vol_4h",
@@ -159,7 +161,6 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "price_trend_4h",
         "liq_total_1h_usd",
         "liq_imbalance_1h",
-        "oi_change_rate_1h",
         "volume_vs_1h_avg_ratio",
         "cvd_ratio_30m",
         "funding_vs_30d_zscore",
@@ -168,8 +169,8 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "liq_cascade_active",       # Active cascade = amplified drawdowns
         "oi_price_direction",       # OI flowing with/against price
         "hours_to_funding",         # Near settlement = forced exit pressure
-        "funding_velocity",         # Funding direction change rate
         "liq_1h_vs_4h_avg",        # Liquidation acceleration
+        "oi_funding_pressure",      # OI growth × funding interaction
     ],
     "mae_short": [
         "realized_vol_1h",
@@ -178,7 +179,6 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "price_trend_4h",
         "liq_total_1h_usd",
         "liq_imbalance_1h",
-        "oi_change_rate_1h",
         "volume_vs_1h_avg_ratio",
         "cvd_ratio_30m",
         "funding_vs_30d_zscore",
@@ -187,8 +187,8 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "liq_cascade_active",
         "oi_price_direction",
         "hours_to_funding",
-        "funding_velocity",
         "liq_1h_vs_4h_avg",
+        "oi_funding_pressure",
     ],
     # SL survival: uses only v1 features (available in all 60K+ snapshots).
     # v3 features (vol_of_vol, volume_acceleration, etc.) only exist in ~2K recent rows,
