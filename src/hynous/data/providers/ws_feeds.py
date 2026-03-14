@@ -77,6 +77,14 @@ class MarketDataFeed:
         self._asset_ctxs: dict[str, dict] = {}
         self._asset_ctxs_time: dict[str, float] = {}
 
+        # candle: {(coin, interval): deque of candle dicts}
+        # Rolling windows: 300 for 1m (~5h), 100 for 5m (~8h)
+        from collections import deque
+        self._candle_windows: dict[tuple[str, str], deque] = {}
+        for coin in self._coins:
+            self._candle_windows[(coin, "1m")] = deque(maxlen=300)
+            self._candle_windows[(coin, "5m")] = deque(maxlen=100)
+
         # --- Health ---
         self._connected: bool = False
         self._last_msg: float = 0.0
@@ -118,6 +126,7 @@ class MarketDataFeed:
 
         # Subscribe new coins on the live connection if possible
         if new_coins and self._connected and self._ws:
+            from collections import deque
             for coin in new_coins:
                 try:
                     self._ws.send(json.dumps({
@@ -128,6 +137,15 @@ class MarketDataFeed:
                         "method": "subscribe",
                         "subscription": {"type": "activeAssetCtx", "coin": coin},
                     }))
+                    for interval in ["1m", "5m"]:
+                        self._ws.send(json.dumps({
+                            "method": "subscribe",
+                            "subscription": {"type": "candle", "coin": coin, "interval": interval},
+                        }))
+                        if (coin, interval) not in self._candle_windows:
+                            self._candle_windows[(coin, interval)] = deque(
+                                maxlen=300 if interval == "1m" else 100,
+                            )
                 except Exception:
                     logger.debug("Failed to subscribe new coin %s", coin)
 
@@ -152,6 +170,18 @@ class MarketDataFeed:
         if ctx and (time.time() - ts) < WS_STALE_THRESHOLD:
             return ctx
         return None
+
+    def get_candles(self, coin: str, interval: str, count: int) -> list[dict] | None:
+        """Return last `count` closed candles for (coin, interval).
+
+        Returns None if unavailable or insufficient data (need 10+ candles
+        for meaningful feature computation). Caller falls back to REST.
+        """
+        key = (coin, interval)
+        window = self._candle_windows.get(key)
+        if not window or len(window) < 10:
+            return None
+        return list(window)[-count:]
 
     def get_health(self) -> FeedHealth:
         """Return health snapshot for status reporting."""
@@ -225,6 +255,8 @@ class MarketDataFeed:
                             self._handle_l2_book(data)
                         elif channel == "activeAssetCtx":
                             self._handle_asset_ctx(data)
+                        elif channel == "candle":
+                            self._handle_candle(data)
                         # Ignore other channels (pong, etc.)
                     except Exception:
                         logger.debug("WS market feed parse error", exc_info=True)
@@ -283,6 +315,12 @@ class MarketDataFeed:
                 "method": "subscribe",
                 "subscription": {"type": "activeAssetCtx", "coin": coin},
             })
+            # Candle subscriptions for ML features (realized_vol, price_trend, etc.)
+            for interval in ["1m", "5m"]:
+                subs.append({
+                    "method": "subscribe",
+                    "subscription": {"type": "candle", "coin": coin, "interval": interval},
+                })
         return subs
 
     # ------------------------------------------------------------------
@@ -396,3 +434,43 @@ class MarketDataFeed:
         new_ctxs[coin] = transformed
         self._asset_ctxs = new_ctxs
         self._asset_ctxs_time = {**self._asset_ctxs_time, coin: time.time()}
+
+    def _handle_candle(self, data: dict):
+        """Handle candle WS message. Upserts forming/closed candle into rolling window.
+
+        WS format:
+            {"s": "BTC", "i": "5m", "t": 1710000000000, "o": "97400", ...}
+
+        Stored in HL-compatible format:
+            {"t": 1710000000000, "o": 97400.0, "h": ..., "l": ..., "c": ..., "v": ...}
+
+        The WS sends updates for the forming candle multiple times before close.
+        We upsert: if the last candle in the window has the same timestamp, replace it.
+        """
+        coin = data.get("s")
+        interval = data.get("i")
+        if not coin or not interval:
+            return
+
+        key = (coin, interval)
+        window = self._candle_windows.get(key)
+        if window is None:
+            return  # not tracking this coin/interval
+
+        try:
+            candle = {
+                "t": int(data["t"]),
+                "o": float(data["o"]),
+                "h": float(data["h"]),
+                "l": float(data["l"]),
+                "c": float(data["c"]),
+                "v": float(data["v"]),
+            }
+        except (KeyError, ValueError, TypeError):
+            return
+
+        # Upsert: update forming candle or append new closed candle
+        if window and window[-1]["t"] == candle["t"]:
+            window[-1] = candle  # update forming candle
+        else:
+            window.append(candle)  # new candle

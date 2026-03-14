@@ -1475,6 +1475,23 @@ class Daemon:
                     except Exception as e:
                         logger.warning("Satellite adapter creation failed: %s", e)
 
+                # Refresh snapshot fields from WS immediately before satellite tick.
+                # _poll_derivatives() already used WS-first data at the start, but
+                # the method takes time (Coinglass, data-layer push, etc.). Refreshing
+                # from WS here minimizes staleness for ML features.
+                if self._satellite_config:
+                    provider = self._get_provider()
+                    for coin in self._satellite_config.coins:
+                        try:
+                            ctx = provider.get_asset_context(coin)
+                            if ctx:
+                                price = self.snapshot.prices.get(coin, 0)
+                                self.snapshot.funding[coin] = ctx["funding"]
+                                self.snapshot.oi_usd[coin] = ctx["open_interest"] * price if price else self.snapshot.oi_usd.get(coin, 0)
+                                self.snapshot.volume_usd[coin] = ctx["day_volume"]
+                        except Exception:
+                            pass  # stale snapshot is fine — next tick will be fresh
+
                 # Fetch candles for satellite features (price_change_5m, realized_vol_1h)
                 candles_map = {}
                 for coin in self._satellite_config.coins:
@@ -1749,6 +1766,8 @@ class Daemon:
     def _fetch_satellite_candles(self, coin: str) -> tuple[list[dict], list[dict]]:
         """Fetch 5m and 1m candles for satellite features.
 
+        Tries WS candle cache first (zero API calls), falls back to REST.
+
         Returns:
             (candles_5m, candles_1m) — both sorted ascending by timestamp.
             Either list may be empty on failure.
@@ -1758,21 +1777,31 @@ class Daemon:
         candles_5m = []
         candles_1m = []
 
-        try:
-            # 5m candles: need 1h+ for price_trend_1h + close_position_5m
-            # Fetch 75 min of 5m candles (15 candles, covers 1h lookback + buffer)
-            start_5m = now_ms - 75 * 60 * 1000
-            candles_5m = provider.get_candles(coin, "5m", start_5m, now_ms)
-        except Exception:
-            logger.debug("Failed to fetch 5m candles for %s", coin)
+        # Try WS candle cache first (populated by MarketDataFeed)
+        real = getattr(provider, "_real", provider)
+        feed = getattr(real, "_market_feed", None)
+        if feed:
+            ws_5m = feed.get_candles(coin, "5m", count=15)  # 75 min
+            ws_1m = feed.get_candles(coin, "1m", count=70)  # 70 min
+            if ws_5m:
+                candles_5m = ws_5m
+            if ws_1m:
+                candles_1m = ws_1m
 
-        try:
-            # 1m candles: need 60+ for realized vol (1 hour)
-            # Fetch 70 minutes of 1m candles (buffer for forming candle)
-            start_1m = now_ms - 70 * 60 * 1000
-            candles_1m = provider.get_candles(coin, "1m", start_1m, now_ms)
-        except Exception:
-            logger.debug("Failed to fetch 1m candles for %s", coin)
+        # REST fallback for anything not covered by WS
+        if not candles_5m:
+            try:
+                start_5m = now_ms - 75 * 60 * 1000
+                candles_5m = provider.get_candles(coin, "5m", start_5m, now_ms)
+            except Exception:
+                logger.debug("Failed to fetch 5m candles for %s", coin)
+
+        if not candles_1m:
+            try:
+                start_1m = now_ms - 70 * 60 * 1000
+                candles_1m = provider.get_candles(coin, "1m", start_1m, now_ms)
+            except Exception:
+                logger.debug("Failed to fetch 1m candles for %s", coin)
 
         return candles_5m, candles_1m
 
