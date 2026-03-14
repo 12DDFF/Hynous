@@ -653,6 +653,7 @@ def build_condition_targets(rows: list[dict]) -> list[dict]:
 
         # 8. vol_expand: future_vol / current_vol ratio
         future_vol = _safe_get(rows, i + LOOK_1H, "realized_vol_1h")
+        current_vol = row.get("realized_vol_1h")
         if future_vol is not None and current_vol is not None and current_vol > 1e-8:
             row["target_vol_expand"] = future_vol / current_vol
         else:
