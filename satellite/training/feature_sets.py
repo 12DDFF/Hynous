@@ -250,12 +250,12 @@ MODEL_FEATURES: dict[str, list[str]] = {
     # now that candles_history is backfilled and enrich_with_new_features() works.
     # v3 features (funding_rate_raw, funding_velocity, oi_change_rate_1h) are
     # critical for this model — it dropped from Sp 0.48 to 0.27 without them.
-    # funding_4h: v1 crowding signals perform best (Sp 0.27).
-    # v3 features (funding_rate_raw, funding_velocity) degraded performance
-    # even after backfill — enrichment format mismatch suspected.
-    # Original 0.48 was from a different training setup, not reproducible.
+    # funding_4h: original feature set with v3 funding features.
+    # funding_history now fully backfilled Aug 2025 – Mar 2026 (9K+ records).
     "funding_4h": [
         "funding_vs_30d_zscore",
+        "funding_rate_raw",
+        "funding_velocity",
         "hours_to_funding",
         "oi_funding_pressure",
         "oi_vs_7d_avg_ratio",
@@ -263,10 +263,8 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "realized_vol_1h",
         "volume_vs_1h_avg_ratio",
         "price_trend_1h",
-        "cvd_ratio_30m",
+        "cvd_acceleration",
         "liq_cascade_active",
-        "oi_price_direction",
-        "liq_imbalance_1h",
     ],
 
     # --- Volume model ---
