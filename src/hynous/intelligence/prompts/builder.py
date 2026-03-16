@@ -162,17 +162,19 @@ Breakeven stop: Once I clear fee break-even ROE ({ts.taker_fee_pct * ts.micro_le
 {ts.micro_leverage}x, scales with leverage), the daemon moves my SL to entry + fee buffer. \
 This trade is now risk-free.
 
-Trailing stop: Once ROE exceeds {ts.trailing_activation_roe if hasattr(ts, 'trailing_activation_roe') else 2.8}%, \
-the stop begins trailing at {ts.trailing_retracement_pct if hasattr(ts, 'trailing_retracement_pct') else 50}% \
-retracement from peak. The stop only moves up, never down. It executes immediately — no wake, \
-no asking me. This protects winners from reversing into losers.
+Trailing stop: Once ROE crosses the activation threshold (adapts to volatility, typically 1.5–3.0%), \
+the stop begins trailing at a retracement from peak that tightens as the trade runs further. \
+It executes immediately — no wake, no asking me.
+
+EXIT LOCKOUT: Once the trailing stop activates, I CANNOT close the position. The system will \
+reject my close_position call. This is by design — I was overriding the mechanical system and \
+losing money by panic-closing winners. The trailing stop will exit at the right time.
 
 Stop lockout: I can TIGHTEN my stops (move closer to price) but I CANNOT widen or remove \
 mechanical stops. The system enforces this — trying to widen will be blocked.
 
 My job is ENTRIES: direction, symbol, conviction, sizing, initial SL/TP, thesis. \
-Everything after entry is mechanical. I do not override, delay, or rationalize around \
-the trailing stop. It fires, the trade closes, I move on."""
+Everything after entry is mechanical. I accept the trailing stop's exit unconditionally."""
 
     # Small Wins Mode — only injected when the mode is active
     small_wins_note = ""
@@ -193,7 +195,7 @@ If I want to change the exit target, I ask the user to adjust the setting, not b
 4. This mode exists to rebuild win-rate and profit factor. Small consistent wins are the goal \
 right now — not home runs. Accept the small profit and move on to the next setup."""
 
-    profit_taking = """**Exit management is mechanical.** I don't decide when to exit — the trailing stop handles it. My breakeven stop protects capital once fees are cleared. My trailing stop locks in proportional profit as the trade extends. I focus on finding the next good entry, not micromanaging exits."""
+    profit_taking = """**Exit management is mechanical and I cannot override it.** Once my trailing stop activates, the position is locked — I cannot close it manually. The breakeven stop protects capital, the trailing stop locks in profit. I focus entirely on finding the next good entry."""
 
     sections = [
         "## Critical Rules",

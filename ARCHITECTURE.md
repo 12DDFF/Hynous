@@ -125,7 +125,7 @@ Market data from external sources.
 |--------|----------------|
 | `providers/` | Data source wrappers (6 providers + WS feed manager) |
 | `hyperliquid.py` | Hyperliquid API (WS-first market data reads, REST execution) |
-| `ws_feeds.py` | WebSocket feed manager — `MarketDataFeed` class manages `allMids`, `l2Book`, `activeAssetCtx` channels on one connection with REST fallback |
+| `ws_feeds.py` | WebSocket feed manager — `MarketDataFeed` class manages `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m) channels on one connection with 30s staleness gating and REST fallback |
 | `paper.py` | Paper trading simulator (local order matching) |
 | `coinglass.py` | Coinglass API (derivatives data: OI, liquidations, funding) |
 | `cryptocompare.py` | CryptoCompare API (news feed, sentiment) |
@@ -295,7 +295,7 @@ daemon.py (continuous loop)
     │     ├── check_triggers() → SL/TP fill detection
     │     ├── Capital-breakeven (Layer 1, 0.5% ROE → SL at entry price)
     │     ├── Fee-breakeven (Layer 2, fee-proportional ROE → SL at entry + buffer)
-    │     └── Trailing stop (Phase 1/2/3, 2.8% ROE activation, 50% retracement trail)
+    │     └── Trailing stop (Phase 1/2/3, ML-adaptive vol-regime activation, tiered retracement)
     │
     ├── _poll_prices() (every 60s)
     │     ├── scanner.py (macro anomaly detection across all pairs)
@@ -413,7 +413,7 @@ Large content (LLM messages, responses, injected context) is stored via SHA256 c
 | UI Framework | Reflex | Python-native, compiles to React |
 | Memory System | Nous (TypeScript) via HTTP | Too complex to reimplement, ~5ms overhead acceptable |
 | LLM | LiteLLM via OpenRouter | Multi-provider (Claude, GPT-4, DeepSeek, etc.), single API key |
-| Market Data | WS-first via `ws_feeds.py` | Sub-second prices/L2/contexts, REST fallback if stale (>30s) |
+| Market Data | WS-first via `ws_feeds.py` | Sub-second prices/L2/contexts/candles, REST fallback if stale (>30s). Verified via live soak test. |
 | Agent-Hydra | Direct import | Zero overhead, same Python process |
 | Agent-Nous | HTTP API | Nous is TypeScript, clean separation |
 | Agent-Discord | Shared singleton | Same Agent instance, background thread with own event loop |
@@ -596,7 +596,7 @@ ML inference pipeline wired into live daemon (2026-03-05): model loading at star
 
 ### `docs/revisions/mechanical-exits/`
 
-Mechanical exit system (2026-03-05): trailing stops (activate at 2.8% ROE, 50% retracement trail, floor at fee-breakeven), breakeven stops (BUG-1 fix: formula inversion), stop-tightening lockout, MFE/MAE tracking. Code handles exits deterministically; LLM handles entries. **IMPLEMENTED.**
+Mechanical exit system (2026-03-05, updated 2026-03-15): trailing stops (v2: ML-adaptive vol-regime activation 1.5–3.0%, tiered retracement 30–45%, agent exit lockout), breakeven stops (two-layer capital + fee, re-enabled), stop-tightening lockout, MFE/MAE tracking. Code handles exits deterministically; LLM handles entries. LLM cannot close positions once trailing is active. **IMPLEMENTED.**
 
 ### `docs/revisions/realtime-price-data/`
 
@@ -659,4 +659,4 @@ When working on this codebase:
 
 ---
 
-Last updated: 2026-03-14
+Last updated: 2026-03-15

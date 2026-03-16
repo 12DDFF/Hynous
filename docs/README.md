@@ -119,7 +119,7 @@ Key conventions:
 
 | Track | Description |
 |-------|-------------|
-| [breakeven-fix/](./revisions/breakeven-fix/) | Two-layer capital + fee breakeven system + Round 2 bug fixes (9 bugs A–I) + Round 3 (stale flag cleanup, background wake threads to unblock `_fast_trigger_check`). **Both layers DISABLED** for ML testing — re-enable via `capital_breakeven_enabled` / `breakeven_stop_enabled` in `default.yaml`. |
+| [breakeven-fix/](./revisions/breakeven-fix/) | Two-layer capital + fee breakeven system + Round 2 bug fixes (9 bugs A–I) + Round 3 (stale flag cleanup, background wakes) + ML-adaptive trailing stop v2 (regime-based activation, tiered retracement, agent exit lockout). Both breakeven layers **RE-ENABLED** as of 2026-03-15. |
 
 ### In Progress (2026-03-11)
 
@@ -131,7 +131,7 @@ Key conventions:
 
 | Track | Description |
 |-------|-------------|
-| [ws-migration/](./revisions/ws-migration/) | Phase 1: Market data WS (`allMids`, `l2Book`, `activeAssetCtx`) via `ws_feeds.py`. Provider-level WS-first reads with REST fallback. Daemon WS code removed. 690 tests passing. Phase 2 (account data) planned for live trading. |
+| [ws-migration/](./revisions/ws-migration/) | Phase 1: Market data WS (`allMids`, `l2Book`, `activeAssetCtx`, `candle` 1m/5m) via `ws_feeds.py`. Provider-level WS-first reads with REST fallback. All 4 channels have staleness gating. Candle staleness fix applied (2026-03-15). Live soak test verified. 692 tests passing. Phase 2 (account data) planned for live trading. |
 
 ### Implemented — Trade Mechanism Debug (2026-03-06)
 
@@ -169,4 +169,4 @@ See [archive/README.md](./archive/README.md) for a complete index.
 
 ---
 
-Last updated: 2026-03-14 (WS migration Phase 1 deployed: market data WS via ws_feeds.py, 690 tests passing)
+Last updated: 2026-03-15 (WS migration Phase 1 verified: 4 channels with staleness gating, candle fix applied, live soak test passed, 692 tests passing)

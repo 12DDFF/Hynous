@@ -1,6 +1,6 @@
 # WebSocket Migration — Replace REST Polling with Streaming
 
-> **Status:** Phase 1 Implemented (2026-03-14) — Market data WS (`allMids`, `l2Book`, `activeAssetCtx`). Phase 2 Planned — Account data WS.
+> **Status:** Phase 1 Implemented & Verified (2026-03-15) — Market data WS (`allMids`, `l2Book`, `activeAssetCtx`, `candle` 1m/5m). Candle staleness fix applied. Live soak test passed. Phase 2 Planned — Account data WS.
 > **Priority:** High
 > **Depends on:** WS price feed (superseded — allMids now part of this migration)
 
@@ -142,18 +142,22 @@ WS management moved from daemon to provider layer. `MarketDataFeed` in `ws_feeds
 
 - Background thread with auto-reconnect (exponential backoff 5→60s)
 - Per-channel state dicts (atomically replaced, GIL-safe)
-- `get_prices()`, `get_l2_book(coin)`, `get_asset_ctx(coin)` — return `None` if stale
+- `get_prices()`, `get_l2_book(coin)`, `get_asset_ctx(coin)`, `get_candles(coin, interval, count)` — return `None` if stale
+- All 4 getters share the same staleness gating pattern (`_*_time` timestamp + 30s threshold)
 - Provider methods transparently use WS or REST — callers unaware
+- Candle channel streams forming candle updates (upsert pattern) + new candles on close; satellite features handle forming candle via `[-2]` indexing for completed candles
 
 ### Files Modified (Phase 1)
 
 | File | Changes |
 |------|---------|
-| `src/hynous/data/providers/ws_feeds.py` | **NEW** — `MarketDataFeed` class, 3 channel handlers, reconnect, health |
+| `src/hynous/data/providers/ws_feeds.py` | **NEW** — `MarketDataFeed` class, 4 channel handlers (`allMids`, `l2Book`, `activeAssetCtx`, `candle`), reconnect, health, per-channel staleness gating |
 | `src/hynous/data/providers/hyperliquid.py` | WS-first reads on `get_all_prices`, `get_price`, `get_l2_book`, `get_asset_context`, `get_multi_asset_contexts`; `start_ws`/`stop_ws`/`ws_health` |
 | `src/hynous/data/providers/paper.py` | 3 passthrough methods (`start_ws`, `stop_ws`, `ws_health`) |
-| `src/hynous/intelligence/daemon.py` | Removed `_run_ws_price_feed`, `_get_prices_with_ws_fallback`, WS state vars; added `_update_ws_coins`, provider-based WS startup |
+| `src/hynous/intelligence/daemon.py` | Removed `_run_ws_price_feed`, `_get_prices_with_ws_fallback`, WS state vars; added `_update_ws_coins`, provider-based WS startup; `_fetch_satellite_candles()` uses WS candle cache first |
 | `tests/unit/test_ws_price_feed.py` | 49 tests covering all WS interfaces |
+| `scripts/ws_diagnostic.py` | **NEW** — Live WS pipeline diagnostic (connects, verifies all 4 channels, tests getters + provider + staleness) |
+| `scripts/ws_soak_test.py` | **NEW** — Multi-minute soak test (price movement, book freshness, candle accumulation, transitions) |
 
 ### Connection Strategy
 
@@ -193,6 +197,9 @@ Recommendation: **Two connections** — one for market data (`allMids`, `l2Book`
 3. **Testing:** 49 unit tests using source inspection + direct state injection. No WS mocking needed. ✅
 4. **Gradual rollout:** Phase 1 (market data) shipped first. Phase 2 (account data) deferred to live trading. ✅
 5. **Data layer integration:** Separate concern — data-layer already has its own WS (trade_stream, l2_subscriber). Not affected. ✅
+6. **Candle staleness:** `get_candles()` now has the same staleness gating as other getters (`_candle_times` dict, 30s threshold). Returns `None` on stale → REST fallback in `_fetch_satellite_candles()`. ✅ (Fixed 2026-03-15)
+7. **Candle forming/closed parity:** Both WS and REST `candles_snapshot` include the forming candle as the last entry. Satellite feature code handles this via `[-2]` indexing for completed candles. No WS/REST divergence. ✅ (Audited 2026-03-15)
+8. **Live verification:** `ws_diagnostic.py` and `ws_soak_test.py` confirm all 4 channels deliver data, getters serve <1ms from WS cache, staleness gating works, candle transitions are correct. ✅ (Verified 2026-03-15)
 
 ## Open Questions (Phase 2)
 
@@ -208,8 +215,9 @@ Recommendation: **Two connections** — one for market data (`allMids`, `l2Book`
 - [Python SDK WebSocket Manager](https://github.com/hyperliquid-dex/hyperliquid-python-sdk/blob/master/hyperliquid/websocket_manager.py)
 - Implementation: `src/hynous/data/providers/ws_feeds.py` (MarketDataFeed class)
 - Implementation guide: `docs/revisions/ws-migration/implementation-guide.md`
+- Diagnostics: `scripts/ws_diagnostic.py` (point-in-time verification), `scripts/ws_soak_test.py` (sustained monitoring)
 - Superseded revision: `docs/revisions/ws-price-feed/` (allMids-only WS — now part of this migration)
 
 ---
 
-Last updated: 2026-03-14
+Last updated: 2026-03-15

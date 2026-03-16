@@ -11,7 +11,7 @@ data/
 ├── providers/
 │   ├── hyperliquid.py     # Exchange data + order execution (Hyperliquid SDK, WS-first reads)
 │   ├── paper.py           # Paper trading simulator (wraps HyperliquidProvider)
-│   ├── ws_feeds.py        # WebSocket feed manager (allMids, l2Book, activeAssetCtx)
+│   ├── ws_feeds.py        # WebSocket feed manager (allMids, l2Book, activeAssetCtx, candle 1m/5m)
 │   ├── coinglass.py       # Cross-exchange derivatives data (Coinglass API v4)
 │   ├── cryptocompare.py   # Crypto news articles (CryptoCompare News API v2)
 │   ├── hynous_data.py     # HTTP client for hynous-data service (liquidations, whales, order flow)
@@ -69,7 +69,8 @@ The primary provider. Wraps the Hyperliquid Python SDK for both market data read
 - Mode is controlled by `config.execution.mode`: `"paper"`, `"testnet"`, or `"live"`
 - Private key: `HYPERLIQUID_PRIVATE_KEY` env var
 - Data reads always use mainnet regardless of mode
-- Market data reads use WS-first (`ws_feeds.py`) with REST fallback
+- Market data reads use WS-first (`ws_feeds.py`) with REST fallback (30s staleness threshold on all 4 channels)
+- Candle data (1m/5m) also WS-fed via rolling deques; satellite reads via `feed.get_candles()` with REST fallback
 - `start_ws(coins)` called by daemon on startup; `stop_ws()` on shutdown
 - Exchange is lazily initialized only when a private key is available
 
@@ -183,4 +184,4 @@ Real-time web search via the Perplexity Sonar API. Gives the agent access to cur
 
 ---
 
-Last updated: 2026-03-14
+Last updated: 2026-03-15

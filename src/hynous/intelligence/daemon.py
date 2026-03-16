@@ -786,6 +786,10 @@ class Daemon:
         """Get max adverse excursion (trough ROE %, negative = drawdown) tracked during hold."""
         return self._trough_roe.get(coin, 0.0)
 
+    def is_trailing_active(self, coin: str) -> bool:
+        """Check if trailing stop is currently active for a position."""
+        return self._trailing_active.get(coin, False)
+
     def _build_wake_context(self, coin: str):
         """Build position-aware context for a coin."""
         from satellite.condition_alerts import WakeContext
@@ -1778,8 +1782,7 @@ class Daemon:
         candles_1m = []
 
         # Try WS candle cache first (populated by MarketDataFeed)
-        real = getattr(provider, "_real", provider)
-        feed = getattr(real, "_market_feed", None)
+        feed = self._get_ws_candle_feed()
         if feed:
             ws_5m = feed.get_candles(coin, "5m", count=15)  # 75 min
             ws_1m = feed.get_candles(coin, "1m", count=70)  # 70 min
@@ -2314,27 +2317,64 @@ class Daemon:
                 ):
                     ts = get_trading_settings()
                     if ts.trailing_stop_enabled:
-                        activation_roe = ts.trailing_activation_roe
-                        retracement_pct = ts.trailing_retracement_pct / 100.0
                         peak = self._peak_roe.get(sym, 0)
+
+                        # ── Resolve vol regime from ML conditions (BTC only, 5-min refresh) ──
+                        # Falls back to "normal" for non-BTC coins or stale/missing predictions.
+                        _vol_regime = "normal"
+                        _pred = self._latest_predictions.get("BTC", {})
+                        _cond = _pred.get("conditions", {})
+                        if _cond:
+                            _cond_ts = _cond.get("timestamp", 0)
+                            if time.time() - _cond_ts < 330:  # Fresh within staleness threshold
+                                _vol_regime = _cond.get("vol_1h", {}).get("regime", "normal")
+
+                        # ── Vol-adaptive activation threshold ──
+                        _activation_map = {
+                            "extreme": ts.trail_activation_extreme,
+                            "high": ts.trail_activation_high,
+                            "normal": ts.trail_activation_normal,
+                            "low": ts.trail_activation_low,
+                        }
+                        activation_roe = _activation_map.get(_vol_regime, ts.trail_activation_normal)
+                        # Floor: never activate below fee-BE + minimum distance
+                        fee_be_roe = ts.taker_fee_pct * leverage
+                        activation_roe = max(activation_roe, fee_be_roe + 0.1)
 
                         # Phase 1: Check if trail should activate
                         if not self._trailing_active.get(sym) and roe_pct >= activation_roe:
                             self._trailing_active[sym] = True
                             self._persist_mechanical_state()
                             logger.info(
-                                "Trailing stop ACTIVATED: %s %s | ROE %.1f%% >= %.1f%% threshold",
-                                sym, side, roe_pct, activation_roe,
+                                "Trailing stop ACTIVATED: %s %s | ROE %.1f%% >= %.1f%% threshold (vol=%s)",
+                                sym, side, roe_pct, activation_roe, _vol_regime,
                             )
 
                         # Phase 2: Update trailing stop price (only if active)
                         if self._trailing_active.get(sym) and peak > 0:
-                            # Trail ROE = peak * (1 - retracement)
-                            trail_roe = peak * (1.0 - retracement_pct)
+                            # ── Tiered retracement: tighter as trade runs further ──
+                            if peak < 5.0:
+                                base_retracement = ts.trail_retracement_tier1 / 100.0
+                            elif peak < 10.0:
+                                base_retracement = ts.trail_retracement_tier2 / 100.0
+                            else:
+                                base_retracement = ts.trail_retracement_tier3 / 100.0
 
-                            # Floor: never trail below breakeven (fee break-even ROE)
-                            fee_be_roe = ts.taker_fee_pct * leverage
-                            trail_roe = max(trail_roe, fee_be_roe)
+                            # ── Vol-regime modifier ──
+                            _vol_mod_map = {
+                                "extreme": ts.trail_vol_mod_extreme,
+                                "high": ts.trail_vol_mod_high,
+                                "normal": ts.trail_vol_mod_normal,
+                                "low": ts.trail_vol_mod_low,
+                            }
+                            vol_modifier = _vol_mod_map.get(_vol_regime, ts.trail_vol_mod_normal)
+                            effective_retracement = base_retracement * vol_modifier
+
+                            trail_roe = peak * (1.0 - effective_retracement)
+
+                            # ── Floor: fee-BE + minimum distance ──
+                            trail_floor = fee_be_roe + ts.trail_min_distance_above_fee_be
+                            trail_roe = max(trail_roe, trail_floor)
 
                             # Convert trail ROE to price
                             trail_price_pct = trail_roe / leverage / 100.0
@@ -2546,12 +2586,22 @@ class Daemon:
 
         self._check_pending_watches()
 
+    def _get_ws_candle_feed(self):
+        """Get the MarketDataFeed instance from the provider, unwrapping Paper if needed.
+
+        Returns None if WS feed is not available (WS disabled or not connected).
+        """
+        provider = self._get_provider()
+        real = getattr(provider, "_real", provider)
+        return getattr(real, "_market_feed", None)
+
     def _update_peaks_from_candles(self):
         """Enhance MFE/MAE with 1m candle high/low for open positions.
 
-        Polls only miss peaks/troughs between 10s samples. 1m candles
+        Catches peaks/troughs missed between 1s price samples. 1m candles
         include the true intra-candle extreme. Called once per minute.
-        Only fetches candles for coins with open positions (1 API call each).
+        Uses WS candle cache when available (zero API calls), falls back
+        to REST (1 API call per position) if WS data is insufficient.
         """
         if not self._prev_positions:
             return
@@ -2561,6 +2611,10 @@ class Daemon:
         # Fetch last 2 minutes of 1m candles — ensures we get the just-closed candle
         start_ms = now_ms - 2 * 60 * 1000
 
+        # WS-first: try MarketDataFeed candle cache before REST.
+        # Fetched once outside the loop — same feed instance for all coins.
+        feed = self._get_ws_candle_feed()
+
         for sym, pos in self._prev_positions.items():
             entry_px = pos.get("entry_px", 0)
             leverage = pos.get("leverage", 20)
@@ -2568,11 +2622,21 @@ class Daemon:
             if entry_px <= 0:
                 continue
 
-            try:
-                candles = provider.get_candles(sym, "1m", start_ms, now_ms)
-            except Exception:
-                logger.debug("Candle peak tracking failed for %s", sym)
-                continue
+            candles = None
+
+            # Try WS candle cache first (zero API calls)
+            if feed:
+                ws_candles = feed.get_candles(sym, "1m", count=2)
+                if ws_candles:
+                    candles = ws_candles
+
+            # REST fallback if WS unavailable or insufficient data
+            if not candles:
+                try:
+                    candles = provider.get_candles(sym, "1m", start_ms, now_ms)
+                except Exception:
+                    logger.debug("Candle peak tracking failed for %s", sym)
+                    continue
 
             if not candles:
                 continue

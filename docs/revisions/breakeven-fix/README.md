@@ -1,7 +1,7 @@
 # Breakeven System Fix — Two-Layer Capital + Fee Protection
 
 > **Status:** IMPLEMENTED — Round 1 (commit `5224ade`, 2026-03-10) + Round 2 bugs A–I (commit `5f3c47c`, 2026-03-12) + Round 3 (stale flag fix + background wakes, 2026-03-13)
-> **Config:** Both layers **DISABLED** as of 2026-03-13 (`capital_breakeven_enabled: false`, `breakeven_stop_enabled: false`) — codeveloper testing ML predictions. Re-enable when ready.
+> **Config:** Both layers **RE-ENABLED** as of 2026-03-15 (`capital_breakeven_enabled: true`, `breakeven_stop_enabled: true`). ML-adaptive trailing stop v2 deployed alongside — see `ml-adaptive-trailing-stop.md`.
 > **Priority:** Critical
 > **Depends on:** WS price feed (implemented), mechanical exits (implemented), trade mechanism debug (5 fixes implemented)
 

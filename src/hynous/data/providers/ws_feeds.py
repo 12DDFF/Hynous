@@ -4,13 +4,18 @@ Manages a single WS connection subscribing to multiple channels:
 - allMids: all mid prices (sub-second)
 - l2Book: L2 orderbook per coin (every ~500ms)
 - activeAssetCtx: funding, OI, volume per coin (real-time)
+- candle: 1m and 5m OHLCV candles per coin (forming candle upserted, closed appended)
 
-Each channel maintains a state dict that is atomically replaced on each
-message (GIL-safe, no locks). Provider methods check these dicts first,
-falling back to REST if the WS data is stale (>30s).
+Each channel maintains a state dict/deque that is atomically replaced on each
+message (GIL-safe, no locks). All four getters (get_prices, get_l2_book,
+get_asset_ctx, get_candles) share the same staleness gating pattern: return
+None if no WS update in >30s, triggering REST fallback in callers.
 
-Follows the same pattern as the original daemon._run_ws_price_feed()
-but manages multiple channels on one connection.
+Candle data is stored in rolling deques (300 for 1m, 100 for 5m). The WS
+sends updates for the forming candle multiple times before close; the handler
+upserts (replaces last entry if same timestamp). Both WS and REST candle
+sources include the forming candle as the last entry — satellite feature code
+handles this via [-2] indexing for completed candles.
 """
 
 import json
@@ -81,6 +86,7 @@ class MarketDataFeed:
         # Rolling windows: 300 for 1m (~5h), 100 for 5m (~8h)
         from collections import deque
         self._candle_windows: dict[tuple[str, str], deque] = {}
+        self._candle_times: dict[tuple[str, str], float] = {}
         for coin in self._coins:
             self._candle_windows[(coin, "1m")] = deque(maxlen=300)
             self._candle_windows[(coin, "5m")] = deque(maxlen=100)
@@ -172,14 +178,17 @@ class MarketDataFeed:
         return None
 
     def get_candles(self, coin: str, interval: str, count: int) -> list[dict] | None:
-        """Return last `count` closed candles for (coin, interval).
+        """Return last `count` candles for (coin, interval) if fresh.
 
-        Returns None if unavailable or insufficient data (need 10+ candles
-        for meaningful feature computation). Caller falls back to REST.
+        Returns None if unavailable, insufficient data (need 10+ candles),
+        or stale (no WS update in >30s). Caller falls back to REST.
         """
         key = (coin, interval)
         window = self._candle_windows.get(key)
-        if not window or len(window) < 10:
+        if not window or len(window) < min(count, 10):
+            return None
+        ts = self._candle_times.get(key, 0)
+        if (time.time() - ts) >= WS_STALE_THRESHOLD:
             return None
         return list(window)[-count:]
 
@@ -474,3 +483,6 @@ class MarketDataFeed:
             window[-1] = candle  # update forming candle
         else:
             window.append(candle)  # new candle
+
+        # Track freshness (same pattern as _l2_books_time, _asset_ctxs_time)
+        self._candle_times = {**self._candle_times, key: time.time()}

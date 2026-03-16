@@ -188,11 +188,11 @@ cd nous-server && pnpm test
 - `docs/README.md` — Central documentation hub
 - `docs/integration.md` — Cross-system data flows (satellite ↔ data-layer ↔ daemon)
 - `docs/revisions/trade-mechanism-debug/` — 5 fix guides for mechanical exit bugs (implemented)
-- `docs/revisions/breakeven-fix/` — Two-layer breakeven system + Round 3 (stale flag fix, background wakes). **Both layers DISABLED** for ML testing — re-enable in `config/default.yaml`.
-- `docs/revisions/ws-migration/` — WebSocket migration: Phase 1 (market data) implemented. `allMids`, `l2Book`, `activeAssetCtx` via `ws_feeds.py`. Phase 2 (account data) planned for live trading.
+- `docs/revisions/breakeven-fix/` — Two-layer breakeven system + Round 3 (stale flag fix, background wakes) + ML-adaptive trailing stop v2 (regime-based activation, tiered retracement, agent exit lockout). Both breakeven layers **RE-ENABLED** as of 2026-03-15.
+- `docs/revisions/ws-migration/` — WebSocket migration: Phase 1 (market data) implemented & verified. `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m) via `ws_feeds.py`. All 4 channels have staleness gating. Live soak test passed. Phase 2 (account data) planned for live trading.
 - `docs/archive/` — Completed revision guides (all resolved, kept for reference)
 - Each major directory has its own `README.md`
 
 ---
 
-Last updated: 2026-03-14
+Last updated: 2026-03-15

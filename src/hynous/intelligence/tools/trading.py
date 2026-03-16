@@ -1541,6 +1541,28 @@ def handle_close_position(
         entry_px=position.get("entry_px", 0), size=position["size"],
     )
 
+    # --- Trailing stop lockout: agent cannot close when trail is active ---
+    # Once the trailing stop activates, the mechanical system owns the exit.
+    # The agent's job is entries only — exits are fully mechanical.
+    try:
+        from ...intelligence.daemon import get_active_daemon
+        _daemon = get_active_daemon()
+        if _daemon and _daemon.is_trailing_active(symbol):
+            trail_px = _daemon._trailing_stop_px.get(symbol, 0)
+            peak = _daemon.get_peak_roe(symbol)
+            _record_trade_span(
+                "close_position", "trailing_lockout", False,
+                f"BLOCKED: trailing stop active (peak {peak:.1f}%, trail @ ${trail_px:,.2f})",
+            )
+            return (
+                f"BLOCKED: Trailing stop is active for {symbol}. "
+                f"The mechanical exit system owns this position "
+                f"(peak ROE {peak:+.1f}%, trail SL @ ${trail_px:,.2f}). "
+                f"You cannot close manually while the trail is active. "
+                f"The trailing stop will exit when the price reverses to the trail level."
+            )
+    except Exception:
+        pass  # If daemon unavailable, allow the close (safety fallback)
 
     # --- Validate limit close ---
     if order_type == "limit" and limit_price is None:

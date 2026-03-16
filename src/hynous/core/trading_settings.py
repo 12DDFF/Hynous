@@ -103,6 +103,26 @@ class TradingSettings:
     trailing_activation_roe: float = 2.8    # ROE % threshold to begin trailing
     trailing_retracement_pct: float = 50.0  # % of peak ROE allowed as giveback before exit
 
+    # --- ML-Adaptive Trailing Stop ---
+    # Vol-regime activation: lower activation in high vol (moves are real),
+    # higher in low vol (need more confirmation).
+    trail_activation_extreme: float = 1.5   # Activation ROE % in extreme vol
+    trail_activation_high: float = 2.0      # Activation ROE % in high vol
+    trail_activation_normal: float = 2.5    # Activation ROE % in normal vol
+    trail_activation_low: float = 3.0       # Activation ROE % in low vol
+    # Tiered retracement: tighter as the trade runs further.
+    # Values are the retracement % (how much of peak to give back).
+    trail_retracement_tier1: float = 45.0   # Retracement % for peak 0–5% ROE
+    trail_retracement_tier2: float = 38.0   # Retracement % for peak 5–10% ROE
+    trail_retracement_tier3: float = 30.0   # Retracement % for peak 10%+ ROE
+    # Vol-regime modifier on retracement (multiplied against tier value).
+    trail_vol_mod_extreme: float = 0.75     # Tighten 25% in extreme vol
+    trail_vol_mod_high: float = 0.88        # Tighten 12% in high vol
+    trail_vol_mod_normal: float = 1.0       # No change in normal vol
+    trail_vol_mod_low: float = 1.1          # Loosen 10% in low vol
+    # Minimum trail distance above fee-BE (guarantees net profit when trail fires).
+    trail_min_distance_above_fee_be: float = 0.5  # ROE % above fee-BE floor
+
     # --- ML Adaptive Trading ---
     # The execute_trade tool uses live ML predictions to adapt leverage,
     # sizing, and gating — so trades are context-aware, not hardcoded.

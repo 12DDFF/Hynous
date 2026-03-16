@@ -396,29 +396,31 @@ The daemon is the central orchestrator. It polls market data from Hyperliquid, p
 | 8 | Context Snapshot <-- multiple | Mixed (HTTP, in-memory) | `build_snapshot()` | Every `chat()` call |
 | 9 | Settings Page --> JSON --> consumers | File I/O | `trading_settings.json` | On save |
 | 10 | Discord Bot <--> Agent | Shared Python singleton | `agent.chat()` + `notify()` | On message / wake |
-| 11 | Provider <-- Hyperliquid WS | WebSocket | `ws_feeds.py` → `allMids`, `l2Book`, `activeAssetCtx` | Sub-second streaming |
+| 11 | Provider <-- Hyperliquid WS | WebSocket | `ws_feeds.py` → `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m) | Sub-second streaming |
 
 ---
 
 ## Flow 11: Provider <-- Hyperliquid WebSocket (Market Data Feed)
 
-**What**: `MarketDataFeed` in `ws_feeds.py` maintains a single WS connection to `wss://api.hyperliquid.xyz/ws`, subscribing to `allMids`, `l2Book` (per tracked coin), and `activeAssetCtx` (per tracked coin). Data is cached in atomic dicts and consumed by provider methods (`get_all_prices`, `get_l2_book`, `get_asset_context`) with 30s staleness gating and REST fallback.
+**What**: `MarketDataFeed` in `ws_feeds.py` maintains a single WS connection to `wss://api.hyperliquid.xyz/ws`, subscribing to `allMids`, `l2Book` (per tracked coin), `activeAssetCtx` (per tracked coin), and `candle` (1m + 5m per tracked coin). Data is cached in atomic dicts/deques and consumed by provider methods (`get_all_prices`, `get_l2_book`, `get_asset_context`) and directly by daemon (`_fetch_satellite_candles`) with 30s staleness gating and REST fallback.
 
 **Code path**:
 1. Daemon calls `provider.start_ws(coins)` on startup
 2. `HyperliquidProvider.start_ws()` creates `MarketDataFeed(coins)` and calls `.start()`
 3. Background thread connects to WS, subscribes to channels
-4. `on_message` callback routes to `_handle_all_mids`, `_handle_l2_book`, `_handle_asset_ctx`
+4. `on_message` callback routes to `_handle_all_mids`, `_handle_l2_book`, `_handle_asset_ctx`, `_handle_candle`
 5. Handlers transform WS data to provider format and atomically replace state dicts
 6. Provider read methods (e.g., `get_all_prices()`) check WS cache first; if stale (>30s), fall through to REST
+7. Candle data accessed directly by daemon's `_fetch_satellite_candles()` via `feed.get_candles()` (WS-first, REST fallback)
 
 **Channels**:
 - `allMids` — all mid prices, updated per block (~0.4s). Consumed by `get_all_prices()`, `get_price()`.
 - `l2Book` — L2 orderbook per coin, updated every ~0.5s. Consumed by `get_l2_book()`.
 - `activeAssetCtx` — funding, OI, volume per coin, real-time. Consumed by `get_asset_context()`, `get_multi_asset_contexts()`.
+- `candle` — 1m and 5m candles per tracked coin. Rolling deques (300 for 1m, 100 for 5m). Consumed by `_fetch_satellite_candles()` for ML features. Forming candle upserted in place; new candles appended on close.
 
 **Not WS-fed** (stays REST):
-- `get_candles()` — historical ranges, WS only provides current candle
+- `get_candles()` at provider level — historical time-range queries (7d, 50h) incompatible with WS rolling window
 - `get_all_asset_contexts()` — full 200+ coin universe for scanner, impractical via WS
 - All write operations — `market_open`, `market_close`, `order`, `cancel`
 
@@ -435,13 +437,19 @@ The daemon is the central orchestrator. It polls market data from Hyperliquid, p
        │  activeAssetCtx push (real-time)                           │
        │ ─────────────────────────────► │  _asset_ctxs dict         │
        │                                │                           │
+       │  candle push (1m/5m, ~1s)      │                           │
+       │ ─────────────────────────────► │  _candle_windows deques   │
+       │                                │                           │
        │                                │  get_prices() ──────────► │  get_all_prices()
        │                                │  get_l2_book("BTC") ────► │  get_l2_book()
        │                                │  get_asset_ctx("BTC") ──► │  get_asset_context()
+       │                                │  get_candles("BTC","1m")──► │  _fetch_satellite_candles()
        │                                │                           │
        │                                │  (returns None if stale)  │  REST fallback
 ```
 
+**Verified**: Live diagnostic (`scripts/ws_diagnostic.py`) and 3-minute soak test (`scripts/ws_soak_test.py`) confirm all 4 channels deliver data, getters serve <1ms from WS cache, staleness gating triggers REST fallback correctly, and candle close transitions accumulate at the expected rate.
+
 ---
 
-Last updated: 2026-03-14
+Last updated: 2026-03-15

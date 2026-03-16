@@ -50,15 +50,32 @@ daemon:
   wake_cooldown_seconds: 120         # Min seconds between non-priority wakes
   playbook_cache_ttl: 1800           # Playbook matcher cache refresh interval (seconds, 30 min)
   # Peak profit protection
-  breakeven_stop_enabled: false          # DISABLED — codeveloper testing ML predictions (2026-03-13)
+  breakeven_stop_enabled: true
   breakeven_buffer_micro_pct: 0.07   # Price % buffer for breakeven stop (matches round-trip fee)
   breakeven_buffer_macro_pct: 0.07   # Same for macro trades
-  capital_breakeven_enabled: false       # DISABLED — codeveloper testing ML predictions (2026-03-13)
+  capital_breakeven_enabled: true
   capital_breakeven_roe: 0.5              # Fixed ROE % — SL moves to entry price when hit
   # Trailing stop (mechanical exit — no agent involvement)
   trailing_stop_enabled: true          # Master switch
   trailing_activation_roe: 2.8         # ROE % to activate trailing
   trailing_retracement_pct: 50.0       # % of peak ROE to give back before exit
+  # ML-adaptive trailing stop parameters
+  # Vol-regime activation thresholds (ROE % — lower = activates earlier)
+  trail_activation_extreme: 1.5
+  trail_activation_high: 2.0
+  trail_activation_normal: 2.5
+  trail_activation_low: 3.0
+  # Tiered retracement (% of peak to give back — lower = keeps more profit)
+  trail_retracement_tier1: 45.0       # Peak 0-5% ROE
+  trail_retracement_tier2: 38.0       # Peak 5-10% ROE
+  trail_retracement_tier3: 30.0       # Peak 10%+ ROE
+  # Vol modifier on retracement (multiplied — lower = tighter trail)
+  trail_vol_mod_extreme: 0.75
+  trail_vol_mod_high: 0.88
+  trail_vol_mod_normal: 1.0
+  trail_vol_mod_low: 1.1
+  # Minimum trail distance above fee-BE (ROE %)
+  trail_min_distance_above_fee_be: 0.5
   # Candle-based peak tracking (enhances MFE/MAE for trailing stop accuracy)
   candle_peak_tracking_enabled: true
   # WebSocket price feed (sub-second prices for mechanical exits)
