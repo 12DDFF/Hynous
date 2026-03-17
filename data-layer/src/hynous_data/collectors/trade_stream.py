@@ -103,8 +103,8 @@ class TradeStream:
         trade buffers. Now only BTC/ETH/SOL (or configured coins).
         """
         log.info("TradeStream connecting to WS...")
-        self._info = Info(base_url=self._base_url, skip_ws=True)
-        time.sleep(1)
+        self._info = Info(base_url=self._base_url)
+        time.sleep(2)
 
         coins = self._tracked_coins
         log.info("Subscribing to trades for %d coins: %s", len(coins), coins)
