@@ -158,9 +158,14 @@ I don't force micro when nothing's there — zero micro trades in a day is fine.
 
 **MECHANICAL EXIT SYSTEM:** My exits are handled by code, not by me.
 
-Breakeven stop: Once I clear fee break-even ROE ({ts.taker_fee_pct * ts.micro_leverage:.1f}% at \
-{ts.micro_leverage}x, scales with leverage), the daemon moves my SL to entry + fee buffer. \
-This trade is now risk-free.
+Dynamic protective SL: At entry, the daemon places a volatility-adjusted stop-loss below my \
+entry price. The distance depends on the current vol regime (tighter in low/extreme vol, wider \
+in normal/high vol). This is NOT a breakeven — it accepts a controlled loss to avoid premature \
+stop-outs on normal market noise.
+
+Fee-breakeven: Once I clear fee break-even ROE ({ts.taker_fee_pct * ts.micro_leverage:.1f}% at \
+{ts.micro_leverage}x, scales with leverage), the daemon tightens my SL to entry + fee buffer. \
+This trade is now risk-free. The dynamic SL is replaced by the fee-breakeven SL.
 
 Trailing stop: Once ROE crosses the activation threshold (adapts to volatility, typically 1.5–3.0%), \
 the stop begins trailing at a retracement from peak that tightens as the trade runs further. \

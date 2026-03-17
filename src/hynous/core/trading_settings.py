@@ -123,6 +123,15 @@ class TradingSettings:
     # Minimum trail distance above fee-BE (guarantees net profit when trail fires).
     trail_min_distance_above_fee_be: float = 0.5  # ROE % above fee-BE floor
 
+    # --- Dynamic Protective SL (replaces capital-breakeven) ---
+    dynamic_sl_enabled: bool = True
+    dynamic_sl_low_vol: float = 2.5       # ROE % SL distance in low vol
+    dynamic_sl_normal_vol: float = 7.0    # ROE % SL distance in normal vol
+    dynamic_sl_high_vol: float = 8.0      # ROE % SL distance in high vol
+    dynamic_sl_extreme_vol: float = 3.0   # ROE % SL distance in extreme vol
+    dynamic_sl_floor: float = 1.5         # minimum SL distance (ROE %)
+    dynamic_sl_cap: float = 10.0          # maximum SL distance (ROE %)
+
     # --- ML Adaptive Trading ---
     # The execute_trade tool uses live ML predictions to adapt leverage,
     # sizing, and gating — so trades are context-aware, not hardcoded.

@@ -447,7 +447,7 @@ class TestBugILoadConfigWiring:
         """YAML values for all newly-wired fields must be parseable."""
         cfg = _default_yaml()
         daemon_cfg = cfg.get("daemon", {})
-        assert daemon_cfg.get("capital_breakeven_enabled") is True
+        assert daemon_cfg.get("capital_breakeven_enabled") is False  # DEPRECATED — replaced by dynamic_sl
         assert daemon_cfg.get("capital_breakeven_roe") == 0.5
         assert daemon_cfg.get("trailing_stop_enabled") is True
         assert daemon_cfg.get("trailing_activation_roe") == 2.8

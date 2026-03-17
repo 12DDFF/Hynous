@@ -53,59 +53,71 @@ class TestCapitalBreakevenExists:
             "capital_breakeven_roe must be in DaemonConfig"
 
     def test_yaml_defaults_match_python(self):
-        """YAML defaults must match DaemonConfig Python defaults exactly."""
+        """YAML capital_breakeven_enabled must be false (DEPRECATED — replaced by dynamic_sl)."""
         cfg = _default_yaml()
         daemon_cfg = cfg.get("daemon", {})
-        assert daemon_cfg.get("capital_breakeven_enabled") is True, \
-            "YAML capital_breakeven_enabled must be true"
+        # capital-BE is now DEPRECATED and disabled — guard against accidental re-enablement
+        assert daemon_cfg.get("capital_breakeven_enabled") is False, \
+            "YAML capital_breakeven_enabled must be false (deprecated — replaced by dynamic_sl)"
         assert daemon_cfg.get("capital_breakeven_roe") == 0.5, \
             "YAML capital_breakeven_roe must be 0.5"
-        # Verify Python defaults match
+        # Verify Python defaults match — capital-BE deprecated, defaults to False
         source = _config_source()
-        assert "capital_breakeven_enabled: bool = True" in source
+        assert "capital_breakeven_enabled: bool = False" in source, \
+            "DaemonConfig capital_breakeven_enabled must default to False (deprecated)"
         assert "capital_breakeven_roe: float = 0.5" in source
+        # Verify dynamic SL is now enabled
+        assert daemon_cfg.get("dynamic_sl_enabled") is True, \
+            "YAML dynamic_sl_enabled must be true"
 
     def test_capital_be_block_exists_in_fast_trigger_check(self):
-        """capital_breakeven must appear in _fast_trigger_check."""
+        """capital-BE config field must still exist in source (disabled, not deleted).
+        Dynamic SL block must replace it in _fast_trigger_check.
+        """
         source = _daemon_source()
         method_start = source.find("def _fast_trigger_check(")
         method_end = source.find("\n    def ", method_start + 1)
         method_source = source[method_start:method_end]
-        assert "capital_breakeven" in method_source, \
-            "capital_breakeven block must exist in _fast_trigger_check"
+        # Dynamic SL must be in _fast_trigger_check (replaced capital-BE)
+        assert "dynamic_sl_enabled" in method_source, \
+            "dynamic_sl_enabled block must exist in _fast_trigger_check (replaced capital-BE)"
+        # capital-BE config field must still exist in daemon source (guarded by False default)
+        assert "capital_breakeven_enabled" in source, \
+            "capital_breakeven_enabled must remain in source (deprecated, not deleted)"
 
     def test_capital_be_runs_before_fee_be(self):
-        """Capital-BE block must appear BEFORE fee-BE block in _fast_trigger_check.
+        """Dynamic SL block must appear BEFORE fee-BE block in _fast_trigger_check.
 
-        Capital-BE has a lower threshold (0.5%), so it must evaluate first.
+        Dynamic SL has no threshold (placed at entry), fee-BE fires when ROE covers fees.
         """
         source = _daemon_source()
         method_start = source.find("def _fast_trigger_check(")
         method_end = source.find("\n    def ", method_start + 1)
         method_source = source[method_start:method_end]
-        capital_be_pos = method_source.find("capital_breakeven")
+        dynamic_sl_pos = method_source.find("dynamic_sl_enabled")
         fee_be_pos = method_source.find("fee_breakeven")
-        assert capital_be_pos > 0, "capital_breakeven not found in _fast_trigger_check"
+        assert dynamic_sl_pos > 0, "dynamic_sl_enabled not found in _fast_trigger_check"
         assert fee_be_pos > 0, "fee_breakeven not found in _fast_trigger_check"
-        assert capital_be_pos < fee_be_pos, \
-            "capital-BE block must appear before fee-BE block"
+        assert dynamic_sl_pos < fee_be_pos, \
+            "dynamic SL block must appear before fee-BE block"
 
     def test_no_wake_agent_in_breakeven_blocks(self):
-        """_wake_agent must NOT appear between breakeven blocks and trailing stop.
+        """_wake_agent must NOT appear in the protective SL region (dynamic SL + fee-BE).
 
         Bug B fix: _wake_agent was blocking _fast_trigger_check for 5-30s.
-        Breakeven must be fully mechanical — no agent involvement.
+        Both dynamic SL and fee-BE must be fully mechanical — no agent involvement.
         """
         source = _daemon_source()
         method_start = source.find("def _fast_trigger_check(")
         method_end = source.find("\n    def ", method_start + 1)
         method_source = source[method_start:method_end]
-        be_start = method_source.find("capital_breakeven")
+        be_start = method_source.find("dynamic_sl_enabled")
         trail_start = method_source.find("Trailing Stop", be_start)
-        assert trail_start > 0, "Trailing Stop section must exist after breakeven"
+        assert be_start > 0, "dynamic_sl_enabled section must exist in _fast_trigger_check"
+        assert trail_start > 0, "Trailing Stop section must exist after dynamic SL"
         be_region = method_source[be_start:trail_start]
         assert "_wake_agent" not in be_region, \
-            "Bug B: _wake_agent must NOT appear in breakeven blocks (blocks the loop)"
+            "Bug B: _wake_agent must NOT appear in protective SL blocks (blocks the loop)"
 
     def test_refresh_trigger_cache_after_be_placement(self):
         """_refresh_trigger_cache must appear after every place_trigger_order in BE region.
@@ -128,19 +140,19 @@ class TestCapitalBreakevenExists:
         )
 
     def test_cancel_before_place_in_capital_be(self):
-        """cancel_order must appear before place_trigger_order in capital-BE block."""
+        """cancel_order must appear before place_trigger_order in dynamic SL block."""
         source = _daemon_source()
         method_start = source.find("def _fast_trigger_check(")
         method_end = source.find("\n    def ", method_start + 1)
         method_source = source[method_start:method_end]
-        be_start = method_source.find("capital_breakeven")
-        assert be_start > 0, "capital_breakeven section must exist"
+        be_start = method_source.find("dynamic_sl_enabled")
+        assert be_start > 0, "dynamic_sl_enabled section must exist in _fast_trigger_check"
         cancel_pos = method_source.find("cancel_order", be_start)
         place_pos = method_source.find("place_trigger_order", be_start)
-        assert cancel_pos > 0, "cancel_order must appear in capital-BE block"
-        assert place_pos > 0, "place_trigger_order must appear in capital-BE block"
+        assert cancel_pos > 0, "cancel_order must appear in dynamic SL block"
+        assert place_pos > 0, "place_trigger_order must appear in dynamic SL block"
         assert cancel_pos < place_pos, \
-            "Bug C fix: cancel_order must come before place_trigger_order"
+            "Bug C pattern: cancel_order must come before place_trigger_order"
 
     def test_capital_be_cleanup_in_side_flip(self):
         """_capital_be_set must be cleared on side flip (new position same coin)."""
@@ -495,13 +507,13 @@ class TestCapitalBreakevenClassification:
         assert result == "stop_loss"
 
     def test_source_has_capital_breakeven_in_override_method(self):
-        """Verify _override_sl_classification in daemon.py handles capital_breakeven_stop."""
+        """Verify _override_sl_classification handles dynamic_protective_sl (replaced capital_breakeven_stop)."""
         source = _daemon_source()
         method_start = source.find("def _override_sl_classification(")
         method_end = source.find("\n    def ", method_start + 1)
         method_source = source[method_start:method_end]
-        assert "capital_breakeven_stop" in method_source, \
-            "_override_sl_classification must return capital_breakeven_stop"
+        assert "dynamic_protective_sl" in method_source, \
+            "_override_sl_classification must return dynamic_protective_sl (replaced capital_breakeven_stop)"
 
     def test_source_has_capital_breakeven_in_recording_guard(self):
         """Verify _handle_position_close records capital_breakeven_stop to Nous."""
@@ -575,15 +587,20 @@ class TestCancelReplaceRollback:
         assert not rollback_called, "No rollback when no old SL existed"
 
     def test_rollback_failure_logs_critical(self):
-        """CRITICAL log must exist in code for double-failure scenario."""
+        """Dynamic SL must have rollback logic; CRITICAL log exists in fee-BE double-failure path."""
         source = _daemon_source()
         method_start = source.find("def _fast_trigger_check(")
         method_end = source.find("\n    def ", method_start + 1)
         method_source = source[method_start:method_end]
-        be_start = method_source.find("capital_breakeven")
-        critical_pos = method_source.find("CRITICAL", be_start)
-        assert critical_pos > 0, \
-            "CRITICAL log must appear in capital-BE rollback failure path"
+        # Dynamic SL block must have rollback warning
+        dyn_start = method_source.find("dynamic_sl_enabled")
+        assert dyn_start > 0, "dynamic_sl_enabled block must exist in _fast_trigger_check"
+        rollback_pos = method_source.find("rolled back to old SL", dyn_start)
+        assert rollback_pos > 0, "Dynamic SL block must have rollback on failure"
+        # Fee-BE still has CRITICAL log for double-failure (unchanged)
+        fee_be_pos = method_source.find("fee_breakeven")
+        critical_pos = method_source.find("CRITICAL", fee_be_pos)
+        assert critical_pos > 0, "CRITICAL log must appear in fee-BE double-failure rollback path"
 
     def test_rollback_exists_in_fee_be_block_too(self):
         """Fee-BE block must also have rollback protection."""

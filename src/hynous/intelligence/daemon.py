@@ -343,6 +343,7 @@ class Daemon:
         self._current_roe: dict[str, float] = {}   # coin → latest computed ROE % (updated every 10s)
         self._breakeven_set: dict[str, bool] = {}  # coin → True once breakeven SL placed this hold
         self._capital_be_set: dict[str, bool] = {}  # coin → True once capital-breakeven SL placed this hold
+        self._dynamic_sl_set: dict[str, bool] = {}   # True once dynamic protective SL placed
         self._small_wins_exited: dict[str, bool] = {}  # coin → True once small-wins exit fired
         self._small_wins_tp_placed: dict[str, bool] = {}  # coin → True once exchange TP order placed
         self._trailing_active: dict[str, bool] = {}   # coin → True once trail is engaged
@@ -2117,6 +2118,7 @@ class Daemon:
                     self._peak_roe.pop(_coin, None)
                     self._capital_be_set.pop(_coin, None)
                     self._breakeven_set.pop(_coin, None)
+                    self._dynamic_sl_set.pop(_coin, None)
                 self._persist_mechanical_state()
                 # Try to get the full fresh state (also picks up any new positions)
                 try:
@@ -2153,83 +2155,106 @@ class Daemon:
                 if roe_pct < self._trough_roe.get(sym, 0):
                     self._trough_roe[sym] = roe_pct
 
-                # Breakeven stop: two-layer capital + fee protection system
-                # ── Layer 1: Capital-breakeven — protect capital, accept fee loss ──
-                # Activates at a low fixed ROE threshold. SL moves to entry price.
-                # Worst case: exit costs the taker fee (~0.7% ROE at 20x).
-                # This is the safety net — catches trades that never reach fee-BE.
+                # Breakeven stop: dynamic protective SL + fee-BE protection system
+                # ── Dynamic Protective SL (replaces capital-breakeven) ────────
+                # Placed immediately on position detection. Vol-regime-calibrated
+                # distance below entry. Fee-BE will tighten later if ROE rises.
+                ts = get_trading_settings()
                 if (
-                    self.config.daemon.capital_breakeven_enabled
-                    and not self._capital_be_set.get(sym)
-                    and not self._breakeven_set.get(sym)  # Skip if fee-BE already set (tighter)
+                    ts.dynamic_sl_enabled
+                    and self.config.daemon.dynamic_sl_enabled
+                    and not self._dynamic_sl_set.get(sym)
+                    and not self._breakeven_set.get(sym)
                 ):
-                    capital_be_threshold = self.config.daemon.capital_breakeven_roe
-                    if roe_pct >= capital_be_threshold:
-                        is_long = (side == "long")
-                        # SL at exactly entry price — no buffer (we accept the fee loss)
-                        capital_be_price = entry_px
+                    try:
+                        # ── Resolve vol regime (same pattern as trailing) ──
+                        _vol_regime = "normal"
+                        _pred = self._latest_predictions.get("BTC", {})
+                        _cond = _pred.get("conditions", {})
+                        if _cond:
+                            _cond_ts = _cond.get("timestamp", 0)
+                            if time.time() - _cond_ts < 330:
+                                _vol_regime = _cond.get("vol_1h", {}).get("regime", "normal")
 
-                        # Check if existing SL is already tighter than entry
-                        triggers = self._tracked_triggers.get(sym, [])
-                        has_tighter_sl = any(
-                            t.get("order_type") == "stop_loss" and (
-                                (is_long and t.get("trigger_px", 0) >= capital_be_price) or
-                                (not is_long and 0 < t.get("trigger_px", 0) <= capital_be_price)
-                            )
-                            for t in triggers
-                        )
-                        if has_tighter_sl:
-                            self._capital_be_set[sym] = True
+                        # ── Map regime → SL distance (ROE %) ──
+                        _sl_map = {
+                            "extreme": ts.dynamic_sl_extreme_vol,
+                            "high":    ts.dynamic_sl_high_vol,
+                            "normal":  ts.dynamic_sl_normal_vol,
+                            "low":     ts.dynamic_sl_low_vol,
+                        }
+                        sl_roe = _sl_map.get(_vol_regime, ts.dynamic_sl_normal_vol)
+                        sl_roe = max(sl_roe, ts.dynamic_sl_floor)
+                        sl_roe = min(sl_roe, ts.dynamic_sl_cap)
+
+                        # ── Convert to price ──
+                        sl_price_pct = sl_roe / leverage / 100.0
+                        if side == "long":
+                            sl_px = entry_px * (1.0 - sl_price_pct)
                         else:
-                            # Save old SL for rollback on failure
-                            old_sl_info = None
-                            for t in triggers:
-                                if t.get("order_type") == "stop_loss" and t.get("oid"):
-                                    old_sl_info = (t["oid"], t.get("trigger_px"))
-                                    break
+                            sl_px = entry_px * (1.0 + sl_price_pct)
 
-                            try:
-                                # Cancel existing SL
-                                for t in triggers:
-                                    if t.get("order_type") == "stop_loss" and t.get("oid"):
-                                        self._get_provider().cancel_order(sym, t["oid"])
+                        # ── Check if existing SL is already tighter ──
+                        existing_sl = None
+                        for t in self._tracked_triggers.get(sym, []):
+                            if t.get("order_type") == "stop_loss":
+                                existing_sl = t
+                                break
 
-                                # Place capital-breakeven SL at entry price
-                                sz = pos.get("size", 0)
-                                self._get_provider().place_trigger_order(
-                                    symbol=sym,
-                                    is_buy=(side != "long"),
-                                    sz=sz,
-                                    trigger_px=capital_be_price,
-                                    tpsl="sl",
-                                )
+                        already_tighter = False
+                        if existing_sl:
+                            tpx = existing_sl.get("trigger_px", 0)
+                            if side == "long" and tpx > 0:
+                                already_tighter = tpx >= sl_px  # existing is closer to price
+                            elif side == "short" and tpx > 0:
+                                already_tighter = tpx <= sl_px
+
+                        if already_tighter:
+                            self._dynamic_sl_set[sym] = True
+                            logger.debug(
+                                "Dynamic SL skip: %s existing SL tighter (%.2f vs %.2f)",
+                                sym, existing_sl.get("trigger_px", 0), sl_px,
+                            )
+                        else:
+                            # ── Save old SL for rollback (Bug A pattern) ──
+                            old_sl_oid = existing_sl.get("oid") if existing_sl else None
+                            old_sl_px = existing_sl.get("trigger_px") if existing_sl else None
+
+                            # ── Cancel existing SL ──
+                            if old_sl_oid:
+                                provider.cancel_order(sym, old_sl_oid)
+
+                            # ── Place dynamic SL ──
+                            result = provider.place_trigger_order(
+                                symbol=sym,
+                                is_buy=(side != "long"),
+                                sz=pos.get("size", 0),
+                                trigger_px=round(sl_px, 6),
+                                tpsl="sl",
+                            )
+                            if result and result.get("status") == "trigger_placed":
                                 self._refresh_trigger_cache()
-                                self._capital_be_set[sym] = True
+                                self._dynamic_sl_set[sym] = True
                                 logger.info(
-                                    "Capital-breakeven SET: %s %s | SL @ $%,.2f (entry) | ROE %+.1f%% >= %.1f%% threshold",
-                                    sym, side, capital_be_price, roe_pct, capital_be_threshold,
+                                    "Dynamic SL placed: %s %s | %.2f ROE%% (%s vol) | SL @ $%.4f",
+                                    sym, side, sl_roe, _vol_regime, sl_px,
                                 )
-                                log_event(DaemonEvent(
-                                    "profit", f"capital_breakeven: {sym} {side}",
-                                    f"SL @ ${capital_be_price:,.2f} (entry) | ROE {roe_pct:+.1f}%",
-                                ))
-                            except Exception as cbe_err:
-                                logger.warning("Capital-breakeven failed for %s: %s", sym, cbe_err)
-                                # Rollback: restore old SL if placement failed
-                                if old_sl_info:
-                                    try:
-                                        self._get_provider().place_trigger_order(
-                                            symbol=sym,
-                                            is_buy=(side != "long"),
-                                            sz=pos.get("size", 0),
-                                            trigger_px=old_sl_info[1],
-                                            tpsl="sl",
-                                        )
-                                        self._refresh_trigger_cache()
-                                    except Exception:
-                                        logger.error(
-                                            "CRITICAL: Failed to restore old SL for %s after capital-BE failure", sym,
-                                        )
+                            else:
+                                # ── Rollback: restore old SL on failure ──
+                                if old_sl_px and old_sl_oid:
+                                    provider.place_trigger_order(
+                                        symbol=sym,
+                                        is_buy=(side != "long"),
+                                        sz=pos.get("size", 0),
+                                        trigger_px=old_sl_px,
+                                        tpsl="sl",
+                                    )
+                                    self._refresh_trigger_cache()
+                                logger.warning(
+                                    "Dynamic SL FAILED: %s — rolled back to old SL", sym,
+                                )
+                    except Exception:
+                        logger.exception("Dynamic SL error for %s", sym)
 
                 # ── Layer 2: Fee-breakeven — tighten SL to cover fees ──────────
                 # Activates when ROE covers round-trip fee. SL moves to entry + buffer.
@@ -2263,6 +2288,7 @@ class Daemon:
                         )
                         if has_good_sl:
                             self._breakeven_set[sym] = True
+                            self._dynamic_sl_set[sym] = True
                         else:
                             # Save old SL for rollback
                             old_sl_info = None
@@ -2288,6 +2314,7 @@ class Daemon:
                                 self._breakeven_set[sym] = True
                                 # Also mark capital-BE as set (fee-BE is strictly tighter)
                                 self._capital_be_set[sym] = True
+                                self._dynamic_sl_set[sym] = True
                                 type_label = f"{trade_type} {leverage}x"
                                 logger.info(
                                     "Fee-breakeven SET: %s %s (%s) | SL @ $%,.2f | ROE %+.1f%% >= %.1f%%",
@@ -2995,7 +3022,7 @@ class Daemon:
         self._update_daily_pnl(realized_pnl)
 
         # Record to Nous (auto-triggered closes aren't written by agent)
-        if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop", "capital_breakeven_stop"):
+        if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop", "capital_breakeven_stop", "dynamic_protective_sl"):
             self._record_trigger_close({
                 "coin": coin, "side": side, "entry_px": entry_px,
                 "exit_px": exit_px, "realized_pnl": realized_pnl,
@@ -3192,8 +3219,8 @@ class Daemon:
         if self._trailing_active.get(coin) and self._trailing_stop_px.get(coin): return "trailing_stop"
         if self._breakeven_set.get(coin):
             return "breakeven_stop"
-        if self._capital_be_set.get(coin):
-            return "capital_breakeven_stop"
+        if self._dynamic_sl_set.get(coin) and not self._breakeven_set.get(coin):
+            return "dynamic_protective_sl"
         return classification
 
     # ================================================================
@@ -3354,6 +3381,7 @@ class Daemon:
                     self._profit_alerts.pop(coin, None)
                     self._breakeven_set.pop(coin, None)         # New position — re-evaluate breakeven
                     self._capital_be_set.pop(coin, None)        # New position — re-evaluate capital-BE
+                    self._dynamic_sl_set.pop(coin, None)        # New position — re-evaluate dynamic SL
                     self._small_wins_exited.pop(coin, None)    # New hold — re-arm small wins
                     self._small_wins_tp_placed.pop(coin, None) # New hold — re-arm TP order
                     self._peak_roe.pop(coin, None)             # New hold — reset MFE
@@ -3424,6 +3452,9 @@ class Daemon:
             for coin in list(self._capital_be_set):
                 if coin not in open_coins:
                     del self._capital_be_set[coin]
+            for coin in list(self._dynamic_sl_set):
+                if coin not in open_coins:
+                    del self._dynamic_sl_set[coin]
             for coin in list(self._small_wins_exited):
                 if coin not in open_coins:
                     del self._small_wins_exited[coin]

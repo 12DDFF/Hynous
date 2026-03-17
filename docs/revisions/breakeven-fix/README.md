@@ -1,7 +1,7 @@
 # Breakeven System Fix — Two-Layer Capital + Fee Protection
 
 > **Status:** IMPLEMENTED — Round 1 (commit `5224ade`, 2026-03-10) + Round 2 bugs A–I (commit `5f3c47c`, 2026-03-12) + Round 3 (stale flag fix + background wakes, 2026-03-13)
-> **Config:** Both layers **RE-ENABLED** as of 2026-03-15 (`capital_breakeven_enabled: true`, `breakeven_stop_enabled: true`). ML-adaptive trailing stop v2 deployed alongside — see `ml-adaptive-trailing-stop.md`.
+> **Config (2026-03-17 update):** Capital-BE (Layer 1) **DEPRECATED** — replaced by Dynamic Protective SL (`capital_breakeven_enabled: false`). Fee-BE (Layer 2) remains active (`breakeven_stop_enabled: true`). New layer progression: Dynamic SL → Fee-BE → Trailing. See `dynamic-protective-sl.md`.
 > **Priority:** Critical
 > **Depends on:** WS price feed (implemented), mechanical exits (implemented), trade mechanism debug (5 fixes implemented)
 
@@ -911,11 +911,23 @@ Round 2 added `_persist_mechanical_state()` calls at every state transition:
 - `_breakeven_set` and `_capital_be_set` are NOT persisted to disk — but the "has_tighter_sl" check in both BE blocks prevents SL degradation on restart (the existing SL at entry price is already tighter than a re-evaluation would place)
 - `_trailing_stop_px` IS persisted — the restart-safe trailing vulnerability (cancelling +5% SL and replacing with +1.4%) is now fixed
 
+### Dynamic Protective SL — Replaces Capital-BE (2026-03-17)
+
+Capital-BE (Layer 1) was deprecated and replaced by the **Dynamic Protective SL** — a vol-regime-calibrated stop placed immediately at entry detection (no ROE threshold). See `dynamic-protective-sl.md` for the full specification.
+
+**What changed:**
+- `capital_breakeven_enabled: false` in `config/default.yaml`
+- New `dynamic_sl_enabled: true` controls the replacement layer
+- Layer progression is now: **Dynamic SL → Fee-BE → Trailing Stop**
+- `_dynamic_sl_set` state dict added alongside `_capital_be_set` (which is kept for rollback)
+- Capital-BE code preserved in daemon.py, guarded by `config.daemon.capital_breakeven_enabled` (now False)
+- Classification `"dynamic_protective_sl"` replaces `"capital_breakeven_stop"` in the precedence chain
+
 ### Next Steps
 
-1. **Validate on paper** — Run multiple trades through the full lifecycle (entry → capital-BE → fee-BE → trailing → exit) without daemon restarts, then WITH a restart mid-trade.
+1. **Monitor paper trades** — Validate dynamic SL distances, confirm trail capture rate improvement vs capital-BE.
 2. **Live trading** — Once paper validation is complete, flip `execution.mode` to `live_confirm`.
 
 ---
 
-Last updated: 2026-03-12
+Last updated: 2026-03-17

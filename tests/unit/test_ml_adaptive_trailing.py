@@ -317,8 +317,9 @@ class TestExistingBehaviorUnchanged:
         assert '"trailing_stop"' in method
 
     def test_breakeven_layers_unchanged(self):
-        """Capital-BE and fee-BE blocks must still exist in _fast_trigger_check."""
+        """Dynamic SL and fee-BE blocks must exist in _fast_trigger_check."""
         src = _daemon_source()
         method = _get_method(src, "_fast_trigger_check")
-        assert "capital_breakeven_enabled" in method
+        # Dynamic SL replaced capital-BE (capital_breakeven_enabled is deprecated/False)
+        assert "dynamic_sl_enabled" in method
         assert "breakeven_stop_enabled" in method
