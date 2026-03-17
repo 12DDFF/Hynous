@@ -533,6 +533,22 @@ def handle_execute_trade(
     # --- Fetch ML conditions (used for adaptive leverage, sizing, gating) ---
     ml_cond = _get_ml_conditions(symbol.upper())
 
+    # --- ML unavailable = block trading ---
+    # When data-layer is down or ML predictions are stale (>10min),
+    # ml_cond is None. Previously this silently skipped all ML checks,
+    # letting trades through with zero protection. Now we block.
+    if ml_cond is None:
+        _record_trade_span(
+            "execute_trade", "ml_gate", False,
+            f"Blocked: ML conditions unavailable for {symbol} (data-layer down or predictions stale >10min)",
+            symbol=symbol,
+        )
+        return (
+            f"BLOCKED: ML conditions unavailable for {symbol}. "
+            f"Data-layer may be down or satellite predictions are stale (>10min). "
+            f"Cannot trade without ML risk assessment. Check system health."
+        )
+
     # --- ML: Entry quality gate (early reject on terrible conditions) ---
     if ml_cond:
         _entry = ml_cond.get("entry_quality", {})

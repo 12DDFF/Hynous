@@ -245,7 +245,7 @@ class ConditionEngine:
             ", ".join(sorted(self._artifacts.keys())),
         )
 
-    def predict(self, coin: str, features: dict[str, float]) -> MarketConditions:
+    def predict(self, coin: str, features: dict[str, float]) -> MarketConditions | None:
         """Run all loaded condition models on a feature vector.
 
         Args:
@@ -253,8 +253,24 @@ class ConditionEngine:
             features: Dict of feature_name -> value from the latest snapshot.
 
         Returns:
-            MarketConditions with all predictions.
+            MarketConditions with all predictions, or None if features are
+            too degraded (>50% zero) to produce meaningful predictions.
         """
+        # Feature quality gate: if most features are zero/missing, the data-layer
+        # is likely down and predictions would be garbage. Return None so downstream
+        # consumers (trading tool, briefing) know ML is unavailable.
+        core_features = [
+            "realized_vol_1h", "volume_vs_1h_avg_ratio", "price_trend_1h",
+            "funding_vs_30d_zscore", "oi_vs_7d_avg_ratio", "cvd_ratio_30m",
+        ]
+        zero_count = sum(1 for f in core_features if not features.get(f))
+        if zero_count >= 4:  # 4 of 6 core features missing = data-layer likely down
+            log.warning(
+                "Feature quality too low for %s (%d/%d core features zero) — skipping predictions",
+                coin, zero_count, len(core_features),
+            )
+            return None
+
         t0 = time.perf_counter()
         predictions: dict[str, ConditionPrediction] = {}
 

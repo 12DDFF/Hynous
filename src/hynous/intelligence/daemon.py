@@ -1722,20 +1722,28 @@ class Daemon:
                 if latest:
                     features = {name: latest.get(name, 0.0) for name in _FEAT_NAMES}
                     conditions = self._condition_engine.predict(coin, features)
-                    if coin not in self._latest_predictions:
-                        self._latest_predictions[coin] = {}
-                    self._latest_predictions[coin]["conditions"] = conditions.to_dict()
-                    self._latest_predictions[coin]["conditions_text"] = conditions.to_briefing_text()
-                    # Persist for live validation
-                    self._satellite_store.save_condition_predictions(
-                        snapshot_id=latest["snapshot_id"],
-                        coin=coin,
-                        conditions=conditions,
-                    )
-                    logger.debug(
-                        "Condition predictions for %s: %d models, %.1fms",
-                        coin, len(conditions.predictions), conditions.inference_time_ms,
-                    )
+                    if conditions is None:
+                        # Feature quality too low — clear cached predictions so
+                        # trading tool sees ml_cond=None and blocks trading.
+                        if coin in self._latest_predictions:
+                            self._latest_predictions[coin].pop("conditions", None)
+                            self._latest_predictions[coin].pop("conditions_text", None)
+                        logger.warning("ML conditions unavailable for %s — features degraded", coin)
+                    else:
+                        if coin not in self._latest_predictions:
+                            self._latest_predictions[coin] = {}
+                        self._latest_predictions[coin]["conditions"] = conditions.to_dict()
+                        self._latest_predictions[coin]["conditions_text"] = conditions.to_briefing_text()
+                        # Persist for live validation
+                        self._satellite_store.save_condition_predictions(
+                            snapshot_id=latest["snapshot_id"],
+                            coin=coin,
+                            conditions=conditions,
+                        )
+                        logger.debug(
+                            "Condition predictions for %s: %d models, %.1fms",
+                            coin, len(conditions.predictions), conditions.inference_time_ms,
+                        )
             except Exception:
                 logger.debug("Condition prediction failed", exc_info=True)
 
