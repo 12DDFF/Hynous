@@ -21,11 +21,33 @@ from satellite.training.condition_artifact import ConditionArtifact
 
 log = logging.getLogger(__name__)
 
-# Models confirmed broken via live validation (zero predictive power).
-# reversal_30m: tautological target, BinaryAcc = base rate (92%), Spearman +0.022
-# momentum_quality: Spearman 0.075, DirAcc 50% = coin flip
-# They still exist as artifacts but are skipped during inference.
-DISABLED_MODELS: set[str] = {"reversal_30m", "momentum_quality"}
+# Models disabled from inference. Two categories:
+#
+# BROKEN (zero predictive power):
+#   reversal_30m: tautological target, BinaryAcc = base rate (92%), Spearman +0.02
+#   momentum_quality: Spearman 0.075, DirAcc 50% = coin flip
+#
+# WEAK (live Spearman < 0.25, not reliable enough for agent decisions):
+#   mae_long: Spearman +0.21, drawdown prediction too noisy
+#   mae_short: Spearman +0.22, same
+#   entry_quality: Spearman +0.26, relative target is weak by design
+#   sl_survival_03: Spearman +0.10, class imbalance (11% positive rate)
+#   sl_survival_05: Spearman +0.03, extreme imbalance (2.8% positive rate)
+#   vol_expand: Spearman +0.28, borderline — re-enable when improved
+#
+# Artifacts are kept for retraining. Re-enable by removing from this set.
+DISABLED_MODELS: set[str] = {
+    # Broken
+    "reversal_30m",
+    "momentum_quality",
+    # Weak — improve before re-enabling
+    "mae_long",
+    "mae_short",
+    "entry_quality",
+    "sl_survival_03",
+    "sl_survival_05",
+    "vol_expand",
+}
 
 
 @dataclass
