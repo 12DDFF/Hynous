@@ -270,13 +270,28 @@ class Database:
                 "DELETE FROM liquidation_events WHERE occurred_at < ?",
                 (hist_cutoff,),
             )
+            # Prune inactive addresses (not seen in 30+ days, low tier)
+            # Prevents unbounded growth from trade stream address discovery.
+            addr_cutoff = time.time() - 30 * 86400
+            cur7 = conn.execute(
+                "DELETE FROM addresses WHERE last_seen < ? AND tier >= 3",
+                (addr_cutoff,),
+            )
+            # Also clean orphaned profiles for pruned addresses
+            cur8 = conn.execute(
+                "DELETE FROM wallet_profiles WHERE address NOT IN (SELECT address FROM addresses)",
+            )
+            cur9 = conn.execute(
+                "DELETE FROM wallet_trades WHERE address NOT IN (SELECT address FROM addresses)",
+            )
+
             deleted = sum(
                 cur.rowcount
-                for cur in [cur1, cur2, cur3, cur4, cur5, cur6]
+                for cur in [cur1, cur2, cur3, cur4, cur5, cur6, cur7, cur8, cur9]
             )
             conn.commit()
         if deleted:
-            log.info("Pruned %d old time-series rows (cutoff=%d days)", deleted, days)
+            log.info("Pruned %d old rows (time-series + %d inactive addresses)", deleted, cur7.rowcount)
 
     def close(self):
         if self._conn:

@@ -533,44 +533,19 @@ class WalletProfiler:
             "SELECT * FROM wallet_profiles WHERE address = ?", (address,)
         ).fetchone()
 
-        need_compute = not row
-        if row and days > self._cfg.profile_window_days:
-            # User is requesting deeper analysis — recompute if profile is
-            # older than 1 hour (avoid re-fetching on every page reload)
-            age_hours = (time.time() - (row["computed_at"] or 0)) / 3600
-            if age_hours > 1:
-                need_compute = True
-
-        if need_compute:
-            fills = self.fetch_fills(address, days=days)
-            profile = self.compute_profile(fills) if fills else {}
-
-            if profile:
-                # Full profile computed — save to DB
-                eq_row = conn.execute(
-                    "SELECT equity FROM pnl_snapshots WHERE address = ? ORDER BY snapshot_at DESC LIMIT 1",
-                    (address,),
-                ).fetchone()
-                equity = eq_row["equity"] if eq_row else None
-                self._upsert_profile(address, profile, equity)
-                profile_data = profile
-                profile_data["equity"] = equity
-                profile_data["address"] = address
-                profile_data["computed_at"] = time.time()
-            elif row:
-                # Computation failed but we have a cached profile
-                profile_data = dict(row)
-            else:
-                # No computed stats, no cache — build from live data.
-                # Stats fields stay null; positions/changes/equity still
-                # attached below so the agent always gets useful data.
-                eq_row = conn.execute(
-                    "SELECT equity FROM pnl_snapshots WHERE address = ? ORDER BY snapshot_at DESC LIMIT 1",
-                    (address,),
-                ).fetchone()
-                profile_data = {"address": address, "equity": eq_row["equity"] if eq_row else None}
-        else:
+        # Always return cached profile immediately — never block on API calls.
+        # On-demand recomputation caused "failed to load profile" when the HL API
+        # returned 429 or timed out during the synchronous fetch_fills() call.
+        if row:
             profile_data = dict(row)
+        else:
+            # No cached profile — return stub with equity + positions.
+            # The drainer will eventually profile this address.
+            eq_row = conn.execute(
+                "SELECT equity FROM pnl_snapshots WHERE address = ? ORDER BY snapshot_at DESC LIMIT 1",
+                (address,),
+            ).fetchone()
+            profile_data = {"address": address, "equity": eq_row["equity"] if eq_row else None}
 
         # Attach current positions
         positions = conn.execute(

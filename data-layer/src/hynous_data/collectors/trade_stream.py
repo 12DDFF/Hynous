@@ -203,8 +203,11 @@ class TradeStream:
                     pass  # never crash trade stream for liq recording
 
             # Address discovery from users field
+            # Only discover addresses from trades >= $1K USD to avoid dust wallets
+            # clogging the addresses table and wasting position poller budget.
+            trade_usd = px * sz
             users = trade.get("users")
-            if users and isinstance(users, list):
+            if trade_usd >= 1000 and users and isinstance(users, list):
                 with self._addr_lock:
                     for addr in users:
                         if not addr or not isinstance(addr, str) or len(addr) < 10:
