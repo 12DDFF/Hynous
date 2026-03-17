@@ -64,6 +64,11 @@ class TradeStream:
         self._pending_addresses: dict[str, dict] = {}
         self._addr_lock = threading.Lock()
         self._flush_interval = 1.0
+        # Trade flow aggregation: 5-minute buy/sell volume buckets → trade_flow_history
+        # Keyed by (coin, bucket_start_ts). Flushed every 5 minutes.
+        self._flow_buckets: dict[tuple[str, int], dict] = {}  # (coin, bucket) → {buy, sell}
+        self._flow_lock = threading.Lock()
+        self._last_flow_flush: float = 0.0
         # Health monitoring
         self._last_trade_time = 0.0
         self._reconnect_count = 0
@@ -121,9 +126,10 @@ class TradeStream:
         log.info("TradeStream subscribed to %d coins", len(self._subscribed_coins))
 
     def _monitor_loop(self):
-        """Flush addresses + check WS health."""
+        """Flush addresses + trade flow + check WS health."""
         while not self._stop_event.is_set():
             self._flush_addresses()
+            self._flush_trade_flow()
 
             # Health check: if no trades for WS_DEAD_THRESHOLD, force reconnect
             if self._last_trade_time > 0:
@@ -164,6 +170,19 @@ class TradeStream:
                 continue
 
             self.total_trades += 1
+
+            # Accumulate into 5-minute buy/sell buckets for trade_flow_history
+            trade_time_s = trade.get("time", 0) / 1000 if trade.get("time", 0) > 1e12 else trade.get("time", 0)
+            bucket_start = int(trade_time_s // 300) * 300
+            notional = px * sz
+            flow_key = (coin, bucket_start)
+            with self._flow_lock:
+                if flow_key not in self._flow_buckets:
+                    self._flow_buckets[flow_key] = {"buy": 0.0, "sell": 0.0}
+                if side == "B":
+                    self._flow_buckets[flow_key]["buy"] += notional
+                else:
+                    self._flow_buckets[flow_key]["sell"] += notional
 
             # Buffer trade for order flow
             buf = get_trade_buffer(coin)
@@ -253,6 +272,49 @@ class TradeStream:
             self.total_addresses_discovered += (after - before)
         except Exception:
             log.exception("Failed to flush %d addresses", len(batch))
+
+    def _flush_trade_flow(self):
+        """Write accumulated 5-minute buy/sell volume buckets to trade_flow_history.
+
+        Only flushes completed buckets (older than current 5-min window).
+        This populates the table that satellite ML reads for CVD features.
+        """
+        now = time.time()
+        # Only flush every 60s to avoid excessive DB writes
+        if now - self._last_flow_flush < 60:
+            return
+        self._last_flow_flush = now
+
+        current_bucket = int(now // 300) * 300  # current forming bucket
+
+        with self._flow_lock:
+            # Only flush completed buckets (not the current forming one)
+            completed = {
+                k: v for k, v in self._flow_buckets.items()
+                if k[1] < current_bucket
+            }
+            for k in completed:
+                del self._flow_buckets[k]
+
+        if not completed:
+            return
+
+        try:
+            rows = [
+                (coin, float(bucket_ts), data["buy"], data["sell"])
+                for (coin, bucket_ts), data in completed.items()
+            ]
+            with self._db.write_lock:
+                self._db.conn.executemany(
+                    "INSERT OR REPLACE INTO trade_flow_history "
+                    "(coin, recorded_at, buy_volume_usd, sell_volume_usd) "
+                    "VALUES (?, ?, ?, ?)",
+                    rows,
+                )
+                self._db.conn.commit()
+            log.debug("Flushed %d trade_flow buckets", len(rows))
+        except Exception:
+            log.exception("Failed to flush trade_flow buckets")
 
     def stop(self):
         self._stop_event.set()
