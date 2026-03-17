@@ -23,7 +23,7 @@ hyperliquid:
 
 # Agent settings
 agent:
-  model: "openrouter/anthropic/claude-sonnet-4-6"  # OpenRouter: 1 key, all models
+  model: "openrouter/x-ai/grok-4.1-fast"  # OpenRouter: 1 key, all models — runtime override via storage/model_prefs.json
   max_tokens: 2048           # Max response tokens (user chat default)
   temperature: 0.7           # Creativity (0-1)
 
