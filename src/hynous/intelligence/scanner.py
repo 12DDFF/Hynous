@@ -999,7 +999,10 @@ class MarketScanner:
 
         now = time.time()
         tracked = self.execution_symbols | self.position_symbols
-        snaps = [self._books.nth_back(i) for i in range(3)]
+        # Require 5 consecutive snapshots (~5 min) instead of 3 (~3 min)
+        # to filter natural orderbook oscillation
+        n_required = 5
+        snaps = [self._books.nth_back(i) for i in range(n_required)]
         if any(s is None for s in snaps):
             return results
 
@@ -1010,14 +1013,14 @@ class MarketScanner:
                 if not book_data:
                     break
                 imbalances.append(book_data["imbalance"])
-            if len(imbalances) < 3:
+            if len(imbalances) < n_required:
                 continue
 
             avg_imb = sum(imbalances) / len(imbalances)
 
-            # ALL 3 must be consistently skewed (bid-heavy > 0.60, ask-heavy < 0.40)
-            all_bid_heavy = all(imb > 0.60 for imb in imbalances)
-            all_ask_heavy = all(imb < 0.40 for imb in imbalances)
+            # ALL must be consistently skewed (was 0.60/0.40 — too loose)
+            all_bid_heavy = all(imb > 0.65 for imb in imbalances)
+            all_ask_heavy = all(imb < 0.35 for imb in imbalances)
             if not all_bid_heavy and not all_ask_heavy:
                 continue
 
@@ -1042,7 +1045,7 @@ class MarketScanner:
                         severity += 0.1
 
             curr_data = snaps[0].books.get(sym, {})
-            headline = f"{sym} sustained pressure {direction} (avg {avg_imb:.2f}, 3min)"
+            headline = f"{sym} sustained pressure {direction} (avg {avg_imb:.2f}, {n_required}min)"
             detail = (
                 f"Imbalances: {', '.join(f'{imb:.2f}' for imb in imbalances)} | "
                 f"Bid: ${curr_data.get('bid_depth_usd', 0):,.0f} | "

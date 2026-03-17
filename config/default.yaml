@@ -46,7 +46,7 @@ daemon:
   consolidation_interval: 86400      # Cross-episode generalization (seconds, 24 hours)
   max_daily_loss_usd: 100            # Circuit breaker: pause trading after this daily loss
   max_open_positions: 3              # Max simultaneous open positions
-  max_wakes_per_hour: 6              # Rate limit on agent wakes per hour
+  max_wakes_per_hour: 4              # Was 6 — fewer wakes, higher quality
   wake_cooldown_seconds: 120         # Min seconds between non-priority wakes
   playbook_cache_ttl: 1800           # Playbook matcher cache refresh interval (seconds, 30 min)
   # Peak profit protection
@@ -90,9 +90,9 @@ daemon:
 # Market scanner (anomaly detection across ALL Hyperliquid pairs)
 scanner:
   enabled: true
-  wake_threshold: 0.6              # Min severity to wake agent (0.0-1.0)
+  wake_threshold: 0.7              # Min severity to wake agent (was 0.6 — too much noise)
   max_anomalies_per_wake: 5
-  dedup_ttl_minutes: 30
+  dedup_ttl_minutes: 45                # Was 30 — give market more time to develop
   price_spike_5min_pct: 3.0        # % move in 5min to flag
   price_spike_15min_pct: 5.0       # % move in 15min to flag
   funding_extreme_percentile: 95   # Percentile cutoff for funding extremes
