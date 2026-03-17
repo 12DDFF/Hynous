@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 _trade_buffers: dict[str, deque] = {}
 _buffer_lock = threading.Lock()
 
-MAX_BUFFER_SIZE = 50_000  # per-coin trade buffer cap
+MAX_BUFFER_SIZE = 5_000  # per-coin trade buffer cap (was 50K — reduced for memory)
 WS_DEAD_THRESHOLD = 30  # seconds with no trades = WS considered dead
 WS_RECONNECT_DELAY = 5  # seconds to wait before reconnecting
 
@@ -49,9 +49,14 @@ class TradeStream:
     Includes health monitoring: if no trades arrive for 30s, kills and reconnects WS.
     """
 
-    def __init__(self, db: Database, base_url: str = "https://api.hyperliquid.xyz"):
+    # Only subscribe to tracked coins. Subscribing to all 1000+ coins wastes
+    # 600-800MB RAM on trade buffers that no one reads.
+    TRACKED_COINS: list[str] = ["BTC", "ETH", "SOL"]
+
+    def __init__(self, db: Database, base_url: str = "https://api.hyperliquid.xyz", coins: list[str] | None = None):
         self._db = db
         self._base_url = base_url
+        self._tracked_coins = coins or self.TRACKED_COINS
         self._info: Info | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -92,14 +97,17 @@ class TradeStream:
                 self._stop_event.wait(WS_RECONNECT_DELAY)
 
     def _connect_and_subscribe(self):
-        """Connect WS and subscribe to all coins."""
-        log.info("TradeStream connecting to WS...")
-        self._info = Info(base_url=self._base_url)
-        time.sleep(2)
+        """Connect WS and subscribe to tracked coins only.
 
-        meta = self._info.meta()
-        coins = [asset["name"] for asset in meta.get("universe", [])]
-        log.info("Subscribing to trades for %d coins", len(coins))
+        Previously subscribed to ALL 1000+ coins, wasting 600-800MB on
+        trade buffers. Now only BTC/ETH/SOL (or configured coins).
+        """
+        log.info("TradeStream connecting to WS...")
+        self._info = Info(base_url=self._base_url, skip_ws=True)
+        time.sleep(1)
+
+        coins = self._tracked_coins
+        log.info("Subscribing to trades for %d coins: %s", len(coins), coins)
 
         self._subscribed_coins.clear()
         for coin in coins:

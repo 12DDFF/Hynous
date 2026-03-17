@@ -63,7 +63,7 @@ class HlpTrackerConfig:
 
 @dataclass
 class HeatmapConfig:
-    recompute_interval: int = 10
+    recompute_interval: int = 60  # was 10s — positions don't change that fast
     bucket_count: int = 50
     range_pct: float = 15.0
 

@@ -90,7 +90,7 @@ class SmartMoneyEngine:
                     addr = self._profile_queue.popleft()
 
                 self._profile_one(addr)
-                time.sleep(3)  # ~20 profiles/min, leaves 60%+ budget for polling
+                time.sleep(10)  # ~6 profiles/min (was 20/min at 3s — starved rate limiter)
 
     def _profile_one(self, addr: str):
         """Profile a single address. Silently skips on failure."""
