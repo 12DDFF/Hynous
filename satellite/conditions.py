@@ -36,17 +36,19 @@ log = logging.getLogger(__name__)
 #   vol_expand: Spearman +0.28, borderline — re-enable when improved
 #
 # Artifacts are kept for retraining. Re-enable by removing from this set.
+# Broken models (zero predictive power, confirmed):
+# reversal_30m: tautological target, BinaryAcc = base rate
+# momentum_quality: Spearman 0.075, coin flip
+# sl_survival_05: Spearman 0.03, extreme class imbalance (2.8%)
+#
+# Re-enabled for re-validation after data-layer fixes:
+# mae_long, mae_short, entry_quality, vol_expand, sl_survival_03
+# Previous "weak" scores may have been from broken data (trade stream crash,
+# CVD zero, features degraded). Re-validate with clean data.
 DISABLED_MODELS: set[str] = {
-    # Broken
     "reversal_30m",
     "momentum_quality",
-    # Weak — improve before re-enabling
-    "mae_long",
-    "mae_short",
-    "entry_quality",
-    "sl_survival_03",
     "sl_survival_05",
-    "vol_expand",
 }
 
 

@@ -359,7 +359,7 @@ body {
     sl_survival_03:{ icon:"\u26D4",label:"SL Risk (0.3%)",       good:"low",    what:"Probability a tight 0.3% stop-loss gets hit within 30min. High = widen your stop." },
     sl_survival_05:{ icon:"\u26D4",label:"SL Risk (0.5%)",       good:"low",    what:"Probability a 0.5% stop-loss gets hit within 30min. High = dangerous for tight stops." },
   };
-  var COND_ORDER = ["vol_1h","vol_4h","range_30m","move_30m","volume_1h","funding_4h"];
+  var COND_ORDER = ["vol_1h","vol_4h","range_30m","move_30m","volume_1h","funding_4h","mae_long","mae_short","entry_quality","vol_expand","sl_survival_03"];
 
   // ── Helpers ─────────────────────────────────────────
   function vis() { return !document.hidden; }
