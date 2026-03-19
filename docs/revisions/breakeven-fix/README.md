@@ -911,6 +911,10 @@ Round 2 added `_persist_mechanical_state()` calls at every state transition:
 - `_breakeven_set` and `_capital_be_set` are NOT persisted to disk — but the "has_tighter_sl" check in both BE blocks prevents SL degradation on restart (the existing SL at entry price is already tighter than a re-evaluation would place)
 - `_trailing_stop_px` IS persisted — the restart-safe trailing vulnerability (cancelling +5% SL and replacing with +1.4%) is now fixed
 
+### Trailing Stop v3 — Continuous Exponential Retracement (2026-03-18)
+
+The ML-adaptive trailing stop v2 (tiered retracement + vol modifier) described in `ml-adaptive-trailing-stop.md` has been **superseded by v3** (continuous exponential retracement). The 3-tier if/elif/else + multiplicative vol modifier has been replaced by a single exponential function `r(p) = 0.20 + 0.30 × exp(-k × p)` where k varies by vol regime (extreme=0.160, high=0.100, normal=0.080, low=0.040). See `docs/revisions/trailing-stop-fix/` for the current design and calibration results.
+
 ### Dynamic Protective SL — Replaces Capital-BE (2026-03-17)
 
 Capital-BE (Layer 1) was deprecated and replaced by the **Dynamic Protective SL** — a vol-regime-calibrated stop placed immediately at entry detection (no ROE threshold). See `dynamic-protective-sl.md` for the full specification.

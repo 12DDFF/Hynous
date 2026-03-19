@@ -188,11 +188,12 @@ cd nous-server && pnpm test
 - `docs/README.md` — Central documentation hub
 - `docs/integration.md` — Cross-system data flows (satellite ↔ data-layer ↔ daemon)
 - `docs/revisions/trade-mechanism-debug/` — 5 fix guides for mechanical exit bugs (implemented)
-- `docs/revisions/breakeven-fix/` — Two-layer breakeven system + Round 3 (stale flag fix, background wakes) + ML-adaptive trailing stop v2 (regime-based activation, tiered retracement, agent exit lockout) + Dynamic Protective SL (2026-03-17, replaces capital-BE: vol-regime distances Low=2.5%/Normal=7.0%/High=8.0%/Extreme=3.0% ROE, placed at entry detection). Capital-BE **DEPRECATED** (`capital_breakeven_enabled: false`). Fee-BE layer remains active.
+- `docs/revisions/breakeven-fix/` — Two-layer breakeven system + Round 3 (stale flag fix, background wakes) + ML-adaptive trailing stop v2 (regime-based activation, tiered retracement, agent exit lockout) + Dynamic Protective SL (2026-03-17, replaces capital-BE: vol-regime distances Low=2.5%/Normal=7.0%/High=8.0%/Extreme=3.0% ROE, placed at entry detection). Capital-BE **DEPRECATED** (`capital_breakeven_enabled: false`). Fee-BE layer remains active. Trailing stop v2 **SUPERSEDED** by v3 (see below).
+- `docs/revisions/trailing-stop-fix/` — Adaptive Trailing Stop v3 (2026-03-18): continuous exponential retracement `r(p) = 0.20 + 0.30 × exp(-k × p)` replaces 3-tier discrete system. Vol regime absorbed into decay rate k (extreme=0.160, high=0.100, normal=0.080, low=0.040). Eliminates tier boundary discontinuities and floor violations. 6 new TradingSettings fields: `trail_ret_floor`, `trail_ret_amplitude`, `trail_ret_k_extreme/high/normal/low`. 800 unit tests passing.
 - `docs/revisions/ws-migration/` — WebSocket migration: Phase 1 (market data) implemented & verified. `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m) via `ws_feeds.py`. All 4 channels have staleness gating. Live soak test passed. Phase 2 (account data) planned for live trading.
 - `docs/archive/` — Completed revision guides (all resolved, kept for reference)
 - Each major directory has its own `README.md`
 
 ---
 
-Last updated: 2026-03-17
+Last updated: 2026-03-18

@@ -66,15 +66,14 @@ daemon:
   trail_activation_high: 2.0
   trail_activation_normal: 2.5
   trail_activation_low: 3.0
-  # Tiered retracement (% of peak to give back — lower = keeps more profit)
-  trail_retracement_tier1: 45.0       # Peak 0-5% ROE
-  trail_retracement_tier2: 38.0       # Peak 5-10% ROE
-  trail_retracement_tier3: 30.0       # Peak 10%+ ROE
-  # Vol modifier on retracement (multiplied — lower = tighter trail)
-  trail_vol_mod_extreme: 0.75
-  trail_vol_mod_high: 0.88
-  trail_vol_mod_normal: 1.0
-  trail_vol_mod_low: 1.1
+  # Continuous exponential retracement: r(p) = floor + amplitude * exp(-k * p)
+  # Replaces 3-tier + vol-modifier system. k varies by vol regime.
+  trail_ret_floor: 0.20
+  trail_ret_amplitude: 0.30
+  trail_ret_k_extreme: 0.160
+  trail_ret_k_high: 0.100
+  trail_ret_k_normal: 0.080
+  trail_ret_k_low: 0.040
   # Minimum trail distance above fee-BE (ROE %)
   trail_min_distance_above_fee_be: 0.5
   # Candle-based peak tracking (enhances MFE/MAE for trailing stop accuracy)

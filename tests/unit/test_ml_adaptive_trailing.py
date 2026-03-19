@@ -6,13 +6,21 @@ Verifies:
 2. Agent exit lockout in handle_close_position()
 3. System prompt updated with EXIT LOCKOUT
 4. Vol-adaptive activation threshold (4-regime map)
-5. Tiered retracement (3 tiers by peak)
-6. Vol-regime modifier on retracement
+5. Continuous exponential retracement (replaces 3-tier discrete system)
+6. Vol regime absorbed into decay rate k (no separate modifier)
 7. Trail floor = fee_be_roe + min_distance
-8. All 13 new config fields in TradingSettings and default.yaml
+8. All new config fields in TradingSettings and default.yaml
 9. Regression: Phase 2/3, persist calls, breakeven layers unchanged
 """
 from pathlib import Path
+
+# Calibrated values from Phase 1
+CALIBRATED_FLOOR = 0.20
+CALIBRATED_AMPLITUDE = 0.30
+CALIBRATED_K_EXTREME = 0.160
+CALIBRATED_K_HIGH = 0.100
+CALIBRATED_K_NORMAL = 0.080
+CALIBRATED_K_LOW = 0.040
 
 
 # ---------------------------------------------------------------------------
@@ -178,77 +186,160 @@ class TestAdaptiveActivation:
         assert '_vol_regime = "normal"' in method
 
 
-class TestTieredRetracement:
-    """Verify tiered retracement logic in _fast_trigger_check."""
+class TestContinuousRetracement:
+    """Verify continuous exponential retracement replaces discrete tiers."""
 
-    def test_three_tiers_exist(self):
-        """All three retracement tier keys must appear in _fast_trigger_check."""
-        src = _daemon_source()
-        method = _get_method(src, "_fast_trigger_check")
-        for key in ["trail_retracement_tier1", "trail_retracement_tier2",
-                    "trail_retracement_tier3"]:
-            assert key in method, f"{key} not found in _fast_trigger_check"
+    def test_exponential_fields_exist(self):
+        """New fields exist in TradingSettings."""
+        src = Path("src/hynous/core/trading_settings.py").read_text()
+        assert "trail_ret_floor" in src
+        assert "trail_ret_amplitude" in src
+        assert "trail_ret_k_extreme" in src
+        assert "trail_ret_k_high" in src
+        assert "trail_ret_k_normal" in src
+        assert "trail_ret_k_low" in src
 
-    def test_tier_boundaries(self):
-        """Tier boundaries peak < 5.0 and peak < 10.0 must appear in trailing block."""
-        src = _daemon_source()
-        method = _get_method(src, "_fast_trigger_check")
-        assert "peak < 5.0" in method
-        assert "peak < 10.0" in method
+    def test_tier_fields_removed(self):
+        """Old tier and vol_mod fields no longer exist."""
+        src = Path("src/hynous/core/trading_settings.py").read_text()
+        assert "trail_retracement_tier1" not in src
+        assert "trail_retracement_tier2" not in src
+        assert "trail_retracement_tier3" not in src
+        assert "trail_vol_mod_extreme" not in src
+        assert "trail_vol_mod_high" not in src
+        assert "trail_vol_mod_normal" not in src
+        assert "trail_vol_mod_low" not in src
 
-    def test_vol_modifier_applied(self):
-        """effective_retracement = base_retracement * vol_modifier must exist."""
-        src = _daemon_source()
-        method = _get_method(src, "_fast_trigger_check")
-        assert "effective_retracement = base_retracement * vol_modifier" in method
+    def test_daemon_uses_math_exp(self):
+        """daemon.py uses math.exp for retracement, not if/elif/else tiers."""
+        src = Path("src/hynous/intelligence/daemon.py").read_text()
+        assert "math.exp" in src
+        # Old tier logic should be gone
+        assert "trail_retracement_tier1" not in src
+        assert "trail_retracement_tier2" not in src
+        assert "trail_retracement_tier3" not in src
+        assert "trail_vol_mod_extreme" not in src
 
-    def test_trail_floor_includes_min_distance(self):
-        """trail_min_distance_above_fee_be must appear in trailing block as floor."""
-        src = _daemon_source()
-        method = _get_method(src, "_fast_trigger_check")
-        assert "trail_min_distance_above_fee_be" in method
-        assert "trail_floor" in method
+    def test_k_map_in_daemon(self):
+        """daemon.py has a _k_map dict for regime-dependent decay rate."""
+        src = Path("src/hynous/intelligence/daemon.py").read_text()
+        assert "_k_map" in src
+        assert "trail_ret_k_extreme" in src
+        assert "trail_ret_k_normal" in src
+
+    def test_trail_floor_unchanged(self):
+        """trail_min_distance_above_fee_be is still present and used."""
+        src = Path("src/hynous/core/trading_settings.py").read_text()
+        assert "trail_min_distance_above_fee_be" in src
+        daemon_src = Path("src/hynous/intelligence/daemon.py").read_text()
+        assert "trail_min_distance_above_fee_be" in daemon_src
 
 
-class TestTieredRetractionFormulas:
-    """Pure math validation of tiered retracement formulas."""
+class TestContinuousRetractionFormulas:
+    """Verify the exponential retracement formula produces correct values."""
 
-    def test_tier1_normal_vol(self):
-        """peak=4%, tier1=45%, vol_mod=1.0 → trail_roe=2.2%."""
-        peak, ret, mod = 4.0, 0.45, 1.0
-        trail = peak * (1.0 - ret * mod)
-        assert abs(trail - 2.2) < 0.01
+    def test_formula_at_low_peak(self):
+        """At peak near activation, retracement should be near ceiling."""
+        import math
+        floor, amp, k = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE, CALIBRATED_K_NORMAL
+        peak = 2.5
+        r = floor + amp * math.exp(-k * peak)
+        # Should be near 0.45 (the old tier 1 value in normal vol)
+        assert 0.35 <= r <= 0.55, f"r({peak}) = {r}, expected ~0.45"
 
-    def test_tier2_high_vol(self):
-        """peak=7%, tier2=38%, vol_mod=0.88 → trail_roe≈4.66%."""
-        peak, ret, mod = 7.0, 0.38, 0.88
-        trail = peak * (1.0 - ret * mod)
-        assert abs(trail - 4.66) < 0.01
+    def test_formula_at_mid_peak(self):
+        """At peak ~7.5%, retracement should be near old tier 2."""
+        import math
+        floor, amp, k = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE, CALIBRATED_K_NORMAL
+        peak = 7.5
+        r = floor + amp * math.exp(-k * peak)
+        # Should be near 0.38 (the old tier 2 value in normal vol)
+        assert 0.28 <= r <= 0.48, f"r({peak}) = {r}, expected ~0.38"
 
-    def test_tier3_extreme_vol(self):
-        """peak=12%, tier3=30%, vol_mod=0.75 → trail_roe=9.30%."""
-        peak, ret, mod = 12.0, 0.30, 0.75
-        trail = peak * (1.0 - ret * mod)
-        assert abs(trail - 9.30) < 0.01
+    def test_formula_at_high_peak(self):
+        """At peak ~12%, retracement should be near old tier 3."""
+        import math
+        floor, amp, k = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE, CALIBRATED_K_NORMAL
+        peak = 12.0
+        r = floor + amp * math.exp(-k * peak)
+        # Should be near 0.30 (the old tier 3 value in normal vol)
+        assert 0.20 <= r <= 0.40, f"r({peak}) = {r}, expected ~0.30"
+
+    def test_monotonically_decreasing(self):
+        """Retracement decreases as peak increases."""
+        import math
+        floor, amp, k = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE, CALIBRATED_K_NORMAL
+        prev = 1.0
+        for peak in [1.0, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0]:
+            r = floor + amp * math.exp(-k * peak)
+            assert r <= prev, f"r({peak}) = {r} > r(prev) = {prev}"
+            prev = r
+
+    def test_never_below_floor(self):
+        """Retracement never goes below floor, even at extreme peaks."""
+        import math
+        floor, amp = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE
+        for k in [CALIBRATED_K_EXTREME, CALIBRATED_K_HIGH, CALIBRATED_K_NORMAL, CALIBRATED_K_LOW]:
+            for peak in [0.0, 5.0, 10.0, 20.0, 50.0, 100.0]:
+                r = floor + amp * math.exp(-k * peak)
+                assert r >= floor - 1e-9, f"r({peak}) = {r} < floor {floor}"
+
+    def test_extreme_vol_tighter_than_normal(self):
+        """In extreme vol (higher k), retracement is lower at same peak."""
+        import math
+        floor, amp = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE
+        for peak in [3.0, 5.0, 7.5, 10.0, 15.0]:
+            r_extreme = floor + amp * math.exp(-CALIBRATED_K_EXTREME * peak)
+            r_normal = floor + amp * math.exp(-CALIBRATED_K_NORMAL * peak)
+            assert r_extreme <= r_normal, (
+                f"At peak {peak}: extreme r={r_extreme} > normal r={r_normal}"
+            )
+
+    def test_low_vol_looser_than_normal(self):
+        """In low vol (lower k), retracement is higher at same peak."""
+        import math
+        floor, amp = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE
+        for peak in [3.0, 5.0, 7.5, 10.0, 15.0]:
+            r_low = floor + amp * math.exp(-CALIBRATED_K_LOW * peak)
+            r_normal = floor + amp * math.exp(-CALIBRATED_K_NORMAL * peak)
+            assert r_low >= r_normal, (
+                f"At peak {peak}: low r={r_low} < normal r={r_normal}"
+            )
 
     def test_floor_prevents_low_trail(self):
-        """Low trail is raised by floor = fee_be + min_distance."""
-        trail = 2.5 * (1.0 - 0.45)   # 1.375%
-        floor = 1.4 + 0.5              # 1.9%
-        result = max(trail, floor)
-        assert abs(result - 1.9) < 0.01
+        """Trail floor (fee_be + min_distance) still applies."""
+        import math
+        floor, amp, k = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE, CALIBRATED_K_NORMAL
+        peak = 2.5  # Low peak
+        r = floor + amp * math.exp(-k * peak)
+        trail_roe = peak * (1.0 - r)
+        fee_be_roe = 0.07 * 20  # 1.4% at 20x
+        trail_floor = fee_be_roe + 0.5  # 1.9%
+        effective_trail = max(trail_roe, trail_floor)
+        assert effective_trail >= trail_floor
 
-    def test_extreme_vol_activation(self):
-        """Extreme regime activation=1.5%, floor at 20x ≈ 1.4+0.1 = 1.5%."""
-        activation = 1.5
-        floor = 0.07 * 20 + 0.1
-        assert abs(max(activation, floor) - 1.5) < 0.01
+    def test_continuous_at_old_boundary_5pct(self):
+        """No discontinuity at the old 5% tier boundary."""
+        import math
+        floor, amp, k = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE, CALIBRATED_K_NORMAL
+        r_499 = floor + amp * math.exp(-k * 4.99)
+        r_501 = floor + amp * math.exp(-k * 5.01)
+        # Change should be tiny (< 0.01), not the old 0.07 jump
+        assert abs(r_499 - r_501) < 0.01, (
+            f"Discontinuity at 5%: r(4.99)={r_499}, r(5.01)={r_501}, "
+            f"delta={abs(r_499 - r_501)}"
+        )
 
-    def test_low_vol_activation(self):
-        """Low regime activation=3.0%, floor at 20x = 1.5%."""
-        activation = 3.0
-        floor = 0.07 * 20 + 0.1
-        assert max(activation, floor) == 3.0
+    def test_continuous_at_old_boundary_10pct(self):
+        """No discontinuity at the old 10% tier boundary."""
+        import math
+        floor, amp, k = CALIBRATED_FLOOR, CALIBRATED_AMPLITUDE, CALIBRATED_K_NORMAL
+        r_999 = floor + amp * math.exp(-k * 9.99)
+        r_1001 = floor + amp * math.exp(-k * 10.01)
+        assert abs(r_999 - r_1001) < 0.01, (
+            f"Discontinuity at 10%: r(9.99)={r_999}, r(10.01)={r_1001}, "
+            f"delta={abs(r_999 - r_1001)}"
+        )
 
 
 class TestConfigFields:
@@ -257,9 +348,9 @@ class TestConfigFields:
     _NEW_FIELDS = [
         "trail_activation_extreme", "trail_activation_high",
         "trail_activation_normal", "trail_activation_low",
-        "trail_retracement_tier1", "trail_retracement_tier2", "trail_retracement_tier3",
-        "trail_vol_mod_extreme", "trail_vol_mod_high",
-        "trail_vol_mod_normal", "trail_vol_mod_low",
+        "trail_ret_floor", "trail_ret_amplitude",
+        "trail_ret_k_extreme", "trail_ret_k_high",
+        "trail_ret_k_normal", "trail_ret_k_low",
         "trail_min_distance_above_fee_be",
     ]
 
@@ -270,11 +361,15 @@ class TestConfigFields:
             assert field in src, f"{field} missing from TradingSettings"
 
     def test_yaml_has_new_fields(self):
-        """All new fields must appear in default.yaml daemon section."""
-        src = Path(__file__).parent.parent.parent / "config" / "default.yaml"
-        yaml_text = src.read_text()
-        for field in self._NEW_FIELDS:
-            assert field in yaml_text, f"{field} missing from default.yaml"
+        """default.yaml contains all new trailing stop fields."""
+        yaml_text = Path("config/default.yaml").read_text()
+        for field_name in [
+            "trail_ret_floor", "trail_ret_amplitude",
+            "trail_ret_k_extreme", "trail_ret_k_high",
+            "trail_ret_k_normal", "trail_ret_k_low",
+            "trail_min_distance_above_fee_be",
+        ]:
+            assert field_name in yaml_text, f"Missing in YAML: {field_name}"
 
     def test_legacy_fields_preserved(self):
         """trailing_activation_roe and trailing_retracement_pct must still exist."""

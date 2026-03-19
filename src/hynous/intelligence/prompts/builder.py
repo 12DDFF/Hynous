@@ -168,7 +168,8 @@ Fee-breakeven: Once I clear fee break-even ROE ({ts.taker_fee_pct * ts.micro_lev
 This trade is now risk-free. The dynamic SL is replaced by the fee-breakeven SL.
 
 Trailing stop: Once ROE crosses the activation threshold (adapts to volatility, typically 1.5–3.0%), \
-the stop begins trailing at a retracement from peak that tightens as the trade runs further. \
+the stop begins trailing using a continuous exponential curve — retracement tightens smoothly as \
+the trade runs further, with the tightening speed calibrated to the current vol regime. \
 It executes immediately — no wake, no asking me.
 
 EXIT LOCKOUT: Once the trailing stop activates, I CANNOT close the position. The system will \

@@ -1,6 +1,10 @@
-# ML-Adaptive Trailing Stop + Agent Exit Lockout
+> ⚠️ **SUPERSEDED by Adaptive Trailing Stop v3 (2026-03-18).** The tiered retracement + vol modifier system described below has been replaced by a continuous exponential function with regime-dependent decay rate: `r(p) = 0.20 + 0.30 × exp(-k × p)` where k varies by vol regime (extreme=0.160, high=0.100, normal=0.080, low=0.040). The agent exit lockout and vol-adaptive activation thresholds from this document remain unchanged and are still active. See `docs/revisions/trailing-stop-fix/` for the current design.
 
-> **Status:** Ready for implementation
+---
+
+# ML-Adaptive Trailing Stop + Agent Exit Lockout (v2 — Superseded)
+
+> **Status:** Implemented (2026-03-15) — superseded by v3 (2026-03-18)
 > **Priority:** High — agent override is the #1 source of lost profit
 > **Branch:** `test-env`
 > **Files touched:** `src/hynous/intelligence/daemon.py`, `src/hynous/intelligence/tools/trading.py`, `src/hynous/core/trading_settings.py`, `src/hynous/intelligence/prompts/builder.py`, `config/default.yaml`

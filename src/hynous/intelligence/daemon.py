@@ -23,6 +23,7 @@ Usage:
 import collections
 import json
 import logging
+import math
 import queue as _queue_module
 import re
 import threading
@@ -2387,23 +2388,17 @@ class Daemon:
 
                         # Phase 2: Update trailing stop price (only if active)
                         if self._trailing_active.get(sym) and peak > 0:
-                            # ── Tiered retracement: tighter as trade runs further ──
-                            if peak < 5.0:
-                                base_retracement = ts.trail_retracement_tier1 / 100.0
-                            elif peak < 10.0:
-                                base_retracement = ts.trail_retracement_tier2 / 100.0
-                            else:
-                                base_retracement = ts.trail_retracement_tier3 / 100.0
-
-                            # ── Vol-regime modifier ──
-                            _vol_mod_map = {
-                                "extreme": ts.trail_vol_mod_extreme,
-                                "high": ts.trail_vol_mod_high,
-                                "normal": ts.trail_vol_mod_normal,
-                                "low": ts.trail_vol_mod_low,
+                            # ── Continuous exponential retracement ──
+                            # r(p) = floor + amplitude * exp(-k * p)
+                            # Vol regime absorbed into k (no separate modifier).
+                            _k_map = {
+                                "extreme": ts.trail_ret_k_extreme,
+                                "high": ts.trail_ret_k_high,
+                                "normal": ts.trail_ret_k_normal,
+                                "low": ts.trail_ret_k_low,
                             }
-                            vol_modifier = _vol_mod_map.get(_vol_regime, ts.trail_vol_mod_normal)
-                            effective_retracement = base_retracement * vol_modifier
+                            _k = _k_map.get(_vol_regime, ts.trail_ret_k_normal)
+                            effective_retracement = ts.trail_ret_floor + ts.trail_ret_amplitude * math.exp(-_k * peak)
 
                             trail_roe = peak * (1.0 - effective_retracement)
 

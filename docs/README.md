@@ -115,11 +115,12 @@ Key conventions:
 |-------|-------------|
 | [ws-price-feed/](./revisions/ws-price-feed/) | `allMids` WebSocket feed — **superseded by ws-migration** (allMids now managed by `ws_feeds.py` alongside l2Book and activeAssetCtx) |
 
-### Implemented (2026-03-12, updated 2026-03-13)
+### Implemented (2026-03-12, updated 2026-03-18)
 
 | Track | Description |
 |-------|-------------|
-| [breakeven-fix/](./revisions/breakeven-fix/) | Two-layer capital + fee breakeven system + Round 2 bug fixes (9 bugs A–I) + Round 3 (stale flag cleanup, background wakes) + ML-adaptive trailing stop v2 (regime-based activation, tiered retracement, agent exit lockout). Both breakeven layers **RE-ENABLED** as of 2026-03-15. |
+| [breakeven-fix/](./revisions/breakeven-fix/) | Two-layer capital + fee breakeven system + Round 2 bug fixes (9 bugs A–I) + Round 3 (stale flag cleanup, background wakes) + ML-adaptive trailing stop v2 (regime-based activation, tiered retracement, agent exit lockout). Capital-BE deprecated (2026-03-17). Trailing stop v2 superseded by v3 (2026-03-18). |
+| [trailing-stop-fix/](./revisions/trailing-stop-fix/) | Adaptive Trailing Stop v3 (2026-03-18): continuous exponential retracement replacing 3-tier discrete system. `r(p) = 0.20 + 0.30 × exp(-k × p)`, k calibrated per vol regime against 55,888 BTC snapshots. Eliminates boundary discontinuities and floor violations. |
 
 ### In Progress (2026-03-11)
 
@@ -169,4 +170,4 @@ See [archive/README.md](./archive/README.md) for a complete index.
 
 ---
 
-Last updated: 2026-03-15 (WS migration Phase 1 verified: 4 channels with staleness gating, candle fix applied, live soak test passed, 692 tests passing)
+Last updated: 2026-03-18 (Adaptive Trailing Stop v3 implemented: continuous exponential retracement, 800 unit tests passing)
