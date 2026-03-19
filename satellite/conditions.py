@@ -90,79 +90,75 @@ class MarketConditions:
         """Human-readable format for LLM briefing injection."""
         lines = [f"ML Conditions ({self.coin}):"]
 
-        # Volatility
+        # Volatility (price swing intensity — NOT volume)
         vol_1h = self.predictions.get("vol_1h")
         vol_4h = self.predictions.get("vol_4h")
         vol_expand = self.predictions.get("vol_expand")
         if vol_1h or vol_4h:
-            vol_parts = []
-            if vol_1h:
-                vol_parts.append(f"1h: {vol_1h.value:.2f}")
-            if vol_4h:
-                vol_parts.append(f"4h: {vol_4h.value:.2f}")
             regime = (vol_1h or vol_4h).regime.upper()
-            line = f"  Volatility: {regime} ({', '.join(vol_parts)})"
+            line = f"  Volatility (price swings): {regime}"
             if regime in ("HIGH", "EXTREME"):
-                line += " — expect large moves"
+                line += " — expect large price moves, widen stops"
             elif regime == "LOW":
-                line += " — quiet market"
+                line += " — quiet market, tight range likely"
+            else:
+                line += " — normal conditions"
             lines.append(line)
 
         if vol_expand:
-            expand_str = f"{vol_expand.value:.1f}x"
             if vol_expand.value > 1.3:
-                lines.append(f"  Vol expanding: {expand_str} — potential breakout")
+                lines.append(f"  Volatility expanding ({vol_expand.value:.1f}x current) — breakout risk")
             elif vol_expand.value < 0.7:
-                lines.append(f"  Vol compressing: {expand_str} — consolidation")
+                lines.append(f"  Volatility compressing ({vol_expand.value:.1f}x current) — consolidation")
 
-        # Move forecast
+        # Price move forecast (how far price could move in next 30 min)
         range_30m = self.predictions.get("range_30m")
         move_30m = self.predictions.get("move_30m")
         if range_30m or move_30m:
             parts = []
             if range_30m:
-                parts.append(f"{range_30m.value:.1f}% range in 30m")
+                parts.append(f"total range ~{range_30m.value:.1f}% ROE")
             if move_30m:
-                parts.append(f"max single move ~{move_30m.value:.1f}%")
-            lines.append(f"  Move forecast: {', '.join(parts)}")
+                parts.append(f"max one-direction ~{move_30m.value:.1f}% ROE")
+            lines.append(f"  Expected 30m move: {', '.join(parts)}")
 
-        # Risk
+        # Max drawdown risk (worst dip before recovery, in next 30 min)
         mae_long = self.predictions.get("mae_long")
         mae_short = self.predictions.get("mae_short")
         if mae_long or mae_short:
             parts = []
             if mae_long:
-                parts.append(f"long drawdown ~{mae_long.value:.1f}% ROE")
+                parts.append(f"longs may dip ~{mae_long.value:.1f}% ROE before recovering")
             if mae_short:
-                parts.append(f"short drawdown ~{mae_short.value:.1f}% ROE")
-            lines.append(f"  Risk: {', '.join(parts)}")
+                parts.append(f"shorts may spike ~{mae_short.value:.1f}% ROE against you")
+            lines.append(f"  Drawdown risk: {', '.join(parts)}")
 
-        # Entry quality
+        # Entry timing quality (is NOW a good time to enter?)
         entry = self.predictions.get("entry_quality")
         if entry:
-            label = "above average" if entry.percentile > 60 else (
-                "below average" if entry.percentile < 40 else "neutral"
-            )
-            lines.append(
-                f"  Entry quality: {label} ({entry.value:.1f}, "
-                f"{entry.percentile}th percentile)"
-            )
+            if entry.percentile > 60:
+                label = "GOOD — better than recent entries"
+            elif entry.percentile < 40:
+                label = "POOR — worse than recent entries, consider waiting"
+            else:
+                label = "neutral"
+            lines.append(f"  Entry timing: {label} ({entry.percentile}th percentile)")
 
-        # Volume
+        # Trading volume (activity level — NOT volatility)
         volume = self.predictions.get("volume_1h")
         if volume:
-            lines.append(f"  Volume forecast: {volume.regime} ({volume.value:.1f}x avg)")
+            lines.append(f"  Trading volume (1h ahead): {volume.regime} ({volume.value:.1f}x typical)")
 
-        # Funding
+        # Funding rate direction (which side pays over next 4 hours)
         funding = self.predictions.get("funding_4h")
         if funding:
-            direction = "increasing" if funding.value > 0.05 else (
-                "decreasing" if funding.value < -0.05 else "flat"
-            )
-            lines.append(
-                f"  Funding trajectory: {direction} over 4h "
-                f"({funding.value:+.2f} z-score change)"
-            )
+            if funding.value > 0.05:
+                direction = "rising — longs will pay more, short squeeze potential"
+            elif funding.value < -0.05:
+                direction = "falling — shorts will pay more, long squeeze potential"
+            else:
+                direction = "flat — no directional funding pressure"
+            lines.append(f"  Funding (next 4h): {direction}")
 
         # Reversal
         reversal = self.predictions.get("reversal_30m")
@@ -179,19 +175,13 @@ class MarketConditions:
 
         # SL survival
         sl_03 = self.predictions.get("sl_survival_03")
-        sl_05 = self.predictions.get("sl_survival_05")
-        if sl_03 or sl_05:
-            parts = []
-            if sl_03:
-                parts.append(f"0.3%: {sl_03.value:.0%} hit risk")
-            if sl_05:
-                parts.append(f"0.5%: {sl_05.value:.0%} hit risk")
-            line = f"  SL survival (30m): {', '.join(parts)}"
-            # High-risk warning
-            high_risk = (sl_03 and sl_03.value > 0.5) or (sl_05 and sl_05.value > 0.5)
-            if high_risk:
-                line += " — tight stops likely to get hit"
-            lines.append(line)
+        # Stop-loss survival (chance a tight SL gets hit in 30 min)
+        sl_03 = self.predictions.get("sl_survival_03")
+        if sl_03:
+            if sl_03.value > 0.5:
+                lines.append(f"  Stop-loss warning: {sl_03.value:.0%} chance a 0.3% stop gets hit in 30m — widen your stop")
+            elif sl_03.value > 0.3:
+                lines.append(f"  Stop-loss risk: moderate ({sl_03.value:.0%} chance 0.3% stop hit in 30m)")
 
         lines.append(f"  [inference: {self.inference_time_ms:.1f}ms]")
         return "\n".join(lines)
