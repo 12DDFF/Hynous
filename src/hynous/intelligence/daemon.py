@@ -1018,7 +1018,7 @@ class Daemon:
         self._last_validation_run = time.time() - self.config.daemon.validation_interval + 3600  # First run after 1h warmup
         self._last_fill_check = time.time()
         self._last_phantom_check = time.time()
-        self._load_phantoms()
+        # self._load_phantoms()  # DISABLED — phantom system removed
         self._load_daily_pnl()
 
         # Start WebSocket market data feed via provider
@@ -1174,10 +1174,10 @@ class Daemon:
                     else:
                         logger.debug("Conflict check still running — skipping interval")
 
-                # 7b. Phantom evaluation (default every 30 min)
-                if self._phantoms and now - self._last_phantom_check >= self.config.daemon.phantom_check_interval:
-                    self._last_phantom_check = now
-                    self._evaluate_phantoms()
+                # 7b. Phantom evaluation — DISABLED (removed from system)
+                # if self._phantoms and now - self._last_phantom_check >= self.config.daemon.phantom_check_interval:
+                #     self._last_phantom_check = now
+                #     self._evaluate_phantoms()
 
                 # 8. Nous health check (default every 1 hour)
                 if now - self._last_health_check >= self.config.daemon.health_check_interval:
@@ -1321,10 +1321,10 @@ class Daemon:
             self._data_changed = True
             self.polls += 1
 
-            # Quick phantom evaluation on fresh prices (faster resolution)
-            if self._phantoms:
-                self._evaluate_phantoms()
-                self._last_phantom_check = time.time()
+            # Quick phantom evaluation — DISABLED (removed from system)
+            # if self._phantoms:
+            #     self._evaluate_phantoms()
+            #     self._last_phantom_check = time.time()
         except Exception as e:
             logger.debug("Price poll failed: %s", e)
 
@@ -3702,73 +3702,12 @@ class Daemon:
     def _build_historical_context(self, anomalies: list) -> str:
         """Build a [Track Record] block for scanner wakes.
 
-        Action-oriented framing: when phantoms outperform real trades,
-        pushes the agent to ACT rather than reinforcing fear of past losses.
+        Phantom/regret system DISABLED. Only pass streak detection remains.
         """
         lines = []
-        symbols = {a.symbol for a in anomalies if a.symbol != "MARKET"}
-        anomaly_types = {a.type for a in anomalies}
 
-        # Phantom stats
-        total_resolved = self._phantom_stats["missed"] + self._phantom_stats["good_pass"]
-        phantom_winrate = (self._phantom_stats["missed"] / total_resolved * 100) if total_resolved >= 3 else 0
-
-        # Real trade stats
-        real_winrate = 0
-        real_total = 0
-        try:
-            from ..core.trade_analytics import get_trade_stats
-            stats = get_trade_stats()
-            real_winrate = stats.win_rate
-            real_total = stats.total_trades
-        except Exception:
-            pass
-
-        # Detect paralysis: phantom winrate significantly beats real, or long pass streak
-        is_paralyzed = (
-            (phantom_winrate > 40 and total_resolved >= 5) or
-            self._scanner_pass_streak >= 5
-        )
-
-        if is_paralyzed:
-            # Action-oriented framing — break the fear loop
-            if phantom_winrate > 0 and total_resolved >= 5:
-                lines.append(
-                    f"[PARALYSIS CHECK] Your phantom tracker shows {phantom_winrate:.0f}% winrate on "
-                    f"{total_resolved} setups you PASSED on. That's real money left on the table."
-                )
-            if self._scanner_pass_streak >= 5:
-                lines.append(
-                    f"You've passed {self._scanner_pass_streak} scanner wakes in a row. "
-                    f"Caution has become paralysis. Take the next setup with 1.5:1+ R:R at Speculative size."
-                )
-            if real_total > 0 and phantom_winrate > real_winrate:
-                lines.append(
-                    f"Your filters are COSTING you — phantoms ({phantom_winrate:.0f}% win) outperform "
-                    f"your actual trades ({real_winrate:.0f}% win). The lesson: you pass on too many, not too few."
-                )
-        else:
-            # Normal track record — brief, not fear-inducing
-            if total_resolved >= 3:
-                lines.append(
-                    f"Phantom tracker: {self._phantom_stats['missed']} missed winners, "
-                    f"{self._phantom_stats['good_pass']} good passes ({phantom_winrate:.0f}% miss rate)"
-                )
-
-            # Per-symbol phantom data (brief)
-            if self._phantom_results:
-                for sym in symbols:
-                    sym_phantoms = [p for p in self._phantom_results if p.get("symbol") == sym]
-                    if sym_phantoms:
-                        missed = sum(1 for p in sym_phantoms if p.get("result") == "missed")
-                        good = sum(1 for p in sym_phantoms if p.get("result") == "good_pass")
-                        if missed > good:
-                            lines.append(f"{sym} phantoms: {missed} missed vs {good} good pass — you're over-filtering {sym}")
-                        elif sym_phantoms:
-                            lines.append(f"{sym} phantoms: {missed} missed, {good} good pass")
-
-            if self._scanner_pass_streak >= 3:
-                lines.append(f"Pass streak: {self._scanner_pass_streak} consecutive — consider loosening filters")
+        if self._scanner_pass_streak >= 3:
+            lines.append(f"Pass streak: {self._scanner_pass_streak} consecutive — consider loosening filters")
 
         if not lines:
             return ""
@@ -4059,8 +3998,8 @@ class Daemon:
                     self._link_playbooks_to_trade(matched_playbooks, top)
             else:
                 self._scanner_pass_streak += 1
-                # Phantom tracking: record what would have happened on this pass
-                self._maybe_create_phantom(top_event, agent_response=response)
+                # Phantom tracking — DISABLED (removed from system)
+                # self._maybe_create_phantom(top_event, agent_response=response)
 
             log_event(DaemonEvent(
                 "scanner", title,

@@ -983,10 +983,9 @@ def _tab_pill(label: str, tab_value: str) -> rx.Component:
 
 
 def _tab_bar() -> rx.Component:
-    """Segmented tab bar — Trades / Regret."""
+    """Segmented tab bar — Trades only (Regret tab removed)."""
     return rx.hstack(
         _tab_pill("Trades", "trades"),
-        _tab_pill("Regret", "regret"),
         spacing="1",
         background="#111111",
         border="1px solid #1a1a1a",
@@ -1055,12 +1054,8 @@ def journal_page() -> rx.Component:
                 align="center",
             ),
 
-            # Tab content
-            rx.cond(
-                AppState.journal_tab == "trades",
-                _trades_content(),
-                _regret_content(),
-            ),
+            # Tab content (regret tab removed)
+            _trades_content(),
 
             spacing="5",
             width="100%",
