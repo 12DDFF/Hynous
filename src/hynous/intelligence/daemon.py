@@ -432,6 +432,7 @@ class Daemon:
         self._inference_engine = None              # NEW — unconditional
         self._kill_switch = None                   # NEW — unconditional
         self._latest_predictions: dict[str, dict] = {}  # NEW — unconditional
+        self._latest_predictions_lock = threading.Lock()
         if config.satellite.enabled:
             try:
                 from satellite.config import SatelliteConfig as SatCfg
@@ -819,7 +820,8 @@ class Daemon:
         contexts = {}
         conditions = {}
         for coin in self._satellite_config.coins:
-            pred = self._latest_predictions.get(coin, {})
+            with self._latest_predictions_lock:
+                pred = dict(self._latest_predictions.get(coin, {}))
             cond = pred.get("conditions")
             if cond:
                 contexts[coin] = self._build_wake_context(coin)
@@ -1687,16 +1689,17 @@ class Daemon:
                             self._kill_switch.record_snapshot_time(_time.time())
 
                         # Cache for briefing injection
-                        self._latest_predictions[coin] = {
-                            "signal": result.signal,
-                            "long_roe": result.predicted_long_roe,
-                            "short_roe": result.predicted_short_roe,
-                            "confidence": result.confidence,
-                            "summary": result.summary,
-                            "inference_time_ms": result.inference_time_ms,
-                            "timestamp": _time.time(),
-                            "shadow": shadow,
-                        }
+                        with self._latest_predictions_lock:
+                            self._latest_predictions[coin] = {
+                                "signal": result.signal,
+                                "long_roe": result.predicted_long_roe,
+                                "short_roe": result.predicted_short_roe,
+                                "confidence": result.confidence,
+                                "summary": result.summary,
+                                "inference_time_ms": result.inference_time_ms,
+                                "timestamp": _time.time(),
+                                "shadow": shadow,
+                            }
 
                         # Collect actionable signals for potential wake
                         if result.signal in ("long", "short"):
@@ -1727,15 +1730,17 @@ class Daemon:
                     if conditions is None:
                         # Feature quality too low — clear cached predictions so
                         # trading tool sees ml_cond=None and blocks trading.
-                        if coin in self._latest_predictions:
-                            self._latest_predictions[coin].pop("conditions", None)
-                            self._latest_predictions[coin].pop("conditions_text", None)
+                        with self._latest_predictions_lock:
+                            if coin in self._latest_predictions:
+                                self._latest_predictions[coin].pop("conditions", None)
+                                self._latest_predictions[coin].pop("conditions_text", None)
                         logger.warning("ML conditions unavailable for %s — features degraded", coin)
                     else:
-                        if coin not in self._latest_predictions:
-                            self._latest_predictions[coin] = {}
-                        self._latest_predictions[coin]["conditions"] = conditions.to_dict()
-                        self._latest_predictions[coin]["conditions_text"] = conditions.to_briefing_text()
+                        with self._latest_predictions_lock:
+                            if coin not in self._latest_predictions:
+                                self._latest_predictions[coin] = {}
+                            self._latest_predictions[coin]["conditions"] = conditions.to_dict()
+                            self._latest_predictions[coin]["conditions_text"] = conditions.to_briefing_text()
                         # Persist for live validation
                         self._satellite_store.save_condition_predictions(
                             snapshot_id=latest["snapshot_id"],
@@ -2170,7 +2175,8 @@ class Daemon:
                     try:
                         # ── Resolve vol regime (same pattern as trailing) ──
                         _vol_regime = "normal"
-                        _pred = self._latest_predictions.get("BTC", {})
+                        with self._latest_predictions_lock:
+                            _pred = dict(self._latest_predictions.get("BTC", {}))
                         _cond = _pred.get("conditions", {})
                         if _cond:
                             _cond_ts = _cond.get("timestamp", 0)
@@ -2358,7 +2364,8 @@ class Daemon:
                         # ── Resolve vol regime from ML conditions (BTC only, 5-min refresh) ──
                         # Falls back to "normal" for non-BTC coins or stale/missing predictions.
                         _vol_regime = "normal"
-                        _pred = self._latest_predictions.get("BTC", {})
+                        with self._latest_predictions_lock:
+                            _pred = dict(self._latest_predictions.get("BTC", {}))
                         _cond = _pred.get("conditions", {})
                         if _cond:
                             _cond_ts = _cond.get("timestamp", 0)
@@ -3725,7 +3732,8 @@ class Daemon:
 
         lines = []
         for coin in sorted(coins):
-            pred = self._latest_predictions.get(coin, {})
+            with self._latest_predictions_lock:
+                pred = dict(self._latest_predictions.get(coin, {}))
             cond = pred.get("conditions", {})
             if not cond:
                 continue
@@ -5565,10 +5573,12 @@ class Daemon:
             if self._data_cache.symbols:
                 try:
                     from .briefing import build_briefing, build_code_questions
+                    with self._latest_predictions_lock:
+                        _ml_snap = {k: dict(v) for k, v in self._latest_predictions.items()}
                     briefing_text = build_briefing(
                         self._data_cache, self.snapshot,
                         self._get_provider(), self, self.config,
-                        ml_predictions=self._latest_predictions,  # NEW
+                        ml_predictions=_ml_snap,
                     )
                     # Get positions for code questions
                     try:
@@ -5579,7 +5589,7 @@ class Daemon:
                     code_questions = build_code_questions(
                         self._data_cache, self.snapshot, positions, self.config,
                         daemon=self,
-                        ml_predictions=self._latest_predictions,  # NEW
+                        ml_predictions=_ml_snap,
                     )
                 except Exception as e:
                     logger.debug("Briefing build failed: %s", e)

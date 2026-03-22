@@ -25,7 +25,7 @@ import numpy as np
 import xgboost as xgb
 from scipy.stats import spearmanr
 
-from satellite.features import FEATURE_NAMES
+from satellite.features import FEATURE_NAMES, NEUTRAL_VALUES
 from satellite.training.feature_sets import get_features_for_model
 from satellite.training.condition_artifact import (
     ConditionArtifact,
@@ -763,17 +763,21 @@ def train_single_condition(
 
     target_col = target.build_fn_name  # e.g. "target_vol_1h"
 
-    # Filter to rows with valid target and features
+    # Filter to rows with valid target; impute NULL features to neutral values.
+    # Historical snapshots may have NULL for features added after initial collection
+    # (v2 directional features, v3/v4 features). Imputing to NEUTRAL_VALUES lets
+    # all rows participate in training — the model sees 0 signal for those features
+    # rather than losing all training data. Valid when neutral means "no data".
     valid_rows = []
     for row in rows:
         target_val = row.get(target_col)
         if target_val is None:
             continue
-        features_ok = all(
-            row.get(f) is not None for f in feature_names
-        )
-        if features_ok:
-            valid_rows.append(row)
+        # Impute NULL features to neutral value in-place
+        for f in feature_names:
+            if row.get(f) is None:
+                row[f] = NEUTRAL_VALUES.get(f, 0.0)
+        valid_rows.append(row)
 
     if len(valid_rows) < (MIN_TRAIN_DAYS + TEST_DAYS) * SNAPSHOTS_PER_DAY:
         log.warning(

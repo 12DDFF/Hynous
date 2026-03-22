@@ -1,0 +1,42 @@
+{
+  "name": "mae_short",
+  "version": 1,
+  "feature_hash": "f52c51b607371f9a",
+  "feature_names": [
+    "realized_vol_1h",
+    "price_trend_1h",
+    "liq_imbalance_1h",
+    "volume_vs_1h_avg_ratio",
+    "cvd_ratio_30m",
+    "funding_vs_30d_zscore",
+    "oi_vs_7d_avg_ratio",
+    "liq_cascade_active",
+    "oi_price_direction",
+    "hours_to_funding",
+    "liq_1h_vs_4h_avg",
+    "oi_funding_pressure"
+  ],
+  "target_description": "abs(worst_short_mae_30m)",
+  "created_at": "2026-03-22T23:20:56.722100+00:00",
+  "training_samples": 55584,
+  "validation_spearman": 0.2715,
+  "validation_mae": 3.2629,
+  "xgboost_params": {
+    "objective": "reg:squarederror",
+    "max_depth": 5,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 5,
+    "gamma": 0.0,
+    "verbosity": 0
+  },
+  "percentiles": {
+    "p10": 2.026209,
+    "p25": 2.74444,
+    "p50": 3.710976,
+    "p75": 5.308694,
+    "p90": 7.16572,
+    "p95": 8.304687
+  }
+}

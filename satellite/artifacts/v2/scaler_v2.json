@@ -1,0 +1,142 @@
+{
+  "feature_names": [
+    "oi_vs_7d_avg_ratio",
+    "liq_cascade_active",
+    "liq_1h_vs_4h_avg",
+    "liq_imbalance_1h",
+    "liq_total_1h_usd",
+    "funding_vs_30d_zscore",
+    "hours_to_funding",
+    "oi_funding_pressure",
+    "funding_rate_raw",
+    "oi_change_rate_1h",
+    "oi_price_direction",
+    "realized_vol_1h",
+    "realized_vol_4h",
+    "vol_of_vol",
+    "volume_vs_1h_avg_ratio",
+    "volume_acceleration",
+    "cvd_ratio_30m",
+    "cvd_ratio_1h",
+    "cvd_acceleration",
+    "price_trend_1h",
+    "price_trend_4h",
+    "close_position_5m",
+    "return_autocorrelation",
+    "body_ratio_1h",
+    "upper_wick_ratio_1h",
+    "funding_velocity",
+    "hour_sin",
+    "hour_cos"
+  ],
+  "feature_hash": "917773f7d4e31d94",
+  "transform_map": {
+    "liq_cascade_active": "P",
+    "cvd_ratio_30m": "P",
+    "cvd_acceleration": "P",
+    "close_position_5m": "P",
+    "oi_price_direction": "P",
+    "liq_imbalance_1h": "P",
+    "cvd_ratio_1h": "P",
+    "return_autocorrelation": "P",
+    "body_ratio_1h": "P",
+    "upper_wick_ratio_1h": "P",
+    "hour_sin": "P",
+    "hour_cos": "P",
+    "funding_vs_30d_zscore": "C",
+    "hours_to_funding": "Z",
+    "realized_vol_1h": "Z",
+    "price_trend_1h": "Z",
+    "oi_change_rate_1h": "Z",
+    "realized_vol_4h": "Z",
+    "vol_of_vol": "Z",
+    "price_trend_4h": "Z",
+    "oi_vs_7d_avg_ratio": "L",
+    "liq_1h_vs_4h_avg": "L",
+    "volume_vs_1h_avg_ratio": "L",
+    "liq_total_1h_usd": "L",
+    "volume_acceleration": "L",
+    "oi_funding_pressure": "S",
+    "funding_rate_raw": "S",
+    "funding_velocity": "S"
+  },
+  "params": {
+    "oi_vs_7d_avg_ratio": {
+      "log_mean": 0.6931471805599454,
+      "log_std": 1.1102230246251565e-16
+    },
+    "liq_cascade_active": {},
+    "liq_1h_vs_4h_avg": {
+      "log_mean": 0.6931471805599454,
+      "log_std": 1.1102230246251565e-16
+    },
+    "liq_imbalance_1h": {},
+    "liq_total_1h_usd": {
+      "log_mean": 0.0,
+      "log_std": 0.0
+    },
+    "funding_vs_30d_zscore": {
+      "clip_low": -5.0,
+      "clip_high": 5.0
+    },
+    "hours_to_funding": {
+      "mean": 3.9939561989790184,
+      "std": 2.285898106706474
+    },
+    "oi_funding_pressure": {
+      "slog_mean": 0.0,
+      "slog_std": 0.0
+    },
+    "funding_rate_raw": {
+      "slog_mean": 0.0,
+      "slog_std": 0.0
+    },
+    "oi_change_rate_1h": {
+      "mean": 0.0,
+      "std": 0.0
+    },
+    "oi_price_direction": {},
+    "realized_vol_1h": {
+      "mean": 0.37247417192045995,
+      "std": 0.255388206209558
+    },
+    "realized_vol_4h": {
+      "mean": 0.0,
+      "std": 0.0
+    },
+    "vol_of_vol": {
+      "mean": 0.0,
+      "std": 0.0
+    },
+    "volume_vs_1h_avg_ratio": {
+      "log_mean": 0.5504018022200721,
+      "log_std": 0.42787392108888234
+    },
+    "volume_acceleration": {
+      "log_mean": 0.6931471805599454,
+      "log_std": 1.1102230246251565e-16
+    },
+    "cvd_ratio_30m": {},
+    "cvd_ratio_1h": {},
+    "cvd_acceleration": {},
+    "price_trend_1h": {
+      "mean": 0.0,
+      "std": 0.0
+    },
+    "price_trend_4h": {
+      "mean": 0.0,
+      "std": 0.0
+    },
+    "close_position_5m": {},
+    "return_autocorrelation": {},
+    "body_ratio_1h": {},
+    "upper_wick_ratio_1h": {},
+    "funding_velocity": {
+      "slog_mean": 0.0,
+      "slog_std": 0.0
+    },
+    "hour_sin": {},
+    "hour_cos": {}
+  },
+  "fitted": true
+}

@@ -94,42 +94,22 @@ CRYPTOCOMPARE_API_KEY=...           # News feed (optional)
 
 ## Branches & Deployment
 
-**CRITICAL: Check which branch you're on before pushing.**
+**Single branch: `main`.** All development and production on `main`.
 
 | Branch | Purpose | VPS Path | Deploys to |
 |--------|---------|----------|------------|
 | `main` | **Production** — live trading agent | `/opt/hynous` | Ports 3000/8000/3100 |
-| `test-env` | **Testing** — experimental changes | `/opt/hynous-test` | Ports 3001/8001/3101 |
-
-**Rules:**
-- **NEVER push experimental/untested code to `main`.** Production runs on `main`.
-- Develop on `test` branch, verify on test instance, then merge to `main`.
-- Always confirm the current branch before `git push`: `git branch --show-current`
-- The test instance shares the data-layer (`:8100`) but has isolated Nous memory and storage.
 
 **Deploy workflow:**
 ```bash
-# Deploy to TEST
-git checkout test-env
-# ... make changes ...
-git push origin test-env
-ssh vps "cd /opt/hynous-test && sudo -u hynous git pull && sudo systemctl restart hynous-test"
-
-# Promote to PRODUCTION (after verifying on test)
-git checkout main && git merge test && git push origin main
+git push origin main
 ssh vps "cd /opt/hynous && sudo -u hynous git pull && sudo systemctl restart hynous"
 ```
 
 **VPS services:**
 ```bash
-# Production (auto-starts on boot)
 sudo systemctl restart hynous        # Dashboard + daemon
 sudo systemctl restart nous          # Memory server
-
-# Test (manual start/stop — doesn't auto-start)
-sudo systemctl start hynous-test     # Test dashboard + daemon
-sudo systemctl start nous-test       # Test memory server
-sudo systemctl stop hynous-test nous-test  # Free RAM when not testing
 ```
 
 ---

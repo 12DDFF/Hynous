@@ -1,0 +1,42 @@
+{
+  "name": "funding_4h",
+  "version": 1,
+  "feature_hash": "93a2ce484b679971",
+  "feature_names": [
+    "funding_vs_30d_zscore",
+    "funding_rate_raw",
+    "funding_velocity",
+    "hours_to_funding",
+    "oi_funding_pressure",
+    "oi_vs_7d_avg_ratio",
+    "liq_1h_vs_4h_avg",
+    "realized_vol_1h",
+    "volume_vs_1h_avg_ratio",
+    "price_trend_1h",
+    "cvd_acceleration",
+    "liq_cascade_active"
+  ],
+  "target_description": "Future funding_zscore minus current (48 ahead)",
+  "created_at": "2026-03-22T23:21:02.417145+00:00",
+  "training_samples": 55840,
+  "validation_spearman": 0.0,
+  "validation_mae": 0.0019,
+  "xgboost_params": {
+    "objective": "reg:pseudohubererror",
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "verbosity": 0
+  },
+  "percentiles": {
+    "p10": 0.000558,
+    "p25": 0.000558,
+    "p50": 0.000558,
+    "p75": 0.000558,
+    "p90": 0.000558,
+    "p95": 0.000558
+  }
+}

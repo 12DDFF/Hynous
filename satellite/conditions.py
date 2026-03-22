@@ -41,14 +41,17 @@ log = logging.getLogger(__name__)
 # momentum_quality: Spearman 0.075, coin flip
 # sl_survival_05: Spearman 0.03, extreme class imbalance (2.8%)
 #
-# Re-enabled for re-validation after data-layer fixes:
-# mae_long, mae_short, entry_quality, vol_expand, sl_survival_03
-# Previous "weak" scores may have been from broken data (trade stream crash,
-# CVD zero, features degraded). Re-validate with clean data.
+# Phase 1 retrain results (2026-03-22):
+#   reversal_30m: untrainable (target depends on price_trend_1h which is NULL in all historical rows)
+#   momentum_quality: untrainable (target depends on cvd_ratio_30m which is NULL in all historical rows)
+#   funding_4h: Spearman=0.000 (all v3 funding features are NULL/neutral in historical data)
+#   entry_quality: Spearman=0.054 (cvd_ratio_30m/price_trend_1h NULL → model has no signal)
+#   sl_survival_05: Spearman=0.201 (was 0.03) — RE-ENABLED, significant improvement
 DISABLED_MODELS: set[str] = {
     "reversal_30m",
     "momentum_quality",
-    "sl_survival_05",
+    "funding_4h",
+    "entry_quality",
 }
 
 

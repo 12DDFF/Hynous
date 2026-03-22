@@ -126,6 +126,12 @@ AVAIL_COLUMNS: list[str] = [
     "close_position_avail",
     "oi_price_dir_avail",
     "liq_imbalance_avail",
+    # v3/v4 availability flags
+    "realized_vol_4h_avail",
+    "vol_of_vol_avail",
+    "volume_acceleration_avail",
+    "cvd_1h_avail",
+    "price_trend_4h_avail",
 ]
 
 
@@ -289,16 +295,16 @@ def compute_features(
     )
 
     # 19. vol_of_vol (stdev of rolling 15min vols)
-    _compute_vol_of_vol(features, candles_1m=candles_1m)
+    _compute_vol_of_vol(features, avail, candles_1m=candles_1m)
 
     # 20. volume_acceleration (5m vol spike vs 1h avg)
     _compute_volume_acceleration(
-        coin, features, raw_data, data_layer_db, now,
+        coin, features, avail, raw_data, data_layer_db, now,
     )
 
     # 21. cvd_ratio_1h (1h CVD)
     _compute_cvd_1h(
-        coin, features, raw_data, data_layer_db, now,
+        coin, features, avail, raw_data, data_layer_db, now,
     )
 
     # 22. price_trend_4h (4h price change %)
@@ -477,7 +483,7 @@ def _compute_funding_zscore(
 
         rates = [safe_float(r["rate"]) for r in rows]
         mean_rate = sum(rates) / len(rates)
-        variance = sum((r - mean_rate) ** 2 for r in rates) / len(rates)
+        variance = sum((r - mean_rate) ** 2 for r in rates) / (len(rates) - 1)
         std_rate = math.sqrt(variance) if variance > 0 else 0
 
         if std_rate < 1e-10:
@@ -543,7 +549,7 @@ def _compute_oi_funding_pressure(
 
         if current_oi <= 0:
             features["oi_funding_pressure"] = NEUTRAL_VALUES["oi_funding_pressure"]
-            avail["oi_funding_pressure_avail"] = 1
+            avail["oi_funding_pressure_avail"] = 0
             return
 
         cutoff_1h = now - 3600
@@ -659,7 +665,7 @@ def _compute_realized_vol(
             return
 
         mean_ret = sum(returns) / len(returns)
-        variance = sum((r - mean_ret) ** 2 for r in returns) / len(returns)
+        variance = sum((r - mean_ret) ** 2 for r in returns) / (len(returns) - 1)
         realized_vol = math.sqrt(variance) * math.sqrt(60) * 100
 
         features["realized_vol_1h"] = realized_vol
@@ -792,13 +798,9 @@ def _compute_price_trend_1h(
             if len(past_candles) >= 2:
                 close_now = float(past_candles[-2]["c"])  # last completed
 
-                # Find candle closest to 1h ago
-                close_1h = None
-                for c in past_candles:
-                    if c["t"] <= target_1h_ms:
-                        close_1h = float(c["c"])
-                    else:
-                        break
+                # Find candle closest to 1h ago (most recent at or before target)
+                candidates = [c for c in past_candles if c["t"] <= target_1h_ms]
+                close_1h = float(candidates[-1]["c"]) if candidates else None
 
                 if close_1h and close_1h > 0 and close_now > 0:
                     pct = (close_now - close_1h) / close_1h * 100
@@ -1003,12 +1005,12 @@ def _compute_liq_imbalance(
 
         if total < 100:  # less than $100 in liqs = effectively no signal
             features["liq_imbalance_1h"] = 0.0
+            avail["liq_imbalance_avail"] = 0
         else:
             features["liq_imbalance_1h"] = max(-1.0, min(1.0,
                 (short_liq - long_liq) / total
             ))
-
-        avail["liq_imbalance_avail"] = 1
+            avail["liq_imbalance_avail"] = 1
         raw_data["liq_long_1h"] = long_liq
         raw_data["liq_short_1h"] = short_liq
 
@@ -1075,6 +1077,7 @@ def _compute_realized_vol_4h(
     """
     if not candles_1m:
         features["realized_vol_4h"] = NEUTRAL_VALUES["realized_vol_4h"]
+        avail["realized_vol_4h_avail"] = 0
         return
 
     try:
@@ -1083,6 +1086,7 @@ def _compute_realized_vol_4h(
 
         if len(candles_4h) < 30:
             features["realized_vol_4h"] = NEUTRAL_VALUES["realized_vol_4h"]
+            avail["realized_vol_4h_avail"] = 0
             return
 
         returns = []
@@ -1094,19 +1098,23 @@ def _compute_realized_vol_4h(
 
         if len(returns) < 20:
             features["realized_vol_4h"] = NEUTRAL_VALUES["realized_vol_4h"]
+            avail["realized_vol_4h_avail"] = 0
             return
 
         mean_ret = sum(returns) / len(returns)
-        variance = sum((r - mean_ret) ** 2 for r in returns) / len(returns)
+        variance = sum((r - mean_ret) ** 2 for r in returns) / (len(returns) - 1)
         features["realized_vol_4h"] = math.sqrt(variance) * math.sqrt(60) * 100
+        avail["realized_vol_4h_avail"] = 1
 
     except Exception:
         log.debug("Failed realized_vol_4h for %s", coin, exc_info=True)
         features["realized_vol_4h"] = NEUTRAL_VALUES["realized_vol_4h"]
+        avail["realized_vol_4h_avail"] = 0
 
 
 def _compute_vol_of_vol(
     features: dict,
+    avail: dict,
     candles_1m: list[dict] | None = None,
 ) -> None:
     """vol_of_vol: stdev of rolling 15min realized vols over 1h.
@@ -1116,6 +1124,7 @@ def _compute_vol_of_vol(
     """
     if not candles_1m or len(candles_1m) < 60:
         features["vol_of_vol"] = NEUTRAL_VALUES["vol_of_vol"]
+        avail["vol_of_vol_avail"] = 0
         return
 
     try:
@@ -1134,24 +1143,28 @@ def _compute_vol_of_vol(
                     returns.append(math.log(curr_c / prev_c))
             if len(returns) >= 5:
                 mean_r = sum(returns) / len(returns)
-                var_r = sum((r - mean_r) ** 2 for r in returns) / len(returns)
+                var_r = sum((r - mean_r) ** 2 for r in returns) / (len(returns) - 1)
                 window_vols.append(math.sqrt(var_r) * math.sqrt(60) * 100)
 
         if len(window_vols) < 3:
             features["vol_of_vol"] = NEUTRAL_VALUES["vol_of_vol"]
+            avail["vol_of_vol_avail"] = 0
             return
 
         mean_vol = sum(window_vols) / len(window_vols)
-        var_vol = sum((v - mean_vol) ** 2 for v in window_vols) / len(window_vols)
+        var_vol = sum((v - mean_vol) ** 2 for v in window_vols) / (len(window_vols) - 1)
         features["vol_of_vol"] = math.sqrt(var_vol)
+        avail["vol_of_vol_avail"] = 1
 
     except Exception:
         features["vol_of_vol"] = NEUTRAL_VALUES["vol_of_vol"]
+        avail["vol_of_vol_avail"] = 0
 
 
 def _compute_volume_acceleration(
     coin: str,
     features: dict,
+    avail: dict,
     raw_data: dict,
     data_layer_db: object,
     now: float,
@@ -1180,17 +1193,21 @@ def _compute_volume_acceleration(
 
         if avg_5m > 0 and vol_5m > 0:
             features["volume_acceleration"] = vol_5m / avg_5m
+            avail["volume_acceleration_avail"] = 1
         else:
             features["volume_acceleration"] = NEUTRAL_VALUES["volume_acceleration"]
+            avail["volume_acceleration_avail"] = 0
 
     except Exception:
         log.debug("Failed volume_acceleration for %s", coin, exc_info=True)
         features["volume_acceleration"] = NEUTRAL_VALUES["volume_acceleration"]
+        avail["volume_acceleration_avail"] = 0
 
 
 def _compute_cvd_1h(
     coin: str,
     features: dict,
+    avail: dict,
     raw_data: dict,
     data_layer_db: object,
     now: float,
@@ -1211,6 +1228,7 @@ def _compute_cvd_1h(
 
         if not rows:
             features["cvd_ratio_1h"] = NEUTRAL_VALUES["cvd_ratio_1h"]
+            avail["cvd_1h_avail"] = 0
             return
 
         total_buy = sum(safe_float(r["buy_volume_usd"]) for r in rows)
@@ -1223,10 +1241,12 @@ def _compute_cvd_1h(
             features["cvd_ratio_1h"] = max(-1.0, min(1.0,
                 (total_buy - total_sell) / total
             ))
+        avail["cvd_1h_avail"] = 1
 
     except Exception:
         log.debug("Failed cvd_ratio_1h for %s", coin, exc_info=True)
         features["cvd_ratio_1h"] = NEUTRAL_VALUES["cvd_ratio_1h"]
+        avail["cvd_1h_avail"] = 0
 
 
 def _compute_price_trend_4h(
@@ -1251,15 +1271,12 @@ def _compute_price_trend_4h(
             if len(past_candles) >= 2:
                 close_now = float(past_candles[-2]["c"])
 
-                close_4h = None
-                for c in past_candles:
-                    if c["t"] <= target_4h_ms:
-                        close_4h = float(c["c"])
-                    else:
-                        break
+                candidates = [c for c in past_candles if c["t"] <= target_4h_ms]
+                close_4h = float(candidates[-1]["c"]) if candidates else None
 
                 if close_4h and close_4h > 0 and close_now > 0:
                     features["price_trend_4h"] = (close_now - close_4h) / close_4h * 100
+                    avail["price_trend_4h_avail"] = 1
                     return
 
         # Fallback: candles_history table
@@ -1282,13 +1299,16 @@ def _compute_price_trend_4h(
             close_4h = safe_float(row_4h["close"])
             if close_4h > 0 and close_now > 0:
                 features["price_trend_4h"] = (close_now - close_4h) / close_4h * 100
+                avail["price_trend_4h_avail"] = 1
                 return
 
         features["price_trend_4h"] = NEUTRAL_VALUES["price_trend_4h"]
+        avail["price_trend_4h_avail"] = 0
 
     except Exception:
         log.debug("Failed price_trend_4h for %s", coin, exc_info=True)
         features["price_trend_4h"] = NEUTRAL_VALUES["price_trend_4h"]
+        avail["price_trend_4h_avail"] = 0
 
 
 # ─── NEW v4 Feature Computers ────────────────────────────────────────────────
@@ -1315,8 +1335,12 @@ def _compute_return_autocorrelation(
         recent = [c for c in candles_5m if c["t"] <= now_ms and c["t"] >= cutoff_ms]
 
         if len(recent) < 12:
-            # Fall back to last 12 candles
-            recent = candles_5m[-12:]
+            stale_cutoff = (now - 7200) * 1000 if now else 0
+            recent = [c for c in candles_5m if c["t"] >= stale_cutoff][-12:]
+            if len(recent) < 6:
+                features["return_autocorrelation"] = NEUTRAL_VALUES["return_autocorrelation"]
+                avail["return_autocorr_avail"] = 0
+                return
 
         closes = []
         for c in recent:
@@ -1342,9 +1366,9 @@ def _compute_return_autocorrelation(
         mean1 = sum(r1) / n
         mean2 = sum(r2) / n
 
-        cov = sum((r1[i] - mean1) * (r2[i] - mean2) for i in range(n)) / n
-        std1 = math.sqrt(sum((x - mean1) ** 2 for x in r1) / n)
-        std2 = math.sqrt(sum((x - mean2) ** 2 for x in r2) / n)
+        cov = sum((r1[i] - mean1) * (r2[i] - mean2) for i in range(n)) / (n - 1)
+        std1 = math.sqrt(sum((x - mean1) ** 2 for x in r1) / (n - 1))
+        std2 = math.sqrt(sum((x - mean2) ** 2 for x in r2) / (n - 1))
 
         if std1 < 1e-12 or std2 < 1e-12:
             features["return_autocorrelation"] = 0.0
@@ -1380,7 +1404,12 @@ def _compute_candle_ratios(
         cutoff_ms = (now - 3600) * 1000 if now else 0
         recent = [c for c in candles_5m if c["t"] <= now_ms and c["t"] >= cutoff_ms]
         if len(recent) < 12:
-            recent = candles_5m[-12:]
+            stale_cutoff = (now - 7200) * 1000 if now else 0
+            recent = [c for c in candles_5m if c["t"] >= stale_cutoff][-12:]
+            if len(recent) < 6:
+                features["body_ratio_1h"] = NEUTRAL_VALUES["body_ratio_1h"]
+                features["upper_wick_ratio_1h"] = NEUTRAL_VALUES["upper_wick_ratio_1h"]
+                return
 
         body_ratios = []
         wick_ratios = []

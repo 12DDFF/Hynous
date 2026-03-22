@@ -1,0 +1,40 @@
+{
+  "name": "volume_1h",
+  "version": 1,
+  "feature_hash": "c5bb6ee13a28f9f7",
+  "feature_names": [
+    "volume_vs_1h_avg_ratio",
+    "volume_acceleration",
+    "realized_vol_1h",
+    "oi_vs_7d_avg_ratio",
+    "oi_change_rate_1h",
+    "hours_to_funding",
+    "cvd_ratio_30m",
+    "cvd_acceleration",
+    "price_trend_1h",
+    "liq_total_1h_usd"
+  ],
+  "target_description": "Future volume_vs_1h_avg_ratio (12 snapshots ahead)",
+  "created_at": "2026-03-22T23:20:53.188913+00:00",
+  "training_samples": 55876,
+  "validation_spearman": 0.317,
+  "validation_mae": 0.6591,
+  "xgboost_params": {
+    "objective": "reg:pseudohubererror",
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "verbosity": 0
+  },
+  "percentiles": {
+    "p10": 0.49955,
+    "p25": 0.584974,
+    "p50": 0.703564,
+    "p75": 0.846149,
+    "p90": 1.009526,
+    "p95": 1.077538
+  }
+}

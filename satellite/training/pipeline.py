@@ -140,18 +140,18 @@ def prepare_training_data(
     # Append availability flags as additional features (ml-006 decision).
     # These are binary (0/1) and go through as-is (no normalization).
     # AVAIL_COLUMNS imported from features.py (single source of truth).
-    avail_names = []
+    # Always include all AVAIL_COLUMNS (default missing to 1) so training
+    # and inference always produce the same feature dimension.
+    avail_names = list(AVAIL_COLUMNS)
     for col in AVAIL_COLUMNS:
-        if col in train_rows[0]:
-            train_avail = np.array(
-                [r.get(col, 1) for r in train_rows], dtype=np.float64,
-            ).reshape(-1, 1)
-            val_avail = np.array(
-                [r.get(col, 1) for r in val_rows], dtype=np.float64,
-            ).reshape(-1, 1)
-            X_train = np.hstack([X_train, train_avail])
-            X_val = np.hstack([X_val, val_avail])
-            avail_names.append(col)
+        train_avail = np.array(
+            [r.get(col, 1) for r in train_rows], dtype=np.float64,
+        ).reshape(-1, 1)
+        val_avail = np.array(
+            [r.get(col, 1) for r in val_rows], dtype=np.float64,
+        ).reshape(-1, 1)
+        X_train = np.hstack([X_train, train_avail])
+        X_val = np.hstack([X_val, val_avail])
 
     all_feature_names = list(FEATURE_NAMES) + avail_names
 

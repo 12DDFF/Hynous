@@ -51,8 +51,8 @@ class TestFeatureScaler:
         scaler = FeatureScaler()
         data = _make_training_data()
         scaler.fit(data)
-        result = scaler.transform({"liq_magnet_direction": 0.5})
-        idx = FEATURE_NAMES.index("liq_magnet_direction")
+        result = scaler.transform({"cvd_ratio_30m": 0.5})
+        idx = FEATURE_NAMES.index("cvd_ratio_30m")
         assert result[idx] == 0.5
 
     def test_clip_only_no_rescale(self):
@@ -113,26 +113,26 @@ class TestFeatureScaler:
         scaler = FeatureScaler()
         data = _make_training_data()
         scaler.fit(data)
-        result = scaler.transform({"liq_magnet_direction": float("nan")})
-        idx = FEATURE_NAMES.index("liq_magnet_direction")
-        assert result[idx] == NEUTRAL_VALUES["liq_magnet_direction"]
+        result = scaler.transform({"cvd_ratio_30m": float("nan")})
+        idx = FEATURE_NAMES.index("cvd_ratio_30m")
+        assert result[idx] == NEUTRAL_VALUES["cvd_ratio_30m"]
 
     def test_none_imputed_to_neutral(self):
         """None values are imputed to neutral before transform."""
         scaler = FeatureScaler()
         data = _make_training_data()
         scaler.fit(data)
-        result = scaler.transform({"liq_magnet_direction": None})
-        idx = FEATURE_NAMES.index("liq_magnet_direction")
-        assert result[idx] == NEUTRAL_VALUES["liq_magnet_direction"]
+        result = scaler.transform({"cvd_ratio_30m": None})
+        idx = FEATURE_NAMES.index("cvd_ratio_30m")
+        assert result[idx] == NEUTRAL_VALUES["cvd_ratio_30m"]
 
-    def test_transform_returns_12_values(self):
-        """Transform output has exactly 12 values."""
+    def test_transform_returns_28_values(self):
+        """Transform output has exactly 28 values (28-feature set)."""
         scaler = FeatureScaler()
         data = _make_training_data()
         scaler.fit(data)
         result = scaler.transform({})
-        assert len(result) == 12
+        assert len(result) == 28
 
     def test_transform_batch_shape(self):
         """Batch transform produces correct shape."""
@@ -140,7 +140,7 @@ class TestFeatureScaler:
         data = _make_training_data()
         scaler.fit(data)
         result = scaler.transform_batch(data)
-        assert result.shape == (100, 12)
+        assert result.shape == (100, 28)
 
     def test_serialization_roundtrip(self):
         """Scaler survives to_dict/from_dict roundtrip."""
@@ -335,10 +335,10 @@ class TestPipeline:
 
         assert td.X_train.shape[0] == 80
         assert td.X_val.shape[0] == 20
-        # 12 features + 9 avail flags = 21 columns
-        assert td.X_train.shape[1] == 12 + len(AVAIL_COLUMNS)
+        # 28 features + 16 avail flags = 44 columns
+        assert td.X_train.shape[1] == 28 + len(AVAIL_COLUMNS)
         assert td.scaler.fitted is True
-        assert len(td.feature_names) == 12 + len(AVAIL_COLUMNS)
+        assert len(td.feature_names) == 28 + len(AVAIL_COLUMNS)
 
     def test_targets_clipped(self):
         """Training targets are clipped to [-20, +20]."""

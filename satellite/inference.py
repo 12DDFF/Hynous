@@ -2,7 +2,7 @@
 
 Converts model predictions into actionable trade signals:
   1. Compute features (SPEC-02 compute_features())
-  2. Normalize structural features (artifact's sealed scaler, 12 values)
+  2. Normalize structural features (artifact's sealed scaler, 28 values)
   3. Append availability flags (9 binary values, no normalization)
   4. Predict (XGBoost inference <1ms)
   5. Explain (SHAP ~100us)
@@ -32,7 +32,7 @@ from satellite.training.explain import (
 
 log = logging.getLogger(__name__)
 
-# Full feature list used by trained models: 12 structural + 9 avail = 21
+# Full feature list: 28 structural + 16 avail = 44
 _ALL_FEATURE_NAMES = list(FEATURE_NAMES) + list(AVAIL_COLUMNS)
 
 
@@ -148,7 +148,7 @@ class InferenceEngine:
         # 3. Append availability flags (9 binary, no normalization)
         avail = feature_result.availability
         avail_values = [avail.get(col, 1) for col in AVAIL_COLUMNS]
-        full_vector = transformed + avail_values  # 12 + 9 = 21
+        full_vector = transformed + avail_values  # 28 structural (scaler) + 16 avail (raw binary) = 44
 
         # 4. Predict
         x = np.array([full_vector])

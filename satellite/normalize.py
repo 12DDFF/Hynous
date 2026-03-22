@@ -32,6 +32,12 @@ TRANSFORM_MAP: dict[str, str] = {
     "close_position_5m": "P",       # [0, 1], already bounded
     "oi_price_direction": "P",      # {-1, 0, +1}, discrete
     "liq_imbalance_1h": "P",        # [-1, +1], already a ratio
+    "cvd_ratio_1h": "P",            # [-1, +1], same semantics as cvd_30m
+    "return_autocorrelation": "P",  # [-1, +1], bounded correlation
+    "body_ratio_1h": "P",           # [0, 1], bounded ratio
+    "upper_wick_ratio_1h": "P",     # [0, 1], bounded ratio
+    "hour_sin": "P",                # [-1, +1], cyclical encoding
+    "hour_cos": "P",                # [-1, +1], cyclical encoding
 
     # TYPE C — Clip only (already a z-score, don't re-normalize)
     "funding_vs_30d_zscore": "C",   # already a market z-score
@@ -40,14 +46,22 @@ TRANSFORM_MAP: dict[str, str] = {
     "hours_to_funding": "Z",        # 0-8, continuous
     "realized_vol_1h": "Z",         # %, continuous
     "price_trend_1h": "Z",          # %, continuous, directional
+    "oi_change_rate_1h": "Z",       # %, continuous OI change rate
+    "realized_vol_4h": "Z",         # %, same distribution as vol_1h
+    "vol_of_vol": "Z",              # %, continuous volatility-of-vol
+    "price_trend_4h": "Z",          # %, same distribution as trend_1h
 
     # TYPE L — Log transform + Z-score (skewed ratios, always positive)
     "oi_vs_7d_avg_ratio": "L",      # ratio > 0, skewed right
     "liq_1h_vs_4h_avg": "L",        # ratio > 0, spike-prone
     "volume_vs_1h_avg_ratio": "L",  # ratio > 0, skewed right
+    "liq_total_1h_usd": "L",        # log10(USD) >= 0, heavily skewed
+    "volume_acceleration": "L",     # ratio > 0, unbounded, skewed right
 
     # TYPE S — Signed log + Z-score (any sign, skewed)
     "oi_funding_pressure": "S",     # interaction term, large range
+    "funding_rate_raw": "S",        # small values, any sign, skewed tails
+    "funding_velocity": "S",        # rate difference, any sign, skewed
 }
 
 

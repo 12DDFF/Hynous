@@ -1,0 +1,42 @@
+{
+  "name": "move_30m",
+  "version": 1,
+  "feature_hash": "f1160ecd457742e9",
+  "feature_names": [
+    "realized_vol_1h",
+    "volume_vs_1h_avg_ratio",
+    "price_trend_1h",
+    "cvd_ratio_30m",
+    "oi_vs_7d_avg_ratio",
+    "funding_vs_30d_zscore",
+    "liq_cascade_active",
+    "oi_price_direction",
+    "hours_to_funding",
+    "liq_1h_vs_4h_avg",
+    "liq_imbalance_1h",
+    "oi_funding_pressure"
+  ],
+  "target_description": "max(abs(long_roe), abs(short_roe)) from 30m labels",
+  "created_at": "2026-03-22T23:20:50.053306+00:00",
+  "training_samples": 55584,
+  "validation_spearman": 0.4923,
+  "validation_mae": 3.5615,
+  "xgboost_params": {
+    "objective": "reg:squarederror",
+    "max_depth": 5,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 5,
+    "gamma": 0.0,
+    "verbosity": 0
+  },
+  "percentiles": {
+    "p10": 3.276675,
+    "p25": 4.491119,
+    "p50": 6.252426,
+    "p75": 8.473974,
+    "p90": 11.434233,
+    "p95": 13.064831
+  }
+}

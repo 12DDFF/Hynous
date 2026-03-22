@@ -1,0 +1,42 @@
+{
+  "name": "vol_expand",
+  "version": 1,
+  "feature_hash": "fa2a4e1de94f1dd7",
+  "feature_names": [
+    "realized_vol_1h",
+    "volume_vs_1h_avg_ratio",
+    "hours_to_funding",
+    "price_trend_1h",
+    "cvd_ratio_30m",
+    "funding_vs_30d_zscore",
+    "oi_vs_7d_avg_ratio",
+    "liq_cascade_active",
+    "liq_1h_vs_4h_avg",
+    "oi_price_direction",
+    "oi_funding_pressure",
+    "liq_imbalance_1h"
+  ],
+  "target_description": "Future vol / current vol ratio",
+  "created_at": "2026-03-22T23:20:59.679321+00:00",
+  "training_samples": 55636,
+  "validation_spearman": 0.3546,
+  "validation_mae": 0.3458,
+  "xgboost_params": {
+    "objective": "reg:pseudohubererror",
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "verbosity": 0
+  },
+  "percentiles": {
+    "p10": 0.948897,
+    "p25": 1.010193,
+    "p50": 1.095147,
+    "p75": 1.167738,
+    "p90": 1.230838,
+    "p95": 1.271968
+  }
+}

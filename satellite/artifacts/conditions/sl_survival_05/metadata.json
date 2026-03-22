@@ -1,0 +1,42 @@
+{
+  "name": "sl_survival_05",
+  "version": 1,
+  "feature_hash": "e9d8bbd44c612bdd",
+  "feature_names": [
+    "realized_vol_1h",
+    "volume_vs_1h_avg_ratio",
+    "oi_vs_7d_avg_ratio",
+    "funding_vs_30d_zscore",
+    "price_trend_1h",
+    "cvd_ratio_30m",
+    "liq_cascade_active",
+    "liq_1h_vs_4h_avg",
+    "oi_funding_pressure",
+    "hours_to_funding"
+  ],
+  "target_description": "P(0.5% SL hit within 30m for long)",
+  "created_at": "2026-03-22T23:21:11.678202+00:00",
+  "training_samples": 55584,
+  "validation_spearman": 0.2009,
+  "validation_mae": 0.3935,
+  "xgboost_params": {
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "verbosity": 0,
+    "scale_pos_weight": 8.067536704730832
+  },
+  "percentiles": {
+    "p10": 0.056638,
+    "p25": 0.145119,
+    "p50": 0.372695,
+    "p75": 0.581029,
+    "p90": 0.755764,
+    "p95": 0.816023
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "vol_1h",
+  "version": 1,
+  "feature_hash": "2337c216627416c8",
+  "feature_names": [
+    "realized_vol_1h",
+    "volume_vs_1h_avg_ratio",
+    "oi_vs_7d_avg_ratio",
+    "price_trend_1h",
+    "hours_to_funding",
+    "cvd_ratio_30m",
+    "liq_cascade_active",
+    "liq_1h_vs_4h_avg",
+    "liq_imbalance_1h",
+    "oi_funding_pressure",
+    "funding_vs_30d_zscore",
+    "oi_price_direction"
+  ],
+  "target_description": "Future realized_vol_1h (12 snapshots ahead)",
+  "created_at": "2026-03-22T23:20:42.401882+00:00",
+  "training_samples": 55876,
+  "validation_spearman": 0.6201,
+  "validation_mae": 0.1602,
+  "xgboost_params": {
+    "objective": "reg:pseudohubererror",
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "verbosity": 0
+  },
+  "percentiles": {
+    "p10": 0.211396,
+    "p25": 0.278531,
+    "p50": 0.372863,
+    "p75": 0.49366,
+    "p90": 0.658919,
+    "p95": 0.768773
+  }
+}

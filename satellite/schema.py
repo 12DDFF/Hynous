@@ -302,4 +302,20 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         except Exception:
             pass  # column already exists
 
+    # Phase 0: Add v3/v4 availability flag columns
+    for col in [
+        "realized_vol_4h_avail",
+        "vol_of_vol_avail",
+        "volume_acceleration_avail",
+        "cvd_1h_avail",
+        "price_trend_4h_avail",
+    ]:
+        try:
+            conn.execute(
+                f"ALTER TABLE snapshots ADD COLUMN {col} "
+                "INTEGER NOT NULL DEFAULT 1",
+            )
+        except Exception:
+            pass  # column already exists
+
     conn.commit()
