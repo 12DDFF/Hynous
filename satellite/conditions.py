@@ -21,37 +21,17 @@ from satellite.training.condition_artifact import ConditionArtifact
 
 log = logging.getLogger(__name__)
 
-# Models disabled from inference. Two categories:
-#
-# BROKEN (zero predictive power):
-#   reversal_30m: tautological target, BinaryAcc = base rate (92%), Spearman +0.02
-#   momentum_quality: Spearman 0.075, DirAcc 50% = coin flip
-#
-# WEAK (live Spearman < 0.25, not reliable enough for agent decisions):
-#   mae_long: Spearman +0.21, drawdown prediction too noisy
-#   mae_short: Spearman +0.22, same
-#   entry_quality: Spearman +0.26, relative target is weak by design
-#   sl_survival_03: Spearman +0.10, class imbalance (11% positive rate)
-#   sl_survival_05: Spearman +0.03, extreme imbalance (2.8% positive rate)
-#   vol_expand: Spearman +0.28, borderline — re-enable when improved
-#
+# Models disabled from inference (Spearman < 0.15).
 # Artifacts are kept for retraining. Re-enable by removing from this set.
-# Broken models (zero predictive power, confirmed):
-# reversal_30m: tautological target, BinaryAcc = base rate
-# momentum_quality: Spearman 0.075, coin flip
-# sl_survival_05: Spearman 0.03, extreme class imbalance (2.8%)
 #
-# Phase 1 retrain results (2026-03-22):
-#   reversal_30m: untrainable (target depends on price_trend_1h which is NULL in all historical rows)
-#   momentum_quality: untrainable (target depends on cvd_ratio_30m which is NULL in all historical rows)
-#   funding_4h: Spearman=0.000 (all v3 funding features are NULL/neutral in historical data)
-#   entry_quality: Spearman=0.054 (cvd_ratio_30m/price_trend_1h NULL → model has no signal)
-#   sl_survival_05: Spearman=0.201 (was 0.03) — RE-ENABLED, significant improvement
+# Phase 1b VPS retrain (2026-03-22, 62K+ snapshots with real feature data):
+#   vol_1h: 0.720, vol_4h: 0.673, range_30m: 0.603, move_30m: 0.533
+#   volume_1h: 0.441, momentum_quality: 0.398, vol_expand: 0.355
+#   entry_quality: 0.341, mae_short: 0.334, mae_long: 0.291
+#   sl_survival_03: 0.280, funding_4h: 0.277, sl_survival_05: 0.238
+#   reversal_30m: 0.097 — DISABLED (tautological target, confirmed broken)
 DISABLED_MODELS: set[str] = {
     "reversal_30m",
-    "momentum_quality",
-    "funding_4h",
-    "entry_quality",
 }
 
 

@@ -62,13 +62,13 @@
   },
   "params": {
     "oi_vs_7d_avg_ratio": {
-      "log_mean": 0.6931471805599454,
-      "log_std": 1.1102230246251565e-16
+      "log_mean": 0.6868146834911517,
+      "log_std": 0.07120257622902385
     },
     "liq_cascade_active": {},
     "liq_1h_vs_4h_avg": {
-      "log_mean": 0.6931471805599454,
-      "log_std": 1.1102230246251565e-16
+      "log_mean": 0.6908042746348939,
+      "log_std": 0.06543368449337107
     },
     "liq_imbalance_1h": {},
     "liq_total_1h_usd": {
@@ -80,12 +80,12 @@
       "clip_high": 5.0
     },
     "hours_to_funding": {
-      "mean": 3.9939561989790184,
-      "std": 2.285898106706474
+      "mean": 3.9574656307348604,
+      "std": 2.3057705164813984
     },
     "oi_funding_pressure": {
-      "slog_mean": 0.0,
-      "slog_std": 0.0
+      "slog_mean": 3.2325943245531057e-06,
+      "slog_std": 0.00020138942639522252
     },
     "funding_rate_raw": {
       "slog_mean": 0.0,
@@ -97,8 +97,8 @@
     },
     "oi_price_direction": {},
     "realized_vol_1h": {
-      "mean": 0.37247417192045995,
-      "std": 0.255388206209558
+      "mean": 0.3992378830200734,
+      "std": 0.29522942060694596
     },
     "realized_vol_4h": {
       "mean": 0.0,
@@ -109,19 +109,19 @@
       "std": 0.0
     },
     "volume_vs_1h_avg_ratio": {
-      "log_mean": 0.5504018022200721,
-      "log_std": 0.42787392108888234
+      "log_mean": 0.743662433187576,
+      "log_std": 0.40262592109291523
     },
     "volume_acceleration": {
-      "log_mean": 0.6931471805599454,
+      "log_mean": 0.6931471805599452,
       "log_std": 1.1102230246251565e-16
     },
     "cvd_ratio_30m": {},
     "cvd_ratio_1h": {},
     "cvd_acceleration": {},
     "price_trend_1h": {
-      "mean": 0.0,
-      "std": 0.0
+      "mean": -0.010092375628878955,
+      "std": 0.46489185222180673
     },
     "price_trend_4h": {
       "mean": 0.0,
