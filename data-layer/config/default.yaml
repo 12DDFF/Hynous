@@ -73,4 +73,4 @@ tick_collector:
   enabled: true
   coins:
     - "BTC"
-  satellite_db_path: "storage/satellite.db"
+  satellite_db_path: "../storage/satellite.db"
