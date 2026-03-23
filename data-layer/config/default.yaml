@@ -63,3 +63,14 @@ smart_money:
   auto_curate_min_profit_factor: 1.5
   auto_curate_max_wallets: 20
   auto_curate_exclude_bots: true
+
+l2_subscriber:
+  enabled: true
+  coins:
+    - "BTC"
+
+tick_collector:
+  enabled: true
+  coins:
+    - "BTC"
+  satellite_db_path: "storage/satellite.db"
