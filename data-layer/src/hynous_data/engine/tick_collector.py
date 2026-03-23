@@ -172,6 +172,7 @@ class TickCollector:
 
     def _run_inner(self):
         last_write = time.time()
+        last_status_log = time.time()
 
         while self._running:
             t0 = time.time()
@@ -195,6 +196,16 @@ class TickCollector:
             if time.time() - last_write >= self.WRITE_INTERVAL:
                 self._flush_buffer()
                 last_write = time.time()
+
+            # Periodic status log every 60s
+            if time.time() - last_status_log >= 60:
+                last_status_log = time.time()
+                log.info(
+                    "TickCollector: %d written, %d errors, buf=%d",
+                    self.snapshots_written,
+                    self.compute_errors,
+                    len(self._write_buffer),
+                )
 
             elapsed = time.time() - t0
             sleep_time = max(0, self.COMPUTE_INTERVAL - elapsed)

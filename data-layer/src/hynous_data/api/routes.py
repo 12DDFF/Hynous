@@ -20,12 +20,23 @@ def create_router(c: dict) -> APIRouter:
         ts = c.get("trade_stream")
         ws_healthy = ts.is_healthy if ts else None
 
+        # Tick collector health
+        tc = c.get("tick_collector")
+        tick_info = None
+        if tc:
+            tick_info = {
+                "running": tc._running,
+                "written": tc.snapshots_written,
+                "errors": tc.compute_errors + tc.write_errors,
+            }
+
         return {
             "status": "ok" if (ws_healthy is None or ws_healthy) else "degraded",
             "uptime_seconds": round(time.time() - start_time, 1),
             "addresses_discovered": addr_count,
             "positions_tracked": pos_count,
             "ws_healthy": ws_healthy,
+            "tick_collector": tick_info,
         }
 
     @router.get("/v1/heatmap/{coin}")
