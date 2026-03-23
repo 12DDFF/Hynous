@@ -270,6 +270,15 @@ class Database:
                 "DELETE FROM liquidation_events WHERE occurred_at < ?",
                 (hist_cutoff,),
             )
+            # Candles + trade flow: 90-day retention (was never pruned — Artemis backfill grew to 8GB)
+            cur6b = conn.execute(
+                "DELETE FROM candles_history WHERE open_time < ?",
+                (hist_cutoff,),
+            )
+            cur6c = conn.execute(
+                "DELETE FROM trade_flow_history WHERE recorded_at < ?",
+                (hist_cutoff,),
+            )
             # Prune inactive addresses (not seen in 30+ days, low tier)
             # Prevents unbounded growth from trade stream address discovery.
             addr_cutoff = time.time() - 30 * 86400
@@ -287,7 +296,7 @@ class Database:
 
             deleted = sum(
                 cur.rowcount
-                for cur in [cur1, cur2, cur3, cur4, cur5, cur6, cur7, cur8, cur9]
+                for cur in [cur1, cur2, cur3, cur4, cur5, cur6, cur6b, cur6c, cur7, cur8, cur9]
             )
             conn.commit()
         if deleted:
