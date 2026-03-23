@@ -130,6 +130,8 @@ def create_router(c: dict) -> APIRouter:
             result["hlp_tracker"] = c["hlp_tracker"].stats()
         if "liq_heatmap" in c:
             result["liq_heatmap"] = c["liq_heatmap"].stats()
+        if "tick_collector" in c:
+            result["tick_collector"] = c["tick_collector"].stats()
         return result
 
     # ---- Smart Money: Wallet Tracker ----

@@ -195,6 +195,19 @@ events:
     spike_percent: 0.05      # 5% move triggers event
   cooldown_minutes: 30       # Min time between same event type
 
+# Data-layer: L2 orderbook WebSocket subscriber
+l2_subscriber:
+  enabled: true
+  coins:
+    - "BTC"
+
+# Data-layer: Tick-level microstructure feature collector (writes to satellite.db)
+tick_collector:
+  enabled: true
+  coins:
+    - "BTC"
+  satellite_db_path: "storage/satellite.db"
+
 # Logging
 logging:
   level: "INFO"              # DEBUG | INFO | WARNING | ERROR

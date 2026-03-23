@@ -150,6 +150,23 @@ class Orchestrator:
             self._components["l2_subscriber"] = l2
             log.info("L2Subscriber started")
 
+        # Tick-level microstructure feature collector (writes to satellite.db)
+        if self.cfg.tick_collector.enabled:
+            l2 = self._components.get("l2_subscriber")
+            if l2:
+                from hynous_data.engine.tick_collector import TickCollector
+                sat_db = Path(self.cfg.project_root) / self.cfg.tick_collector.satellite_db_path
+                tc = TickCollector(
+                    l2_subscriber=l2,
+                    coins=self.cfg.tick_collector.coins,
+                    satellite_db_path=sat_db,
+                )
+                tc.start()
+                self._components["tick_collector"] = tc
+                log.info("TickCollector started → %s", sat_db)
+            else:
+                log.warning("TickCollector requires L2Subscriber — enable l2_subscriber first")
+
         # Start engine threads
         liq_heatmap.start()
         log.info("Signal engines started")
@@ -200,6 +217,21 @@ class Orchestrator:
                     if cur.rowcount:
                         db.conn.commit()
                         log.info("Pruned %d old position changes", cur.rowcount)
+                # Prune old tick_snapshots (>30 days) from satellite.db
+                tc = self._components.get("tick_collector")
+                if tc:
+                    try:
+                        tick_cutoff = time.time() - 30 * 86400
+                        with tc._db_lock:
+                            cur = tc._conn.execute(
+                                "DELETE FROM tick_snapshots WHERE timestamp < ?",
+                                (tick_cutoff,),
+                            )
+                            if cur.rowcount:
+                                tc._conn.commit()
+                                log.info("Pruned %d old tick_snapshots (>30d)", cur.rowcount)
+                    except Exception:
+                        log.warning("Failed to prune tick_snapshots", exc_info=True)
             except Exception:
                 log.exception("Pruner error")
 
@@ -223,7 +255,7 @@ class Orchestrator:
         """Gracefully shut down all components."""
         log.info("Shutting down...")
         self._stop_event.set()
-        for name in ("trade_stream", "position_poller", "hlp_tracker", "liq_heatmap", "l2_subscriber"):
+        for name in ("tick_collector", "trade_stream", "position_poller", "hlp_tracker", "liq_heatmap", "l2_subscriber"):
             comp = self._components.get(name)
             if comp and hasattr(comp, "stop"):
                 comp.stop()
