@@ -7,6 +7,28 @@
 
 ---
 
+## What to Check Before Starting Phase 4
+
+Phase 4 should NOT begin until the following data exists from paper trading with Phases 1-3:
+
+1. **Entry score IC from feedback loop** (`entry_snapshots` table in satellite.db): Does the composite score correlate with trade outcomes? Run `SELECT composite_score, outcome_roe, outcome_won FROM entry_snapshots WHERE outcome_won IS NOT NULL` — need 30+ closed trades.
+2. **Per-signal IC** (daemon logs, "Rolling IC:"): Which signals predict winners? If entry_quality IC is high, the composite score is working. If all ICs are near zero, the signals don't predict outcomes and Phase 4 won't help.
+3. **Latency impact assessment**: Are entries consistently late (price moved >0.3% between wake and execution)? If yes, Phase 4 is justified. If entries are on time but wrong direction, Phase 4 won't help — the problem is signal quality, not speed.
+4. **Weight convergence** (`storage/entry_score_weights.json`): Have the adaptive weights stabilized or are they still shifting? Unstable weights mean the score isn't reliable enough to gate staged entries.
+
+### Architecture Decision: Option A vs Option B
+
+**Option A (current guide below):** LLM stages a fully specified trade (price, SL, TP, size, leverage). Daemon fires mechanically when price hits target. Risk: stale thesis — the specific price level may be irrelevant 10-30 minutes later.
+
+**Option B (simpler, recommended if signals are strong):** LLM provides only direction + symbol + conviction. Mechanical system handles everything else — entry timing (composite score threshold), SL (from MAE/range predictions), TP (from move prediction), sizing (from score). No price target to go stale. The LLM's directional thesis ("funding crowded short, expect squeeze") persists longer than a specific price level.
+
+**Choose based on data:**
+- If composite score IC > 0.15 and entry_quality IC > 0.10 → Option B (signals are strong enough to time entries mechanically)
+- If composite score IC < 0.10 but latency is the proven problem → Option A with very short TTLs (5min micro, 15min macro)
+- If both IC is low AND latency isn't the issue → Phase 4 isn't the right investment — focus on improving the condition models instead
+
+---
+
 ## Required Reading
 
 ### Mechanical Exit Pattern (template for staged entry execution)
