@@ -352,4 +352,23 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     ]:
         conn.execute(idx)
 
+    # Tick-level microstructure snapshots (1s compute, 5s batch write)
+    # For directional prediction using orderbook + trade flow features.
+    # Separate from the 300s condition snapshots — much higher frequency.
+    from satellite.tick_features import TICK_FEATURE_NAMES, TICK_SCHEMA_VERSION
+    tick_cols = ["timestamp REAL NOT NULL", "coin TEXT NOT NULL"]
+    tick_cols += [f"{f} REAL" for f in TICK_FEATURE_NAMES]
+    tick_cols += ["schema_version INTEGER NOT NULL DEFAULT 1"]
+    tick_ddl = (
+        "CREATE TABLE IF NOT EXISTS tick_snapshots (\n"
+        "    " + ",\n    ".join(tick_cols) + ",\n"
+        "    PRIMARY KEY (coin, timestamp)\n"
+        ")"
+    )
+    conn.execute(tick_ddl)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tick_coin_time "
+        "ON tick_snapshots(coin, timestamp)"
+    )
+
     conn.commit()
