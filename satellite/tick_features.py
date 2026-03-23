@@ -113,6 +113,11 @@ class TickFeatureEngine:
             for coin in self._coins
         }
 
+        # Cached trade data from data-layer (refreshed every 5s)
+        self._trade_cache: dict[str, list] = {}
+        self._trade_cache_time: dict[str, float] = {}
+        self._trade_cache_ttl = 5.0  # seconds
+
         # Stats
         self.snapshots_computed = 0
         self.snapshots_written = 0
@@ -196,12 +201,8 @@ class TickFeatureEngine:
         # Track price for momentum
         self._price_history[coin].append((now, mid))
 
-        # Get trade buffer
-        from hynous_data.collectors.trade_stream import get_trade_buffer
-        try:
-            trades = list(get_trade_buffer(coin))
-        except Exception:
-            trades = []
+        # Get trade data from data-layer order flow API (cached, refreshed every 5s)
+        trades = self._get_cached_trades(coin, now)
 
         features = {}
 
@@ -287,6 +288,64 @@ class TickFeatureEngine:
             coin=coin,
             features=features,
         )
+
+    def _get_cached_trades(self, coin: str, now: float) -> list:
+        """Get recent trades from data-layer, cached for 5s.
+
+        Returns list of dicts with keys: px, sz, side, time (ms).
+        Falls back to empty list if data-layer is unreachable.
+        """
+        cache_age = now - self._trade_cache_time.get(coin, 0)
+        if cache_age < self._trade_cache_ttl and coin in self._trade_cache:
+            return self._trade_cache[coin]
+
+        try:
+            import urllib.request
+            import json
+            url = "http://127.0.0.1:8100/v1/orderflow/%s" % coin
+            req = urllib.request.Request(url, method="GET")
+            resp = urllib.request.urlopen(req, timeout=2)
+            data = json.loads(resp.read())
+
+            # Convert order flow windows to trade-like records for feature computation
+            # We don't get individual trades, but we get buy/sell volume per window
+            trades = []
+            for label, window in data.get("windows", {}).items():
+                buy_vol = window.get("buy_volume_usd", 0)
+                sell_vol = window.get("sell_volume_usd", 0)
+                buy_count = window.get("buy_count", 0)
+                sell_count = window.get("sell_count", 0)
+
+                # Synthesize trade records from aggregate data
+                mid = self._price_history.get(coin, deque())
+                current_price = mid[-1][1] if mid else 0
+
+                if current_price > 0:
+                    if buy_count > 0:
+                        avg_buy_size = buy_vol / buy_count / current_price
+                        for _ in range(min(buy_count, 100)):  # cap to avoid memory issues
+                            trades.append({
+                                "px": current_price,
+                                "sz": avg_buy_size,
+                                "side": "B",
+                                "time": int(now * 1000),
+                            })
+                    if sell_count > 0:
+                        avg_sell_size = sell_vol / sell_count / current_price
+                        for _ in range(min(sell_count, 100)):
+                            trades.append({
+                                "px": current_price,
+                                "sz": avg_sell_size,
+                                "side": "A",
+                                "time": int(now * 1000),
+                            })
+
+            self._trade_cache[coin] = trades
+            self._trade_cache_time[coin] = now
+            return trades
+
+        except Exception:
+            return self._trade_cache.get(coin, [])
 
     def _flush_buffer(self):
         """Write buffered snapshots to DB."""

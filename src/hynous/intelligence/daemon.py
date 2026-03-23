@@ -568,6 +568,21 @@ class Daemon:
             except Exception:
                 logger.debug("Failed to load entry score weights", exc_info=True)
 
+        # Tick-level microstructure feature engine (1s compute for direction prediction)
+        self._tick_engine = None
+        if self._satellite_store:
+            try:
+                from satellite.tick_features import TickFeatureEngine
+                provider = self._get_provider()
+                self._tick_engine = TickFeatureEngine(
+                    provider=provider,
+                    store=self._satellite_store,
+                    coins=["BTC"],  # BTC only for now
+                )
+                logger.info("TickFeatureEngine initialized")
+            except Exception:
+                logger.debug("TickFeatureEngine init failed", exc_info=True)
+
         # Stats
         self.wake_count: int = 0
         self.watchpoint_fires: int = 0
@@ -1045,6 +1060,11 @@ class Daemon:
             )
             provider.start_ws(ws_coins)
             logger.warning("WS market data feed started via provider")
+
+        # Start tick-level feature collection (1s compute, 5s DB write)
+        if self._tick_engine:
+            self._tick_engine.start()
+            logger.warning("Tick feature engine started (1s compute)")
 
         while self._running:
             try:
