@@ -371,4 +371,15 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         "ON tick_snapshots(coin, timestamp)"
     )
 
+    # tick_snapshots v1 → v2: add book delta + trade distribution columns
+    for col in [
+        "book_imbalance_delta_5s", "book_imbalance_delta_10s",
+        "depth_ratio_change_5s", "max_trade_usd_60s",
+        "trade_count_60s", "trade_count_10s",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE tick_snapshots ADD COLUMN {col} REAL")
+        except Exception:
+            pass  # column already exists
+
     conn.commit()

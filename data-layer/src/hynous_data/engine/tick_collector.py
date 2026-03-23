@@ -1,7 +1,7 @@
 """Tick-level microstructure feature collector.
 
 Runs inside the data-layer process (independent of daemon restarts).
-Computes 20 orderbook + trade flow features every 1s from live WS data,
+Computes 26 orderbook + trade flow features every 1s from live WS data,
 batches writes to satellite.db every 5s.
 
 Data sources (in-process, zero HTTP):
@@ -26,30 +26,58 @@ log = logging.getLogger(__name__)
 # Feature names — order matters, must match training.
 # Canonical list lives in satellite/tick_features.py; keep in sync.
 TICK_FEATURE_NAMES = [
+    # Orderbook imbalance at multiple depth levels
     "book_imbalance_5",
     "book_imbalance_10",
     "book_imbalance_20",
+    # Depth metrics
     "bid_depth_usd_5",
     "ask_depth_usd_5",
     "spread_pct",
     "mid_price",
+    # VWAP deviations
     "buy_vwap_deviation",
     "sell_vwap_deviation",
+    # Trade flow at multiple windows
     "flow_imbalance_10s",
     "flow_imbalance_30s",
     "flow_imbalance_60s",
     "flow_intensity_10s",
     "flow_intensity_30s",
+    # Volume metrics
     "trade_volume_10s_usd",
     "trade_volume_30s_usd",
+    # Momentum
     "price_change_10s",
     "price_change_30s",
     "price_change_60s",
+    # Pressure
     "large_trade_imbalance",
+    # --- v2 features (book pressure + trade size distribution) ---
+    # Book pressure delta — how fast is the orderbook shifting?
+    "book_imbalance_delta_5s",   # imbalance_5 now minus 5s ago
+    "book_imbalance_delta_10s",  # imbalance_5 now minus 10s ago
+    "depth_ratio_change_5s",     # (bid/ask depth ratio now) / (5s ago) - 1
+    # Trade size distribution — are whales active?
+    "max_trade_usd_60s",         # largest single trade notional in 60s
+    "trade_count_60s",           # raw number of trades in 60s
+    "trade_count_10s",           # raw number of trades in 10s
 ]
 
 TICK_FEATURE_COUNT = len(TICK_FEATURE_NAMES)
-TICK_SCHEMA_VERSION = 1
+
+# v2: added 6 book-delta + trade-distribution features
+TICK_SCHEMA_VERSION = 2
+
+# v2 features added via ALTER TABLE migration
+_V2_FEATURES = [
+    "book_imbalance_delta_5s",
+    "book_imbalance_delta_10s",
+    "depth_ratio_change_5s",
+    "max_trade_usd_60s",
+    "trade_count_60s",
+    "trade_count_10s",
+]
 
 # SQL for batch inserts
 _COLS = ["timestamp", "coin"] + TICK_FEATURE_NAMES + ["schema_version"]
@@ -91,6 +119,12 @@ class TickCollector:
             c: deque(maxlen=120) for c in coins
         }
 
+        # Feature history for delta computation (per coin)
+        # Stores (timestamp, imbalance_5, bid_depth_5, ask_depth_5) every 1s
+        self._book_history: dict[str, deque] = {
+            c: deque(maxlen=15) for c in coins  # 15s lookback
+        }
+
         # Satellite DB connection (separate from data-layer DB)
         self._conn: sqlite3.Connection | None = None
         self._db_lock = threading.Lock()
@@ -128,7 +162,7 @@ class TickCollector:
             self._conn = None
 
     # ------------------------------------------------------------------
-    # DB init — creates tick_snapshots table in satellite.db
+    # DB init — creates tick_snapshots table + migrations
     # ------------------------------------------------------------------
 
     def _init_db(self):
@@ -141,6 +175,7 @@ class TickCollector:
         )
         self._conn.execute("PRAGMA journal_mode=WAL")
 
+        # Create table with ALL columns (for fresh installs)
         tick_cols = ["timestamp REAL NOT NULL", "coin TEXT NOT NULL"]
         tick_cols += [f"{f} REAL" for f in TICK_FEATURE_NAMES]
         tick_cols += ["schema_version INTEGER NOT NULL DEFAULT 1"]
@@ -154,8 +189,19 @@ class TickCollector:
             "CREATE INDEX IF NOT EXISTS idx_tick_coin_time "
             "ON tick_snapshots(coin, timestamp)"
         )
+
+        # v1 → v2 migration: add new columns to existing tables
+        for col in _V2_FEATURES:
+            try:
+                self._conn.execute(
+                    f"ALTER TABLE tick_snapshots ADD COLUMN {col} REAL"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
         self._conn.commit()
-        log.info("TickCollector DB ready: %s", self._db_path)
+        log.info("TickCollector DB ready (v%d, %d features): %s",
+                 TICK_SCHEMA_VERSION, TICK_FEATURE_COUNT, self._db_path)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -263,6 +309,7 @@ class TickCollector:
         count_10 = 0
         large_buys = 0.0
         large_sells = 0.0
+        max_trade_usd = 0.0  # v2: largest single trade
 
         # Iterate deque directly (no list() copy — deque iteration is thread-safe for reads)
         for t in trade_buf:
@@ -272,6 +319,10 @@ class TickCollector:
             count_60 += 1
             notional = t["px"] * t["sz"]
             is_buy = t["side"] == "B"
+
+            # v2: track max trade size
+            if notional > max_trade_usd:
+                max_trade_usd = notional
 
             if is_buy:
                 buy_notional_60 += notional
@@ -310,8 +361,10 @@ class TickCollector:
             features[f"book_imbalance_{label}"] = bid_vol / total if total > 0 else 0.5
 
         # === DEPTH METRICS ===
-        features["bid_depth_usd_5"] = sum(px * sz for px, sz in bids[:5])
-        features["ask_depth_usd_5"] = sum(px * sz for px, sz in asks[:5])
+        bid_depth_5 = sum(px * sz for px, sz in bids[:5])
+        ask_depth_5 = sum(px * sz for px, sz in asks[:5])
+        features["bid_depth_usd_5"] = bid_depth_5
+        features["ask_depth_usd_5"] = ask_depth_5
         features["spread_pct"] = book.get("spread", 0) / mid if mid else 0
         features["mid_price"] = mid
 
@@ -358,6 +411,44 @@ class TickCollector:
         # === LARGE TRADE IMBALANCE ===
         large_total = large_buys + large_sells
         features["large_trade_imbalance"] = large_buys / large_total if large_total > 0 else 0.5
+
+        # === v2: BOOK PRESSURE DELTA ===
+        imbalance_5 = features["book_imbalance_5"]
+        depth_ratio = bid_depth_5 / ask_depth_5 if ask_depth_5 > 0 else 1.0
+
+        # Store current snapshot for future delta lookups
+        book_hist = self._book_history[coin]
+        book_hist.append((now, imbalance_5, bid_depth_5, ask_depth_5))
+
+        # Look back 5s and 10s
+        for lookback, label in [(5, "5s"), (10, "10s")]:
+            target_t = now - lookback
+            past_imb = None
+            for h_ts, h_imb, _, _ in book_hist:
+                if target_t - 1.5 <= h_ts <= target_t + 1.5:
+                    past_imb = h_imb
+                    break
+            if past_imb is not None:
+                features[f"book_imbalance_delta_{label}"] = imbalance_5 - past_imb
+            else:
+                features[f"book_imbalance_delta_{label}"] = 0.0
+
+        # Depth ratio change (bid/ask ratio now vs 5s ago)
+        past_ratio = None
+        target_t = now - 5
+        for h_ts, _, h_bid, h_ask in book_hist:
+            if target_t - 1.5 <= h_ts <= target_t + 1.5:
+                past_ratio = h_bid / h_ask if h_ask > 0 else 1.0
+                break
+        if past_ratio is not None and past_ratio > 0:
+            features["depth_ratio_change_5s"] = depth_ratio / past_ratio - 1.0
+        else:
+            features["depth_ratio_change_5s"] = 0.0
+
+        # === v2: TRADE SIZE DISTRIBUTION ===
+        features["max_trade_usd_60s"] = max_trade_usd
+        features["trade_count_60s"] = float(count_60)
+        features["trade_count_10s"] = float(count_10)
 
         # Sanitize NaN/inf
         for k, v in features.items():
@@ -415,4 +506,6 @@ class TickCollector:
             "write_errors": self.write_errors,
             "buffer_size": len(self._write_buffer),
             "db_path": str(self._db_path),
+            "schema_version": TICK_SCHEMA_VERSION,
+            "feature_count": TICK_FEATURE_COUNT,
         }

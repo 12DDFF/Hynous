@@ -27,7 +27,8 @@ from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
-# Feature names — order matters, must match training
+# Feature names — order matters, must match training.
+# Canonical list — data-layer/engine/tick_collector.py has a copy; keep in sync.
 TICK_FEATURE_NAMES = [
     # Orderbook imbalance at multiple depth levels
     "book_imbalance_5",       # bid_vol / (bid_vol + ask_vol) at top 5 levels
@@ -56,12 +57,21 @@ TICK_FEATURE_NAMES = [
     "price_change_60s",       # % change over 60 seconds
     # Pressure
     "large_trade_imbalance",  # buy/sell imbalance of trades > $10K only
+    # v2: Book pressure delta — how fast is the orderbook shifting?
+    "book_imbalance_delta_5s",   # imbalance_5 now minus 5s ago
+    "book_imbalance_delta_10s",  # imbalance_5 now minus 10s ago
+    "depth_ratio_change_5s",     # (bid/ask depth ratio now) / (5s ago) - 1
+    # v2: Trade size distribution — are whales active?
+    "max_trade_usd_60s",         # largest single trade notional in 60s
+    "trade_count_60s",           # raw number of trades in 60s
+    "trade_count_10s",           # raw number of trades in 10s
 ]
 
 TICK_FEATURE_COUNT = len(TICK_FEATURE_NAMES)
 
 # Schema version — increment when features change
-TICK_SCHEMA_VERSION = 1
+# v2: added book pressure delta + trade size distribution (6 features)
+TICK_SCHEMA_VERSION = 2
 
 
 @dataclass
