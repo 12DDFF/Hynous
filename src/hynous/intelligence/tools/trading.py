@@ -132,7 +132,13 @@ def _get_ml_conditions(symbol: str) -> dict | None:
         cond_ts = conditions.get("timestamp", 0)
         if time.time() - cond_ts > 600:
             return None
-        return conditions if conditions else None
+        if not conditions:
+            return None
+        # Include composite entry score in the returned dict
+        conditions["_entry_score"] = pred.get("entry_score")
+        conditions["_entry_score_label"] = pred.get("entry_score_label")
+        conditions["_entry_score_components"] = pred.get("entry_score_components")
+        return conditions
     except Exception:
         return None
 
@@ -549,6 +555,28 @@ def handle_execute_trade(
             f"Cannot trade without ML risk assessment. Check system health."
         )
 
+    # --- Composite entry score gate (replaces per-signal synthesis) ---
+    _comp_score = ml_cond.get("_entry_score") if ml_cond else None
+    _comp_label = ml_cond.get("_entry_score_label", "unknown") if ml_cond else "unknown"
+    if _comp_score is not None:
+        if _comp_score < ts.composite_reject_score:
+            _record_trade_span(
+                "execute_trade", "composite_gate", False,
+                f"Entry score {_comp_score:.0f}/100 ({_comp_label})",
+                symbol=symbol,
+            )
+            return (
+                f"BLOCKED: Entry score {_comp_score:.0f}/100 ({_comp_label}). "
+                f"Market conditions unfavorable for entries. "
+                f"Components: {ml_cond.get('_entry_score_components', {})}. "
+                f"Wait for conditions to improve or set a watchpoint."
+            )
+        if _comp_score < ts.composite_warn_score:
+            _warnings.append(
+                f"Entry score {_comp_score:.0f}/100 ({_comp_label}) — "
+                f"below average conditions. Consider reducing size."
+            )
+
     # --- ML: Entry quality gate (early reject on terrible conditions) ---
     if ml_cond:
         _entry = ml_cond.get("entry_quality", {})
@@ -672,64 +700,41 @@ def handle_execute_trade(
             recommended_margin = portfolio * (ts.tier_speculative_margin_pct / 100)
             tier = "Speculative"
 
-        # --- ML: Adaptive sizing (scale by ML quality factor) ---
+        # --- ML: Composite score-based sizing ---
         if ml_cond and ts.ml_adaptive_sizing:
-            _ml_factor = 1.0
-            _ml_reasons = []
+            _comp_score = ml_cond.get("_entry_score")
+            if _comp_score is not None:
+                from satellite.entry_score import score_to_sizing_factor
+                _sizing_factor = score_to_sizing_factor(_comp_score)
+                _effective_conf = confidence * _sizing_factor
 
-            _entry = ml_cond.get("entry_quality", {})
-            _ep = _entry.get("percentile", 50)
-            if _ep < 40:
-                _ml_factor *= 0.7
-                _ml_reasons.append(f"entry={_ep}th pctl")
-
-            _vol = ml_cond.get("vol_1h", {})
-            _vr = _vol.get("regime", "normal")
-            if _vr == "extreme":
-                _ml_factor *= 0.6
-                _ml_reasons.append("vol=EXTREME")
-            elif _vr == "high":
-                _ml_factor *= 0.8
-                _ml_reasons.append("vol=HIGH")
-
-            _mae_key = "mae_long" if is_buy else "mae_short"
-            _mae = ml_cond.get(_mae_key, {})
-            if _mae.get("regime") == "extreme":
-                _ml_factor *= 0.7
-                _ml_reasons.append(f"MAE={_mae.get('value', 0):.1f}%")
-
-            _ml_factor = max(0.4, min(1.0, _ml_factor))
-
-            if _ml_factor < 0.95:
-                _effective_conf = confidence * _ml_factor
                 if _effective_conf < ts.tier_pass_threshold:
                     return (
-                        f"ML BLOCKED: Poor conditions reduce effective conviction to "
-                        f"{_effective_conf:.0%} (below {ts.tier_pass_threshold:.0%} minimum).\n"
-                        f"  Your conviction: {confidence:.0%} × ML quality: {_ml_factor:.0%} "
+                        f"ML BLOCKED: Entry score {_comp_score:.0f}/100 reduces effective "
+                        f"conviction to {_effective_conf:.0%} (below {ts.tier_pass_threshold:.0%}).\n"
+                        f"  Your conviction: {confidence:.0%} × sizing factor: {_sizing_factor:.2f} "
                         f"= {_effective_conf:.0%}\n"
-                        f"  Issues: {', '.join(_ml_reasons)}\n"
                         f"Wait for better conditions or increase conviction."
                     )
 
-                # Re-tier with adjusted confidence
-                _old_tier = tier
-                if _effective_conf >= 0.8:
-                    recommended_margin = portfolio * (ts.tier_high_margin_pct / 100)
-                    tier = "High"
-                elif _effective_conf >= 0.6:
-                    recommended_margin = portfolio * (ts.tier_medium_margin_pct / 100)
-                    tier = "Medium"
-                else:
-                    recommended_margin = portfolio * (ts.tier_speculative_margin_pct / 100)
-                    tier = "Speculative"
+                if _sizing_factor < 0.95:
+                    _old_tier = tier
+                    if _effective_conf >= 0.8:
+                        recommended_margin = portfolio * (ts.tier_high_margin_pct / 100)
+                        tier = "High"
+                    elif _effective_conf >= 0.6:
+                        recommended_margin = portfolio * (ts.tier_medium_margin_pct / 100)
+                        tier = "Medium"
+                    else:
+                        recommended_margin = portfolio * (ts.tier_speculative_margin_pct / 100)
+                        tier = "Speculative"
 
-                if tier != _old_tier:
-                    _warnings.append(
-                        f"ML: Sizing {_old_tier} → {tier} "
-                        f"(ML quality {_ml_factor:.0%} × conviction {confidence:.0%} "
-                        f"= {_effective_conf:.0%}). Reasons: {', '.join(_ml_reasons)}."
-                    )
+                    if tier != _old_tier:
+                        _warnings.append(
+                            f"ML: Sizing {_old_tier} → {tier} "
+                            f"(entry score {_comp_score:.0f}/100 × conviction {confidence:.0%} "
+                            f"= {_effective_conf:.0%})."
+                        )
 
         # Auto-size from conviction — conviction always drives sizing
         size_usd = recommended_margin * leverage
@@ -1188,6 +1193,39 @@ def handle_execute_trade(
         duration_ms=int((time.monotonic() - _mem_start) * 1000),
         node_id=_mem_node_id, subtype="custom:trade_entry",
     )
+
+    # --- Log entry conditions for feedback loop (Phase 3) ---
+    try:
+        if ml_cond and hasattr(daemon, '_satellite_store') and daemon._satellite_store:
+            import json as _json
+            daemon._satellite_store.conn.execute(
+                "INSERT INTO entry_snapshots ("
+                "trade_id, coin, side, entry_time, composite_score, "
+                "vol_1h_regime, vol_1h_pctl, entry_quality_pctl, "
+                "funding_4h_pctl, volume_1h_regime, mae_long_pctl, "
+                "mae_short_pctl, direction_signal, direction_long_roe, "
+                "direction_short_roe, score_components"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _mem_node_id or "",
+                    symbol, side, time.time(),
+                    ml_cond.get("_entry_score", 50),
+                    ml_cond.get("vol_1h", {}).get("regime"),
+                    ml_cond.get("vol_1h", {}).get("percentile"),
+                    ml_cond.get("entry_quality", {}).get("percentile"),
+                    ml_cond.get("funding_4h", {}).get("percentile"),
+                    ml_cond.get("volume_1h", {}).get("regime"),
+                    ml_cond.get("mae_long", {}).get("percentile"),
+                    ml_cond.get("mae_short", {}).get("percentile"),
+                    ml_cond.get("direction_signal"),
+                    ml_cond.get("direction_long_roe", 0),
+                    ml_cond.get("direction_short_roe", 0),
+                    _json.dumps(ml_cond.get("_entry_score_components", {})),
+                ),
+            )
+            daemon._satellite_store.conn.commit()
+    except Exception:
+        logger.debug("Failed to log entry snapshot", exc_info=True)
 
     lines.extend(_warnings)
     return "\n".join(lines)

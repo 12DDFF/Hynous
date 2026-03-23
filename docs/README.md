@@ -122,12 +122,18 @@ Key conventions:
 | [breakeven-fix/](./revisions/breakeven-fix/) | Two-layer capital + fee breakeven system + Round 2 bug fixes (9 bugs A–I) + Round 3 (stale flag cleanup, background wakes) + ML-adaptive trailing stop v2 (regime-based activation, tiered retracement, agent exit lockout). Capital-BE deprecated (2026-03-17). Trailing stop v2 superseded by v3 (2026-03-18). |
 | [trailing-stop-fix/](./revisions/trailing-stop-fix/) | Adaptive Trailing Stop v3 (2026-03-18): continuous exponential retracement replacing 3-tier discrete system. `r(p) = 0.20 + 0.30 × exp(-k × p)`, k calibrated per vol regime against 55,888 BTC snapshots. Eliminates boundary discontinuities and floor violations. |
 
-### In Progress (2026-03-22)
+### Implemented (2026-03-22)
+
+| Track | Description |
+|-------|-------------|
+| [entry-quality-rework/](./revisions/entry-quality-rework/) | Entry quality overhaul (Phases 0-3): 10 ML pipeline bug fixes, 13 models retrained on 62K snapshots, composite entry score (0-100), entry-outcome feedback loop with rolling IC + adaptive weights. Phase 4 (staged entries) deferred pending paper trading data. |
+
+### Future
 
 | Track | Description | Status |
 |-------|-------------|--------|
-| [entry-quality-rework/](./revisions/entry-quality-rework/) | Entry quality overhaul: fix 10 ML pipeline bugs, retrain models with 28 features, composite entry score, entry-outcome feedback loop, staged entries (LLM lookahead) | Phase 0 ready |
-| [llm-lookahead-trade/](./revisions/llm-lookahead-trade/) | Pre-staged trade directives — **superseded by entry-quality-rework Phase 4** | Superseded |
+| [entry-quality-rework Phase 4](./revisions/entry-quality-rework/phase-4-staged-entries.md) | LLM lookahead / mechanical entry execution — architecture TBD based on paper trading results | Deferred |
+| [llm-lookahead-trade/](./revisions/llm-lookahead-trade/) | Original concept doc — **superseded by entry-quality-rework Phase 4** | Superseded |
 
 ### Implemented (2026-03-14) — Phase 1
 

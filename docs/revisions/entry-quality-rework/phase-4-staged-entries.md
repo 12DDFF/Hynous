@@ -1,8 +1,8 @@
 # Phase 4: LLM Lookahead — Staged Entries
 
-> **Status:** Blocked on Phase 2
-> **Depends on:** Phase 2 deployed (composite entry score functional)
-> **Can run in parallel with:** Phase 3
+> **Status:** DEFERRED — pending paper trading data from Phases 1-3
+> **Depends on:** Phase 3 feedback data (IC results, composite score validation)
+> **Design:** Will be revised based on paper trading results. Current guide is the original concept; the architecture may change to Option B (LLM provides direction + conviction only, mechanical system handles timing/levels/risk).
 > **Supersedes:** `docs/revisions/llm-lookahead-trade/README.md` (concept doc)
 
 ---

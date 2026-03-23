@@ -1,6 +1,6 @@
 # Entry Quality Rework
 
-> **Status:** Phase 0 ready for implementation
+> **Status:** Phases 0-3 implemented. Phase 4 deferred pending paper trading data.
 > **Priority:** Critical
 > **Depends on:** Phantom removal (done), ML briefing rewrite (done), trailing stop v3 (done), dynamic protective SL (done)
 
@@ -8,49 +8,61 @@
 
 ## Problem
 
-The entry pipeline has three structural weaknesses:
+The entry pipeline had three structural weaknesses:
 
-1. **The XGBoost direction model is broken.** Feature hash mismatch causes `ModelArtifact.load()` to fail at daemon startup. `_inference_engine` is `None`. Zero direction predictions have been generated since the feature set expanded from 12 to 28.
+1. **The XGBoost direction model was broken.** Feature hash mismatch caused `ModelArtifact.load()` to fail at daemon startup. Zero direction predictions generated. **FIXED in Phase 0+1.**
 
-2. **The LLM is the entry bottleneck.** 5-30s reasoning latency means entry opportunities pass before execution. Exits are mechanical (1s loop) but entries require full LLM reasoning.
+2. **No closed-loop learning.** The system didn't track which market conditions predicted winning entries. **FIXED in Phase 2+3.**
 
-3. **No closed-loop learning.** The system doesn't track which market conditions predicted winning entries. Trade outcomes don't feed back into entry signal quality.
+3. **The LLM is the entry bottleneck.** 5-30s reasoning latency means entry opportunities can pass before execution. **Deferred to Phase 4** — needs paper trading data to inform the right architecture.
 
-## Solution (4 Phases)
+## Solution
 
-| Phase | Guide | What | Depends On |
-|-------|-------|------|------------|
-| 0 | [phase-0-ml-foundation.md](./phase-0-ml-foundation.md) | Fix 14 ML pipeline bugs (TRANSFORM_MAP, avail flags, std, alignment) | Nothing |
-| 1 | [phase-1-retrain-models.md](./phase-1-retrain-models.md) | Retrain direction + condition models with all 28 features | Phase 0 verified |
-| 2 | [phase-2-composite-entry-score.md](./phase-2-composite-entry-score.md) | Mechanical composite entry score replacing LLM signal synthesis | Phase 1 validated |
-| 3 | [phase-3-feedback-loop.md](./phase-3-feedback-loop.md) | Entry-outcome logging, rolling IC, adaptive weights, drift detection | Phase 2 deployed |
-| 4 | [phase-4-staged-entries.md](./phase-4-staged-entries.md) | LLM lookahead: agent stages entries, daemon executes mechanically | Phase 2 deployed |
+| Phase | Guide | What | Status |
+|-------|-------|------|--------|
+| 0 | [phase-0-ml-foundation.md](./phase-0-ml-foundation.md) | Fix 10 ML pipeline bugs (TRANSFORM_MAP, avail flags, std, alignment, threading lock) | **DONE** |
+| 1 | [phase-1-retrain-models.md](./phase-1-retrain-models.md) | Retrain all models on VPS with 62K real-data snapshots. 13 models enabled. | **DONE** |
+| 2 | [phase-2-composite-entry-score.md](./phase-2-composite-entry-score.md) | Mechanical composite entry score (0-100) replacing per-signal LLM synthesis | **DONE** |
+| 3 | [phase-3-feedback-loop.md](./phase-3-feedback-loop.md) | Entry-outcome logging, rolling IC, adaptive weight adjustment | **DONE** |
+| 4 | [phase-4-staged-entries.md](./phase-4-staged-entries.md) | LLM lookahead / mechanical entry execution — architecture TBD | **FUTURE** |
 
-**Phases 3 and 4 can run in parallel** after Phase 2 is stable.
+## Phase 4 Status
 
-## Execution Rules
+Phase 4 (staged entries / LLM lookahead) is deferred until Phases 1-3 are validated in paper trading. The design requires data on:
+- Whether the composite score actually predicts winning entries (Phase 3 IC data)
+- Whether LLM latency is the primary cause of entry quality loss (vs. bad direction calls, bad SL placement, etc.)
+- Whether the LLM should specify exact entry prices (current concept) or just direction + conviction (Option B — simpler, less stale thesis risk)
 
-- Complete each phase fully before starting the next.
-- Run all unit tests + integration tests after each phase.
-- If any test fails or unexpected behavior is observed, **STOP and report** — do not proceed to the next phase.
-- Each guide lists required reading, exact code changes, and verification steps.
+The Phase 4 guide contains the original design. It will be revised based on paper trading results.
 
----
+## Implementation Summary
 
-## Confirmed Bugs (Phase 0)
+### Phase 0 — ML Foundation Fixes (10 bugs)
+- `normalize.py`: TRANSFORM_MAP 14 → 28 entries
+- `features.py`: AVAIL_COLUMNS 11 → 16, 7 avail flag fixes, 5 population→sample std, 4 candle search/stale fixes
+- `pipeline.py`: Unconditional avail column inclusion
+- `inference.py`: Updated stale comments
+- `schema.py`: 5 new avail column migrations
+- `daemon.py`: `_latest_predictions_lock` + wrapped all read/write sites
 
-| # | Bug | File | Severity |
-|---|-----|------|----------|
-| 1 | 14 features missing from TRANSFORM_MAP | normalize.py:27-51 | Critical (blocks retraining) |
-| 2 | Direction model artifact hash mismatch → inference disabled | daemon.py:530, artifact.py:138 | Critical (zero predictions) |
-| 3 | 5 features have no availability flag | features.py | High (model can't detect missing data) |
-| 4 | 2 features set avail=1 unconditionally on neutral | features.py | High (model misinterprets neutral as signal) |
-| 5 | Population std instead of sample std in 5 functions | features.py | Medium (systematic vol underestimate) |
-| 6 | Training/inference avail column count mismatch | pipeline.py:145 vs inference.py:150 | High (dimension mismatch on retrain) |
-| 7 | Stale comment "12 + 9 = 21" in inference.py | inference.py:151 | Low |
-| 8 | No lock on `_latest_predictions` cache | daemon.py:434 | Medium (race condition) |
-| 9 | Fragile candle search in price_trend_1h/4h | features.py:797-801 | Medium |
-| 10 | Stale candle fallback in microstructure features | features.py:1319 | Medium |
+### Phase 1 — Retrain Models (VPS, 62K snapshots)
+- 13 condition models enabled (was 6 effective). Only `reversal_30m` disabled.
+- Key recoveries: entry_quality (0.054→0.341), funding_4h (0→0.277), momentum_quality (0→0.398)
+- Direction model v2 loads cleanly (Spearman ~0.02, inherently hard task)
+
+### Phase 2 — Composite Entry Score
+- `satellite/entry_score.py`: 6-signal weighted composite (entry_quality, vol_favorability, funding_safety, volume_quality, mae_safety, direction_edge)
+- Daemon computes score after condition predictions, caches under lock
+- Trading tool: composite gate (block <25, warn <45) + score-based sizing factor
+- Briefing injection: "Entry score: XX/100 (label)"
+
+### Phase 3 — Entry-Outcome Feedback Loop
+- `satellite/schema.py`: `entry_snapshots` table (22 columns, condition values + outcome)
+- `trading.py`: Logs entry conditions on every successful fill
+- `daemon.py`: Backfills outcome (ROE, PnL, win/loss, exit reason) when trade closes
+- `satellite/signal_evaluator.py`: Rolling Spearman IC per signal, ECE computation
+- `satellite/weight_updater.py`: Auto-adjusts composite score weights from IC (daily, 30-trade minimum)
+- Daemon loads persisted weights on startup, passes to `compute_entry_score()`
 
 ---
 

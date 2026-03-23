@@ -433,6 +433,7 @@ class Daemon:
         self._kill_switch = None                   # NEW — unconditional
         self._latest_predictions: dict[str, dict] = {}  # NEW — unconditional
         self._latest_predictions_lock = threading.Lock()
+        self._staged_entries: dict = {}  # directive_id → StagedEntry
         if config.satellite.enabled:
             try:
                 from satellite.config import SatelliteConfig as SatCfg
@@ -554,6 +555,18 @@ class Daemon:
                 logger.info("Condition wake evaluator initialized")
             except Exception:
                 logger.debug("Condition wake evaluator init failed", exc_info=True)
+
+        # Entry score feedback loop (Phase 3)
+        self._entry_score_weights: dict[str, float] | None = None
+        self._last_feedback_analysis: float = 0
+        self._feedback_thread: threading.Thread | None = None
+        _weights_path = config.project_root / "storage" / "entry_score_weights.json"
+        if _weights_path.exists():
+            try:
+                self._entry_score_weights = json.loads(_weights_path.read_text())
+                logger.info("Loaded entry score weights: %s", self._entry_score_weights)
+            except Exception:
+                logger.debug("Failed to load entry score weights", exc_info=True)
 
         # Stats
         self.wake_count: int = 0
@@ -1250,6 +1263,20 @@ class Daemon:
                     else:
                         logger.debug("Validation still running — skipping interval")
 
+                # 13. Entry score feedback — daily weight adjustment from trade outcomes
+                if (
+                    self._satellite_store
+                    and now - self._last_feedback_analysis >= 86400  # 24 hours
+                ):
+                    self._last_feedback_analysis = now
+                    if self._feedback_thread is None or not self._feedback_thread.is_alive():
+                        self._feedback_thread = threading.Thread(
+                            target=self._run_feedback_analysis,
+                            daemon=True,
+                            name="hynous-feedback",
+                        )
+                        self._feedback_thread.start()
+
             except Exception as e:
                 log_event(DaemonEvent("error", "Loop error", str(e)))
                 logger.error("Daemon loop error: %s", e)
@@ -1747,6 +1774,35 @@ class Daemon:
                             coin=coin,
                             conditions=conditions,
                         )
+
+                        # --- Compute composite entry score ---
+                        try:
+                            from satellite.entry_score import compute_entry_score, EntryScoreConfig
+
+                            # Use feedback-adjusted weights if available
+                            _score_cfg = EntryScoreConfig()
+                            if self._entry_score_weights:
+                                _score_cfg.weights = self._entry_score_weights
+
+                            # Get direction model results for this coin (may be None)
+                            _dir_pred = self._latest_predictions.get(coin, {})
+                            _entry_score = compute_entry_score(
+                                conditions=conditions.to_dict(),
+                                direction_signal=_dir_pred.get("signal"),
+                                direction_long_roe=_dir_pred.get("long_roe", 0),
+                                direction_short_roe=_dir_pred.get("short_roe", 0),
+                                config=_score_cfg,
+                                coin=coin,
+                            )
+                            with self._latest_predictions_lock:
+                                if coin in self._latest_predictions:
+                                    self._latest_predictions[coin]["entry_score"] = _entry_score.score
+                                    self._latest_predictions[coin]["entry_score_label"] = _entry_score.label
+                                    self._latest_predictions[coin]["entry_score_components"] = _entry_score.components
+                                    self._latest_predictions[coin]["entry_score_line"] = _entry_score.to_briefing_line()
+                        except Exception:
+                            logger.debug("Failed to compute entry score for %s", coin, exc_info=True)
+
                         logger.debug(
                             "Condition predictions for %s: %d models, %.1fms",
                             coin, len(conditions.predictions), conditions.inference_time_ms,
@@ -2024,6 +2080,10 @@ class Daemon:
             self._load_position_types()
             # Load trailing stop state (prevents SL degradation on restart)
             self._load_mechanical_state()
+            # Load staged entry directives (filter expired on load)
+            from .staged_entries import load_staged_entries
+            _staged_path = self.config.project_root / "storage" / "staged_entries.json"
+            self._staged_entries = load_staged_entries(_staged_path)
 
             # Infer position types for any remaining unregistered positions
             for coin, data in self._prev_positions.items():
@@ -2069,7 +2129,7 @@ class Daemon:
         and runs check_triggers + peak ROE tracking on every loop.
         """
         provider = self._get_provider()
-        if not hasattr(provider, "check_triggers") or not self._prev_positions:
+        if not hasattr(provider, "check_triggers") or (not self._prev_positions and not self._staged_entries):
             return
 
         try:
@@ -2621,7 +2681,219 @@ class Daemon:
         except Exception as e:
             logger.debug("Fast trigger check failed: %s", e)
 
+        # ── Staged entry evaluation ──
+        if self._staged_entries:
+            try:
+                _se_prices = self._get_provider().get_all_prices()
+                self._evaluate_staged_entries(_se_prices)
+            except Exception as _se_err:
+                logger.debug("Staged entry evaluation failed: %s", _se_err)
+
         self._check_pending_watches()
+
+    def _evaluate_staged_entries(self, prices: dict[str, float]) -> None:
+        """Evaluate staged entry directives against live WS prices.
+
+        Called every ~1s from _fast_trigger_check(). Executes entries
+        mechanically when price trigger + composite score are both satisfied.
+        """
+        from .staged_entries import evaluate_trigger, persist_staged_entries
+
+        now = time.time()
+        to_remove = []
+        ts = get_trading_settings()
+
+        for did, entry in list(self._staged_entries.items()):
+            # Check expiry
+            if now >= entry.expires_at:
+                entry.status = "expired"
+                to_remove.append(did)
+                logger.info("Staged entry expired: %s %s %s", entry.coin, entry.side, did)
+                continue
+
+            # Check price trigger
+            price = prices.get(entry.coin)
+            if not price:
+                continue
+
+            if not evaluate_trigger(entry, price):
+                continue
+
+            # Re-verify composite score at trigger time
+            with self._latest_predictions_lock:
+                _pred = dict(self._latest_predictions.get(entry.coin, {}))
+            current_score = _pred.get("entry_score", 0)
+            if current_score < entry.min_entry_score:
+                # Don't cancel — score may recover. Just skip this tick.
+                continue
+
+            # Re-verify safety gates
+            if self._trading_paused:
+                continue
+            if entry.coin.upper() in self._prev_positions:
+                entry.status = "cancelled"
+                to_remove.append(did)
+                logger.info("Staged entry cancelled (position exists): %s", did)
+                continue
+            if len(self._prev_positions) >= ts.max_open_positions:
+                continue
+
+            # EXECUTE
+            self._execute_staged_entry(entry, price)
+            to_remove.append(did)
+
+        for did in to_remove:
+            self._staged_entries.pop(did, None)
+
+        if to_remove:
+            _path = self.config.project_root / "storage" / "staged_entries.json"
+            persist_staged_entries(self._staged_entries, _path)
+
+    def _execute_staged_entry(self, entry, trigger_price: float) -> None:
+        """Execute a staged entry via provider. Mechanical — no LLM."""
+        try:
+            provider = self._get_provider()
+            ts = get_trading_settings()
+
+            # Set leverage
+            provider.update_leverage(entry.coin, entry.leverage)
+
+            # Compute size from conviction (same formula as trading.py)
+            try:
+                state = provider.get_user_state()
+                portfolio = state.get("account_value", 1000)
+            except Exception:
+                portfolio = 1000
+
+            if entry.confidence >= 0.8:
+                margin = portfolio * (ts.tier_high_margin_pct / 100)
+            elif entry.confidence >= 0.6:
+                margin = portfolio * (ts.tier_medium_margin_pct / 100)
+            else:
+                margin = portfolio * (ts.tier_speculative_margin_pct / 100)
+
+            size_usd = margin * entry.leverage
+            size_usd = min(size_usd, ts.max_position_usd)
+
+            # Execute market order
+            is_buy = entry.side == "long"
+            result = provider.market_open(
+                entry.coin, is_buy, size_usd,
+                self._config.hyperliquid.default_slippage,
+            )
+
+            if result.get("status") != "filled" or not result.get("fillSz"):
+                logger.warning("Staged entry fill failed: %s %s", entry.coin, result)
+                return
+
+            fill_px = float(result.get("avgPx", trigger_price))
+            entry.status = "filled"
+            entry.fill_price = fill_px
+            entry.fill_time = time.time()
+
+            # Place SL/TP triggers (same as trading tool)
+            try:
+                if entry.stop_loss:
+                    provider.place_trigger_order(
+                        symbol=entry.coin,
+                        is_buy=not is_buy,
+                        sz=float(result["fillSz"]),
+                        trigger_px=entry.stop_loss,
+                        tpsl="sl",
+                    )
+                if entry.take_profit:
+                    provider.place_trigger_order(
+                        symbol=entry.coin,
+                        is_buy=not is_buy,
+                        sz=float(result["fillSz"]),
+                        trigger_px=entry.take_profit,
+                        tpsl="tp",
+                    )
+            except Exception:
+                logger.debug("Failed to place staged entry triggers", exc_info=True)
+
+            # Record entry (same as daemon.record_trade_entry())
+            self.record_trade_entry()
+            self.register_position_type(entry.coin, entry.trade_type)
+
+            # Store trade memory in background
+            threading.Thread(
+                target=self._store_staged_trade_memory,
+                args=(entry, fill_px, size_usd),
+                name="hynous-staged-memory",
+                daemon=True,
+            ).start()
+
+            # Notify Discord
+            _notify_discord_simple(
+                f"STAGED ENTRY FILLED: {entry.coin} {entry.side.upper()} "
+                f"@ ${fill_px:,.2f} ({entry.leverage}x) "
+                f"| staged {(time.time() - entry.created_at) / 60:.1f}min ago"
+            )
+
+            logger.info(
+                "Staged entry filled: %s %s @ %.2f (size=$%.0f, staged %.0fs ago)",
+                entry.coin, entry.side, fill_px, size_usd,
+                time.time() - entry.created_at,
+            )
+
+        except Exception:
+            logger.exception("Staged entry execution failed: %s", entry.directive_id)
+
+    def _store_staged_trade_memory(self, entry, fill_px: float, size_usd: float) -> None:
+        """Store staged entry trade memory in Nous. Runs in background thread."""
+        try:
+            from .tools.trading import _store_to_nous
+
+            is_buy = entry.side == "long"
+            if is_buy:
+                risk = fill_px - entry.stop_loss
+                reward = entry.take_profit - fill_px
+            else:
+                risk = entry.stop_loss - fill_px
+                reward = fill_px - entry.take_profit
+            rr_val = round(reward / risk, 2) if risk > 0 else 0
+
+            price_label = f"${fill_px:,.2f}" if fill_px >= 100 else f"${fill_px:,.4f}"
+            content = (
+                f"[STAGED ENTRY — Mechanical fill]\n"
+                f"Thesis: {entry.reasoning}\n"
+                f"Entry: {price_label} | Size: ~${size_usd:,.0f}\n"
+                f"Stop Loss: ${entry.stop_loss:,.2f} | Take Profit: ${entry.take_profit:,.2f}"
+            )
+            if rr_val:
+                content += f" | R:R: {rr_val}:1"
+
+            summary = (
+                f"{entry.side.upper()} {entry.coin} @ {price_label} [staged] | "
+                f"SL ${entry.stop_loss:,.2f} | TP ${entry.take_profit:,.2f}"
+            )
+
+            signals = {
+                "action": "entry",
+                "side": entry.side,
+                "symbol": entry.coin,
+                "entry": fill_px,
+                "stop": entry.stop_loss,
+                "target": entry.take_profit,
+                "size_usd": round(size_usd, 2),
+                "confidence": entry.confidence,
+                "staged": True,
+                "directive_id": entry.directive_id,
+                "trade_type": entry.trade_type,
+            }
+            if rr_val:
+                signals["rr_ratio"] = rr_val
+
+            _store_to_nous(
+                subtype="custom:trade_entry",
+                title=f"{entry.side.upper()} {entry.coin} @ {price_label} [staged]",
+                content=content,
+                summary=summary,
+                signals=signals,
+            )
+        except Exception:
+            logger.debug("Failed to store staged trade memory", exc_info=True)
 
     def _get_ws_candle_feed(self):
         """Get the MarketDataFeed instance from the provider, unwrapping Paper if needed.
@@ -4104,6 +4376,28 @@ class Daemon:
             f"PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%){hold_str}"
         )
 
+        # Backfill entry snapshot outcome for feedback loop (Phase 3)
+        try:
+            if self._satellite_store:
+                self._satellite_store.conn.execute(
+                    "UPDATE entry_snapshots "
+                    "SET outcome_roe = ?, outcome_pnl_usd = ?, "
+                    "outcome_won = ?, close_time = ?, close_reason = ? "
+                    "WHERE id = ("
+                    "  SELECT id FROM entry_snapshots "
+                    "  WHERE coin = ? AND outcome_won IS NULL "
+                    "  ORDER BY entry_time DESC LIMIT 1"
+                    ")",
+                    (
+                        pnl_pct, realized_pnl,
+                        1 if realized_pnl > 0 else 0,
+                        time.time(), classification, coin,
+                    ),
+                )
+                self._satellite_store.conn.commit()
+        except Exception:
+            logger.debug("Failed to backfill entry snapshot outcome", exc_info=True)
+
         if classification == "stop_loss":
             header = f"[DAEMON WAKE — Stop Loss: {coin} {side.upper()} ({type_label})]"
             if is_scalp:
@@ -5120,6 +5414,36 @@ class Daemon:
         except Exception as e:
             logger.warning("Validation run failed: %s", e)
 
+    def _run_feedback_analysis(self):
+        """Compute rolling signal IC and update composite score weights.
+
+        Runs daily. Requires >= 30 closed trades in entry_snapshots.
+        Updates self._entry_score_weights and persists to disk.
+        """
+        try:
+            from satellite.weight_updater import update_weights
+            from satellite.signal_evaluator import compute_rolling_ic, compute_calibration_error
+
+            # Log current signal quality
+            ics = compute_rolling_ic(self._satellite_store, window=30)
+            if ics:
+                logger.info("Rolling IC: %s", ics)
+            ece = compute_calibration_error(self._satellite_store)
+            if ece >= 0:
+                logger.info("Composite score ECE: %.4f", ece)
+
+            # Attempt weight update
+            weights_path = self.config.project_root / "storage" / "entry_score_weights.json"
+            new_weights = update_weights(
+                self._satellite_store, weights_path, min_trades=30,
+            )
+            if new_weights:
+                self._entry_score_weights = new_weights
+                logger.info("Entry score weights updated from feedback loop")
+
+        except Exception as e:
+            logger.debug("Feedback analysis failed: %s", e, exc_info=True)
+
     def _check_conflicts(self):
         """Poll the Nous contradiction queue for pending conflicts.
 
@@ -5675,6 +5999,28 @@ class Daemon:
                 parts.append(warnings_text)
             if position_block:
                 parts.append(position_block)
+
+            # Active staged entries
+            if self._staged_entries:
+                staged_lines = []
+                for e in self._staged_entries.values():
+                    if e.status != "active":
+                        continue
+                    ttl_min = (e.expires_at - time.time()) / 60
+                    price_str = (
+                        f"@ ${e.entry_price:,.2f}"
+                        if e.entry_price
+                        else f"zone ${e.entry_zone_low:,.2f}-${e.entry_zone_high:,.2f}"
+                    )
+                    staged_lines.append(
+                        f"  STAGED: {e.coin} {e.side.upper()} {price_str} "
+                        f"| SL ${e.stop_loss:,.2f} TP ${e.take_profit:,.2f} "
+                        f"| {e.leverage}x | {e.confidence:.0%} "
+                        f"| expires {ttl_min:.0f}min | min_score={e.min_entry_score:.0f}"
+                    )
+                if staged_lines:
+                    parts.append("[Staged Entries]\n" + "\n".join(staged_lines))
+
             parts.append(message)  # Original wake message
 
             full_message = "\n\n".join(parts)

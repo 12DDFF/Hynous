@@ -318,4 +318,38 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         except Exception:
             pass  # column already exists
 
+    # Phase 3: Entry-outcome feedback loop
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS entry_snapshots (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_id            TEXT NOT NULL,
+            coin                TEXT NOT NULL,
+            side                TEXT NOT NULL,
+            entry_time          REAL NOT NULL,
+            composite_score     REAL NOT NULL,
+            vol_1h_regime       TEXT,
+            vol_1h_pctl         INTEGER,
+            entry_quality_pctl  INTEGER,
+            funding_4h_pctl     INTEGER,
+            volume_1h_regime    TEXT,
+            mae_long_pctl       INTEGER,
+            mae_short_pctl      INTEGER,
+            direction_signal    TEXT,
+            direction_long_roe  REAL,
+            direction_short_roe REAL,
+            score_components    TEXT,
+            outcome_roe         REAL,
+            outcome_pnl_usd     REAL,
+            outcome_won         INTEGER,
+            close_time          REAL,
+            close_reason        TEXT
+        )
+    """)
+    for idx in [
+        "CREATE INDEX IF NOT EXISTS idx_es_coin ON entry_snapshots(coin)",
+        "CREATE INDEX IF NOT EXISTS idx_es_time ON entry_snapshots(entry_time)",
+        "CREATE INDEX IF NOT EXISTS idx_es_outcome ON entry_snapshots(outcome_won)",
+    ]:
+        conn.execute(idx)
+
     conn.commit()

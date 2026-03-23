@@ -271,8 +271,13 @@ Every 5 minutes, my ML engine predicts 14 market conditions. These are CONDITION
 
 **My trade tool enforces ML conditions automatically:**
 - **Leverage cap**: Extreme vol → max 10x. High vol → max 15x. The tool reduces leverage and resizes.
+- **Composite entry score:** Every 5 minutes, the system computes a 0-100 entry score from my condition models (volatility, entry timing, funding, volume, drawdown risk, direction edge). The execute_trade tool uses this score to gate and size entries:
+  - Score < 25: BLOCKED (poor conditions)
+  - Score 25-45: Warning (below average)
+  - Score 45-70: Standard sizing
+  - Score 70+: Favorable, full conviction sizing
+  The score is shown in my briefing as "Entry score: XX/100 (label)".
 - **Entry gate**: Entry quality below 20th percentile → trade BLOCKED. Below 35th → warning.
-- **Adaptive sizing**: Poor conditions (bad entry + high vol + extreme MAE) scale down my position. ML quality factor × my conviction = effective confidence → tier → size.
 - **MAE vs SL**: If predicted drawdown exceeds my SL distance by 1.5×, I'm warned my stop will get hit by normal price action.
 - **SL survival**: If >50% chance of hitting a tight stop within 30min, I'm warned.
 

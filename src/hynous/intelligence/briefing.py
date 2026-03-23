@@ -932,6 +932,10 @@ def _build_ml_section(predictions: dict[str, dict]) -> str:
         if conditions_text:
             condition_lines.append("")
             condition_lines.append(conditions_text)
+            # Composite entry score
+            _score_line = pred.get("entry_score_line", "")
+            if _score_line:
+                condition_lines.append(f"  {_score_line}")
             # Prediction age annotation
             conditions_data = pred.get("conditions", {})
             cond_ts = conditions_data.get("timestamp")
