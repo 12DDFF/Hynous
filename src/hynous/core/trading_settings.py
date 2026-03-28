@@ -122,6 +122,12 @@ class TradingSettings:
     # Minimum trail distance above fee-BE (guarantees net profit when trail fires).
     trail_min_distance_above_fee_be: float = 0.5  # ROE % above fee-BE floor
 
+    # --- Autonomous Close Lockout ---
+    # When True, the agent cannot call close_position or cancel_orders during
+    # daemon wakes. Only user-initiated closes (chat, Discord) are allowed.
+    # Mechanical exits (trailing stop, dynamic SL, fee-BE, small wins) are unaffected.
+    autonomous_close_lockout: bool = True
+
     # --- Dynamic Protective SL (replaces capital-breakeven) ---
     dynamic_sl_enabled: bool = True
     dynamic_sl_low_vol: float = 2.5       # ROE % SL distance in low vol

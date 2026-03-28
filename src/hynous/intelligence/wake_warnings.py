@@ -277,9 +277,9 @@ def _check_profit_at_risk(provider, warnings: list):
             leverage = p.get("leverage", 20)
             nudge, take, _urgent, _ = Daemon._profit_thresholds(leverage)
             if ret_pct >= take:
-                warnings.append(f"{coin} is up {ret_pct:.1f}% — that's exceptional. Tighten stop or take profit NOW.")
+                warnings.append(f"{coin} is up {ret_pct:.1f}% — trailing stop tracking this position")
             elif ret_pct >= nudge:
-                warnings.append(f"{coin} is up {ret_pct:.1f}% — tighten stop to lock in gains")
+                warnings.append(f"{coin} is up {ret_pct:.1f}% — mechanical exits active")
     except Exception:
         pass
 

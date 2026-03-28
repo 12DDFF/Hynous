@@ -143,7 +143,7 @@ class TestPromptUpdated:
         # Extract its value
         end = src.find('"""', idx + len('profit_taking = """'))
         profit_taking = src[idx:end]
-        assert "cannot override" in profit_taking.lower() or "locked" in profit_taking.lower()
+        assert "cannot override" in profit_taking.lower() or "locked" in profit_taking.lower() or "fully mechanical" in profit_taking.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +415,5 @@ class TestExistingBehaviorUnchanged:
         """Dynamic SL and fee-BE blocks must exist in _fast_trigger_check."""
         src = _daemon_source()
         method = _get_method(src, "_fast_trigger_check")
-        # Dynamic SL replaced capital-BE (capital_breakeven_enabled is deprecated/False)
         assert "dynamic_sl_enabled" in method
         assert "breakeven_stop_enabled" in method

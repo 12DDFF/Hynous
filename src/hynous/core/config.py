@@ -115,9 +115,6 @@ class DaemonConfig:
     # Wake rate limiting
     max_wakes_per_hour: int = 6           # Rate limit on agent wakes
     wake_cooldown_seconds: int = 120      # Min seconds between non-priority wakes
-    # Phantom tracker (inaction cost)
-    phantom_check_interval: int = 1800          # Seconds between phantom evaluations (30 min)
-    phantom_max_age_seconds: int = 14400        # Max phantom lifetime (4h, macro default)
     # Playbook matcher (Issue 5: procedural memory)
     playbook_cache_ttl: int = 1800              # Seconds between playbook cache refreshes (30 min)
     # Peak profit protection
@@ -126,9 +123,7 @@ class DaemonConfig:
     breakeven_stop_enabled: bool = True            # Auto-move SL to entry buffer once fees are cleared
     breakeven_buffer_micro_pct: float = 0.07       # Price % buffer above entry (long) / below (short) — micro (equals round-trip fee → nets ~0%)
     breakeven_buffer_macro_pct: float = 0.07       # Same for macro — true breakeven regardless of trade type
-    capital_breakeven_enabled: bool = False   # DEPRECATED — replaced by dynamic_sl_enabled
-    capital_breakeven_roe: float = 0.5        # DEPRECATED — kept for config compat
-    dynamic_sl_enabled: bool = True           # NEW — master switch for dynamic protective SL
+    dynamic_sl_enabled: bool = True           # Master switch for dynamic protective SL
     # Trailing stop (mechanical exit — no agent involvement)
     trailing_stop_enabled: bool = True              # Master switch for trailing stop system
     trailing_activation_roe: float = 2.8            # ROE % to activate trailing (modeled optimum)
@@ -331,15 +326,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
             breakeven_stop_enabled=daemon_raw.get("breakeven_stop_enabled", True),
             breakeven_buffer_micro_pct=daemon_raw.get("breakeven_buffer_micro_pct", 0.07),
             breakeven_buffer_macro_pct=daemon_raw.get("breakeven_buffer_macro_pct", 0.07),
-            capital_breakeven_enabled=daemon_raw.get("capital_breakeven_enabled", False),
-            capital_breakeven_roe=daemon_raw.get("capital_breakeven_roe", 0.5),
             dynamic_sl_enabled=daemon_raw.get("dynamic_sl_enabled", True),
             trailing_stop_enabled=daemon_raw.get("trailing_stop_enabled", True),
             candle_peak_tracking_enabled=daemon_raw.get("candle_peak_tracking_enabled", True),
             peak_reversion_threshold_micro=daemon_raw.get("peak_reversion_threshold_micro", 0.40),
             peak_reversion_threshold_macro=daemon_raw.get("peak_reversion_threshold_macro", 0.50),
-            phantom_check_interval=daemon_raw.get("phantom_check_interval", 1800),
-            phantom_max_age_seconds=daemon_raw.get("phantom_max_age_seconds", 14400),
             playbook_cache_ttl=daemon_raw.get("playbook_cache_ttl", 1800),
             ws_price_feed=daemon_raw.get("ws_price_feed", True),
             labeler_interval=daemon_raw.get("labeler_interval", 3600),

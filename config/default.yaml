@@ -53,8 +53,6 @@ daemon:
   breakeven_stop_enabled: true
   breakeven_buffer_micro_pct: 0.07   # Price % buffer for breakeven stop (matches round-trip fee)
   breakeven_buffer_macro_pct: 0.07   # Same for macro trades
-  capital_breakeven_enabled: false    # DEPRECATED — replaced by dynamic_sl
-  capital_breakeven_roe: 0.5         # DEPRECATED
   dynamic_sl_enabled: true           # Vol-regime protective SL at entry
   # Trailing stop (mechanical exit — no agent involvement)
   trailing_stop_enabled: true          # Master switch
@@ -76,6 +74,9 @@ daemon:
   trail_ret_k_low: 0.040
   # Minimum trail distance above fee-BE (ROE %)
   trail_min_distance_above_fee_be: 0.5
+  # Agent cannot close positions during autonomous daemon wakes.
+  # User-initiated closes (chat, Discord) always allowed.
+  autonomous_close_lockout: true
   # Candle-based peak tracking (enhances MFE/MAE for trailing stop accuracy)
   candle_peak_tracking_enabled: true
   # WebSocket price feed (sub-second prices for mechanical exits)

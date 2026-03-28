@@ -1595,6 +1595,31 @@ def handle_close_position(
         entry_px=position.get("entry_px", 0), size=position["size"],
     )
 
+    # --- Autonomous close lockout: agent cannot close from daemon wakes ---
+    # Mechanical exits (trailing stop, dynamic SL, fee-BE) handle all exits.
+    # Only user-initiated closes (chat, Discord) are allowed through.
+    try:
+        from ...core.trading_settings import get_trading_settings
+        _ts = get_trading_settings()
+        if _ts.autonomous_close_lockout:
+            from ...core.request_tracer import get_active_trace, get_tracer
+            _trace_id = get_active_trace()
+            if _trace_id:
+                _trace = get_tracer()._active.get(_trace_id)
+                if _trace and _trace.get("source", "").startswith("daemon:"):
+                    _record_trade_span(
+                        "close_position", "autonomous_lockout", False,
+                        f"BLOCKED: autonomous close not allowed (source={_trace['source']})",
+                    )
+                    return (
+                        f"BLOCKED: You cannot close {symbol} during autonomous operation. "
+                        f"The mechanical exit system (dynamic SL / fee-BE / trailing stop) "
+                        f"manages all exits. Only the user can close positions manually via chat. "
+                        f"Focus on entries — exits are mechanical."
+                    )
+    except Exception:
+        pass  # If tracing unavailable, allow the close (safety fallback)
+
     # --- Trailing stop lockout: agent cannot close when trail is active ---
     # Once the trailing stop activates, the mechanical system owns the exit.
     # The agent's job is entries only — exits are fully mechanical.
@@ -2035,6 +2060,58 @@ def handle_modify_position(
                 f"Error: Take profit ({_fmt_price(take_profit)}) must be below "
                 f"mark price ({_fmt_price(mark_px)}) for a short."
             )
+
+    # --- Autonomous modify lockout: restrict destructive modifications from daemon wakes ---
+    # During daemon wakes: block cancel_orders (nukes SL+TP) and TP changes.
+    # SL tightening remains allowed (reinforces mechanical exits).
+    try:
+        from ...core.trading_settings import get_trading_settings as _gts
+        _ts_mod = _gts()
+        if _ts_mod.autonomous_close_lockout:
+            from ...core.request_tracer import get_active_trace as _gat, get_tracer as _gt
+            _tid = _gat()
+            if _tid:
+                _tr = _gt()._active.get(_tid)
+                if _tr and _tr.get("source", "").startswith("daemon:"):
+                    if cancel_orders:
+                        return (
+                            f"BLOCKED: Cannot cancel orders for {symbol} during autonomous operation. "
+                            f"Mechanical stops must remain in place. Only the user can cancel orders via chat."
+                        )
+                    if take_profit is not None:
+                        return (
+                            f"BLOCKED: Cannot modify take profit for {symbol} during autonomous operation. "
+                            f"Only the user can adjust take profits via chat."
+                        )
+    except Exception:
+        pass
+
+    # --- Mechanical TP lockout: LLM can only TIGHTEN take profits, never widen ---
+    # Mirrors the SL widening guard. Prevents the agent from defeating its own TP
+    # by moving it out of reach. TP can only move closer to current price.
+    if take_profit is not None:
+        _tp_triggers = []
+        try:
+            _tp_triggers = provider.get_trigger_orders(symbol)
+        except Exception:
+            pass
+        for t in _tp_triggers:
+            if t.get("order_type") == "take_profit":
+                existing_tp = t.get("trigger_px")
+                if existing_tp is not None:
+                    if is_long and take_profit > existing_tp:
+                        return (
+                            f"BLOCKED: Cannot widen take profit from ${existing_tp:,.2f} to ${take_profit:,.2f}. "
+                            f"Take profits can only be TIGHTENED (moved closer to current price). "
+                            f"Your TP must be <= ${existing_tp:,.2f} for this long."
+                        )
+                    if not is_long and take_profit < existing_tp:
+                        return (
+                            f"BLOCKED: Cannot widen take profit from ${existing_tp:,.2f} to ${take_profit:,.2f}. "
+                            f"Take profits can only be TIGHTENED (moved closer to current price). "
+                            f"Your TP must be >= ${existing_tp:,.2f} for this short."
+                        )
+                break
 
     # --- Fetch existing trigger orders (used by lockout check AND cancel-replace flow) ---
     existing_triggers = []

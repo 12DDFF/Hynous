@@ -1844,22 +1844,21 @@ def format_scanner_wake(
         risk_coin = risk[0].symbol
         ptype = (position_types or {}).get(risk_coin, {}).get("type", "macro")
         if ptype == "micro":
-            lines.append("This is a scalp — book flipped against you. Close or tighten SL now. Don't hold a micro against the flow. 1-2 sentences.")
+            lines.append("Scalp — book flipped against you. Mechanical exits are active. You can tighten SL via modify_position if needed. 1-2 sentences.")
         else:
-            lines.append("Swing position — book pressure building. Check if your thesis still holds. Tighten stop or hold if conviction is strong. 1-2 sentences.")
+            lines.append("Swing — book pressure building against you. Mechanical exits managing this position. Tighten SL via modify_position if conviction is weakening. 1-2 sentences.")
     elif has_peak_fade and not has_micro and not has_macro and not has_news:
         fade_coin = peak_fade[0].symbol
         ptype = (position_types or {}).get(fade_coin, {}).get("type", "macro")
         if ptype == "micro":
             lines.append(
-                "Scalp is giving back a significant chunk of peak profit. You had it, now it's eroding. "
-                "CLOSE or tighten SL to current mark. 'Waiting for recovery' is not a plan on a micro. 1-2 sentences."
+                "Scalp gave back a significant chunk of peak profit. "
+                "Trailing stop / dynamic SL will manage the exit. You can tighten SL via modify_position if needed. 1-2 sentences."
             )
         else:
             lines.append(
-                "Swing position is fading from its peak. Three options: close and lock in what's left, "
-                "tighten SL to current mark, or state clearly why your thesis still points higher. "
-                "No answer is not an answer. 1-2 sentences."
+                "Swing fading from peak. Mechanical exits are tracking this position. "
+                "You can tighten SL via modify_position if thesis is weakening. 1-2 sentences."
             )
     elif has_news and not has_micro and not has_macro:
         lines.append(f"Signal or noise? If it matters for your positions or thesis, act on it.{direction_hint} 1-2 sentences.")
@@ -1875,73 +1874,3 @@ def format_scanner_wake(
     lines.append("IMPORTANT: If you decide to trade, you MUST call execute_trade. Writing 'Entered long' in text does NOT open a position. If the tool rejects your parameters, ADJUST and retry — don't give up after one rejection.")
 
     return "\n".join(lines)
-
-
-def infer_phantom_direction(anomaly: AnomalyEvent) -> str | None:
-    """Infer a tradeable direction from an anomaly event for phantom tracking.
-
-    Returns "long", "short", or None if direction is ambiguous.
-    Conservative — returns None for signals where direction isn't clear.
-    """
-    fp = anomaly.fingerprint
-    atype = anomaly.type
-
-    # funding_extreme:SYM:high → crowded longs paying shorts → fade them → SHORT
-    # funding_extreme:SYM:low  → crowded shorts paying longs → fade them → LONG
-    if atype == "funding_extreme":
-        if fp.endswith(":high"):
-            return "short"
-        elif fp.endswith(":low"):
-            return "long"
-        return None
-
-    # liq_cascade: "longs rekt" → capitulation → contrarian LONG
-    # liq_cascade: "shorts rekt" → squeeze → contrarian SHORT
-    if atype == "liq_cascade":
-        hl = anomaly.headline.lower()
-        if "longs" in hl:
-            return "long"
-        elif "shorts" in hl:
-            return "short"
-        return None
-
-    # book_flip: ask→bid = buying pressure building → LONG
-    # book_flip: bid→ask = selling pressure building → SHORT
-    if atype == "book_flip":
-        if "ask→bid" in fp:
-            return "long"
-        elif "bid→ask" in fp:
-            return "short"
-        return None
-
-    # momentum_burst: up → LONG, down → SHORT
-    if atype == "momentum_burst":
-        if fp.endswith(":up"):
-            return "long"
-        elif fp.endswith(":down"):
-            return "short"
-        return None
-
-    # price_spike: direction from headline sign
-    if atype == "price_spike":
-        # headline format: "SYM +3.2% in 5min" or "SYM -4.1% in 15min"
-        hl = anomaly.headline
-        pct_part = hl.split("%")[0] if "%" in hl else ""
-        if "+" in pct_part:
-            return "long"
-        elif "-" in pct_part:
-            return "short"
-        return None
-
-    # oi_surge: fingerprint has direction
-    if atype == "oi_surge":
-        if fp.endswith(":up"):
-            return "long"
-        elif fp.endswith(":down"):
-            return "short"
-        return None
-
-    # Ambiguous signals — no phantom
-    # oi_price_divergence, funding_flip, market_liq_wave,
-    # position_adverse_book, news_alert
-    return None

@@ -416,16 +416,6 @@ class TestBugILoadConfigWiring:
         assert "breakeven_buffer_macro_pct" in source, \
             "breakeven_buffer_macro_pct must be wired in load_config()"
 
-    def test_capital_breakeven_enabled_wired(self):
-        source = _load_config_source()
-        assert "capital_breakeven_enabled" in source, \
-            "capital_breakeven_enabled must be wired in load_config()"
-
-    def test_capital_breakeven_roe_wired(self):
-        source = _load_config_source()
-        assert "capital_breakeven_roe" in source, \
-            "capital_breakeven_roe must be wired in load_config()"
-
     def test_trailing_stop_enabled_wired(self):
         source = _load_config_source()
         assert "trailing_stop_enabled" in source, \
@@ -447,8 +437,6 @@ class TestBugILoadConfigWiring:
         """YAML values for all newly-wired fields must be parseable."""
         cfg = _default_yaml()
         daemon_cfg = cfg.get("daemon", {})
-        assert daemon_cfg.get("capital_breakeven_enabled") is False  # DEPRECATED — replaced by dynamic_sl
-        assert daemon_cfg.get("capital_breakeven_roe") == 0.5
         assert daemon_cfg.get("trailing_stop_enabled") is True
         assert daemon_cfg.get("trailing_activation_roe") == 2.8
         assert daemon_cfg.get("candle_peak_tracking_enabled") is True

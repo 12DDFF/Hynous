@@ -343,7 +343,6 @@ class Daemon:
         self._trough_roe: dict[str, float] = {}   # coin → min ROE % seen during hold (MAE, negative = drawdown)
         self._current_roe: dict[str, float] = {}   # coin → latest computed ROE % (updated every 10s)
         self._breakeven_set: dict[str, bool] = {}  # coin → True once breakeven SL placed this hold
-        self._capital_be_set: dict[str, bool] = {}  # coin → True once capital-breakeven SL placed this hold
         self._dynamic_sl_set: dict[str, bool] = {}   # True once dynamic protective SL placed
         self._small_wins_exited: dict[str, bool] = {}  # coin → True once small-wins exit fired
         self._small_wins_tp_placed: dict[str, bool] = {}  # coin → True once exchange TP order placed
@@ -384,12 +383,6 @@ class Daemon:
 
         # Scanner stats
         self._scanner_pass_streak: int = 0
-
-        # Phantom tracker (inaction cost — tracks what would have happened on passes)
-        self._phantoms: list[dict] = []           # Active phantom positions
-        self._phantom_results: list[dict] = []    # Resolved (for historical context)
-        self._last_phantom_check: float = 0
-        self._phantom_stats = {"missed": 0, "good_pass": 0, "expired": 0}
 
         # Cached counts (for snapshot, avoids re-querying Nous)
         self._active_watchpoint_count: int = 0
@@ -1035,8 +1028,6 @@ class Daemon:
         self._last_labeler_run = time.time() - self.config.daemon.labeler_interval + 300  # First run after 5min warmup
         self._last_validation_run = time.time() - self.config.daemon.validation_interval + 3600  # First run after 1h warmup
         self._last_fill_check = time.time()
-        self._last_phantom_check = time.time()
-        # self._load_phantoms()  # DISABLED — phantom system removed
         self._load_daily_pnl()
 
         # Start WebSocket market data feed via provider
@@ -1194,11 +1185,6 @@ class Daemon:
                     else:
                         logger.debug("Conflict check still running — skipping interval")
 
-                # 7b. Phantom evaluation — DISABLED (removed from system)
-                # if self._phantoms and now - self._last_phantom_check >= self.config.daemon.phantom_check_interval:
-                #     self._last_phantom_check = now
-                #     self._evaluate_phantoms()
-
                 # 8. Nous health check (default every 1 hour)
                 if now - self._last_health_check >= self.config.daemon.health_check_interval:
                     self._last_health_check = now
@@ -1355,10 +1341,6 @@ class Daemon:
             self._data_changed = True
             self.polls += 1
 
-            # Quick phantom evaluation — DISABLED (removed from system)
-            # if self._phantoms:
-            #     self._evaluate_phantoms()
-            #     self._last_phantom_check = time.time()
         except Exception as e:
             logger.debug("Price poll failed: %s", e)
 
@@ -2187,7 +2169,6 @@ class Daemon:
                     self._trailing_active.pop(_coin, None)
                     self._trailing_stop_px.pop(_coin, None)
                     self._peak_roe.pop(_coin, None)
-                    self._capital_be_set.pop(_coin, None)
                     self._breakeven_set.pop(_coin, None)
                     self._dynamic_sl_set.pop(_coin, None)
                 self._persist_mechanical_state()
@@ -2384,8 +2365,6 @@ class Daemon:
                                 )
                                 self._refresh_trigger_cache()  # Fix Bug A: was missing
                                 self._breakeven_set[sym] = True
-                                # Also mark capital-BE as set (fee-BE is strictly tighter)
-                                self._capital_be_set[sym] = True
                                 self._dynamic_sl_set[sym] = True
                                 type_label = f"{trade_type} {leverage}x"
                                 logger.info(
@@ -2985,73 +2964,6 @@ class Daemon:
                     if self._trailing_active.get(sym):
                         self._persist_mechanical_state()
 
-                    # Re-evaluate capital-breakeven if candle shows threshold was crossed.
-                    # A wick above the threshold (even sub-second) earns entry-price protection.
-                    # Only capital-BE — fee-BE requires sustained price above threshold.
-                    if (
-                        self.config.daemon.capital_breakeven_enabled
-                        and not self._capital_be_set.get(sym)
-                        and not self._breakeven_set.get(sym)
-                    ):
-                        capital_threshold = self.config.daemon.capital_breakeven_roe
-                        if best_roe >= capital_threshold:
-                            is_long = (side == "long")
-                            # Pure dict lookups — moved outside try so old_sl_info_candle
-                            # can be saved before any cancel happens (mirrors _fast_trigger_check).
-                            triggers_for_sym = self._tracked_triggers.get(sym, [])
-                            has_tighter = any(
-                                t.get("order_type") == "stop_loss" and (
-                                    (is_long and t.get("trigger_px", 0) >= entry_px) or
-                                    (not is_long and 0 < t.get("trigger_px", 0) <= entry_px)
-                                )
-                                for t in triggers_for_sym
-                            )
-                            if has_tighter:
-                                self._capital_be_set[sym] = True
-                            else:
-                                # Save old SL for rollback — cancel can succeed before place
-                                # fails, leaving position with NO stop-loss. Same pattern as
-                                # _fast_trigger_check capital-BE block.
-                                old_sl_info_candle = None
-                                for t in triggers_for_sym:
-                                    if t.get("order_type") == "stop_loss" and t.get("oid"):
-                                        old_sl_info_candle = (t["oid"], t.get("trigger_px"))
-                                        break
-                                try:
-                                    for t in triggers_for_sym:
-                                        if t.get("order_type") == "stop_loss" and t.get("oid"):
-                                            self._get_provider().cancel_order(sym, t["oid"])
-                                    self._get_provider().place_trigger_order(
-                                        symbol=sym,
-                                        is_buy=(side != "long"),
-                                        sz=self._prev_positions.get(sym, {}).get("size", 0),
-                                        trigger_px=entry_px,
-                                        tpsl="sl",
-                                    )
-                                    self._refresh_trigger_cache()
-                                    self._capital_be_set[sym] = True
-                                    logger.info(
-                                        "Capital-BE from candle: %s %s | candle peak ROE %.1f%% >= %.1f%%",
-                                        sym, side, best_roe, capital_threshold,
-                                    )
-                                except Exception as cbe_candle_err:
-                                    logger.warning("Candle capital-BE failed for %s: %s", sym, cbe_candle_err)
-                                    # Rollback: restore old SL if placement failed
-                                    if old_sl_info_candle:
-                                        try:
-                                            self._get_provider().place_trigger_order(
-                                                symbol=sym,
-                                                is_buy=(side != "long"),
-                                                sz=self._prev_positions.get(sym, {}).get("size", 0),
-                                                trigger_px=old_sl_info_candle[1],
-                                                tpsl="sl",
-                                            )
-                                            self._refresh_trigger_cache()
-                                        except Exception:
-                                            logger.error(
-                                                "CRITICAL: Failed to restore old SL for %s after candle capital-BE failure", sym,
-                                            )
-
                 if worst_roe < self._trough_roe.get(sym, 0):
                     old_trough = self._trough_roe.get(sym, 0)
                     self._trough_roe[sym] = worst_roe
@@ -3301,7 +3213,7 @@ class Daemon:
         self._update_daily_pnl(realized_pnl)
 
         # Record to Nous (auto-triggered closes aren't written by agent)
-        if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop", "capital_breakeven_stop", "dynamic_protective_sl"):
+        if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop", "dynamic_protective_sl"):
             self._record_trigger_close({
                 "coin": coin, "side": side, "entry_px": entry_px,
                 "exit_px": exit_px, "realized_pnl": realized_pnl,
@@ -3659,7 +3571,6 @@ class Daemon:
                 if prev_side and prev_side != side:
                     self._profit_alerts.pop(coin, None)
                     self._breakeven_set.pop(coin, None)         # New position — re-evaluate breakeven
-                    self._capital_be_set.pop(coin, None)        # New position — re-evaluate capital-BE
                     self._dynamic_sl_set.pop(coin, None)        # New position — re-evaluate dynamic SL
                     self._small_wins_exited.pop(coin, None)    # New hold — re-arm small wins
                     self._small_wins_tp_placed.pop(coin, None) # New hold — re-arm TP order
@@ -3728,9 +3639,6 @@ class Daemon:
             for coin in list(self._breakeven_set):
                 if coin not in open_coins:
                     del self._breakeven_set[coin]
-            for coin in list(self._capital_be_set):
-                if coin not in open_coins:
-                    del self._capital_be_set[coin]
             for coin in list(self._dynamic_sl_set):
                 if coin not in open_coins:
                     del self._dynamic_sl_set[coin]
@@ -3815,46 +3723,46 @@ class Daemon:
             )
             priority = False
         elif tier == "urgent_profit":
-            header = f"[DAEMON WAKE — TAKE PROFIT: {coin} {side.upper()} +{roe_pct:.0f}%]"
+            header = f"[DAEMON WAKE — Profit Check: {coin} {side.upper()} +{roe_pct:.0f}%]"
             if is_scalp:
-                footer = f"This scalp is up {roe_pct:+.0f}%. That's a clean win — close it and move on."
+                footer = f"Scalp up {roe_pct:+.0f}%. Mechanical exits are tracking this position."
             else:
-                footer = f"Swing up {roe_pct:+.0f}% — your thesis played out. Take profit or give a clear reason to hold."
+                footer = f"Swing up {roe_pct:+.0f}%. Trailing stop will manage the exit if price reverses."
             priority = True
         elif tier == "take_profit":
-            header = f"[DAEMON WAKE — Profit Alert: {coin} {side.upper()} +{roe_pct:.0f}%]"
+            header = f"[DAEMON WAKE — Profit Check: {coin} {side.upper()} +{roe_pct:.0f}%]"
             if is_scalp:
-                footer = f"Scalp up {roe_pct:+.0f}%. Lock in the gain — don't let a quick win turn into a hold."
+                footer = f"Scalp up {roe_pct:+.0f}%. Trailing stop active — mechanical exit manages this."
             else:
-                footer = f"Swing position up {roe_pct:+.0f}%. Consider taking some off the table or trail your stop."
+                footer = f"Swing up {roe_pct:+.0f}%. Trailing stop tracking — let the mechanical system work."
             priority = True
         elif tier == "profit_nudge":
             header = f"[DAEMON WAKE — {coin} {side.upper()} +{roe_pct:.0f}%]"
             if is_scalp:
-                footer = f"Scalp up {roe_pct:+.0f}%. CLOSE THIS TRADE NOW. This is peak micro profit — take it before it reverses."
+                footer = f"Scalp up {roe_pct:+.0f}%. Position running — mechanical exits active."
             else:
-                footer = f"Swing building nicely at +{roe_pct:.0f}%. Trail your stop to lock in the move."
+                footer = f"Swing building at +{roe_pct:.0f}%. Trailing stop will engage when appropriate."
             priority = False
         elif tier == "profit_fading":
             peak = self._peak_roe.get(coin, 0)
-            header = f"[DAEMON WAKE — PROFIT FADING: {coin} {side.upper()} peaked +{peak:.0f}% → now {roe_pct:+.0f}%]"
+            header = f"[DAEMON WAKE — Profit Update: {coin} {side.upper()} peaked +{peak:.0f}% -> now {roe_pct:+.0f}%]"
             if is_scalp:
                 footer = (
-                    f"Scalp peaked at +{peak:.0f}% ROE but now at {roe_pct:+.0f}%. "
-                    f"Your profit is dying. CLOSE NOW or you lose it all."
+                    f"Scalp peaked at +{peak:.0f}% ROE, now at {roe_pct:+.0f}%. "
+                    f"Trailing stop / dynamic SL will handle the exit."
                 )
             else:
                 footer = (
-                    f"Swing peaked at +{peak:.0f}% ROE but dropped to {roe_pct:+.0f}%. "
-                    f"Profit is fading fast. Take what's left or tighten your stop."
+                    f"Swing peaked at +{peak:.0f}% ROE, now at {roe_pct:+.0f}%. "
+                    f"Mechanical exits are managing this position."
                 )
             priority = True
         elif tier == "risk_no_sl":
             header = f"[DAEMON WAKE — RISK: {coin} {side.upper()} {roe_pct:+.0f}%]"
             if is_scalp:
-                footer = f"Scalp down {roe_pct:+.0f}% with no SL. Close or set a tight stop immediately."
+                footer = f"Scalp at {roe_pct:+.0f}% with no SL detected. Check if dynamic SL placement failed — set a stop via modify_position."
             else:
-                footer = f"Swing down {roe_pct:+.0f}% with no stop loss. Your thesis needs a line in the sand — set one."
+                footer = f"Swing at {roe_pct:+.0f}% with no stop loss detected. Set a stop via modify_position to protect capital."
             priority = True
         else:
             return
@@ -3986,7 +3894,7 @@ class Daemon:
     def _build_historical_context(self, anomalies: list) -> str:
         """Build a [Track Record] block for scanner wakes.
 
-        Phantom/regret system DISABLED. Only pass streak detection remains.
+        Pass streak detection for scanner wakes.
         """
         lines = []
 
@@ -3996,44 +3904,6 @@ class Daemon:
         if not lines:
             return ""
         return "[Track Record]\n" + "\n".join(lines)
-
-    def _build_ml_context(self, anomalies: list) -> str:
-        """Build compact ML conditions block for scanner wakes.
-
-        Shows only high/extreme regime predictions for coins in the anomalies,
-        so the agent sees risk and opportunity signals alongside the scanner alert.
-        """
-        coins = {a.symbol for a in anomalies if a.symbol != "MARKET"}
-        if not coins or not self._latest_predictions:
-            return ""
-
-        lines = []
-        for coin in sorted(coins):
-            with self._latest_predictions_lock:
-                pred = dict(self._latest_predictions.get(coin, {}))
-            cond = pred.get("conditions", {})
-            if not cond:
-                continue
-
-            highlights = []
-            for name in ["vol_1h", "vol_4h", "range_30m", "move_30m", "mae_long",
-                         "mae_short", "entry_quality", "vol_expand", "funding_4h"]:
-                info = cond.get(name)
-                if not info:
-                    continue
-                regime = info.get("regime", "normal")
-                if regime in ("high", "extreme"):
-                    pctl = info.get("percentile", 0)
-                    val = info.get("value", 0)
-                    highlights.append(f"{name}={val:.2f} (p{pctl}, {regime})")
-
-            if highlights:
-                lines.append(f"  {coin}: {', '.join(highlights)}")
-
-        if not lines:
-            return ""
-
-        return "[ML Conditions — noteworthy]\n" + "\n".join(lines)
 
     # Validation specs per signal type — injected into scanner wake prompts.
     # Each spec teaches the agent WHAT to fetch and HOW to assess it for this
@@ -4275,7 +4145,7 @@ class Daemon:
             top_event = top[0]
             title = top_event.headline
 
-            # Track pass streak + phantom creation
+            # Track pass streak
             if self.agent.last_chat_had_trade_tool():
                 self._scanner_pass_streak = 0
                 # Issue 5: auto-link matched playbooks to the trade entry
@@ -4283,8 +4153,6 @@ class Daemon:
                     self._link_playbooks_to_trade(matched_playbooks, top)
             else:
                 self._scanner_pass_streak += 1
-                # Phantom tracking — DISABLED (removed from system)
-                # self._maybe_create_phantom(top_event, agent_response=response)
 
             log_event(DaemonEvent(
                 "scanner", title,
@@ -4484,356 +4352,6 @@ class Daemon:
             )
             logger.info("Fill wake complete: %s %s %s %s (PnL: %s%.2f)",
                          classification, trade_type, coin, side, pnl_sign, abs(realized_pnl))
-
-    # ================================================================
-    # Phantom Tracker — Inaction Cost
-    # ================================================================
-
-    _PHANTOM_PARAMS_RE = re.compile(
-        r'Conviction:\s*([\d.]+).*?\[SL\s*([\d.]+)%\s*TP\s*([\d.]+)%\]',
-        re.IGNORECASE,
-    )
-
-    @staticmethod
-    def _parse_phantom_params(response: str) -> dict | None:
-        """Parse agent-informed SL/TP from scanner response suffix.
-
-        Looks for: Conviction: 0.35 — too weak. [SL 1.5% TP 3%]
-        Returns dict with conviction, sl_pct, tp_pct (as decimals) or None.
-        """
-        m = Daemon._PHANTOM_PARAMS_RE.search(response)
-        if not m:
-            return None
-        try:
-            conviction = float(m.group(1))
-            sl_pct = float(m.group(2))
-            tp_pct = float(m.group(3))
-            if not (0.1 <= sl_pct <= 10.0 and 0.2 <= tp_pct <= 20.0 and 0 <= conviction <= 1):
-                return None
-            return {"conviction": conviction, "sl_pct": sl_pct / 100, "tp_pct": tp_pct / 100}
-        except (ValueError, TypeError):
-            return None
-
-    def _maybe_create_phantom(self, top_event, agent_response: str = ""):
-        """Create a phantom position when the agent passes on a scanner wake.
-
-        Only tracks high-severity anomalies with inferable direction on liquid symbols.
-        """
-        from .scanner import infer_phantom_direction
-
-        # Gate: severity >= 0.6, real symbol, liquid
-        if top_event.severity < 0.6:
-            return
-        if top_event.symbol == "MARKET":
-            return
-        liquid = getattr(self._scanner, '_liquid_symbols', set()) if self._scanner else set()
-        if liquid and top_event.symbol not in liquid:
-            return
-
-        direction = infer_phantom_direction(top_event)
-        if not direction:
-            return
-
-        entry_price = self.snapshot.prices.get(top_event.symbol, 0)
-        if entry_price <= 0:
-            return
-
-        is_micro = top_event.category == "micro"
-        parsed = self._parse_phantom_params(agent_response) if agent_response else None
-
-        if parsed:
-            sl_pct = parsed["sl_pct"]
-            tp_pct = parsed["tp_pct"]
-            leverage = max(5, min(50, round(15 / (sl_pct * 100))))
-            max_age = 7200 if is_micro else 14400
-            logger.info("Phantom using agent params: SL %.1f%% TP %.1f%% → %dx",
-                        sl_pct * 100, tp_pct * 100, leverage)
-        else:
-            if is_micro:
-                sl_pct, tp_pct, leverage, max_age = 0.004, 0.008, 20, 7200
-            else:
-                sl_pct, tp_pct, leverage, max_age = 0.02, 0.03, 10, 14400
-
-        if direction == "long":
-            stop_loss = entry_price * (1 - sl_pct)
-            take_profit = entry_price * (1 + tp_pct)
-        else:
-            stop_loss = entry_price * (1 + sl_pct)
-            take_profit = entry_price * (1 - tp_pct)
-
-        phantom = {
-            "symbol": top_event.symbol,
-            "side": direction,
-            "entry_price": entry_price,
-            "stop_loss": stop_loss,
-            "take_profit": take_profit,
-            "leverage": leverage,
-            "category": "micro" if is_micro else "macro",
-            "created_at": time.time(),
-            "expires_at": time.time() + max_age,
-            "anomaly_type": top_event.type,
-            "anomaly_headline": top_event.headline,
-            "severity": top_event.severity,
-            "agent_conviction": parsed["conviction"] if parsed else None,
-            "agent_informed": parsed is not None,
-        }
-        self._phantoms.append(phantom)
-
-        # Cap at 20 active phantoms
-        if len(self._phantoms) > 20:
-            self._phantoms = self._phantoms[-20:]
-
-        self._persist_phantoms()
-        logger.info("Phantom created: %s %s %s @ %.2f (SL %.2f / TP %.2f)",
-                     direction, top_event.symbol, top_event.type,
-                     entry_price, stop_loss, take_profit)
-
-    def _evaluate_phantoms(self):
-        """Evaluate all active phantoms against current prices. Zero LLM cost.
-
-        Resolves as: TP hit (missed opportunity), SL hit (good pass), or expired (wash).
-        """
-        now = time.time()
-        still_active = []
-
-        for p in self._phantoms:
-            sym = p["symbol"]
-            price = self.snapshot.prices.get(sym, 0)
-            if not price:
-                still_active.append(p)
-                continue
-
-            result = None
-
-            if p["side"] == "long":
-                if price >= p["take_profit"]:
-                    result = "missed_opportunity"
-                elif price <= p["stop_loss"]:
-                    result = "good_pass"
-            else:
-                if price <= p["take_profit"]:
-                    result = "missed_opportunity"
-                elif price >= p["stop_loss"]:
-                    result = "good_pass"
-
-            # Check expiry
-            if result is None and now >= p["expires_at"]:
-                result = "expired"
-
-            if result is None:
-                still_active.append(p)
-                continue
-
-            # Compute phantom PnL (leveraged ROE %)
-            if p["entry_price"] <= 0:
-                pnl_pct = 0.0  # entry price missing — can't compute ROE
-            elif p["side"] == "long":
-                pnl_pct = ((price - p["entry_price"]) / p["entry_price"]) * p["leverage"] * 100
-            else:
-                pnl_pct = ((p["entry_price"] - price) / p["entry_price"]) * p["leverage"] * 100
-
-            resolved = {
-                **p,
-                "result": result,
-                "exit_price": price,
-                "pnl_pct": round(pnl_pct, 1),
-                "resolved_at": now,
-            }
-            self._phantom_results.append(resolved)
-
-            # Update stats
-            if result == "missed_opportunity":
-                self._phantom_stats["missed"] += 1
-            elif result == "good_pass":
-                self._phantom_stats["good_pass"] += 1
-            else:
-                self._phantom_stats["expired"] += 1
-
-            # Store in Nous (missed + good_pass only)
-            if result != "expired":
-                self._store_phantom_result(resolved)
-
-            # Fire wake for missed opportunities
-            if result == "missed_opportunity":
-                self._wake_for_phantom(resolved)
-
-            logger.info("Phantom resolved: %s %s %s → %s (%.1f%%)",
-                         p["side"], sym, p["anomaly_type"], result, pnl_pct)
-
-        changed = len(self._phantoms) != len(still_active)
-        self._phantoms = still_active
-        if changed:
-            self._persist_phantoms()
-
-    def _store_phantom_result(self, resolved: dict):
-        """Store a resolved phantom in Nous for future memory retrieval."""
-        result = resolved["result"]
-        sym = resolved["symbol"]
-        side = resolved["side"]
-        entry = resolved["entry_price"]
-        exit_px = resolved["exit_price"]
-        pnl = resolved["pnl_pct"]
-        anomaly = resolved["anomaly_type"]
-        headline = resolved["anomaly_headline"]
-
-        if result == "missed_opportunity":
-            subtype = "custom:missed_opportunity"
-            title = f"Missed: {side} {sym} ({anomaly}) would have hit TP"
-            content = (
-                f"Passed on {side} {sym} when scanner detected: {headline}. "
-                f"Entry would have been ${entry:,.2f}, TP hit at ${exit_px:,.2f}. "
-                f"Phantom PnL: {pnl:+.1f}% at {resolved['leverage']}x leverage."
-            )
-        elif result == "good_pass":
-            subtype = "custom:good_pass"
-            title = f"Good pass: {side} {sym} ({anomaly}) hit SL"
-            content = (
-                f"Correctly passed on {side} {sym} when scanner detected: {headline}. "
-                f"Entry would have been ${entry:,.2f}, SL hit at ${exit_px:,.2f}. "
-                f"Phantom loss: {pnl:+.1f}% at {resolved['leverage']}x leverage."
-            )
-        else:
-            return
-
-        try:
-            from .tools.trading import _store_to_nous
-            _store_to_nous(
-                subtype=subtype,
-                title=title,
-                content=content,
-                summary=title,
-                signals={
-                    "phantom": True,
-                    "side": side,
-                    "symbol": sym,
-                    "entry": entry,
-                    "exit": exit_px,
-                    "pnl_pct": pnl,
-                    "anomaly_type": anomaly,
-                    "category": resolved["category"],
-                    "result": result,
-                    "agent_conviction": resolved.get("agent_conviction"),
-                    "agent_informed": resolved.get("agent_informed", False),
-                },
-            )
-        except Exception as e:
-            logger.debug("Failed to store phantom result: %s", e)
-
-    def _wake_for_phantom(self, resolved: dict):
-        """Wake the agent when a phantom position would have hit TP."""
-        sym = resolved["symbol"]
-        side = resolved["side"].upper()
-        entry = resolved["entry_price"]
-        tp = resolved["take_profit"]
-        pnl = resolved["pnl_pct"]
-        headline = resolved["anomaly_headline"]
-        category = resolved["category"]
-        hold_mins = int((resolved["resolved_at"] - resolved["created_at"]) / 60)
-
-        # Phantom stats summary
-        total = self._phantom_stats["missed"] + self._phantom_stats["good_pass"]
-        stats_line = ""
-        if total > 0:
-            miss_rate = self._phantom_stats["missed"] / total * 100
-            stats_line = (
-                f"\nPhantom tracker: {self._phantom_stats['missed']} missed, "
-                f"{self._phantom_stats['good_pass']} good passes "
-                f"({miss_rate:.0f}% miss rate)"
-            )
-
-        lines = [
-            f"[DAEMON WAKE — Missed Opportunity: {sym}]",
-            "",
-            f"You passed on {side} {sym} {hold_mins}m ago.",
-            f"Scanner signal was: {headline}",
-            f"Phantom entry: ${entry:,.2f} → TP hit at ${tp:,.2f}",
-            f"Would have made: {pnl:+.1f}% ({'your levels' if resolved.get('agent_informed') else 'default params'}, {resolved['leverage']}x)",
-        ]
-        if stats_line:
-            lines.append(stats_line)
-        lines.extend([
-            "",
-            "What held you back? Was your caution justified, or did you freeze?",
-        ])
-
-        message = "\n".join(lines)
-        response = self._wake_agent(
-            message, max_coach_cycles=0, max_tokens=512,
-            source="daemon:phantom",
-        )
-        if response:
-            title = f"Missed: {side.lower()} {sym} +{pnl:.0f}%"
-            log_event(DaemonEvent(
-                "phantom", title,
-                f"Entry ${entry:,.0f} → TP ${tp:,.0f} | {pnl:+.1f}% | {category}",
-            ))
-            _queue_and_persist("Phantom", title, response, event_type="phantom")
-            _notify_discord("Phantom", title, response)
-
-    def _persist_phantoms(self):
-        """Save active phantoms + stats to disk (survives restarts)."""
-        try:
-            import json as _json
-            from ..core.persistence import _atomic_write
-            storage = self.config.project_root / "storage"
-            storage.mkdir(parents=True, exist_ok=True)
-            # Active phantoms
-            _atomic_write(storage / "phantoms.json", _json.dumps(self._phantoms, default=str))
-            # Phantom stats + recent results (persist across restarts)
-            stats_data = {
-                "stats": self._phantom_stats,
-                "results": self._phantom_results,
-            }
-            _atomic_write(storage / "phantom_stats.json", _json.dumps(stats_data, default=str))
-        except Exception as e:
-            logger.debug("Failed to persist phantoms: %s", e)
-
-    def _load_phantoms(self):
-        """Load active phantoms + stats from disk on startup."""
-        try:
-            import json as _json
-            storage = self.config.project_root / "storage"
-            # Active phantoms
-            path = storage / "phantoms.json"
-            if path.exists():
-                self._phantoms = _json.loads(path.read_text())
-                now = time.time()
-                self._phantoms = [p for p in self._phantoms if p.get("expires_at", 0) > now]
-                logger.info("Loaded %d active phantoms from disk", len(self._phantoms))
-            # Phantom stats + results
-            stats_path = storage / "phantom_stats.json"
-            if stats_path.exists():
-                data = _json.loads(stats_path.read_text())
-                saved_stats = data.get("stats", {})
-                self._phantom_stats["missed"] = saved_stats.get("missed", 0)
-                self._phantom_stats["good_pass"] = saved_stats.get("good_pass", 0)
-                self._phantom_stats["expired"] = saved_stats.get("expired", 0)
-                self._phantom_results = data.get("results", [])
-                logger.info("Loaded phantom stats: %d missed, %d good pass, %d results",
-                           self._phantom_stats["missed"], self._phantom_stats["good_pass"],
-                           len(self._phantom_results))
-            else:
-                # First run with persistence — seed stats from Nous
-                self._seed_phantom_stats_from_nous()
-        except Exception as e:
-            logger.debug("Failed to load phantoms: %s", e)
-
-    def _seed_phantom_stats_from_nous(self):
-        """Seed phantom stats from Nous nodes on first run (no phantom_stats.json yet)."""
-        try:
-            nous = self._get_nous()
-            if nous is None:
-                return
-            missed = nous.list_nodes(subtype="custom:missed_opportunity", limit=500)
-            good = nous.list_nodes(subtype="custom:good_pass", limit=500)
-            self._phantom_stats["missed"] = len(missed)
-            self._phantom_stats["good_pass"] = len(good)
-            logger.info("Seeded phantom stats from Nous: %d missed, %d good pass",
-                       len(missed), len(good))
-            # Persist immediately so we don't re-seed next restart
-            self._persist_phantoms()
-        except Exception as e:
-            logger.debug("Failed to seed phantom stats from Nous: %s", e)
 
     def _persist_position_types(self):
         """Save position types to disk (survives restarts)."""
@@ -5948,7 +5466,7 @@ class Daemon:
                 code_questions = []
                 haiku_questions = []
 
-            # Strip warnings for lightweight wakes (phantom, memory, conflict, learning)
+            # Strip warnings for lightweight wakes (memory, conflict, learning)
             if not needs_full and not needs_positions:
                 warnings_text = ""
 
@@ -5990,7 +5508,7 @@ class Daemon:
                     position_block = (
                         "[YOUR OPEN POSITIONS]\n"
                         + "\n".join(pos_lines)
-                        + "\nIf any position is profitable, consider whether to close, trail stop, or hold."
+                        + "\nMechanical exits active on all positions. You can tighten stops via modify_position."
                     )
 
             # === 4. Assemble wake message ===
@@ -6162,14 +5680,6 @@ class Daemon:
             lines.append(f"  {age}: [{etype}] {title} — {detail}")
 
         return "\n".join(lines)
-
-    def _store_thought(self, question: str):
-        """Store a Haiku question for injection into the next wake."""
-        self._pending_thoughts.append(question)
-        # Cap at 3 thoughts max
-        if len(self._pending_thoughts) > 3:
-            self._pending_thoughts = self._pending_thoughts[-3:]
-        logger.info("Stored pending thought: %s", question[:60])
 
     def _update_fingerprint(self, audit: dict):
         """Update wake fingerprint for staleness detection by warnings."""

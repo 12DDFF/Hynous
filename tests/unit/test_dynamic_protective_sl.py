@@ -109,12 +109,6 @@ class TestDynamicSlExists:
         assert "_latest_predictions" in dyn_region, \
             "_latest_predictions must be accessed in the dynamic SL block"
 
-    def test_capital_be_disabled_in_yaml(self):
-        """YAML capital_breakeven_enabled must be False (deprecated)."""
-        cfg = _default_yaml()
-        assert cfg["daemon"]["capital_breakeven_enabled"] is False, \
-            "capital_breakeven_enabled must be false in YAML (deprecated)"
-
     def test_dynamic_sl_enabled_in_yaml(self):
         """YAML dynamic_sl_enabled must be True."""
         cfg = _default_yaml()
@@ -191,11 +185,6 @@ class TestDynamicSlConfig:
         assert cfg["daemon"]["dynamic_sl_enabled"] is True
         assert "dynamic_sl_enabled: bool = True" in src
 
-    def test_capital_be_deprecated(self):
-        """DaemonConfig.capital_breakeven_enabled must default to False (deprecated)."""
-        src = _config_source()
-        assert "capital_breakeven_enabled: bool = False" in src, \
-            "capital_breakeven_enabled must default to False in DaemonConfig"
 
 
 # ── Class 3: Formula & Logic Tests ───────────────────────────────────────────

@@ -209,17 +209,6 @@ class NousClient:
 
     # ---- Contradiction Detection ----
 
-    def detect_contradiction(self, content: str, title: Optional[str] = None, node_id: Optional[str] = None) -> dict:
-        """Run tier 1-2 pattern detection on content."""
-        payload: dict = {"content": content}
-        if title:
-            payload["title"] = title
-        if node_id:
-            payload["node_id"] = node_id
-        resp = self._session.post(self._url("/contradiction/detect"), json=payload, timeout=self._DEFAULT_TIMEOUT)
-        resp.raise_for_status()
-        return resp.json()
-
     def get_conflicts(self, status: str = "pending") -> list[dict]:
         """Get conflict queue items."""
         resp = self._session.get(self._url("/contradiction/queue"), params={"status": status}, timeout=self._DEFAULT_TIMEOUT)

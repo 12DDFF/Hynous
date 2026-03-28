@@ -205,7 +205,7 @@ class TestCandleFormatCompatibility:
 # ---------------------------------------------------------------------------
 
 class TestExistingPeakTrackingUnchanged:
-    """Verify the candle processing loop (peak/trough/trailing/capital-BE) is untouched."""
+    """Verify the candle processing loop (peak/trough/trailing) is untouched."""
 
     def test_roe_formula_unchanged(self):
         """ROE computation lines must still be present."""
@@ -213,12 +213,6 @@ class TestExistingPeakTrackingUnchanged:
         method = _get_method(src, "_update_peaks_from_candles")
         assert "((high - entry_px) / entry_px * 100) * leverage" in method
         assert "((entry_px - low) / entry_px * 100) * leverage" in method
-
-    def test_capital_be_reevaluation_unchanged(self):
-        """capital_breakeven_enabled check must still exist in the method."""
-        src = _daemon_source()
-        method = _get_method(src, "_update_peaks_from_candles")
-        assert "capital_breakeven_enabled" in method
 
     def test_persist_on_trailing_active_unchanged(self):
         """Bug E fix pattern must be intact: trailing active check + persist."""
