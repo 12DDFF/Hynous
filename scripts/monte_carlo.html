@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monte Carlo Price Projection — Hynous</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    color: #e0e0e0;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    overflow: hidden;
+    height: 100vh;
+  }
+  #header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: #111118;
+    border-bottom: 1px solid #222233;
+  }
+  #header h1 { font-size: 14px; font-weight: 500; color: #8888aa; }
+  #header h1 span { color: #a78bfa; }
+  #stats {
+    display: flex;
+    gap: 24px;
+    font-size: 12px;
+    color: #666688;
+  }
+  #stats .val { color: #e0e0e0; font-weight: 600; }
+  #stats .long { color: #22c55e; }
+  #stats .short { color: #ef4444; }
+  #stats .skip { color: #666688; }
+  #chart-container {
+    position: relative;
+    width: 100%;
+    height: calc(100vh - 50px);
+  }
+
+  /* Right panels — scrollable column */
+  #panels-container {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: 260px;
+    overflow-y: auto;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: #333355 transparent;
+  }
+  #panels-container::-webkit-scrollbar { width: 4px; }
+  #panels-container::-webkit-scrollbar-thumb { background: #333355; border-radius: 2px; }
+  .panel {
+    background: rgba(17, 17, 24, 0.92);
+    border: 1px solid #222233;
+    border-radius: 8px;
+    padding: 10px 14px;
+    flex-shrink: 0;
+  }
+  .panel h3 {
+    font-size: 11px;
+    color: #6666aa;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+
+  .pred-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    padding: 3px 0;
+    border-bottom: 1px solid #1a1a2a;
+  }
+  .pred-row:last-child { border-bottom: none; }
+  .pred-label { color: #8888aa; }
+  .pred-val { font-weight: 600; }
+  .pred-val.pos { color: #22c55e; }
+  .pred-val.neg { color: #ef4444; }
+  .pred-val.neutral { color: #666688; }
+
+  #signal-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    margin-top: 8px;
+  }
+  .signal-long { background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid #22c55e44; }
+  .signal-short { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid #ef444444; }
+  .signal-skip { background: rgba(102, 102, 136, 0.15); color: #666688; border: 1px solid #66668844; }
+
+  /* Bias tracker */
+  .bias-bar-container {
+    height: 24px;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    margin: 6px 0;
+    background: #1a1a2a;
+  }
+  .bias-bar-long { background: #22c55e; transition: width 0.5s ease; }
+  .bias-bar-skip { background: #333355; transition: width 0.5s ease; }
+  .bias-bar-short { background: #ef4444; transition: width 0.5s ease; }
+  .bias-label-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    margin-bottom: 2px;
+  }
+  .bias-verdict {
+    text-align: center;
+    font-size: 18px;
+    font-weight: 700;
+    padding: 8px 0 4px;
+    letter-spacing: 2px;
+  }
+  .bias-verdict.bullish { color: #22c55e; }
+  .bias-verdict.bearish { color: #ef4444; }
+  .bias-verdict.neutral { color: #666688; }
+  .bias-score {
+    text-align: center;
+    font-size: 24px;
+    font-weight: 700;
+    padding: 2px 0 6px;
+  }
+  .bias-meta {
+    font-size: 10px;
+    color: #555577;
+    text-align: center;
+  }
+
+  /* Bias history sparkline */
+  #bias-history-canvas {
+    width: 100%;
+    height: 40px;
+    margin-top: 6px;
+  }
+
+  /* Accuracy tracker */
+  .acc-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    padding: 3px 0;
+    border-bottom: 1px solid #1a1a2a;
+  }
+  .acc-row:last-child { border-bottom: none; }
+  .acc-horizon { color: #8888aa; width: 40px; }
+  .acc-bar-bg {
+    flex: 1;
+    height: 14px;
+    background: #1a1a2a;
+    border-radius: 3px;
+    margin: 0 8px;
+    overflow: hidden;
+    position: relative;
+  }
+  .acc-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease;
+  }
+  .acc-bar-fill.good { background: linear-gradient(90deg, #22c55e88, #22c55e); }
+  .acc-bar-fill.mid { background: linear-gradient(90deg, #eab30888, #eab308); }
+  .acc-bar-fill.bad { background: linear-gradient(90deg, #ef444488, #ef4444); }
+  .acc-pct { width: 55px; text-align: right; font-weight: 600; }
+  .acc-count { width: 50px; text-align: right; font-size: 10px; color: #555577; }
+  .acc-summary {
+    text-align: center;
+    font-size: 11px;
+    color: #555577;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid #222233;
+  }
+  .acc-pnl { font-weight: 600; }
+  .acc-pnl.pos { color: #22c55e; }
+  .acc-pnl.neg { color: #ef4444; }
+
+  #connection-status {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    font-size: 11px;
+    z-index: 20;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: rgba(17, 17, 24, 0.9);
+  }
+  .connected { color: #22c55e; }
+  .disconnected { color: #ef4444; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1><span>HYNOUS</span> Monte Carlo Price Projection</h1>
+  <div id="stats">
+    <span>Price: <span class="val" id="current-price">—</span></span>
+    <span>Signal: <span class="val" id="current-signal">—</span></span>
+    <span>Bias: <span class="val" id="current-bias">—</span></span>
+    <span>Ticks: <span class="val" id="tick-count">0</span></span>
+    <span>Updated: <span class="val" id="last-update">—</span></span>
+  </div>
+</div>
+
+<div id="chart-container">
+  <canvas id="mc-canvas"></canvas>
+
+  <div id="panels-container">
+    <div class="panel" id="predictions-panel">
+      <h3>Direction Predictions (live)</h3>
+      <div id="pred-list"></div>
+      <div id="signal-badge" class="signal-skip">SKIP</div>
+    </div>
+
+    <div class="panel" id="bias-panel">
+      <h3>Directional Bias</h3>
+      <div class="bias-verdict neutral" id="bias-verdict">NEUTRAL</div>
+      <div class="bias-score" id="bias-score" style="color: #666688">0.0</div>
+      <div class="bias-label-row">
+        <span style="color:#22c55e" id="long-pct">0%</span>
+        <span style="color:#666688" id="skip-pct">0%</span>
+        <span style="color:#ef4444" id="short-pct">0%</span>
+      </div>
+      <div class="bias-bar-container">
+        <div class="bias-bar-long" id="bar-long" style="width:33%"></div>
+        <div class="bias-bar-skip" id="bar-skip" style="width:34%"></div>
+        <div class="bias-bar-short" id="bar-short" style="width:33%"></div>
+      </div>
+      <div class="bias-label-row">
+        <span style="color:#22c55e">LONG <span id="long-count">0</span></span>
+        <span style="color:#666688">SKIP <span id="skip-count">0</span></span>
+        <span style="color:#ef4444">SHORT <span id="short-count">0</span></span>
+      </div>
+      <canvas id="bias-history-canvas"></canvas>
+      <div class="bias-meta" id="bias-window">Rolling window: 0 ticks (0s)</div>
+    </div>
+
+    <div class="panel" id="accuracy-panel">
+      <h3>Live Accuracy</h3>
+      <div id="acc-list"></div>
+      <div class="acc-summary" id="acc-summary">Collecting data...</div>
+    </div>
+  </div>
+
+  <div id="connection-status" class="disconnected">Disconnected</div>
+</div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────
+let priceHistory = [];
+let mcData = null;
+let ws = null;
+let canvas, ctx;
+
+// Bias tracker state
+const biasHistory = [];       // [{t, signal, weightedReturn}] — every tick
+const biasScoreHistory = [];  // [{t, score}] — rolling bias score over time
+const MAX_BIAS_TICKS = 600;   // ~30 min at 3s updates
+const MAX_BIAS_SCORES = 200;  // sparkline points
+
+// Accuracy tracker state
+// Each prediction is stored with its price and timestamp.
+// When enough time passes, we check if the prediction was correct.
+const pendingPredictions = []; // [{t, price, predictions: {horizon: bps}}]
+const accuracyStats = {};      // {horizon: {correct: N, wrong: N, total_pnl_bps: F}}
+const TRACKED_HORIZONS = [10, 15, 20, 30, 45, 60, 120, 180];
+TRACKED_HORIZONS.forEach(h => accuracyStats[h] = { correct: 0, wrong: 0, total_pnl: 0 });
+const MAX_PENDING = 1000;
+
+// ─── WebSocket ──────────────────────────────────────────────────────────
+function connect() {
+  const url = 'ws://localhost:8765';
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    document.getElementById('connection-status').textContent = 'Connected';
+    document.getElementById('connection-status').className = 'connected';
+  };
+
+  ws.onmessage = (e) => {
+    try { handleData(JSON.parse(e.data)); } catch (err) { console.error(err); }
+  };
+
+  ws.onclose = () => {
+    document.getElementById('connection-status').textContent = 'Disconnected — reconnecting...';
+    document.getElementById('connection-status').className = 'disconnected';
+    setTimeout(connect, 3000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+function handleData(data) {
+  if (data.price_history) {
+    priceHistory = data.price_history.map(([t, p]) => ({ t, price: p }));
+  }
+  mcData = data;
+
+  const preds = data.predictions || {};
+  const horizons = Object.keys(preds).map(Number).sort((a, b) => a - b);
+
+  // Compute weighted signal (same as server)
+  let weightedSum = 0, totalWeight = 0;
+  horizons.forEach(h => {
+    weightedSum += preds[h] * (1.0 / h);
+    totalWeight += 1.0 / h;
+  });
+  const weightedReturn = totalWeight > 0 ? weightedSum / totalWeight : 0;
+  let signal = 'skip';
+  if (weightedReturn > 0.5) signal = 'long';
+  else if (weightedReturn < -0.5) signal = 'short';
+
+  // ─── Track bias ───
+  const now = Date.now() / 1000;
+  biasHistory.push({ t: now, signal, weightedReturn });
+  if (biasHistory.length > MAX_BIAS_TICKS) biasHistory.shift();
+
+  updateBiasPanel();
+
+  // ─── Track accuracy ───
+  // Store this prediction for future evaluation
+  pendingPredictions.push({ t: data.timestamp, price: data.mid_price, predictions: { ...preds } });
+  if (pendingPredictions.length > MAX_PENDING) pendingPredictions.splice(0, pendingPredictions.length - MAX_PENDING);
+
+  // Evaluate past predictions whose horizon has elapsed
+  const currentPrice = data.mid_price;
+  const currentTime = data.timestamp;
+  evaluateAccuracy(currentPrice, currentTime);
+  updateAccuracyPanel();
+
+  // ─── Update header ───
+  document.getElementById('current-price').textContent = '$' + data.mid_price.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
+  document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+  document.getElementById('tick-count').textContent = biasHistory.length;
+
+  const sigEl = document.getElementById('current-signal');
+  sigEl.textContent = signal.toUpperCase();
+  sigEl.className = signal === 'long' ? 'val long' : signal === 'short' ? 'val short' : 'val skip';
+
+  // ─── Update predictions panel ───
+  const predList = document.getElementById('pred-list');
+  predList.innerHTML = '';
+  horizons.forEach(h => {
+    const bps = preds[h];
+    const cls = bps > 0.3 ? 'pos' : bps < -0.3 ? 'neg' : 'neutral';
+    const row = document.createElement('div');
+    row.className = 'pred-row';
+    row.innerHTML = `<span class="pred-label">${h}s</span><span class="pred-val ${cls}">${bps >= 0 ? '+' : ''}${bps.toFixed(2)} bps</span>`;
+    predList.appendChild(row);
+  });
+
+  const wRow = document.createElement('div');
+  wRow.className = 'pred-row';
+  wRow.style.borderTop = '1px solid #333355';
+  wRow.style.marginTop = '4px';
+  wRow.style.paddingTop = '6px';
+  const wCls = weightedReturn > 0.3 ? 'pos' : weightedReturn < -0.3 ? 'neg' : 'neutral';
+  wRow.innerHTML = `<span class="pred-label" style="font-weight:600">Weighted</span><span class="pred-val ${wCls}">${weightedReturn >= 0 ? '+' : ''}${weightedReturn.toFixed(3)} bps</span>`;
+  predList.appendChild(wRow);
+
+  const badge = document.getElementById('signal-badge');
+  badge.textContent = signal.toUpperCase();
+  badge.className = `signal-${signal}`;
+}
+
+function updateBiasPanel() {
+  const total = biasHistory.length;
+  if (total === 0) return;
+
+  // Count signals
+  let longs = 0, shorts = 0, skips = 0;
+  biasHistory.forEach(b => {
+    if (b.signal === 'long') longs++;
+    else if (b.signal === 'short') shorts++;
+    else skips++;
+  });
+
+  const longPct = longs / total * 100;
+  const shortPct = shorts / total * 100;
+  const skipPct = skips / total * 100;
+
+  // Bias score: -100 (all short) to +100 (all long), skip = 0
+  // Score = (longs - shorts) / total * 100
+  const biasScore = (longs - shorts) / total * 100;
+
+  // Also compute a weighted bias using the actual return magnitudes
+  let avgReturn = 0;
+  biasHistory.forEach(b => avgReturn += b.weightedReturn);
+  avgReturn /= total;
+
+  // Track score over time for sparkline
+  biasScoreHistory.push({ t: Date.now() / 1000, score: biasScore });
+  if (biasScoreHistory.length > MAX_BIAS_SCORES) biasScoreHistory.shift();
+
+  // Verdict
+  let verdict, verdictClass;
+  if (biasScore > 30) { verdict = 'STRONG LONG'; verdictClass = 'bullish'; }
+  else if (biasScore > 15) { verdict = 'LONG BIAS'; verdictClass = 'bullish'; }
+  else if (biasScore > 5) { verdict = 'SLIGHT LONG'; verdictClass = 'bullish'; }
+  else if (biasScore < -30) { verdict = 'STRONG SHORT'; verdictClass = 'bearish'; }
+  else if (biasScore < -15) { verdict = 'SHORT BIAS'; verdictClass = 'bearish'; }
+  else if (biasScore < -5) { verdict = 'SLIGHT SHORT'; verdictClass = 'bearish'; }
+  else { verdict = 'NEUTRAL'; verdictClass = 'neutral'; }
+
+  // Update DOM
+  document.getElementById('bias-verdict').textContent = verdict;
+  document.getElementById('bias-verdict').className = 'bias-verdict ' + verdictClass;
+
+  const scoreColor = biasScore > 5 ? '#22c55e' : biasScore < -5 ? '#ef4444' : '#666688';
+  const scoreEl = document.getElementById('bias-score');
+  scoreEl.textContent = (biasScore >= 0 ? '+' : '') + biasScore.toFixed(1);
+  scoreEl.style.color = scoreColor;
+
+  document.getElementById('current-bias').textContent = (biasScore >= 0 ? '+' : '') + biasScore.toFixed(0);
+  document.getElementById('current-bias').className = biasScore > 5 ? 'val long' : biasScore < -5 ? 'val short' : 'val skip';
+
+  document.getElementById('long-pct').textContent = longPct.toFixed(0) + '%';
+  document.getElementById('skip-pct').textContent = skipPct.toFixed(0) + '%';
+  document.getElementById('short-pct').textContent = shortPct.toFixed(0) + '%';
+  document.getElementById('bar-long').style.width = longPct + '%';
+  document.getElementById('bar-skip').style.width = skipPct + '%';
+  document.getElementById('bar-short').style.width = shortPct + '%';
+  document.getElementById('long-count').textContent = longs;
+  document.getElementById('skip-count').textContent = skips;
+  document.getElementById('short-count').textContent = shorts;
+
+  const duration = total > 1 ? Math.round(biasHistory[total-1].t - biasHistory[0].t) : 0;
+  const durMin = Math.floor(duration / 60);
+  const durSec = duration % 60;
+  document.getElementById('bias-window').textContent =
+    `Rolling: ${total} ticks (${durMin}m ${durSec}s) · Avg return: ${avgReturn >= 0 ? '+' : ''}${avgReturn.toFixed(3)} bps`;
+
+  // Draw sparkline
+  drawBiasSparkline();
+}
+
+function drawBiasSparkline() {
+  const canvas = document.getElementById('bias-history-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.clientWidth;
+  const H = canvas.clientHeight;
+  canvas.width = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+
+  ctx.clearRect(0, 0, W, H);
+
+  if (biasScoreHistory.length < 2) return;
+
+  // Zero line
+  const midY = H / 2;
+  ctx.strokeStyle = '#333355';
+  ctx.lineWidth = 0.5;
+  ctx.setLineDash([2, 2]);
+  ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Scale: -100 to +100
+  const scaleY = (v) => midY - (v / 100) * (H / 2 - 2);
+
+  // Draw bias score history as filled area
+  ctx.beginPath();
+  ctx.moveTo(0, midY);
+  biasScoreHistory.forEach((p, i) => {
+    const x = i / (biasScoreHistory.length - 1) * W;
+    ctx.lineTo(x, scaleY(p.score));
+  });
+  ctx.lineTo(W, midY);
+  ctx.closePath();
+
+  // Gradient fill based on current bias
+  const lastScore = biasScoreHistory[biasScoreHistory.length - 1].score;
+  if (lastScore > 0) {
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.15)';
+    ctx.strokeStyle = '#22c55e88';
+  } else if (lastScore < 0) {
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+    ctx.strokeStyle = '#ef444488';
+  } else {
+    ctx.fillStyle = 'rgba(102, 102, 136, 0.1)';
+    ctx.strokeStyle = '#66668888';
+  }
+  ctx.fill();
+
+  // Stroke line
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  biasScoreHistory.forEach((p, i) => {
+    const x = i / (biasScoreHistory.length - 1) * W;
+    if (i === 0) ctx.moveTo(x, scaleY(p.score));
+    else ctx.lineTo(x, scaleY(p.score));
+  });
+  ctx.stroke();
+}
+
+// ─── Accuracy Tracker ───────────────────────────────────────────────────
+function evaluateAccuracy(currentPrice, currentTime) {
+  // For each pending prediction, check horizons that have elapsed
+  for (let i = pendingPredictions.length - 1; i >= 0; i--) {
+    const pred = pendingPredictions[i];
+    const elapsed = currentTime - pred.t;
+    let allEvaluated = true;
+
+    for (const h of TRACKED_HORIZONS) {
+      const key = `_evaluated_${h}`;
+      if (pred[key]) continue; // already evaluated this horizon
+
+      if (elapsed >= h) {
+        // This horizon has elapsed — evaluate
+        const predictedBps = pred.predictions[h];
+        if (predictedBps !== undefined && Math.abs(predictedBps) > 0.1) {
+          // Actual return in bps
+          const actualBps = (currentPrice - pred.price) / pred.price * 10000;
+          // Direction correct?
+          const correct = (predictedBps > 0 && actualBps > 0) || (predictedBps < 0 && actualBps < 0);
+          // PnL: if we traded in predicted direction, what's the actual return?
+          const pnl = predictedBps > 0 ? actualBps : -actualBps;
+
+          accuracyStats[h].correct += correct ? 1 : 0;
+          accuracyStats[h].wrong += correct ? 0 : 1;
+          accuracyStats[h].total_pnl += pnl;
+        }
+        pred[key] = true;
+      } else {
+        allEvaluated = false;
+      }
+    }
+
+    // Remove fully evaluated predictions (all horizons checked)
+    if (allEvaluated && elapsed > 200) {
+      pendingPredictions.splice(i, 1);
+    }
+  }
+}
+
+function updateAccuracyPanel() {
+  const list = document.getElementById('acc-list');
+  list.innerHTML = '';
+
+  let totalCorrect = 0, totalWrong = 0, totalPnl = 0;
+
+  TRACKED_HORIZONS.forEach(h => {
+    const s = accuracyStats[h];
+    const total = s.correct + s.wrong;
+    const pct = total > 0 ? (s.correct / total * 100) : 0;
+    const avgPnl = total > 0 ? s.total_pnl / total : 0;
+
+    totalCorrect += s.correct;
+    totalWrong += s.wrong;
+    totalPnl += s.total_pnl;
+
+    const barClass = pct >= 55 ? 'good' : pct >= 50 ? 'mid' : 'bad';
+    const pctColor = pct >= 55 ? '#22c55e' : pct >= 50 ? '#eab308' : '#ef4444';
+
+    const row = document.createElement('div');
+    row.className = 'acc-row';
+    row.innerHTML = `
+      <span class="acc-horizon">${h}s</span>
+      <div class="acc-bar-bg">
+        <div class="acc-bar-fill ${barClass}" style="width:${total > 0 ? pct : 0}%"></div>
+      </div>
+      <span class="acc-pct" style="color:${total > 0 ? pctColor : '#555577'}">${total > 0 ? pct.toFixed(1) + '%' : '—'}</span>
+      <span class="acc-count">${total > 0 ? 'n=' + total : ''}</span>
+    `;
+    list.appendChild(row);
+  });
+
+  // Summary
+  const grandTotal = totalCorrect + totalWrong;
+  const summaryEl = document.getElementById('acc-summary');
+  if (grandTotal > 0) {
+    const overallPct = (totalCorrect / grandTotal * 100).toFixed(1);
+    const avgPnl = (totalPnl / grandTotal).toFixed(3);
+    const pnlClass = totalPnl >= 0 ? 'pos' : 'neg';
+    summaryEl.innerHTML = `
+      Overall: ${overallPct}% correct (${grandTotal} evaluated)<br>
+      Avg P&L: <span class="acc-pnl ${pnlClass}">${totalPnl >= 0 ? '+' : ''}${avgPnl} bps/trade</span>
+    `;
+  } else {
+    summaryEl.textContent = 'Collecting data... (need ' + TRACKED_HORIZONS[0] + 's for first eval)';
+  }
+}
+
+// ─── Canvas Rendering (MC chart) ────────────────────────────────────────
+function initCanvas() {
+  canvas = document.getElementById('mc-canvas');
+  ctx = canvas.getContext('2d');
+  resize();
+  window.addEventListener('resize', resize);
+}
+
+function resize() {
+  const container = document.getElementById('chart-container');
+  canvas.width = container.clientWidth * devicePixelRatio;
+  canvas.height = container.clientHeight * devicePixelRatio;
+  canvas.style.width = container.clientWidth + 'px';
+  canvas.style.height = container.clientHeight + 'px';
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+
+function render() {
+  const W = canvas.width / devicePixelRatio;
+  const H = canvas.height / devicePixelRatio;
+  ctx.clearRect(0, 0, W, H);
+
+  if (!mcData || !priceHistory.length) {
+    ctx.fillStyle = '#333355';
+    ctx.font = '14px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Waiting for data...', W / 2, H / 2);
+    requestAnimationFrame(render);
+    return;
+  }
+
+  const midPrice = mcData.mid_price;
+  const mc = mcData.mc_paths;
+  if (!mc) { requestAnimationFrame(render); return; }
+
+  const bands = mc.percentile_bands;
+  const timePoints = mc.time_points;
+  const samplePaths = mc.sample_paths;
+
+  const splitX = W * 0.50;
+  const marginTop = 20;
+  const marginBottom = 40;
+  const chartH = H - marginTop - marginBottom;
+
+  let minP = midPrice, maxP = midPrice;
+  priceHistory.forEach(p => { minP = Math.min(minP, p.price); maxP = Math.max(maxP, p.price); });
+  Object.values(bands).forEach(b => { minP = Math.min(minP, b.p5); maxP = Math.max(maxP, b.p95); });
+  const padding = (maxP - minP) * 0.1 || midPrice * 0.001;
+  minP -= padding;
+  maxP += padding;
+
+  const priceToY = (p) => marginTop + (1 - (p - minP) / (maxP - minP)) * chartH;
+  const maxHorizon = Math.max(...timePoints);
+
+  // Grid
+  ctx.strokeStyle = '#1a1a2a';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 5; i++) {
+    const y = marginTop + chartH * i / 5;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    const price = maxP - (maxP - minP) * i / 5;
+    ctx.fillStyle = '#444466';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText('$' + price.toFixed(1), 55, y + 3);
+  }
+
+  // Price history
+  if (priceHistory.length > 1) {
+    const histStartT = priceHistory[0].t;
+    const histEndT = priceHistory[priceHistory.length - 1].t;
+    const histDuration = histEndT - histStartT || 1;
+
+    ctx.beginPath();
+    ctx.strokeStyle = '#a78bfa';
+    ctx.lineWidth = 1.5;
+    priceHistory.forEach((p, i) => {
+      const x = 60 + (p.t - histStartT) / histDuration * (splitX - 70);
+      const y = priceToY(p.price);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    ctx.fillStyle = '#444466';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    for (let i = 0; i <= 4; i++) {
+      const t = histStartT + histDuration * i / 4;
+      const x = 60 + (t - histStartT) / histDuration * (splitX - 70);
+      ctx.fillText(new Date(t * 1000).toLocaleTimeString(), x, H - 10);
+    }
+  }
+
+  // Separator
+  ctx.strokeStyle = '#333355';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(splitX, marginTop); ctx.lineTo(splitX, marginTop + chartH); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#a78bfa';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('NOW', splitX, marginTop + chartH + 15);
+
+  // MC projection
+  const projW = W * 0.50 - 80;
+  const tToX = (sec) => splitX + (sec / maxHorizon) * projW;
+
+  // Percentile bands
+  [
+    { lo: 'p5', hi: 'p95', color: 'rgba(167, 139, 250, 0.06)' },
+    { lo: 'p10', hi: 'p90', color: 'rgba(167, 139, 250, 0.08)' },
+    { lo: 'p25', hi: 'p75', color: 'rgba(167, 139, 250, 0.12)' },
+  ].forEach(({ lo, hi, color }) => {
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    timePoints.forEach((t, i) => {
+      const x = tToX(t); const y = priceToY(bands[t][hi]);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    for (let i = timePoints.length - 1; i >= 0; i--) {
+      ctx.lineTo(tToX(timePoints[i]), priceToY(bands[timePoints[i]][lo]));
+    }
+    ctx.closePath();
+    ctx.fill();
+  });
+
+  // Sample paths
+  samplePaths.forEach(path => {
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(167, 139, 250, 0.08)';
+    ctx.lineWidth = 0.5;
+    path.forEach((price, i) => {
+      if (i >= timePoints.length) return;
+      const x = tToX(timePoints[i]); const y = priceToY(price);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+
+  // Median path
+  ctx.beginPath();
+  ctx.strokeStyle = '#a78bfa';
+  ctx.lineWidth = 2;
+  timePoints.forEach((t, i) => {
+    const x = tToX(t); const y = priceToY(bands[t].p50);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Horizon labels
+  ctx.fillStyle = '#444466';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  [10, 30, 60, 120, 180].forEach(h => {
+    if (h <= maxHorizon) {
+      const x = tToX(h);
+      ctx.fillText(h + 's', x, H - 10);
+      ctx.strokeStyle = '#1a1a2a'; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(x, marginTop); ctx.lineTo(x, marginTop + chartH); ctx.stroke();
+    }
+  });
+
+  // End price labels
+  const endBand = bands[maxHorizon];
+  if (endBand) {
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'left';
+    const endX = tToX(maxHorizon) + 6;
+    [
+      { p: endBand.p95, label: 'p95', color: '#22c55e44' },
+      { p: endBand.p75, label: 'p75', color: '#22c55e33' },
+      { p: endBand.p50, label: 'p50', color: '#a78bfa' },
+      { p: endBand.p25, label: 'p25', color: '#ef444433' },
+      { p: endBand.p5, label: 'p5', color: '#ef444444' },
+    ].forEach(({ p, label, color }) => {
+      ctx.fillStyle = color;
+      const diff = ((p - midPrice) / midPrice * 10000).toFixed(1);
+      ctx.fillText(`${label} $${p.toFixed(1)} (${diff >= 0 ? '+' : ''}${diff}bp)`, endX, priceToY(p) + 3);
+    });
+  }
+
+  // Current price line
+  ctx.strokeStyle = '#ffffff22';
+  ctx.lineWidth = 0.5;
+  ctx.setLineDash([2, 2]);
+  ctx.beginPath(); ctx.moveTo(0, priceToY(midPrice)); ctx.lineTo(W, priceToY(midPrice)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  requestAnimationFrame(render);
+}
+
+// ─── Init ───
+initCanvas();
+connect();
+render();
+</script>
+</body>
+</html>
