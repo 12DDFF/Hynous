@@ -247,9 +247,15 @@
     </div>
 
     <div class="panel" id="accuracy-panel">
-      <h3>Live Accuracy</h3>
+      <h3>Live Accuracy — Per Horizon</h3>
       <div id="acc-list"></div>
       <div class="acc-summary" id="acc-summary">Collecting data...</div>
+    </div>
+
+    <div class="panel" id="bias-accuracy-panel">
+      <h3>Bias Accuracy</h3>
+      <div id="bias-acc-list"></div>
+      <div class="acc-summary" id="bias-acc-summary">Need bias signals to evaluate...</div>
     </div>
   </div>
 
@@ -277,6 +283,16 @@ const accuracyStats = {};      // {horizon: {correct: N, wrong: N, total_pnl_bps
 const TRACKED_HORIZONS = [10, 15, 20, 30, 45, 60, 120, 180];
 TRACKED_HORIZONS.forEach(h => accuracyStats[h] = { correct: 0, wrong: 0, total_pnl: 0 });
 const MAX_PENDING = 1000;
+
+// Bias accuracy — tracks whether the bias verdict was correct over evaluation windows
+const BIAS_EVAL_WINDOWS = [60, 180, 300]; // evaluate bias over 1m, 3m, 5m
+const pendingBiasSignals = []; // [{t, price, biasScore, verdict}]
+const biasAccuracyStats = {};  // {window: {correct, wrong, total_pnl}}
+BIAS_EVAL_WINDOWS.forEach(w => biasAccuracyStats[w] = { correct: 0, wrong: 0, total_pnl: 0 });
+let lastBiasVerdict = 'NEUTRAL';
+let lastBiasScore = 0;
+let lastBiasSignalTime = 0;
+const BIAS_SIGNAL_COOLDOWN = 10; // only record a new bias signal every 10s (avoid spam)
 
 // ─── WebSocket ──────────────────────────────────────────────────────────
 function connect() {
@@ -338,6 +354,22 @@ function handleData(data) {
   const currentTime = data.timestamp;
   evaluateAccuracy(currentPrice, currentTime);
   updateAccuracyPanel();
+
+  // ─── Track bias accuracy ───
+  // Record bias signals when they're directional (not neutral) with cooldown
+  const biasScore = biasHistory.length > 0 ? ((function() {
+    let l=0,s=0; biasHistory.forEach(b => { if(b.signal==='long')l++; else if(b.signal==='short')s++; });
+    return (l-s)/biasHistory.length*100;
+  })()) : 0;
+
+  if (Math.abs(biasScore) > 5 && currentTime - lastBiasSignalTime >= BIAS_SIGNAL_COOLDOWN) {
+    const direction = biasScore > 0 ? 'long' : 'short';
+    pendingBiasSignals.push({ t: currentTime, price: currentPrice, biasScore, direction });
+    lastBiasSignalTime = currentTime;
+    if (pendingBiasSignals.length > 500) pendingBiasSignals.splice(0, pendingBiasSignals.length - 500);
+  }
+  evaluateBiasAccuracy(currentPrice, currentTime);
+  updateBiasAccuracyPanel();
 
   // ─── Update header ───
   document.getElementById('current-price').textContent = '$' + data.mid_price.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
@@ -589,6 +621,90 @@ function updateAccuracyPanel() {
     `;
   } else {
     summaryEl.textContent = 'Collecting data... (need ' + TRACKED_HORIZONS[0] + 's for first eval)';
+  }
+}
+
+// ─── Bias Accuracy ──────────────────────────────────────────────────────
+function evaluateBiasAccuracy(currentPrice, currentTime) {
+  for (let i = pendingBiasSignals.length - 1; i >= 0; i--) {
+    const sig = pendingBiasSignals[i];
+    const elapsed = currentTime - sig.t;
+    let allDone = true;
+
+    for (const w of BIAS_EVAL_WINDOWS) {
+      const key = `_eval_${w}`;
+      if (sig[key]) continue;
+
+      if (elapsed >= w) {
+        const actualBps = (currentPrice - sig.price) / sig.price * 10000;
+        const correct = (sig.direction === 'long' && actualBps > 0) ||
+                        (sig.direction === 'short' && actualBps < 0);
+        const pnl = sig.direction === 'long' ? actualBps : -actualBps;
+
+        biasAccuracyStats[w].correct += correct ? 1 : 0;
+        biasAccuracyStats[w].wrong += correct ? 0 : 1;
+        biasAccuracyStats[w].total_pnl += pnl;
+        sig[key] = true;
+      } else {
+        allDone = false;
+      }
+    }
+
+    if (allDone && elapsed > 320) {
+      pendingBiasSignals.splice(i, 1);
+    }
+  }
+}
+
+function updateBiasAccuracyPanel() {
+  const list = document.getElementById('bias-acc-list');
+  list.innerHTML = '';
+
+  let totalCorrect = 0, totalWrong = 0, totalPnl = 0;
+
+  BIAS_EVAL_WINDOWS.forEach(w => {
+    const s = biasAccuracyStats[w];
+    const total = s.correct + s.wrong;
+    const pct = total > 0 ? (s.correct / total * 100) : 0;
+    const avgPnl = total > 0 ? s.total_pnl / total : 0;
+
+    totalCorrect += s.correct;
+    totalWrong += s.wrong;
+    totalPnl += s.total_pnl;
+
+    const barClass = pct >= 55 ? 'good' : pct >= 50 ? 'mid' : 'bad';
+    const pctColor = pct >= 55 ? '#22c55e' : pct >= 50 ? '#eab308' : '#ef4444';
+    const label = w >= 60 ? (w / 60) + 'm' : w + 's';
+
+    const row = document.createElement('div');
+    row.className = 'acc-row';
+    row.innerHTML = `
+      <span class="acc-horizon">${label}</span>
+      <div class="acc-bar-bg">
+        <div class="acc-bar-fill ${barClass}" style="width:${total > 0 ? pct : 0}%"></div>
+      </div>
+      <span class="acc-pct" style="color:${total > 0 ? pctColor : '#555577'}">${total > 0 ? pct.toFixed(1) + '%' : '—'}</span>
+      <span class="acc-count">${total > 0 ? 'n=' + total : ''}</span>
+    `;
+    list.appendChild(row);
+  });
+
+  const summaryEl = document.getElementById('bias-acc-summary');
+  const grandTotal = totalCorrect + totalWrong;
+  if (grandTotal > 0) {
+    const overallPct = (totalCorrect / grandTotal * 100).toFixed(1);
+    const avgPnl = (totalPnl / grandTotal).toFixed(2);
+    const pnlClass = totalPnl >= 0 ? 'pos' : 'neg';
+    summaryEl.innerHTML = `
+      Bias correct: ${overallPct}% (${grandTotal} signals)<br>
+      Avg P&L when biased: <span class="acc-pnl ${pnlClass}">${totalPnl >= 0 ? '+' : ''}${avgPnl} bps</span><br>
+      <span style="font-size:9px">Signals recorded when |bias| > 5, cooldown ${BIAS_SIGNAL_COOLDOWN}s</span>
+    `;
+  } else {
+    const pending = pendingBiasSignals.length;
+    summaryEl.textContent = pending > 0
+      ? `${pending} bias signals pending evaluation...`
+      : 'Need directional bias (|score| > 5) to start tracking';
   }
 }
 
