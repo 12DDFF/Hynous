@@ -270,12 +270,18 @@ let ws = null;
 let canvas, ctx;
 
 // Smooth animation state
-let prevMcData = null;       // previous server snapshot
-let currMcData = null;       // latest server snapshot
-let lastServerTime = 0;      // when we received currMcData
-const LERP_DURATION = 10.0;  // seconds to interpolate (matches server interval)
-let displayPrice = 0;        // smoothly animated mid price
-let displayPreds = {};       // smoothly animated prediction values {horizon: bps}
+let displayPrice = 0;          // smoothly animated price (chases real price)
+let targetPrice = 0;           // latest real price from server
+let displayPreds = {};         // smoothly animated prediction values
+let targetPreds = {};          // latest predictions from server
+let latestVol = 0.0001;        // latest vol_per_sec from server
+let mcBands = null;            // client-side MC bands (regenerated each frame)
+let mcSamples = null;          // client-side sample paths
+let mcTimePoints = null;       // time points for MC
+let lastMcRegen = 0;           // throttle MC regen to ~4fps
+const MC_REGEN_INTERVAL = 0.25; // regenerate MC every 250ms (not every frame)
+const PRICE_CHASE_SPEED = 0.08; // how fast displayPrice chases targetPrice (0-1, per frame)
+const PRED_CHASE_SPEED = 0.06;  // how fast predictions animate
 
 // Bias tracker state
 const biasHistory = [];       // [{t, signal, weightedReturn}] — every tick
@@ -339,16 +345,17 @@ function handleData(data) {
     if (priceHistory.length > 600) priceHistory.splice(0, priceHistory.length - 600);
   }
 
-  // Shift snapshots for interpolation
-  prevMcData = currMcData;
-  currMcData = data;
-  lastServerTime = performance.now() / 1000;
   mcData = data;
+  targetPrice = data.mid_price;
+  latestVol = data.vol_per_sec || 0.0001;
+
+  // Set target predictions for smooth animation
+  const preds = data.predictions || {};
+  Object.keys(preds).forEach(h => targetPreds[h] = preds[h]);
 
   // Initialize display values on first data
-  if (!prevMcData) {
-    displayPrice = data.mid_price;
-    const preds = data.predictions || {};
+  if (displayPrice === 0) {
+    displayPrice = targetPrice;
     Object.keys(preds).forEach(h => displayPreds[h] = preds[h]);
   }
 
@@ -780,41 +787,75 @@ function resize() {
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 }
 
-function lerp(a, b, t) { return a + (b - a) * t; }
-function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
+function regenMonteCarlo(price, preds, vol) {
+  // Client-side MC: 100 paths, anchored to current displayPrice
+  const N = 100;
+  const maxH = 180;
+  const step = 3; // compute every 3s (60 points for 180s)
+  const nSteps = Math.floor(maxH / step);
+  const tps = [];
+  for (let i = 0; i <= nSteps; i++) tps.push(i * step);
+  mcTimePoints = tps;
 
-function lerpBands(prev, curr, t) {
-  // Interpolate percentile bands between two MC snapshots
-  if (!prev || !curr) return curr || prev || {};
-  const result = {};
-  const keys = Object.keys(curr);
-  keys.forEach(tp => {
-    if (prev[tp] && curr[tp]) {
-      result[tp] = {};
-      ['p5','p10','p25','p50','p75','p90','p95'].forEach(p => {
-        result[tp][p] = lerp(prev[tp][p] || 0, curr[tp][p] || 0, t);
-      });
-    } else {
-      result[tp] = curr[tp] || prev[tp];
+  // Build drift per second from predictions
+  const sortedH = Object.keys(preds).map(Number).filter(h => h > 0).sort((a,b) => a-b);
+  const getDrift = (sec) => {
+    if (!sortedH.length) return 0;
+    if (sec <= sortedH[0]) return (preds[sortedH[0]] || 0) / sortedH[0] / 10000;
+    if (sec >= sortedH[sortedH.length-1]) return (preds[sortedH[sortedH.length-1]] || 0) / sortedH[sortedH.length-1] / 10000;
+    for (let i = 0; i < sortedH.length - 1; i++) {
+      if (sec >= sortedH[i] && sec <= sortedH[i+1]) {
+        const h1 = sortedH[i], h2 = sortedH[i+1];
+        const d1 = (preds[h1]||0)/h1/10000, d2 = (preds[h2]||0)/h2/10000;
+        return d1 + (d2-d1) * (sec-h1)/(h2-h1);
+      }
     }
+    return 0;
+  };
+
+  // Simulate paths
+  const paths = [];
+  for (let p = 0; p < N; p++) {
+    const path = [price];
+    let px = price;
+    for (let i = 1; i <= nSteps; i++) {
+      const sec = i * step;
+      let drift = 0;
+      for (let s = 0; s < step; s++) drift += getDrift((i-1)*step + s + 1);
+      const noise = randn() * vol * Math.sqrt(step);
+      px = px * (1 + drift + noise);
+      path.push(px);
+    }
+    paths.push(path);
+  }
+
+  // Compute percentile bands at each time point
+  mcBands = {};
+  tps.forEach((t, ti) => {
+    const col = paths.map(p => p[ti]).sort((a,b) => a-b);
+    const pctile = (p) => col[Math.floor(col.length * p / 100)] || price;
+    mcBands[t] = {
+      p5: pctile(5), p10: pctile(10), p25: pctile(25), p50: pctile(50),
+      p75: pctile(75), p90: pctile(90), p95: pctile(95),
+    };
   });
-  return result;
+
+  // Pick 15 sample paths
+  mcSamples = [];
+  for (let i = 0; i < Math.min(15, N); i += Math.max(1, Math.floor(N/15))) {
+    mcSamples.push(paths[i]);
+  }
 }
 
-function lerpPaths(prev, curr, t) {
-  // Interpolate sample paths
-  if (!prev || !curr) return curr || prev || [];
-  const n = Math.min(prev.length, curr.length);
-  const result = [];
-  for (let i = 0; i < n; i++) {
-    const len = Math.min(prev[i].length, curr[i].length);
-    const path = [];
-    for (let j = 0; j < len; j++) {
-      path.push(lerp(prev[i][j], curr[i][j], t));
-    }
-    result.push(path);
-  }
-  return result;
+// Box-Muller for normal random
+let _spare = null;
+function randn() {
+  if (_spare !== null) { const v = _spare; _spare = null; return v; }
+  let u, v, s;
+  do { u = Math.random()*2-1; v = Math.random()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0);
+  const mul = Math.sqrt(-2 * Math.log(s) / s);
+  _spare = v * mul;
+  return u * mul;
 }
 
 function render() {
@@ -822,7 +863,7 @@ function render() {
   const H = canvas.height / devicePixelRatio;
   ctx.clearRect(0, 0, W, H);
 
-  if (!currMcData || !priceHistory.length) {
+  if (!mcData || !priceHistory.length) {
     ctx.fillStyle = '#333355';
     ctx.font = '14px monospace';
     ctx.textAlign = 'center';
@@ -831,37 +872,25 @@ function render() {
     return;
   }
 
-  // Smooth interpolation between server snapshots
-  const now = performance.now() / 1000;
-  const elapsed = now - lastServerTime;
-  const rawT = Math.min(elapsed / LERP_DURATION, 1.0);
-  const t = easeInOut(rawT);
-
-  // Smoothly animate mid price
-  const targetPrice = currMcData.mid_price;
-  displayPrice = prevMcData ? lerp(prevMcData.mid_price, targetPrice, t) : targetPrice;
-
-  // Smoothly animate prediction values
-  const currPreds = currMcData.predictions || {};
-  const prevPreds = (prevMcData && prevMcData.predictions) || currPreds;
-  Object.keys(currPreds).forEach(h => {
-    const prev = prevPreds[h] !== undefined ? prevPreds[h] : currPreds[h];
-    displayPreds[h] = lerp(prev, currPreds[h], t);
+  // Smoothly chase target price and predictions every frame
+  displayPrice += (targetPrice - displayPrice) * PRICE_CHASE_SPEED;
+  Object.keys(targetPreds).forEach(h => {
+    const curr = displayPreds[h] || 0;
+    displayPreds[h] = curr + (targetPreds[h] - curr) * PRED_CHASE_SPEED;
   });
 
-  // Smoothly animate MC bands and paths
-  const currMc = currMcData.mc_paths;
-  const prevMc = prevMcData ? prevMcData.mc_paths : null;
-  if (!currMc) { requestAnimationFrame(render); return; }
+  // Regenerate MC simulation from current displayPrice (throttled)
+  const now = performance.now() / 1000;
+  if (!mcBands || now - lastMcRegen > MC_REGEN_INTERVAL) {
+    lastMcRegen = now;
+    regenMonteCarlo(displayPrice, displayPreds, latestVol);
+  }
 
-  const bands = (prevMc && prevMc.percentile_bands)
-    ? lerpBands(prevMc.percentile_bands, currMc.percentile_bands, t)
-    : currMc.percentile_bands;
-  const samplePaths = (prevMc && prevMc.sample_paths)
-    ? lerpPaths(prevMc.sample_paths, currMc.sample_paths, t)
-    : currMc.sample_paths;
-  const timePoints = currMc.time_points;
+  if (!mcBands) { requestAnimationFrame(render); return; }
 
+  const bands = mcBands;
+  const samplePaths = mcSamples;
+  const timePoints = mcTimePoints;
   const midPrice = displayPrice;
 
   const splitX = W * 0.50;
