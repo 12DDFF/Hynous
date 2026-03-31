@@ -537,8 +537,22 @@ function drawBiasSparkline() {
 }
 
 // ─── Accuracy Tracker ───────────────────────────────────────────────────
+
+function findPriceAtTime(targetTime) {
+  // Find the price closest to targetTime from priceHistory.
+  // Returns null if nothing within 3s tolerance.
+  if (!priceHistory.length) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (let i = priceHistory.length - 1; i >= 0; i--) {
+    const dist = Math.abs(priceHistory[i].t - targetTime);
+    if (dist < bestDist) { bestDist = dist; best = priceHistory[i]; }
+    if (priceHistory[i].t < targetTime - 10) break;
+  }
+  return (best && bestDist <= 3) ? best.price : null;
+}
+
 function evaluateAccuracy(currentPrice, currentTime) {
-  // For each pending prediction, check horizons that have elapsed
   for (let i = pendingPredictions.length - 1; i >= 0; i--) {
     const pred = pendingPredictions[i];
     const elapsed = currentTime - pred.t;
@@ -546,30 +560,35 @@ function evaluateAccuracy(currentPrice, currentTime) {
 
     for (const h of TRACKED_HORIZONS) {
       const key = `_evaluated_${h}`;
-      if (pred[key]) continue; // already evaluated this horizon
+      if (pred[key]) continue;
 
-      if (elapsed >= h) {
-        // This horizon has elapsed — evaluate
-        const predictedBps = pred.predictions[h];
-        if (predictedBps !== undefined && Math.abs(predictedBps) > 0.1) {
-          // Actual return in bps
-          const actualBps = (currentPrice - pred.price) / pred.price * 10000;
-          // Direction correct?
-          const correct = (predictedBps > 0 && actualBps > 0) || (predictedBps < 0 && actualBps < 0);
-          // PnL: if we traded in predicted direction, what's the actual return?
-          const pnl = predictedBps > 0 ? actualBps : -actualBps;
+      // Wait until horizon + 2s so the target price is in our history
+      if (elapsed >= h + 2) {
+        // Look up price at exactly pred.t + h, NOT currentPrice
+        const evalPrice = findPriceAtTime(pred.t + h);
+        if (evalPrice !== null) {
+          const predictedBps = pred.predictions[h];
+          if (predictedBps !== undefined && Math.abs(predictedBps) > 0.1) {
+            const actualBps = (evalPrice - pred.price) / pred.price * 10000;
+            const correct = (predictedBps > 0 && actualBps > 0) || (predictedBps < 0 && actualBps < 0);
+            const pnl = predictedBps > 0 ? actualBps : -actualBps;
 
-          accuracyStats[h].correct += correct ? 1 : 0;
-          accuracyStats[h].wrong += correct ? 0 : 1;
-          accuracyStats[h].total_pnl += pnl;
+            accuracyStats[h].correct += correct ? 1 : 0;
+            accuracyStats[h].wrong += correct ? 0 : 1;
+            accuracyStats[h].total_pnl += pnl;
+          }
+          pred[key] = true;
+        } else if (elapsed > h + 15) {
+          // No price found after grace period — mark as evaluated, skip
+          pred[key] = true;
+        } else {
+          allEvaluated = false;
         }
-        pred[key] = true;
       } else {
         allEvaluated = false;
       }
     }
 
-    // Remove fully evaluated predictions (all horizons checked)
     if (allEvaluated && elapsed > 200) {
       pendingPredictions.splice(i, 1);
     }
@@ -635,16 +654,23 @@ function evaluateBiasAccuracy(currentPrice, currentTime) {
       const key = `_eval_${w}`;
       if (sig[key]) continue;
 
-      if (elapsed >= w) {
-        const actualBps = (currentPrice - sig.price) / sig.price * 10000;
-        const correct = (sig.direction === 'long' && actualBps > 0) ||
-                        (sig.direction === 'short' && actualBps < 0);
-        const pnl = sig.direction === 'long' ? actualBps : -actualBps;
+      if (elapsed >= w + 2) {
+        const evalPrice = findPriceAtTime(sig.t + w);
+        if (evalPrice !== null) {
+          const actualBps = (evalPrice - sig.price) / sig.price * 10000;
+          const correct = (sig.direction === 'long' && actualBps > 0) ||
+                          (sig.direction === 'short' && actualBps < 0);
+          const pnl = sig.direction === 'long' ? actualBps : -actualBps;
 
-        biasAccuracyStats[w].correct += correct ? 1 : 0;
-        biasAccuracyStats[w].wrong += correct ? 0 : 1;
-        biasAccuracyStats[w].total_pnl += pnl;
-        sig[key] = true;
+          biasAccuracyStats[w].correct += correct ? 1 : 0;
+          biasAccuracyStats[w].wrong += correct ? 0 : 1;
+          biasAccuracyStats[w].total_pnl += pnl;
+          sig[key] = true;
+        } else if (elapsed > w + 15) {
+          sig[key] = true;
+        } else {
+          allDone = false;
+        }
       } else {
         allDone = false;
       }
