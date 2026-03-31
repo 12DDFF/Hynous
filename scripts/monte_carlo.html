@@ -280,8 +280,8 @@ let mcSamples = null;          // client-side sample paths
 let mcTimePoints = null;       // time points for MC
 let lastMcRegen = 0;           // throttle MC regen to ~4fps
 const MC_REGEN_INTERVAL = 0.25; // regenerate MC every 250ms (not every frame)
-const PRICE_CHASE_SPEED = 0.08; // how fast displayPrice chases targetPrice (0-1, per frame)
-const PRED_CHASE_SPEED = 0.06;  // how fast predictions animate
+const PRICE_CHASE_SPEED = 0.02; // how fast displayPrice chases targetPrice (~3s to settle)
+const PRED_CHASE_SPEED = 0.02;  // predictions animate at same rate as price
 let _stableMinP = 0;            // smoothed Y-axis bounds (expand fast, contract slow)
 let _stableMaxP = 0;
 
