@@ -1030,8 +1030,8 @@ function _renderInner() {
     arrowColor[2] += (tB - arrowColor[2]) * 0.1;
 
     const arrowSize = 10;
-    const ax = histR + 4;
-    const ay = tipY;
+    const ax = splitX;
+    const ay = priceToY(targetPrice);
     ctx.save();
     ctx.translate(ax, ay);
     ctx.rotate(arrowAngle);
