@@ -283,10 +283,12 @@ let mcBands = null;            // client-side MC bands
 let mcSamples = null;          // client-side sample paths
 let mcTimePoints = null;       // time points for MC
 let mcDirty = true;            // regenerate MC on next frame when true
-const PRICE_CHASE_SPEED = 0.15; // fast chase — settles in ~0.5s at 60fps
-const PRED_CHASE_SPEED = 0.15;  // match price speed
-let _stableMinP = 0;            // smoothed Y-axis bounds (expand fast, contract slow)
+const PRICE_CHASE_SPEED = 0.25; // smooth chase — settles in ~0.3s at 60fps
+const PRED_CHASE_SPEED = 0.25;
+let _stableMinP = 0;
 let _stableMaxP = 0;
+let arrowAngle = 0;            // smoothly animated arrow angle (radians, 0=right, -pi/2=up, pi/2=down)
+let arrowColor = [102,102,136]; // smoothly animated RGB
 
 // Bias tracker state
 const biasHistory = [];       // [{t, signal, weightedReturn}] — every tick
@@ -360,13 +362,13 @@ function handleData(data) {
   mcData = data;
   latestVol = data.vol_per_sec || 0.0001;
 
-  // Snap price and predictions instantly — no chase delay
-  displayPrice = data.mid_price;
+  // Set targets — displayPrice chases smoothly, MC anchors to target directly
   targetPrice = data.mid_price;
+  if (displayPrice === 0) displayPrice = targetPrice;
   const preds = data.predictions || {};
   Object.keys(preds).forEach(h => {
-    displayPreds[h] = preds[h];
     targetPreds[h] = preds[h];
+    if (displayPreds[h] === undefined) displayPreds[h] = preds[h];
   });
 
   // Fresh MC noise + flag for regen on next render frame
@@ -908,11 +910,17 @@ function _renderInner() {
     return;
   }
 
-  // Regenerate MC when new data arrives (mcDirty) or not yet initialized
+  // Smooth chase for display price + predictions
+  displayPrice += (targetPrice - displayPrice) * PRICE_CHASE_SPEED;
+  Object.keys(targetPreds).forEach(h => {
+    displayPreds[h] = (displayPreds[h] || 0) + (targetPreds[h] - (displayPreds[h] || 0)) * PRED_CHASE_SPEED;
+  });
+
+  // Regenerate MC anchored to TARGET price (exact), not displayPrice
   if (!mcBands || mcDirty) {
     mcDirty = false;
     try {
-      regenMonteCarlo(displayPrice, displayPreds, latestVol);
+      regenMonteCarlo(targetPrice, targetPreds, latestVol);
     } catch(e) { console.error('MC regen error:', e); }
   }
 
@@ -987,10 +995,61 @@ function _renderInner() {
       else ctx.lineTo(x, y);
     });
     // Extend line to displayPrice at the right edge (smooth tip)
+    const tipY = priceToY(displayPrice);
     if (started) {
-      ctx.lineTo(histR, priceToY(displayPrice));
+      ctx.lineTo(histR, tipY);
     }
     ctx.stroke();
+
+    // ─── Direction Arrow at price tip ───
+    // Target angle based on MC drift (median endpoint vs current)
+    const endT = timePoints[timePoints.length - 1];
+    const endP50 = bands[endT] ? bands[endT].p50 : targetPrice;
+    const driftBps = (endP50 - targetPrice) / targetPrice * 10000;
+
+    // Map drift to angle: up = -90°, down = +90°, neutral = 0° (pointing right)
+    // Clamp at ±2 bps for full deflection
+    const targetAngle = -Math.max(-1, Math.min(1, driftBps / 2.0)) * Math.PI / 2;
+    arrowAngle += (targetAngle - arrowAngle) * 0.1; // smooth rotation
+
+    // Arrow color: green up, red down, grey neutral (same as MC cone)
+    const ct = Math.max(-1, Math.min(1, driftBps / 1.0));
+    let tR, tG, tB;
+    if (ct >= 0) {
+      tR = 102 + (34 - 102) * ct;
+      tG = 102 + (197 - 102) * ct;
+      tB = 136 + (94 - 136) * ct;
+    } else {
+      const t2 = -ct;
+      tR = 102 + (239 - 102) * t2;
+      tG = 102 + (68 - 102) * t2;
+      tB = 136 + (68 - 136) * t2;
+    }
+    arrowColor[0] += (tR - arrowColor[0]) * 0.1;
+    arrowColor[1] += (tG - arrowColor[1]) * 0.1;
+    arrowColor[2] += (tB - arrowColor[2]) * 0.1;
+
+    const arrowSize = 10;
+    const ax = histR + 4;
+    const ay = tipY;
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(arrowAngle);
+    ctx.beginPath();
+    ctx.moveTo(arrowSize, 0);
+    ctx.lineTo(-arrowSize * 0.5, -arrowSize * 0.6);
+    ctx.lineTo(-arrowSize * 0.3, 0);
+    ctx.lineTo(-arrowSize * 0.5, arrowSize * 0.6);
+    ctx.closePath();
+    ctx.fillStyle = `rgb(${Math.round(arrowColor[0])}, ${Math.round(arrowColor[1])}, ${Math.round(arrowColor[2])})`;
+    ctx.fill();
+    ctx.restore();
+
+    // Price label next to arrow
+    ctx.fillStyle = `rgb(${Math.round(arrowColor[0])}, ${Math.round(arrowColor[1])}, ${Math.round(arrowColor[2])})`;
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('$' + displayPrice.toFixed(1), ax + arrowSize + 4, ay + 4);
 
     // Time labels
     ctx.fillStyle = '#444466';
