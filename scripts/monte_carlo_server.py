@@ -16,7 +16,6 @@ Usage:
 import asyncio
 import json
 import logging
-import time
 from collections import deque
 from pathlib import Path
 
@@ -129,36 +128,54 @@ class TickPredictor:
         ]
 
         rows = list(self._tick_buffer)
-        latest = rows[-1]
+
+        # Downsample to 5s resolution to match training
+        ds_rows = [rows[0]]
+        last_t = rows[0].get("timestamp", 0)
+        for r in rows[1:]:
+            if r.get("timestamp", 0) - last_t >= 4.5:
+                ds_rows.append(r)
+                last_t = r["timestamp"]
+
+        latest = ds_rows[-1]
         features = {f: (latest.get(f) or 0.0) for f in BASE_TICK_FEATURES}
 
-        if len(rows) >= 5:
+        # Rolling features at training resolution (5s ticks)
+        # w5=1, w10=2, w30=6, w60=12
+        if len(ds_rows) >= 2:
             def _col(name):
-                return [r.get(name) or 0.0 for r in rows]
+                return [r.get(name) or 0.0 for r in ds_rows]
 
             book_imb = _col("book_imbalance_5")
             flow_imb = _col("flow_imbalance_10s")
             price_chg = _col("price_change_10s")
             mid_arr = _col("mid_price")
-            n = len(rows)
+            n = len(ds_rows)
 
-            features["book_imbalance_5_mean5"] = float(np.mean(book_imb[-5:]))
-            features["flow_imbalance_10s_mean5"] = float(np.mean(flow_imb[-5:]))
-            features["price_change_10s_mean5"] = float(np.mean(price_chg[-5:]))
-            features["book_imbalance_5_mean10"] = float(np.mean(book_imb[-min(10, n):]))
-            features["flow_imbalance_10s_mean10"] = float(np.mean(flow_imb[-min(10, n):]))
+            # w5=1: identity (matches training)
+            features["book_imbalance_5_mean5"] = book_imb[-1]
+            features["flow_imbalance_10s_mean5"] = flow_imb[-1]
+            features["price_change_10s_mean5"] = price_chg[-1]
 
-            w30 = min(30, n)
-            features["book_imbalance_5_std30"] = float(np.std(book_imb[-w30:]))
-            features["flow_imbalance_10s_std30"] = float(np.std(flow_imb[-w30:]))
-            features["price_change_10s_std30"] = float(np.std(price_chg[-w30:]))
+            # w10=2
+            w10 = min(2, n)
+            features["book_imbalance_5_mean10"] = float(np.mean(book_imb[-w10:]))
+            features["flow_imbalance_10s_mean10"] = float(np.mean(flow_imb[-w10:]))
 
+            # w30=6
+            w30 = min(6, n)
+            features["book_imbalance_5_std30"] = float(np.std(book_imb[-w30:])) if w30 >= 2 else 0.0
+            features["flow_imbalance_10s_std30"] = float(np.std(flow_imb[-w30:])) if w30 >= 2 else 0.0
+            features["price_change_10s_std30"] = float(np.std(price_chg[-w30:])) if w30 >= 2 else 0.0
+
+            # w60=12
+            w60 = min(12, n)
             for arr, slope_name in [
                 (book_imb, "book_imbalance_5_slope60"),
                 (flow_imb, "flow_imbalance_10s_slope60"),
                 (mid_arr, "mid_price_slope60"),
             ]:
-                seg = np.array(arr[-min(60, n):], dtype=np.float32)
+                seg = np.array(arr[-w60:], dtype=np.float32)
                 if len(seg) >= 3:
                     t = np.arange(len(seg), dtype=np.float32)
                     t_m, y_m = t.mean(), seg.mean()

@@ -41,6 +41,17 @@ BASE_TICK_FEATURES = [
     "max_trade_usd_60s", "trade_count_60s", "trade_count_10s",
 ]
 
+ROLLING_FEATURES = [
+    "book_imbalance_5_mean5", "flow_imbalance_10s_mean5", "price_change_10s_mean5",
+    "book_imbalance_5_mean10", "flow_imbalance_10s_mean10",
+    "book_imbalance_5_std30", "flow_imbalance_10s_std30", "price_change_10s_std30",
+    "book_imbalance_5_slope60", "flow_imbalance_10s_slope60", "mid_price_slope60",
+]
+
+# Model features = base + rolling, minus mid_price (used for labels, not prediction)
+CODE_MODEL_FEATURES = [f for f in BASE_TICK_FEATURES + ROLLING_FEATURES if f != "mid_price"]
+CODE_FEATURE_HASH = hashlib.sha256("|".join(CODE_MODEL_FEATURES).encode()).hexdigest()[:16]
+
 # Minimum basis points to call a direction (below this = "skip")
 DIRECTION_THRESHOLD_BPS = 0.5
 
@@ -167,12 +178,13 @@ class TickInferenceEngine:
                 if fv is None:
                     continue
 
-                # Verify feature hash
-                expected_hash = hashlib.sha256(
-                    "|".join(model.feature_names).encode()
-                ).hexdigest()[:16]
-                if expected_hash != model.feature_hash:
-                    log.warning("Feature hash mismatch for %s — skipping", name)
+                # Verify CODE feature list matches what the model was trained on.
+                # This catches drift between inference code and model artifacts.
+                if CODE_FEATURE_HASH != model.feature_hash:
+                    log.warning(
+                        "Feature hash mismatch for %s: code=%s model=%s — skipping",
+                        name, CODE_FEATURE_HASH, model.feature_hash,
+                    )
                     continue
 
                 dmat = xgb.DMatrix(
@@ -214,12 +226,13 @@ class TickInferenceEngine:
                 )
                 self._db_conn.row_factory = sqlite3.Row
 
-            # Get the last 60 rows (~60s at 1/sec or ~5min at 5s) for rolling features
+            # Get last 90 rows (~90s at 1/sec) — downsample to 5s gives ~18 ticks,
+            # enough for w60=12 (60s rolling window at 5s resolution)
             rows = self._db_conn.execute(
                 """
                 SELECT * FROM tick_snapshots
                 WHERE coin = ? AND schema_version = 2
-                ORDER BY timestamp DESC LIMIT 60
+                ORDER BY timestamp DESC LIMIT 90
                 """,
                 (coin,),
             ).fetchall()
@@ -229,43 +242,65 @@ class TickInferenceEngine:
 
             # Reverse to chronological order
             rows = list(reversed(rows))
-            latest = rows[-1]
+
+            # Downsample to 5s resolution — MUST match training resolution.
+            # Training uses DOWNSAMPLE_INTERVAL=5, so rolling windows are
+            # computed over 5s-spaced ticks. Without this, slopes are ~5x too
+            # small and means/stds differ systematically.
+            ds_rows = [rows[0]]
+            last_t = rows[0]["timestamp"]
+            for r in rows[1:]:
+                if r["timestamp"] - last_t >= 4.5:
+                    ds_rows.append(r)
+                    last_t = r["timestamp"]
+
+            latest = ds_rows[-1]
             tick_ts = latest["timestamp"]
 
             # Build base features from latest row
             features = {f: (latest[f] or 0.0) for f in BASE_TICK_FEATURES}
 
-            # Compute rolling aggregates from the history
-            if len(rows) >= 5:
-                vals = {f: [r[f] or 0.0 for r in rows] for f in BASE_TICK_FEATURES}
+            # Rolling features at TRAINING resolution (5s ticks).
+            # Window sizes match train_tick_direction.py:
+            #   w5  = 5 // 5  = 1 tick   (= just the latest value)
+            #   w10 = 10 // 5 = 2 ticks
+            #   w30 = 30 // 5 = 6 ticks
+            #   w60 = 60 // 5 = 12 ticks
+            if len(ds_rows) >= 2:
+                def _col(name):
+                    return [r.get(name) or 0.0 for r in ds_rows]
 
-                book_imb = vals["book_imbalance_5"]
-                flow_imb = vals["flow_imbalance_10s"]
-                price_chg = vals["price_change_10s"]
-                mid = vals["mid_price"]
+                book_imb = _col("book_imbalance_5")
+                flow_imb = _col("flow_imbalance_10s")
+                price_chg = _col("price_change_10s")
+                mid = _col("mid_price")
+                n = len(ds_rows)
 
-                n = len(rows)
+                # w5=1: mean5 = just the latest value (matches training where
+                # _rolling_mean with window=1 returns x.copy())
+                features["book_imbalance_5_mean5"] = book_imb[-1]
+                features["flow_imbalance_10s_mean5"] = flow_imb[-1]
+                features["price_change_10s_mean5"] = price_chg[-1]
 
-                # Rolling means (last N values)
-                features["book_imbalance_5_mean5"] = np.mean(book_imb[-5:])
-                features["flow_imbalance_10s_mean5"] = np.mean(flow_imb[-5:])
-                features["price_change_10s_mean5"] = np.mean(price_chg[-5:])
-                features["book_imbalance_5_mean10"] = np.mean(book_imb[-10:]) if n >= 10 else np.mean(book_imb)
-                features["flow_imbalance_10s_mean10"] = np.mean(flow_imb[-10:]) if n >= 10 else np.mean(flow_imb)
+                # w10=2
+                w10 = min(2, n)
+                features["book_imbalance_5_mean10"] = float(np.mean(book_imb[-w10:]))
+                features["flow_imbalance_10s_mean10"] = float(np.mean(flow_imb[-w10:]))
 
-                # Rolling stds (last 30 values)
-                w30 = min(30, n)
-                features["book_imbalance_5_std30"] = float(np.std(book_imb[-w30:]))
-                features["flow_imbalance_10s_std30"] = float(np.std(flow_imb[-w30:]))
-                features["price_change_10s_std30"] = float(np.std(price_chg[-w30:]))
+                # w30=6
+                w30 = min(6, n)
+                features["book_imbalance_5_std30"] = float(np.std(book_imb[-w30:])) if w30 >= 2 else 0.0
+                features["flow_imbalance_10s_std30"] = float(np.std(flow_imb[-w30:])) if w30 >= 2 else 0.0
+                features["price_change_10s_std30"] = float(np.std(price_chg[-w30:])) if w30 >= 2 else 0.0
 
-                # Rolling slopes (last 60 values via simple OLS)
-                for feat_name, arr, slope_name in [
-                    ("book_imbalance_5", book_imb, "book_imbalance_5_slope60"),
-                    ("flow_imbalance_10s", flow_imb, "flow_imbalance_10s_slope60"),
-                    ("mid_price", mid, "mid_price_slope60"),
+                # w60=12 — OLS slope over 12 downsampled ticks
+                w60 = min(12, n)
+                for arr, slope_name in [
+                    (book_imb, "book_imbalance_5_slope60"),
+                    (flow_imb, "flow_imbalance_10s_slope60"),
+                    (mid, "mid_price_slope60"),
                 ]:
-                    seg = np.array(arr[-min(60, n):], dtype=np.float32)
+                    seg = np.array(arr[-w60:], dtype=np.float32)
                     if len(seg) >= 3:
                         t = np.arange(len(seg), dtype=np.float32)
                         t_m, y_m = t.mean(), seg.mean()
@@ -275,9 +310,13 @@ class TickInferenceEngine:
                     else:
                         features[slope_name] = 0.0
             else:
-                # Not enough history for rolling — set to zero
-                from satellite.training.train_tick_direction import ROLLING_FEATURES
-                for rf in ROLLING_FEATURES:
+                ROLLING = [
+                    "book_imbalance_5_mean5", "flow_imbalance_10s_mean5", "price_change_10s_mean5",
+                    "book_imbalance_5_mean10", "flow_imbalance_10s_mean10",
+                    "book_imbalance_5_std30", "flow_imbalance_10s_std30", "price_change_10s_std30",
+                    "book_imbalance_5_slope60", "flow_imbalance_10s_slope60", "mid_price_slope60",
+                ]
+                for rf in ROLLING:
                     features.setdefault(rf, 0.0)
 
             return features, tick_ts

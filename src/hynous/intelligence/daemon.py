@@ -1777,18 +1777,21 @@ class Daemon:
                         )
 
                         # --- Tick direction inference ---
+                        # Store under tick_* keys to avoid overwriting v2 direction model.
+                        # Entry score reads from signal/long_roe/short_roe (v2 model).
+                        # Tick predictions stored separately for monitoring + future blending.
                         if self._tick_inference:
                             try:
                                 tick_pred = self._tick_inference.predict(coin)
                                 if tick_pred:
+                                    _ret_bps = tick_pred.predicted_return_bps
                                     with self._latest_predictions_lock:
                                         if coin not in self._latest_predictions:
                                             self._latest_predictions[coin] = {}
-                                        self._latest_predictions[coin]["signal"] = tick_pred.signal
-                                        # Convert bps to approximate ROE at 20x leverage
-                                        _ret_bps = tick_pred.predicted_return_bps
-                                        self._latest_predictions[coin]["long_roe"] = max(0, _ret_bps * 20 / 100)
-                                        self._latest_predictions[coin]["short_roe"] = max(0, -_ret_bps * 20 / 100)
+                                        self._latest_predictions[coin]["tick_signal"] = tick_pred.signal
+                                        self._latest_predictions[coin]["tick_return_bps"] = round(_ret_bps, 3)
+                                        self._latest_predictions[coin]["tick_long_roe"] = max(0, _ret_bps * 20 / 100)
+                                        self._latest_predictions[coin]["tick_short_roe"] = max(0, -_ret_bps * 20 / 100)
                                         self._latest_predictions[coin]["tick_predictions"] = tick_pred.predictions
                                         self._latest_predictions[coin]["tick_inference_ms"] = tick_pred.inference_time_ms
                                     logger.debug(
