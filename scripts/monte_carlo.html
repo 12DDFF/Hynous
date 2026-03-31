@@ -268,7 +268,7 @@ let priceHistory = [];      // points currently drawn on the chart
 let _pendingPrices = [];    // new points queued for gradual release
 let _lastDrip = 0;          // last time we released a pending point
 let _firstLoad = true;      // first server data = dump all history instantly
-const DRIP_INTERVAL = 0.3;  // release one new point every 300ms (smooth line growth)
+const DRIP_INTERVAL = 0.05; // release points fast — with 1s ticks there's usually only 1 pending
 let mcData = null;
 let ws = null;
 let canvas, ctx;
@@ -279,13 +279,12 @@ let targetPrice = 0;           // latest real price from server
 let displayPreds = {};         // smoothly animated prediction values
 let targetPreds = {};          // latest predictions from server
 let latestVol = 0.0001;        // latest vol_per_sec from server
-let mcBands = null;            // client-side MC bands (regenerated each frame)
+let mcBands = null;            // client-side MC bands
 let mcSamples = null;          // client-side sample paths
 let mcTimePoints = null;       // time points for MC
-let lastMcRegen = 0;           // throttle MC regen to ~4fps
-const MC_REGEN_INTERVAL = 0.25; // regenerate MC every 250ms (not every frame)
-const PRICE_CHASE_SPEED = 0.02; // how fast displayPrice chases targetPrice (~3s to settle)
-const PRED_CHASE_SPEED = 0.02;  // predictions animate at same rate as price
+let mcDirty = true;            // regenerate MC on next frame when true
+const PRICE_CHASE_SPEED = 0.15; // fast chase — settles in ~0.5s at 60fps
+const PRED_CHASE_SPEED = 0.15;  // match price speed
 let _stableMinP = 0;            // smoothed Y-axis bounds (expand fast, contract slow)
 let _stableMaxP = 0;
 
@@ -362,8 +361,9 @@ function handleData(data) {
   targetPrice = data.mid_price;
   latestVol = data.vol_per_sec || 0.0001;
 
-  // Fresh random noise for MC on each server update
+  // Fresh MC noise + flag for regen on next render frame
   regenerateNoise();
+  mcDirty = true;
 
   // Set target predictions for smooth animation
   const preds = data.predictions || {};
@@ -917,10 +917,9 @@ function _renderInner() {
     displayPreds[h] = curr + (targetPreds[h] - curr) * PRED_CHASE_SPEED;
   });
 
-  // Regenerate MC simulation from current displayPrice (throttled)
-  const now = performance.now() / 1000;
-  if (!mcBands || now - lastMcRegen > MC_REGEN_INTERVAL) {
-    lastMcRegen = now;
+  // Regenerate MC when new data arrives (mcDirty) or not yet initialized
+  if (!mcBands || mcDirty) {
+    mcDirty = false;
     try {
       regenMonteCarlo(displayPrice, displayPreds, latestVol);
     } catch(e) { console.error('MC regen error:', e); }
