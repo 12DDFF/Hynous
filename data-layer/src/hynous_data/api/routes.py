@@ -1,8 +1,14 @@
-"""REST API endpoints for hynous-data."""
+"""REST + WebSocket API endpoints for hynous-data."""
 
+import asyncio
+import json
+import logging
 import time
-from fastapi import APIRouter, Query, Body
+
+from fastapi import APIRouter, Query, Body, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+
+log = logging.getLogger(__name__)
 
 
 def create_router(c: dict) -> APIRouter:
@@ -350,5 +356,34 @@ def create_router(c: dict) -> APIRouter:
             db.conn.commit()
 
         return {"status": "ok", "recorded": recorded}
+
+    # ---- WebSocket: Tick Snapshot Stream ----
+    # Streams the latest tick snapshot every ~1s to connected clients.
+    # Used by Monte Carlo visualization for near-realtime updates.
+
+    @router.websocket("/ws/ticks")
+    async def tick_stream(websocket: WebSocket):
+        await websocket.accept()
+        tc = c.get("tick_collector")
+        if not tc:
+            await websocket.send_json({"error": "tick_collector not running"})
+            await websocket.close()
+            return
+
+        log.info("Tick WS client connected")
+        last_ts = 0
+        try:
+            while True:
+                snap = tc.get_latest_snapshot()
+                if snap and snap.get("timestamp", 0) != last_ts:
+                    last_ts = snap["timestamp"]
+                    await websocket.send_json(snap)
+                await asyncio.sleep(1)
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            log.debug("Tick WS error", exc_info=True)
+        finally:
+            log.info("Tick WS client disconnected")
 
     return router

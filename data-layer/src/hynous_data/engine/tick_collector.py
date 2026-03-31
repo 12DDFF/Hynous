@@ -129,6 +129,10 @@ class TickCollector:
         self._conn: sqlite3.Connection | None = None
         self._db_lock = threading.Lock()
 
+        # Latest snapshot as dict (for WS streaming — updated every 1s)
+        self._latest_snapshot: dict | None = None
+        self._latest_snapshot_lock = threading.Lock()
+
         # Stats
         self.snapshots_computed = 0
         self.snapshots_written = 0
@@ -229,6 +233,13 @@ class TickCollector:
                     if row:
                         with self._buffer_lock:
                             self._write_buffer.append(row)
+                        # Store latest as dict for WS streaming
+                        snap = dict(zip(
+                            ["timestamp", "coin"] + TICK_FEATURE_NAMES + ["schema_version"],
+                            row,
+                        ))
+                        with self._latest_snapshot_lock:
+                            self._latest_snapshot = snap
                         self.snapshots_computed += 1
                 except Exception:
                     self.compute_errors += 1
@@ -495,6 +506,11 @@ class TickCollector:
     # ------------------------------------------------------------------
     # Status
     # ------------------------------------------------------------------
+
+    def get_latest_snapshot(self) -> dict | None:
+        """Get the most recent tick snapshot as a dict. Thread-safe."""
+        with self._latest_snapshot_lock:
+            return self._latest_snapshot.copy() if self._latest_snapshot else None
 
     def stats(self) -> dict:
         return {
