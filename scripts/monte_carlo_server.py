@@ -26,7 +26,7 @@ FRONTEND_PATH = PROJECT_ROOT / "scripts" / "monte_carlo.html"
 VPS_HOST = "vps"
 N_SIMULATIONS = 200
 HORIZONS = [10, 15, 20, 30, 45, 60, 120, 180]
-UPDATE_INTERVAL = 3.0
+UPDATE_INTERVAL = 10.0
 PRICE_HISTORY_LEN = 300
 
 _clients: set = set()
