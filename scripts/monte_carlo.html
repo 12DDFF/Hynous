@@ -351,6 +351,9 @@ function handleData(data) {
   targetPrice = data.mid_price;
   latestVol = data.vol_per_sec || 0.0001;
 
+  // Fresh random noise for MC on each server update
+  regenerateNoise();
+
   // Set target predictions for smooth animation
   const preds = data.predictions || {};
   Object.keys(preds).forEach(h => targetPreds[h] = preds[h]);
@@ -788,14 +791,36 @@ function resize() {
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 }
 
+// Pre-generated random noise matrix — regenerated only on new server data.
+// Between updates, MC regens reuse the same noise so the cone doesn't jitter.
+const MC_N = 100;
+const MC_MAX_H = 180;
+const MC_STEP = 3;
+const MC_NSTEPS = Math.floor(MC_MAX_H / MC_STEP);
+let _mcNoise = null; // [N][nSteps] of normal random values
+
+function regenerateNoise() {
+  _mcNoise = [];
+  for (let p = 0; p < MC_N; p++) {
+    const row = [];
+    for (let i = 0; i < MC_NSTEPS; i++) row.push(_randn());
+    _mcNoise.push(row);
+  }
+}
+
+function _randn() {
+  let u, v, s;
+  do { u = Math.random()*2-1; v = Math.random()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0);
+  return u * Math.sqrt(-2 * Math.log(s) / s);
+}
+
+// Generate noise on page load
+regenerateNoise();
+
 function regenMonteCarlo(price, preds, vol) {
-  // Client-side MC: 100 paths, anchored to current displayPrice
-  const N = 100;
-  const maxH = 180;
-  const step = 3; // compute every 3s (60 points for 180s)
-  const nSteps = Math.floor(maxH / step);
+  // Client-side MC using pre-generated noise (deterministic between server updates)
   const tps = [];
-  for (let i = 0; i <= nSteps; i++) tps.push(i * step);
+  for (let i = 0; i <= MC_NSTEPS; i++) tps.push(i * MC_STEP);
   mcTimePoints = tps;
 
   // Build drift per second from predictions
@@ -814,49 +839,37 @@ function regenMonteCarlo(price, preds, vol) {
     return 0;
   };
 
-  // Simulate paths
+  // Simulate paths using fixed noise
   const paths = [];
-  for (let p = 0; p < N; p++) {
+  for (let p = 0; p < MC_N; p++) {
     const path = [price];
     let px = price;
-    for (let i = 1; i <= nSteps; i++) {
-      const sec = i * step;
+    for (let i = 0; i < MC_NSTEPS; i++) {
       let drift = 0;
-      for (let s = 0; s < step; s++) drift += getDrift((i-1)*step + s + 1);
-      const noise = randn() * vol * Math.sqrt(step);
+      for (let s = 0; s < MC_STEP; s++) drift += getDrift(i*MC_STEP + s + 1);
+      const noise = _mcNoise[p][i] * vol * Math.sqrt(MC_STEP);
       px = px * (1 + drift + noise);
       path.push(px);
     }
     paths.push(path);
   }
 
-  // Compute percentile bands at each time point
+  // Percentile bands
   mcBands = {};
   tps.forEach((t, ti) => {
     const col = paths.map(p => p[ti]).sort((a,b) => a-b);
-    const pctile = (p) => col[Math.floor(col.length * p / 100)] || price;
+    const pctile = (q) => col[Math.floor(col.length * q / 100)] || price;
     mcBands[t] = {
       p5: pctile(5), p10: pctile(10), p25: pctile(25), p50: pctile(50),
       p75: pctile(75), p90: pctile(90), p95: pctile(95),
     };
   });
 
-  // Pick 15 sample paths
+  // Sample paths
   mcSamples = [];
-  for (let i = 0; i < Math.min(15, N); i += Math.max(1, Math.floor(N/15))) {
+  for (let i = 0; i < Math.min(15, MC_N); i += Math.max(1, Math.floor(MC_N/15))) {
     mcSamples.push(paths[i]);
   }
-}
-
-// Box-Muller for normal random
-let _spare = null;
-function randn() {
-  if (_spare !== null) { const v = _spare; _spare = null; return v; }
-  let u, v, s;
-  do { u = Math.random()*2-1; v = Math.random()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0);
-  const mul = Math.sqrt(-2 * Math.log(s) / s);
-  _spare = v * mul;
-  return u * mul;
 }
 
 function render() {
