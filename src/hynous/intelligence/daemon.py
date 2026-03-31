@@ -561,8 +561,21 @@ class Daemon:
             except Exception:
                 logger.debug("Failed to load entry score weights", exc_info=True)
 
-        # Tick-level features: MOVED to data-layer process (independent of daemon restarts)
-        # See data-layer/src/hynous_data/engine/tick_collector.py
+        # Tick-level features: collected by data-layer process (survives daemon restarts)
+        # Tick direction models: loaded here for inference from satellite.db
+        self._tick_inference = None
+        if self._satellite_store:
+            try:
+                from satellite.tick_inference import TickInferenceEngine
+                _tick_artifacts = config.project_root / "satellite" / "artifacts" / "tick_models"
+                _sat_db = str(config.project_root / config.satellite.db_path)
+                self._tick_inference = TickInferenceEngine(_tick_artifacts, _sat_db)
+                if self._tick_inference.is_ready:
+                    logger.info("Tick inference engine loaded: %s", self._tick_inference.model_names)
+                else:
+                    self._tick_inference = None
+            except Exception:
+                logger.debug("Tick inference engine init failed", exc_info=True)
 
         # Stats
         self.wake_count: int = 0
@@ -940,6 +953,7 @@ class Daemon:
                 "session": self._regime.session if self._regime else "QUIET",
                 "reversal": self._regime.reversal_flag if self._regime else False,
             } if self._regime else None,
+            "tick_inference": self._tick_inference.get_status() if self._tick_inference else None,
         }
 
     @property
@@ -1761,6 +1775,28 @@ class Daemon:
                             coin=coin,
                             conditions=conditions,
                         )
+
+                        # --- Tick direction inference ---
+                        if self._tick_inference:
+                            try:
+                                tick_pred = self._tick_inference.predict(coin)
+                                if tick_pred:
+                                    with self._latest_predictions_lock:
+                                        if coin not in self._latest_predictions:
+                                            self._latest_predictions[coin] = {}
+                                        self._latest_predictions[coin]["signal"] = tick_pred.signal
+                                        # Convert bps to approximate ROE at 20x leverage
+                                        _ret_bps = tick_pred.predicted_return_bps
+                                        self._latest_predictions[coin]["long_roe"] = max(0, _ret_bps * 20 / 100)
+                                        self._latest_predictions[coin]["short_roe"] = max(0, -_ret_bps * 20 / 100)
+                                        self._latest_predictions[coin]["tick_predictions"] = tick_pred.predictions
+                                        self._latest_predictions[coin]["tick_inference_ms"] = tick_pred.inference_time_ms
+                                    logger.debug(
+                                        "Tick inference %s: %s (%.1f bps, %.1fms)",
+                                        coin, tick_pred.signal, _ret_bps, tick_pred.inference_time_ms,
+                                    )
+                            except Exception:
+                                logger.debug("Tick inference failed for %s", coin, exc_info=True)
 
                         # --- Compute composite entry score ---
                         try:

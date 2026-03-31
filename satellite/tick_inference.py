@@ -1,0 +1,345 @@
+"""Tick-level direction model inference engine.
+
+Loads trained XGBoost models from artifacts/tick_models/ and runs
+inference on the latest tick_snapshots row from satellite.db.
+
+Designed to run inside the daemon's satellite tick cycle (every 300s)
+or more frequently if needed. Inference is ~1ms per model.
+
+Usage:
+    engine = TickInferenceEngine(artifacts_dir, db_path)
+    result = engine.predict("BTC")
+    # result.signal = "long" / "short" / "skip"
+    # result.predictions = {horizon: predicted_return_bps}
+"""
+
+import hashlib
+import json
+import logging
+import sqlite3
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+import xgboost as xgb
+
+log = logging.getLogger(__name__)
+
+# Must match train_tick_direction.py exactly
+BASE_TICK_FEATURES = [
+    "book_imbalance_5", "book_imbalance_10", "book_imbalance_20",
+    "bid_depth_usd_5", "ask_depth_usd_5", "spread_pct", "mid_price",
+    "buy_vwap_deviation", "sell_vwap_deviation",
+    "flow_imbalance_10s", "flow_imbalance_30s", "flow_imbalance_60s",
+    "flow_intensity_10s", "flow_intensity_30s",
+    "trade_volume_10s_usd", "trade_volume_30s_usd",
+    "price_change_10s", "price_change_30s", "price_change_60s",
+    "large_trade_imbalance",
+    "book_imbalance_delta_5s", "book_imbalance_delta_10s",
+    "depth_ratio_change_5s",
+    "max_trade_usd_60s", "trade_count_60s", "trade_count_10s",
+]
+
+# Minimum basis points to call a direction (below this = "skip")
+DIRECTION_THRESHOLD_BPS = 0.5
+
+# Max age of tick data before we refuse to predict (seconds)
+MAX_TICK_AGE = 30
+
+
+@dataclass
+class TickPrediction:
+    """Result from tick inference engine."""
+    coin: str
+    signal: str                          # "long", "short", "skip"
+    predictions: dict[str, float]        # {horizon_name: predicted_return_bps}
+    best_horizon: str                    # horizon with highest abs prediction
+    predicted_return_bps: float          # predicted return at best horizon
+    confidence: float                    # abs(predicted_return_bps)
+    tick_age_s: float                    # age of the tick data used
+    inference_time_ms: float
+    timestamp: float
+
+
+@dataclass
+class _TickModel:
+    """One loaded tick model."""
+    name: str
+    horizon_seconds: int
+    booster: xgb.Booster
+    feature_names: list[str]
+    feature_hash: str
+    percentiles: dict[str, float]
+    metadata: dict
+
+
+class TickInferenceEngine:
+    """Loads and runs tick direction models.
+
+    Reads latest tick_snapshots from satellite.db, computes rolling
+    aggregate features, runs all loaded models, and returns a combined
+    direction signal.
+    """
+
+    def __init__(self, artifacts_dir: str | Path, db_path: str | Path):
+        self._artifacts_dir = Path(artifacts_dir)
+        self._db_path = Path(db_path)
+        self._models: dict[str, _TickModel] = {}
+        self._db_conn: sqlite3.Connection | None = None
+        self._load_models()
+
+    def _load_models(self):
+        """Scan artifacts directory and load all tick models."""
+        if not self._artifacts_dir.exists():
+            log.warning("Tick artifacts dir not found: %s", self._artifacts_dir)
+            return
+
+        for model_dir in sorted(self._artifacts_dir.iterdir()):
+            if not model_dir.is_dir():
+                continue
+            model_path = model_dir / "model.json"
+            meta_path = model_dir / "metadata.json"
+            if not model_path.exists() or not meta_path.exists():
+                continue
+
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+
+                booster = xgb.Booster()
+                booster.load_model(str(model_path))
+
+                self._models[meta["name"]] = _TickModel(
+                    name=meta["name"],
+                    horizon_seconds=meta["horizon_seconds"],
+                    booster=booster,
+                    feature_names=meta["feature_names"],
+                    feature_hash=meta["feature_hash"],
+                    percentiles=meta.get("percentiles", {}),
+                    metadata=meta,
+                )
+                log.info("Loaded tick model: %s (%ds horizon, sp=%.4f)",
+                         meta["name"], meta["horizon_seconds"],
+                         meta.get("validation_spearman", 0))
+            except Exception:
+                log.warning("Failed to load tick model from %s", model_dir, exc_info=True)
+
+        if self._models:
+            log.info("TickInferenceEngine: %d models loaded", len(self._models))
+        else:
+            log.warning("TickInferenceEngine: no models loaded from %s", self._artifacts_dir)
+
+    @property
+    def is_ready(self) -> bool:
+        return len(self._models) > 0
+
+    @property
+    def model_names(self) -> list[str]:
+        return list(self._models.keys())
+
+    def predict(self, coin: str = "BTC") -> TickPrediction | None:
+        """Run all tick models on the latest tick data for a coin.
+
+        Returns None if no models loaded or tick data is stale/unavailable.
+        """
+        if not self._models:
+            return None
+
+        t0 = time.time()
+
+        # Get latest tick features from satellite.db
+        features, tick_ts = self._get_latest_tick_features(coin)
+        if features is None:
+            return None
+
+        tick_age = t0 - tick_ts
+        if tick_age > MAX_TICK_AGE:
+            log.debug("Tick data too stale (%.1fs old), skipping inference", tick_age)
+            return None
+
+        # Run each model
+        predictions: dict[str, float] = {}
+        for name, model in self._models.items():
+            try:
+                # Build feature vector in model's expected order
+                fv = self._build_feature_vector(features, model.feature_names)
+                if fv is None:
+                    continue
+
+                # Verify feature hash
+                expected_hash = hashlib.sha256(
+                    "|".join(model.feature_names).encode()
+                ).hexdigest()[:16]
+                if expected_hash != model.feature_hash:
+                    log.warning("Feature hash mismatch for %s — skipping", name)
+                    continue
+
+                dmat = xgb.DMatrix(
+                    fv.reshape(1, -1),
+                    feature_names=model.feature_names,
+                )
+                pred_bps = float(model.booster.predict(dmat)[0])
+                predictions[name] = pred_bps
+            except Exception:
+                log.debug("Inference failed for %s", name, exc_info=True)
+
+        if not predictions:
+            return None
+
+        # Determine direction from the consensus of models
+        # Weight shorter horizons more (they're more accurate)
+        signal, best_horizon, best_return = self._resolve_signal(predictions)
+
+        elapsed_ms = (time.time() - t0) * 1000
+
+        return TickPrediction(
+            coin=coin,
+            signal=signal,
+            predictions=predictions,
+            best_horizon=best_horizon,
+            predicted_return_bps=best_return,
+            confidence=abs(best_return),
+            tick_age_s=round(tick_age, 1),
+            inference_time_ms=round(elapsed_ms, 2),
+            timestamp=t0,
+        )
+
+    def _get_latest_tick_features(self, coin: str) -> tuple[dict | None, float]:
+        """Read latest tick_snapshots row + compute rolling features."""
+        try:
+            if not self._db_conn:
+                self._db_conn = sqlite3.connect(
+                    str(self._db_path), check_same_thread=False, timeout=5,
+                )
+                self._db_conn.row_factory = sqlite3.Row
+
+            # Get the last 60 rows (~60s at 1/sec or ~5min at 5s) for rolling features
+            rows = self._db_conn.execute(
+                """
+                SELECT * FROM tick_snapshots
+                WHERE coin = ? AND schema_version = 2
+                ORDER BY timestamp DESC LIMIT 60
+                """,
+                (coin,),
+            ).fetchall()
+
+            if not rows:
+                return None, 0.0
+
+            # Reverse to chronological order
+            rows = list(reversed(rows))
+            latest = rows[-1]
+            tick_ts = latest["timestamp"]
+
+            # Build base features from latest row
+            features = {f: (latest[f] or 0.0) for f in BASE_TICK_FEATURES}
+
+            # Compute rolling aggregates from the history
+            if len(rows) >= 5:
+                vals = {f: [r[f] or 0.0 for r in rows] for f in BASE_TICK_FEATURES}
+
+                book_imb = vals["book_imbalance_5"]
+                flow_imb = vals["flow_imbalance_10s"]
+                price_chg = vals["price_change_10s"]
+                mid = vals["mid_price"]
+
+                n = len(rows)
+
+                # Rolling means (last N values)
+                features["book_imbalance_5_mean5"] = np.mean(book_imb[-5:])
+                features["flow_imbalance_10s_mean5"] = np.mean(flow_imb[-5:])
+                features["price_change_10s_mean5"] = np.mean(price_chg[-5:])
+                features["book_imbalance_5_mean10"] = np.mean(book_imb[-10:]) if n >= 10 else np.mean(book_imb)
+                features["flow_imbalance_10s_mean10"] = np.mean(flow_imb[-10:]) if n >= 10 else np.mean(flow_imb)
+
+                # Rolling stds (last 30 values)
+                w30 = min(30, n)
+                features["book_imbalance_5_std30"] = float(np.std(book_imb[-w30:]))
+                features["flow_imbalance_10s_std30"] = float(np.std(flow_imb[-w30:]))
+                features["price_change_10s_std30"] = float(np.std(price_chg[-w30:]))
+
+                # Rolling slopes (last 60 values via simple OLS)
+                for feat_name, arr, slope_name in [
+                    ("book_imbalance_5", book_imb, "book_imbalance_5_slope60"),
+                    ("flow_imbalance_10s", flow_imb, "flow_imbalance_10s_slope60"),
+                    ("mid_price", mid, "mid_price_slope60"),
+                ]:
+                    seg = np.array(arr[-min(60, n):], dtype=np.float32)
+                    if len(seg) >= 3:
+                        t = np.arange(len(seg), dtype=np.float32)
+                        t_m, y_m = t.mean(), seg.mean()
+                        cov = np.sum((t - t_m) * (seg - y_m))
+                        var = np.sum((t - t_m) ** 2)
+                        features[slope_name] = float(cov / var) if var > 0 else 0.0
+                    else:
+                        features[slope_name] = 0.0
+            else:
+                # Not enough history for rolling — set to zero
+                from satellite.training.train_tick_direction import ROLLING_FEATURES
+                for rf in ROLLING_FEATURES:
+                    features.setdefault(rf, 0.0)
+
+            return features, tick_ts
+
+        except Exception:
+            log.debug("Failed to read tick features", exc_info=True)
+            return None, 0.0
+
+    def _build_feature_vector(self, features: dict, model_features: list[str]) -> np.ndarray | None:
+        """Extract features in model's expected order."""
+        try:
+            return np.array(
+                [features.get(f, 0.0) for f in model_features],
+                dtype=np.float32,
+            )
+        except Exception:
+            return None
+
+    def _resolve_signal(
+        self, predictions: dict[str, float],
+    ) -> tuple[str, str, float]:
+        """Combine multi-horizon predictions into a single direction signal.
+
+        Strategy: weighted vote. Shorter horizons get more weight (higher accuracy).
+        Weight = 1 / horizon_seconds (so 10s model has 18x weight of 180s model).
+
+        Returns: (signal, best_horizon_name, weighted_return_bps)
+        """
+        weighted_sum = 0.0
+        total_weight = 0.0
+        best_abs = 0.0
+        best_name = ""
+
+        for name, pred_bps in predictions.items():
+            model = self._models.get(name)
+            if not model:
+                continue
+            weight = 1.0 / model.horizon_seconds
+            weighted_sum += pred_bps * weight
+            total_weight += weight
+
+            if abs(pred_bps) > best_abs:
+                best_abs = abs(pred_bps)
+                best_name = name
+
+        if total_weight == 0:
+            return "skip", "", 0.0
+
+        weighted_return = weighted_sum / total_weight
+
+        if weighted_return > DIRECTION_THRESHOLD_BPS:
+            signal = "long"
+        elif weighted_return < -DIRECTION_THRESHOLD_BPS:
+            signal = "short"
+        else:
+            signal = "skip"
+
+        return signal, best_name, round(weighted_return, 3)
+
+    def get_status(self) -> dict:
+        return {
+            "models_loaded": len(self._models),
+            "model_names": list(self._models.keys()),
+            "artifacts_dir": str(self._artifacts_dir),
+        }
