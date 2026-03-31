@@ -918,19 +918,22 @@ function _renderInner() {
   const marginBottom = 40;
   const chartH = H - marginTop - marginBottom;
 
-  // Compute target Y-axis range from price history + MC bands
+  // Y-axis range from price history ONLY (not MC bands — those jitter)
   let targetMinP = midPrice, targetMaxP = midPrice;
-  priceHistory.forEach(p => { targetMinP = Math.min(targetMinP, p.price); targetMaxP = Math.max(targetMaxP, p.price); });
-  Object.values(bands).forEach(b => { targetMinP = Math.min(targetMinP, b.p5); targetMaxP = Math.max(targetMaxP, b.p95); });
-  const padding = (targetMaxP - targetMinP) * 0.1 || midPrice * 0.001;
+  priceHistory.forEach(p => {
+    targetMinP = Math.min(targetMinP, p.price);
+    targetMaxP = Math.max(targetMaxP, p.price);
+  });
+  const minPad = midPrice * 0.0005;
+  const padding = Math.max((targetMaxP - targetMinP) * 0.15, minPad);
   targetMinP -= padding;
   targetMaxP += padding;
 
-  // Smooth the Y-axis range — only expand instantly, contract slowly
-  if (!_stableMinP || targetMinP < _stableMinP) _stableMinP = targetMinP;
-  else _stableMinP += (targetMinP - _stableMinP) * 0.02;
-  if (!_stableMaxP || targetMaxP > _stableMaxP) _stableMaxP = targetMaxP;
-  else _stableMaxP += (targetMaxP - _stableMaxP) * 0.02;
+  // Both directions chase slowly — no instant jumps
+  if (!_stableMinP) _stableMinP = targetMinP;
+  else _stableMinP += (targetMinP - _stableMinP) * 0.03;
+  if (!_stableMaxP) _stableMaxP = targetMaxP;
+  else _stableMaxP += (targetMaxP - _stableMaxP) * 0.03;
 
   const minP = _stableMinP;
   const maxP = _stableMaxP;
