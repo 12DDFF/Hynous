@@ -358,22 +358,20 @@ function handleData(data) {
   }
 
   mcData = data;
-  targetPrice = data.mid_price;
   latestVol = data.vol_per_sec || 0.0001;
+
+  // Snap price and predictions instantly — no chase delay
+  displayPrice = data.mid_price;
+  targetPrice = data.mid_price;
+  const preds = data.predictions || {};
+  Object.keys(preds).forEach(h => {
+    displayPreds[h] = preds[h];
+    targetPreds[h] = preds[h];
+  });
 
   // Fresh MC noise + flag for regen on next render frame
   regenerateNoise();
   mcDirty = true;
-
-  // Set target predictions for smooth animation
-  const preds = data.predictions || {};
-  Object.keys(preds).forEach(h => targetPreds[h] = preds[h]);
-
-  // Initialize display values on first data
-  if (displayPrice === 0) {
-    displayPrice = targetPrice;
-    Object.keys(preds).forEach(h => displayPreds[h] = preds[h]);
-  }
 
   const horizons = Object.keys(preds).map(Number).sort((a, b) => a - b);
 
@@ -909,13 +907,6 @@ function _renderInner() {
     ctx.fillText('Waiting for data...', W / 2, H / 2);
     return;
   }
-
-  // Smoothly chase target price and predictions every frame
-  displayPrice += (targetPrice - displayPrice) * PRICE_CHASE_SPEED;
-  Object.keys(targetPreds).forEach(h => {
-    const curr = displayPreds[h] || 0;
-    displayPreds[h] = curr + (targetPreds[h] - curr) * PRED_CHASE_SPEED;
-  });
 
   // Regenerate MC when new data arrives (mcDirty) or not yet initialized
   if (!mcBands || mcDirty) {
