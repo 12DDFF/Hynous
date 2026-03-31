@@ -893,13 +893,11 @@ function _renderInner() {
   const H = canvas.height / devicePixelRatio;
   ctx.clearRect(0, 0, W, H);
 
-  // Drip pending price points into the drawn history
-  const nowSec = performance.now() / 1000;
-  if (_pendingPrices.length > 0 && nowSec - _lastDrip >= DRIP_INTERVAL) {
-    priceHistory.push(_pendingPrices.shift());
+  // Flush all pending price points immediately
+  if (_pendingPrices.length > 0) {
+    priceHistory.push(..._pendingPrices.splice(0));
     priceHistory.sort((a, b) => a.t - b.t);
     if (priceHistory.length > 600) priceHistory.splice(0, priceHistory.length - 600);
-    _lastDrip = nowSec;
   }
 
   if (!mcData || !priceHistory.length) {
@@ -973,10 +971,11 @@ function _renderInner() {
     ctx.fillText('$' + price.toFixed(1), 55, y + 3);
   }
 
-  // Price history — fixed 5-min window, "now" pinned to right edge (splitX)
+  // Price history — fixed 5-min window, smooth scroll using wall clock
   if (priceHistory.length > 1) {
     const HIST_WINDOW = 300; // 5 minutes
-    const nowT = priceHistory[priceHistory.length - 1].t;
+    // Use real time for smooth continuous scroll (not last data point time)
+    const nowT = Date.now() / 1000;
     const windowStart = nowT - HIST_WINDOW;
     const histL = 60;                      // left margin
     const histR = splitX;                  // right edge = NOW line
