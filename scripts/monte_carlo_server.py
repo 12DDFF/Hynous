@@ -335,6 +335,26 @@ async def broadcast_loop():
             log.exception("Broadcast error")
 
 
+def _start_http_server():
+    """Serve HTML on port 8766 in a background thread."""
+    from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+    class Handler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(FRONTEND_PATH.read_bytes())
+
+        def log_message(self, *a):
+            pass
+
+    import threading
+    httpd = HTTPServer(("localhost", 8766), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    log.info("HTML served at http://localhost:8766")
+
+
 async def main():
     import websockets.asyncio.server
 
@@ -343,8 +363,11 @@ async def main():
         format="%(asctime)s %(levelname)-7s %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    _start_http_server()
+
     log.info("Monte Carlo server starting on ws://localhost:8765")
-    log.info("Open file://%s in your browser", FRONTEND_PATH)
+    log.info("Open http://localhost:8766 in your browser")
 
     server = await websockets.asyncio.server.serve(handler, "localhost", 8765)
     broadcast_task = asyncio.create_task(broadcast_loop())

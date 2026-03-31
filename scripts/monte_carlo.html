@@ -282,6 +282,8 @@ let lastMcRegen = 0;           // throttle MC regen to ~4fps
 const MC_REGEN_INTERVAL = 0.25; // regenerate MC every 250ms (not every frame)
 const PRICE_CHASE_SPEED = 0.08; // how fast displayPrice chases targetPrice (0-1, per frame)
 const PRED_CHASE_SPEED = 0.06;  // how fast predictions animate
+let _stableMinP = 0;            // smoothed Y-axis bounds (expand fast, contract slow)
+let _stableMaxP = 0;
 
 // Bias tracker state
 const biasHistory = [];       // [{t, signal, weightedReturn}] — every tick
@@ -359,7 +361,6 @@ function handleData(data) {
     Object.keys(preds).forEach(h => displayPreds[h] = preds[h]);
   }
 
-  const preds = data.predictions || {};
   const horizons = Object.keys(preds).map(Number).sort((a, b) => a - b);
 
   // Compute weighted signal (same as server)
@@ -859,6 +860,11 @@ function randn() {
 }
 
 function render() {
+  try { _renderInner(); } catch(e) { console.error('Render error:', e); }
+  requestAnimationFrame(render);
+}
+
+function _renderInner() {
   const W = canvas.width / devicePixelRatio;
   const H = canvas.height / devicePixelRatio;
   ctx.clearRect(0, 0, W, H);
@@ -868,7 +874,6 @@ function render() {
     ctx.font = '14px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('Waiting for data...', W / 2, H / 2);
-    requestAnimationFrame(render);
     return;
   }
 
@@ -883,10 +888,12 @@ function render() {
   const now = performance.now() / 1000;
   if (!mcBands || now - lastMcRegen > MC_REGEN_INTERVAL) {
     lastMcRegen = now;
-    regenMonteCarlo(displayPrice, displayPreds, latestVol);
+    try {
+      regenMonteCarlo(displayPrice, displayPreds, latestVol);
+    } catch(e) { console.error('MC regen error:', e); }
   }
 
-  if (!mcBands) { requestAnimationFrame(render); return; }
+  if (!mcBands) return;
 
   const bands = mcBands;
   const samplePaths = mcSamples;
@@ -898,12 +905,22 @@ function render() {
   const marginBottom = 40;
   const chartH = H - marginTop - marginBottom;
 
-  let minP = midPrice, maxP = midPrice;
-  priceHistory.forEach(p => { minP = Math.min(minP, p.price); maxP = Math.max(maxP, p.price); });
-  Object.values(bands).forEach(b => { minP = Math.min(minP, b.p5); maxP = Math.max(maxP, b.p95); });
-  const padding = (maxP - minP) * 0.1 || midPrice * 0.001;
-  minP -= padding;
-  maxP += padding;
+  // Compute target Y-axis range from price history + MC bands
+  let targetMinP = midPrice, targetMaxP = midPrice;
+  priceHistory.forEach(p => { targetMinP = Math.min(targetMinP, p.price); targetMaxP = Math.max(targetMaxP, p.price); });
+  Object.values(bands).forEach(b => { targetMinP = Math.min(targetMinP, b.p5); targetMaxP = Math.max(targetMaxP, b.p95); });
+  const padding = (targetMaxP - targetMinP) * 0.1 || midPrice * 0.001;
+  targetMinP -= padding;
+  targetMaxP += padding;
+
+  // Smooth the Y-axis range — only expand instantly, contract slowly
+  if (!_stableMinP || targetMinP < _stableMinP) _stableMinP = targetMinP;
+  else _stableMinP += (targetMinP - _stableMinP) * 0.02;
+  if (!_stableMaxP || targetMaxP > _stableMaxP) _stableMaxP = targetMaxP;
+  else _stableMaxP += (targetMaxP - _stableMaxP) * 0.02;
+
+  const minP = _stableMinP;
+  const maxP = _stableMaxP;
 
   const priceToY = (p) => marginTop + (1 - (p - minP) / (maxP - minP)) * chartH;
   const maxHorizon = Math.max(...timePoints);
@@ -1045,8 +1062,6 @@ function render() {
 
   // Smooth header price (updates every frame)
   document.getElementById('current-price').textContent = '$' + displayPrice.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
-
-  requestAnimationFrame(render);
 }
 
 // ─── Init ───
