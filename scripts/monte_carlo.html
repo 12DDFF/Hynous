@@ -1002,17 +1002,14 @@ function _renderInner() {
     ctx.stroke();
 
     // ─── Direction Arrow at price tip ───
-    // Target angle based on MC drift (median endpoint vs current)
+    // Use displayPrice for everything — arrow glued to line tip
     const endT = timePoints[timePoints.length - 1];
-    const endP50 = bands[endT] ? bands[endT].p50 : targetPrice;
-    const driftBps = (endP50 - targetPrice) / targetPrice * 10000;
+    const endP50 = bands[endT] ? bands[endT].p50 : displayPrice;
+    const driftBps = (endP50 - displayPrice) / displayPrice * 10000;
 
-    // Map drift to angle: up = -90°, down = +90°, neutral = 0° (pointing right)
-    // Clamp at ±2 bps for full deflection
     const targetAngle = -Math.max(-1, Math.min(1, driftBps / 2.0)) * Math.PI / 2;
-    arrowAngle += (targetAngle - arrowAngle) * 0.1; // smooth rotation
+    arrowAngle += (targetAngle - arrowAngle) * 0.12;
 
-    // Arrow color: green up, red down, grey neutral (same as MC cone)
     const ct = Math.max(-1, Math.min(1, driftBps / 1.0));
     let tR, tG, tB;
     if (ct >= 0) {
@@ -1025,13 +1022,13 @@ function _renderInner() {
       tG = 102 + (68 - 102) * t2;
       tB = 136 + (68 - 136) * t2;
     }
-    arrowColor[0] += (tR - arrowColor[0]) * 0.1;
-    arrowColor[1] += (tG - arrowColor[1]) * 0.1;
-    arrowColor[2] += (tB - arrowColor[2]) * 0.1;
+    arrowColor[0] += (tR - arrowColor[0]) * 0.12;
+    arrowColor[1] += (tG - arrowColor[1]) * 0.12;
+    arrowColor[2] += (tB - arrowColor[2]) * 0.12;
 
     const arrowSize = 10;
-    const ax = splitX;
-    const ay = priceToY(displayPrice);
+    const ax = histR;   // exact same X as line tip
+    const ay = tipY;    // exact same Y as line tip
     ctx.save();
     ctx.translate(ax, ay);
     ctx.rotate(arrowAngle);
