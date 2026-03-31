@@ -283,8 +283,8 @@ let mcBands = null;            // client-side MC bands
 let mcSamples = null;          // client-side sample paths
 let mcTimePoints = null;       // time points for MC
 let mcDirty = true;            // regenerate MC on next frame when true
-const PRICE_CHASE_SPEED = 0.25; // smooth chase — settles in ~0.3s at 60fps
-const PRED_CHASE_SPEED = 0.25;
+const PRICE_CHASE_SPEED = 0.08; // smooth chase — ~1s to settle, buttery at 60fps
+const PRED_CHASE_SPEED = 0.08;
 let _stableMinP = 0;
 let _stableMaxP = 0;
 let arrowAngle = 0;            // smoothly animated arrow angle (radians, 0=right, -pi/2=up, pi/2=down)
@@ -910,17 +910,18 @@ function _renderInner() {
     return;
   }
 
-  // Smooth chase for display price + predictions
+  // Smooth chase for display price + predictions every frame
   displayPrice += (targetPrice - displayPrice) * PRICE_CHASE_SPEED;
   Object.keys(targetPreds).forEach(h => {
     displayPreds[h] = (displayPreds[h] || 0) + (targetPreds[h] - (displayPreds[h] || 0)) * PRED_CHASE_SPEED;
   });
 
-  // Regenerate MC anchored to TARGET price (exact), not displayPrice
-  if (!mcBands || mcDirty) {
-    mcDirty = false;
+  // Regenerate MC from displayPrice EVERY frame — cone glides with price
+  // Noise is pre-generated (regenerated only on server ticks), so paths are stable
+  mcDirty = false;
+  {
     try {
-      regenMonteCarlo(targetPrice, targetPreds, latestVol);
+      regenMonteCarlo(displayPrice, displayPreds, latestVol);
     } catch(e) { console.error('MC regen error:', e); }
   }
 
@@ -1031,7 +1032,7 @@ function _renderInner() {
 
     const arrowSize = 10;
     const ax = splitX;
-    const ay = priceToY(targetPrice);
+    const ay = priceToY(displayPrice);
     ctx.save();
     ctx.translate(ax, ay);
     ctx.rotate(arrowAngle);
