@@ -951,28 +951,41 @@ function _renderInner() {
     ctx.fillText('$' + price.toFixed(1), 55, y + 3);
   }
 
-  // Price history
+  // Price history — fixed 5-min window, "now" pinned to right edge (splitX)
   if (priceHistory.length > 1) {
-    const histStartT = priceHistory[0].t;
-    const histEndT = priceHistory[priceHistory.length - 1].t;
-    const histDuration = histEndT - histStartT || 1;
+    const HIST_WINDOW = 300; // 5 minutes
+    const nowT = priceHistory[priceHistory.length - 1].t;
+    const windowStart = nowT - HIST_WINDOW;
+    const histL = 60;                      // left margin
+    const histR = splitX;                  // right edge = NOW line
 
+    const tToHistX = (t) => histL + (t - windowStart) / HIST_WINDOW * (histR - histL);
+
+    // Draw price line (only points within window)
     ctx.beginPath();
     ctx.strokeStyle = '#a78bfa';
     ctx.lineWidth = 1.5;
-    priceHistory.forEach((p, i) => {
-      const x = 60 + (p.t - histStartT) / histDuration * (splitX - 70);
+    let started = false;
+    priceHistory.forEach(p => {
+      if (p.t < windowStart) return;
+      const x = tToHistX(p.t);
       const y = priceToY(p.price);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
     });
+    // Extend line to displayPrice at the right edge (smooth tip)
+    if (started) {
+      ctx.lineTo(histR, priceToY(displayPrice));
+    }
     ctx.stroke();
 
+    // Time labels
     ctx.fillStyle = '#444466';
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
     for (let i = 0; i <= 4; i++) {
-      const t = histStartT + histDuration * i / 4;
-      const x = 60 + (t - histStartT) / histDuration * (splitX - 70);
+      const t = windowStart + HIST_WINDOW * i / 4;
+      const x = tToHistX(t);
       ctx.fillText(new Date(t * 1000).toLocaleTimeString(), x, H - 10);
     }
   }
