@@ -264,7 +264,10 @@
 
 <script>
 // ─── State ──────────────────────────────────────────────────────────────
-let priceHistory = [];
+let priceHistory = [];      // points currently drawn on the chart
+let _pendingPrices = [];    // new points queued for gradual release
+let _lastDrip = 0;          // last time we released a pending point
+const DRIP_INTERVAL = 0.3;  // release one new point every 300ms (smooth line growth)
 let mcData = null;
 let ws = null;
 let canvas, ctx;
@@ -334,17 +337,17 @@ function connect() {
 }
 
 function handleData(data) {
-  // Merge server price history into local buffer (don't replace — we need old prices for accuracy)
+  // Queue new price points for gradual release (smooth line growth)
   if (data.price_history) {
     const incoming = data.price_history.map(([t, p]) => ({ t, price: p }));
-    const existingTimes = new Set(priceHistory.map(p => Math.round(p.t)));
-    incoming.forEach(p => {
-      if (!existingTimes.has(Math.round(p.t))) {
-        priceHistory.push(p);
-      }
-    });
-    priceHistory.sort((a, b) => a.t - b.t);
-    if (priceHistory.length > 600) priceHistory.splice(0, priceHistory.length - 600);
+    // Merge into both drawn + pending to find truly new points
+    const allTimes = new Set([
+      ...priceHistory.map(p => Math.round(p.t)),
+      ..._pendingPrices.map(p => Math.round(p.t)),
+    ]);
+    const newPoints = incoming.filter(p => !allTimes.has(Math.round(p.t)));
+    newPoints.sort((a, b) => a.t - b.t);
+    _pendingPrices.push(...newPoints);
   }
 
   mcData = data;
@@ -579,15 +582,15 @@ function drawBiasSparkline() {
 // ─── Accuracy Tracker ───────────────────────────────────────────────────
 
 function findPriceAtTime(targetTime) {
-  // Find the price closest to targetTime from priceHistory.
-  // Returns null if nothing within 2s tolerance.
-  if (!priceHistory.length) return null;
+  // Search both drawn history AND pending prices for accuracy evaluation.
+  const allPrices = priceHistory.concat(_pendingPrices);
+  if (!allPrices.length) return null;
   let best = null;
   let bestDist = Infinity;
-  for (let i = priceHistory.length - 1; i >= 0; i--) {
-    const dist = Math.abs(priceHistory[i].t - targetTime);
-    if (dist < bestDist) { bestDist = dist; best = priceHistory[i]; }
-    if (priceHistory[i].t < targetTime - 5) break;
+  for (let i = allPrices.length - 1; i >= 0; i--) {
+    const dist = Math.abs(allPrices[i].t - targetTime);
+    if (dist < bestDist) { bestDist = dist; best = allPrices[i]; }
+    if (allPrices[i].t < targetTime - 5) break;
   }
   return (best && bestDist <= 2) ? best.price : null;
 }
@@ -881,6 +884,15 @@ function _renderInner() {
   const W = canvas.width / devicePixelRatio;
   const H = canvas.height / devicePixelRatio;
   ctx.clearRect(0, 0, W, H);
+
+  // Drip pending price points into the drawn history
+  const nowSec = performance.now() / 1000;
+  if (_pendingPrices.length > 0 && nowSec - _lastDrip >= DRIP_INTERVAL) {
+    priceHistory.push(_pendingPrices.shift());
+    priceHistory.sort((a, b) => a.t - b.t);
+    if (priceHistory.length > 600) priceHistory.splice(0, priceHistory.length - 600);
+    _lastDrip = nowSec;
+  }
 
   if (!mcData || !priceHistory.length) {
     ctx.fillStyle = '#333355';
