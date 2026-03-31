@@ -80,7 +80,7 @@
   }
   .pred-row:last-child { border-bottom: none; }
   .pred-label { color: #8888aa; }
-  .pred-val { font-weight: 600; }
+  .pred-val { font-weight: 600; transition: color 0.8s ease; }
   .pred-val.pos { color: #22c55e; }
   .pred-val.neg { color: #ef4444; }
   .pred-val.neutral { color: #666688; }
@@ -269,6 +269,14 @@ let mcData = null;
 let ws = null;
 let canvas, ctx;
 
+// Smooth animation state
+let prevMcData = null;       // previous server snapshot
+let currMcData = null;       // latest server snapshot
+let lastServerTime = 0;      // when we received currMcData
+const LERP_DURATION = 10.0;  // seconds to interpolate (matches server interval)
+let displayPrice = 0;        // smoothly animated mid price
+let displayPreds = {};       // smoothly animated prediction values {horizon: bps}
+
 // Bias tracker state
 const biasHistory = [];       // [{t, signal, weightedReturn}] — every tick
 const biasScoreHistory = [];  // [{t, score}] — rolling bias score over time
@@ -321,18 +329,28 @@ function handleData(data) {
   // Merge server price history into local buffer (don't replace — we need old prices for accuracy)
   if (data.price_history) {
     const incoming = data.price_history.map(([t, p]) => ({ t, price: p }));
-    // Merge: add any new timestamps we don't have
     const existingTimes = new Set(priceHistory.map(p => Math.round(p.t)));
     incoming.forEach(p => {
       if (!existingTimes.has(Math.round(p.t))) {
         priceHistory.push(p);
       }
     });
-    // Sort and cap at 10 minutes (600 entries) — enough for 5m bias eval
     priceHistory.sort((a, b) => a.t - b.t);
     if (priceHistory.length > 600) priceHistory.splice(0, priceHistory.length - 600);
   }
+
+  // Shift snapshots for interpolation
+  prevMcData = currMcData;
+  currMcData = data;
+  lastServerTime = performance.now() / 1000;
   mcData = data;
+
+  // Initialize display values on first data
+  if (!prevMcData) {
+    displayPrice = data.mid_price;
+    const preds = data.predictions || {};
+    Object.keys(preds).forEach(h => displayPreds[h] = preds[h]);
+  }
 
   const preds = data.predictions || {};
   const horizons = Object.keys(preds).map(Number).sort((a, b) => a - b);
@@ -762,12 +780,49 @@ function resize() {
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 }
 
+function lerp(a, b, t) { return a + (b - a) * t; }
+function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
+
+function lerpBands(prev, curr, t) {
+  // Interpolate percentile bands between two MC snapshots
+  if (!prev || !curr) return curr || prev || {};
+  const result = {};
+  const keys = Object.keys(curr);
+  keys.forEach(tp => {
+    if (prev[tp] && curr[tp]) {
+      result[tp] = {};
+      ['p5','p10','p25','p50','p75','p90','p95'].forEach(p => {
+        result[tp][p] = lerp(prev[tp][p] || 0, curr[tp][p] || 0, t);
+      });
+    } else {
+      result[tp] = curr[tp] || prev[tp];
+    }
+  });
+  return result;
+}
+
+function lerpPaths(prev, curr, t) {
+  // Interpolate sample paths
+  if (!prev || !curr) return curr || prev || [];
+  const n = Math.min(prev.length, curr.length);
+  const result = [];
+  for (let i = 0; i < n; i++) {
+    const len = Math.min(prev[i].length, curr[i].length);
+    const path = [];
+    for (let j = 0; j < len; j++) {
+      path.push(lerp(prev[i][j], curr[i][j], t));
+    }
+    result.push(path);
+  }
+  return result;
+}
+
 function render() {
   const W = canvas.width / devicePixelRatio;
   const H = canvas.height / devicePixelRatio;
   ctx.clearRect(0, 0, W, H);
 
-  if (!mcData || !priceHistory.length) {
+  if (!currMcData || !priceHistory.length) {
     ctx.fillStyle = '#333355';
     ctx.font = '14px monospace';
     ctx.textAlign = 'center';
@@ -776,13 +831,38 @@ function render() {
     return;
   }
 
-  const midPrice = mcData.mid_price;
-  const mc = mcData.mc_paths;
-  if (!mc) { requestAnimationFrame(render); return; }
+  // Smooth interpolation between server snapshots
+  const now = performance.now() / 1000;
+  const elapsed = now - lastServerTime;
+  const rawT = Math.min(elapsed / LERP_DURATION, 1.0);
+  const t = easeInOut(rawT);
 
-  const bands = mc.percentile_bands;
-  const timePoints = mc.time_points;
-  const samplePaths = mc.sample_paths;
+  // Smoothly animate mid price
+  const targetPrice = currMcData.mid_price;
+  displayPrice = prevMcData ? lerp(prevMcData.mid_price, targetPrice, t) : targetPrice;
+
+  // Smoothly animate prediction values
+  const currPreds = currMcData.predictions || {};
+  const prevPreds = (prevMcData && prevMcData.predictions) || currPreds;
+  Object.keys(currPreds).forEach(h => {
+    const prev = prevPreds[h] !== undefined ? prevPreds[h] : currPreds[h];
+    displayPreds[h] = lerp(prev, currPreds[h], t);
+  });
+
+  // Smoothly animate MC bands and paths
+  const currMc = currMcData.mc_paths;
+  const prevMc = prevMcData ? prevMcData.mc_paths : null;
+  if (!currMc) { requestAnimationFrame(render); return; }
+
+  const bands = (prevMc && prevMc.percentile_bands)
+    ? lerpBands(prevMc.percentile_bands, currMc.percentile_bands, t)
+    : currMc.percentile_bands;
+  const samplePaths = (prevMc && prevMc.sample_paths)
+    ? lerpPaths(prevMc.sample_paths, currMc.sample_paths, t)
+    : currMc.sample_paths;
+  const timePoints = currMc.time_points;
+
+  const midPrice = displayPrice;
 
   const splitX = W * 0.50;
   const marginTop = 20;
@@ -933,6 +1013,9 @@ function render() {
   ctx.setLineDash([2, 2]);
   ctx.beginPath(); ctx.moveTo(0, priceToY(midPrice)); ctx.lineTo(W, priceToY(midPrice)); ctx.stroke();
   ctx.setLineDash([]);
+
+  // Smooth header price (updates every frame)
+  document.getElementById('current-price').textContent = '$' + displayPrice.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
 
   requestAnimationFrame(render);
 }
