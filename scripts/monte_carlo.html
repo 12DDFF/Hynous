@@ -1005,14 +1005,40 @@ function _renderInner() {
   const projW = W * 0.50 - 80;
   const tToX = (sec) => splitX + (sec / maxHorizon) * projW;
 
+  // Direction color — based on median endpoint vs current price
+  const endP50 = bands[timePoints[timePoints.length - 1]] ? bands[timePoints[timePoints.length - 1]].p50 : midPrice;
+  const driftBps = (endP50 - midPrice) / midPrice * 10000;
+  // Smooth blend: >1 bps = full green, <-1 bps = full red, between = grey
+  const colorT = Math.max(-1, Math.min(1, driftBps / 1.0)); // -1 to +1
+  const r = colorT < 0 ? Math.round(239 + (239-239) * 0) : Math.round(239 - (239-34) * colorT);
+  const g = colorT > 0 ? Math.round(68 + (197-68) * colorT) : Math.round(68 + (68-68) * 0);
+  const b = colorT < 0 ? Math.round(68 + (68-68) * 0) : Math.round(68 - (68-94) * colorT);
+  // Simpler approach: interpolate between red, grey, green
+  let mcR, mcG, mcB;
+  if (colorT >= 0) {
+    // grey → green
+    mcR = Math.round(102 + (34 - 102) * colorT);   // 102 → 34
+    mcG = Math.round(102 + (197 - 102) * colorT);  // 102 → 197
+    mcB = Math.round(136 + (94 - 136) * colorT);   // 136 → 94
+  } else {
+    // grey → red
+    const t2 = -colorT;
+    mcR = Math.round(102 + (239 - 102) * t2);   // 102 → 239
+    mcG = Math.round(102 + (68 - 102) * t2);    // 102 → 68
+    mcB = Math.round(136 + (68 - 136) * t2);    // 136 → 68
+  }
+
+  const mcColor = (a) => `rgba(${mcR}, ${mcG}, ${mcB}, ${a})`;
+  const mcHex = `rgb(${mcR}, ${mcG}, ${mcB})`;
+
   // Percentile bands
   [
-    { lo: 'p5', hi: 'p95', color: 'rgba(167, 139, 250, 0.06)' },
-    { lo: 'p10', hi: 'p90', color: 'rgba(167, 139, 250, 0.08)' },
-    { lo: 'p25', hi: 'p75', color: 'rgba(167, 139, 250, 0.12)' },
-  ].forEach(({ lo, hi, color }) => {
+    { lo: 'p5', hi: 'p95', alpha: 0.06 },
+    { lo: 'p10', hi: 'p90', alpha: 0.10 },
+    { lo: 'p25', hi: 'p75', alpha: 0.15 },
+  ].forEach(({ lo, hi, alpha }) => {
     ctx.beginPath();
-    ctx.fillStyle = color;
+    ctx.fillStyle = mcColor(alpha);
     timePoints.forEach((t, i) => {
       const x = tToX(t); const y = priceToY(bands[t][hi]);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
@@ -1027,7 +1053,7 @@ function _renderInner() {
   // Sample paths
   samplePaths.forEach(path => {
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(167, 139, 250, 0.08)';
+    ctx.strokeStyle = mcColor(0.08);
     ctx.lineWidth = 0.5;
     path.forEach((price, i) => {
       if (i >= timePoints.length) return;
@@ -1039,7 +1065,7 @@ function _renderInner() {
 
   // Median path
   ctx.beginPath();
-  ctx.strokeStyle = '#a78bfa';
+  ctx.strokeStyle = mcColor(0.9);
   ctx.lineWidth = 2;
   timePoints.forEach((t, i) => {
     const x = tToX(t); const y = priceToY(bands[t].p50);
@@ -1067,11 +1093,11 @@ function _renderInner() {
     ctx.textAlign = 'left';
     const endX = tToX(maxHorizon) + 6;
     [
-      { p: endBand.p95, label: 'p95', color: '#22c55e44' },
-      { p: endBand.p75, label: 'p75', color: '#22c55e33' },
-      { p: endBand.p50, label: 'p50', color: '#a78bfa' },
-      { p: endBand.p25, label: 'p25', color: '#ef444433' },
-      { p: endBand.p5, label: 'p5', color: '#ef444444' },
+      { p: endBand.p95, label: 'p95', color: mcColor(0.3) },
+      { p: endBand.p75, label: 'p75', color: mcColor(0.25) },
+      { p: endBand.p50, label: 'p50', color: mcColor(0.9) },
+      { p: endBand.p25, label: 'p25', color: mcColor(0.25) },
+      { p: endBand.p5, label: 'p5', color: mcColor(0.3) },
     ].forEach(({ p, label, color }) => {
       ctx.fillStyle = color;
       const diff = ((p - midPrice) / midPrice * 10000).toFixed(1);
