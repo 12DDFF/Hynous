@@ -69,6 +69,8 @@ class TickPredictor:
                 log.warning("Failed to load %s: %s", model_dir.name, e)
         log.info("%d tick models loaded", len(self._models))
 
+    MIN_BUFFER_FOR_PREDICT = 12  # need 12 downsampled ticks (60s) for slope features
+
     def on_tick(self, snap: dict) -> dict | None:
         """Process one tick snapshot, run models, return MC result."""
         mid_price = snap.get("mid_price", 0)
@@ -79,6 +81,21 @@ class TickPredictor:
         # Accumulate
         self._price_history.append((ts, mid_price))
         self._tick_buffer.append(snap)
+
+        # Count downsampled ticks to check warmup
+        ds_count = self._count_downsampled()
+        if ds_count < self.MIN_BUFFER_FOR_PREDICT:
+            # Not enough history — send price only, no predictions
+            return {
+                "timestamp": ts,
+                "mid_price": mid_price,
+                "predictions": {},
+                "mc_paths": None,
+                "vol_per_sec": 0.0001,
+                "price_history": list(self._price_history),
+                "warming_up": True,
+                "warmup_pct": round(ds_count / self.MIN_BUFFER_FOR_PREDICT * 100),
+            }
 
         # Build features
         features = self._build_features()
@@ -111,6 +128,19 @@ class TickPredictor:
             "vol_per_sec": vol,
             "price_history": list(self._price_history),
         }
+
+    def _count_downsampled(self) -> int:
+        """Count how many 5s-spaced ticks we have in the buffer."""
+        rows = list(self._tick_buffer)
+        if not rows:
+            return 0
+        count = 1
+        last_t = rows[0].get("timestamp", 0)
+        for r in rows[1:]:
+            if r.get("timestamp", 0) - last_t >= 4.5:
+                count += 1
+                last_t = r["timestamp"]
+        return count
 
     def _build_features(self) -> dict:
         BASE_TICK_FEATURES = [
@@ -250,9 +280,47 @@ predictor = TickPredictor()
 
 # ─── VPS Tick WebSocket Consumer ─────────────────────────────────────────
 
+async def backfill_history():
+    """Fetch last 5 min of tick data from VPS to warm up the buffer on startup."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ssh", "vps",
+            "cd /opt/hynous && .venv/bin/python3 -",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        script = (
+            'import sqlite3,json\n'
+            'conn=sqlite3.connect("storage/satellite.db")\n'
+            'conn.row_factory=sqlite3.Row\n'
+            'rows=conn.execute("SELECT * FROM tick_snapshots WHERE coin=? AND schema_version=2 '
+            'ORDER BY timestamp DESC LIMIT 300",("BTC",)).fetchall()\n'
+            'conn.close()\n'
+            'print(json.dumps([dict(r) for r in rows]))\n'
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(script.encode()), timeout=15)
+        if proc.returncode == 0:
+            rows = json.loads(stdout.decode())
+            rows.reverse()
+            for r in rows:
+                predictor._tick_buffer.append(r)
+                ts = r.get("timestamp", 0)
+                px = r.get("mid_price", 0)
+                if ts and px:
+                    predictor._price_history.append((ts, px))
+            log.info("Backfilled %d ticks (buffer=%d, ds=%d)",
+                     len(rows), len(predictor._tick_buffer), predictor._count_downsampled())
+    except Exception as e:
+        log.warning("Backfill failed: %s", e)
+
+
 async def vps_tick_consumer():
     """Connect to data-layer WS and broadcast each tick to browser clients."""
     import websockets
+
+    # Backfill history before streaming
+    await backfill_history()
 
     while True:
         try:

@@ -908,6 +908,14 @@ function _renderInner() {
     return;
   }
 
+  // Show warmup status if models aren't predicting yet
+  if (mcData.warming_up) {
+    ctx.fillStyle = '#555577';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Warming up model buffer... ' + (mcData.warmup_pct || 0) + '%', W / 2, 14);
+  }
+
   // Smooth chase for display price + predictions every frame
   displayPrice += (targetPrice - displayPrice) * PRICE_CHASE_SPEED;
   Object.keys(targetPreds).forEach(h => {
