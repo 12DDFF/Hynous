@@ -647,12 +647,16 @@ function evaluateAccuracy(currentPrice, currentTime) {
           const predictedBps = pred.predictions[h];
           if (predictedBps !== undefined && Math.abs(predictedBps) > 0.1) {
             const actualBps = (evalPrice - pred.price) / pred.price * 10000;
-            const correct = (predictedBps > 0 && actualBps > 0) || (predictedBps < 0 && actualBps < 0);
-            const pnl = predictedBps > 0 ? actualBps : -actualBps;
-
-            accuracyStats[h].correct += correct ? 1 : 0;
-            accuracyStats[h].wrong += correct ? 0 : 1;
-            accuracyStats[h].total_pnl += pnl;
+            // Skip when price didn't move — not a real test of the model
+            if (Math.abs(actualBps) < 0.5) {
+              // no-op: don't count flat moves as right or wrong
+            } else {
+              const correct = (predictedBps > 0 && actualBps > 0) || (predictedBps < 0 && actualBps < 0);
+              const pnl = predictedBps > 0 ? actualBps : -actualBps;
+              accuracyStats[h].correct += correct ? 1 : 0;
+              accuracyStats[h].wrong += correct ? 0 : 1;
+              accuracyStats[h].total_pnl += pnl;
+            }
           }
           pred[key] = true;
         } else if (elapsed > h + 15) {
@@ -735,13 +739,14 @@ function evaluateBiasAccuracy(currentPrice, currentTime) {
         const evalPrice = findPriceAtTime(sig.t + w);
         if (evalPrice !== null) {
           const actualBps = (evalPrice - sig.price) / sig.price * 10000;
-          const correct = (sig.direction === 'long' && actualBps > 0) ||
-                          (sig.direction === 'short' && actualBps < 0);
-          const pnl = sig.direction === 'long' ? actualBps : -actualBps;
-
-          biasAccuracyStats[w].correct += correct ? 1 : 0;
-          biasAccuracyStats[w].wrong += correct ? 0 : 1;
-          biasAccuracyStats[w].total_pnl += pnl;
+          if (Math.abs(actualBps) >= 0.5) {
+            const correct = (sig.direction === 'long' && actualBps > 0) ||
+                            (sig.direction === 'short' && actualBps < 0);
+            const pnl = sig.direction === 'long' ? actualBps : -actualBps;
+            biasAccuracyStats[w].correct += correct ? 1 : 0;
+            biasAccuracyStats[w].wrong += correct ? 0 : 1;
+            biasAccuracyStats[w].total_pnl += pnl;
+          }
           sig[key] = true;
         } else if (elapsed > w + 15) {
           sig[key] = true;
