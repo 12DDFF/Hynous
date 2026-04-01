@@ -193,11 +193,16 @@ class TickPredictor:
             features["book_imbalance_5_mean10"] = float(np.mean(book_imb[-w10:]))
             features["flow_imbalance_10s_mean10"] = float(np.mean(flow_imb[-w10:]))
 
-            # w30=6
+            # w30=6: training's _rolling_std requires >= 3 elements
             w30 = min(6, n)
-            features["book_imbalance_5_std30"] = float(np.std(book_imb[-w30:])) if w30 >= 2 else 0.0
-            features["flow_imbalance_10s_std30"] = float(np.std(flow_imb[-w30:])) if w30 >= 2 else 0.0
-            features["price_change_10s_std30"] = float(np.std(price_chg[-w30:])) if w30 >= 2 else 0.0
+            if w30 >= 3:
+                features["book_imbalance_5_std30"] = float(np.std(book_imb[-w30:]))
+                features["flow_imbalance_10s_std30"] = float(np.std(flow_imb[-w30:]))
+                features["price_change_10s_std30"] = float(np.std(price_chg[-w30:]))
+            else:
+                features["book_imbalance_5_std30"] = 0.0
+                features["flow_imbalance_10s_std30"] = 0.0
+                features["price_change_10s_std30"] = 0.0
 
             # w60=12
             w60 = min(12, n)

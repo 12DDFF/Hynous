@@ -923,6 +923,14 @@ def _build_ml_section(predictions: dict[str, dict]) -> str:
                 f"  {coin}: skip (long {long_roe:+.1f}%, short {short_roe:+.1f}%){mode}"
             )
 
+        # Tick microstructure model (short-horizon, separate from structural v2)
+        tick_signal = pred.get("tick_signal")
+        if tick_signal and tick_signal != "skip":
+            tick_roe = pred.get("tick_long_roe", 0) if tick_signal == "long" else pred.get("tick_short_roe", 0)
+            lines.append(
+                f"    tick: {tick_signal.upper()} ({tick_roe:+.1f}% ROE, {pred.get('tick_inference_ms', 0):.0f}ms)"
+            )
+
     has_direction = len(lines) > 1  # Got any direction signal lines
 
     # Append condition engine output

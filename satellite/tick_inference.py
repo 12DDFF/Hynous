@@ -226,13 +226,13 @@ class TickInferenceEngine:
                 )
                 self._db_conn.row_factory = sqlite3.Row
 
-            # Get last 90 rows (~90s at 1/sec) — downsample to 5s gives ~18 ticks,
-            # enough for w60=12 (60s rolling window at 5s resolution)
+            # Get enough rows to fill the 60s slope window after downsampling to 5s
+            # 120 raw 1s rows → ~24 downsampled 5s ticks (w60=12 needs 12 minimum)
             rows = self._db_conn.execute(
                 """
                 SELECT * FROM tick_snapshots
                 WHERE coin = ? AND schema_version = 2
-                ORDER BY timestamp DESC LIMIT 90
+                ORDER BY timestamp DESC LIMIT 120
                 """,
                 (coin,),
             ).fetchall()
@@ -242,6 +242,7 @@ class TickInferenceEngine:
 
             # Reverse to chronological order
             rows = list(reversed(rows))
+            tick_ts = rows[-1]["timestamp"]  # freshest timestamp for staleness check
 
             # Downsample to 5s resolution — MUST match training resolution.
             # Training uses DOWNSAMPLE_INTERVAL=5, so rolling windows are
@@ -254,11 +255,9 @@ class TickInferenceEngine:
                     ds_rows.append(r)
                     last_t = r["timestamp"]
 
-            latest = ds_rows[-1]
-            tick_ts = latest["timestamp"]
-
-            # Build base features from latest row
-            features = {f: (latest[f] or 0.0) for f in BASE_TICK_FEATURES}
+            # Build base features from latest DOWNSAMPLED row (matches training:
+            # train_tick_direction.py builds base_matrix from downsampled rows)
+            features = {f: (ds_rows[-1][f] or 0.0) for f in BASE_TICK_FEATURES}
 
             # Rolling features at TRAINING resolution (5s ticks).
             # Window sizes match train_tick_direction.py:
@@ -287,11 +286,17 @@ class TickInferenceEngine:
                 features["book_imbalance_5_mean10"] = float(np.mean(book_imb[-w10:]))
                 features["flow_imbalance_10s_mean10"] = float(np.mean(flow_imb[-w10:]))
 
-                # w30=6
+                # w30=6: std of last 6 downsampled ticks
+                # Training's _rolling_std requires >= 3 elements (guard: i - start < 2)
                 w30 = min(6, n)
-                features["book_imbalance_5_std30"] = float(np.std(book_imb[-w30:])) if w30 >= 2 else 0.0
-                features["flow_imbalance_10s_std30"] = float(np.std(flow_imb[-w30:])) if w30 >= 2 else 0.0
-                features["price_change_10s_std30"] = float(np.std(price_chg[-w30:])) if w30 >= 2 else 0.0
+                if w30 >= 3:
+                    features["book_imbalance_5_std30"] = float(np.std(book_imb[-w30:]))
+                    features["flow_imbalance_10s_std30"] = float(np.std(flow_imb[-w30:]))
+                    features["price_change_10s_std30"] = float(np.std(price_chg[-w30:]))
+                else:
+                    features["book_imbalance_5_std30"] = 0.0
+                    features["flow_imbalance_10s_std30"] = 0.0
+                    features["price_change_10s_std30"] = 0.0
 
                 # w60=12 — OLS slope over 12 downsampled ticks
                 w60 = min(12, n)
