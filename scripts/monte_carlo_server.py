@@ -127,6 +127,7 @@ class TickPredictor:
             "mc_paths": mc,
             "vol_per_sec": vol,
             "price_history": list(self._price_history),
+            "book_imbalance_5": snap.get("book_imbalance_5", 0.5),
         }
 
     def _count_downsampled(self) -> int:

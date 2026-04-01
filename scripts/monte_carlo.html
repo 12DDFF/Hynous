@@ -388,9 +388,14 @@ function handleData(data) {
   if (weightedReturn > 0.5) signal = 'long';
   else if (weightedReturn < -0.5) signal = 'short';
 
-  // ─── Track bias ───
+  // ─── Track bias (only count when book imbalance is strong) ───
   const now = Date.now() / 1000;
-  biasHistory.push({ t: now, signal, weightedReturn });
+  const bookImb = data.book_imbalance_5 !== undefined ? data.book_imbalance_5 : 0.5;
+  const imbStrength = Math.abs(bookImb - 0.5);
+  const STRONG_IMB_THRESHOLD = 0.15;  // validated on 288K samples: below = 50.4%, above = 55.4%
+  const isStrong = imbStrength > STRONG_IMB_THRESHOLD;
+
+  biasHistory.push({ t: now, signal, weightedReturn, bookImb, imbStrength, isStrong });
   if (biasHistory.length > MAX_BIAS_TICKS) biasHistory.shift();
 
   updateBiasPanel();
@@ -461,28 +466,45 @@ function updateBiasPanel() {
   const total = biasHistory.length;
   if (total === 0) return;
 
-  // Count signals
-  let longs = 0, shorts = 0, skips = 0;
+  // Only count signals with strong book imbalance (validated: weak = 50.1% noise)
+  let longs = 0, shorts = 0, skips = 0, filtered = 0;
+  let avgReturn = 0, strongCount = 0;
   biasHistory.forEach(b => {
+    if (!b.isStrong) {
+      filtered++;
+      return; // skip weak signals entirely
+    }
+    strongCount++;
+    avgReturn += b.weightedReturn;
     if (b.signal === 'long') longs++;
     else if (b.signal === 'short') shorts++;
     else skips++;
   });
 
-  const longPct = longs / total * 100;
-  const shortPct = shorts / total * 100;
-  const skipPct = skips / total * 100;
+  const counted = longs + shorts + skips;
+  if (counted === 0) {
+    document.getElementById('bias-verdict').textContent = 'NO SIGNAL';
+    document.getElementById('bias-verdict').className = 'bias-verdict neutral';
+    document.getElementById('bias-score').textContent = '—';
+    document.getElementById('bias-score').style.color = '#666688';
+    document.getElementById('bias-window').textContent =
+      `${total} ticks, ${filtered} filtered (weak imbalance)`;
+    biasScoreHistory.push({ t: Date.now() / 1000, score: 0 });
+    if (biasScoreHistory.length > MAX_BIAS_SCORES) biasScoreHistory.shift();
+    drawBiasSparkline();
+    return;
+  }
 
-  // Bias score: -100 (all short) to +100 (all long), skip = 0
-  // Score = (longs - shorts) / total * 100
-  const biasScore = (longs - shorts) / total * 100;
+  avgReturn /= strongCount;
 
-  // Also compute a weighted bias using the actual return magnitudes
-  let avgReturn = 0;
-  biasHistory.forEach(b => avgReturn += b.weightedReturn);
-  avgReturn /= total;
+  const longPct = longs / counted * 100;
+  const shortPct = shorts / counted * 100;
+  const skipPct = skips / counted * 100;
+  const filteredPct = filtered / total * 100;
 
-  // Track score over time for sparkline
+  // Bias score from strong signals only
+  const biasScore = (longs - shorts) / counted * 100;
+
   biasScoreHistory.push({ t: Date.now() / 1000, score: biasScore });
   if (biasScoreHistory.length > MAX_BIAS_SCORES) biasScoreHistory.shift();
 
@@ -496,7 +518,12 @@ function updateBiasPanel() {
   else if (biasScore < -5) { verdict = 'SLIGHT SHORT'; verdictClass = 'bearish'; }
   else { verdict = 'NEUTRAL'; verdictClass = 'neutral'; }
 
-  // Update DOM
+  // If most signals are filtered, confidence is low
+  if (filteredPct > 70) {
+    verdict = 'LOW CONFIDENCE';
+    verdictClass = 'neutral';
+  }
+
   document.getElementById('bias-verdict').textContent = verdict;
   document.getElementById('bias-verdict').className = 'bias-verdict ' + verdictClass;
 
@@ -522,9 +549,8 @@ function updateBiasPanel() {
   const durMin = Math.floor(duration / 60);
   const durSec = duration % 60;
   document.getElementById('bias-window').textContent =
-    `Rolling: ${total} ticks (${durMin}m ${durSec}s) · Avg return: ${avgReturn >= 0 ? '+' : ''}${avgReturn.toFixed(3)} bps`;
+    `${counted} strong / ${total} total (${filteredPct.toFixed(0)}% filtered) · ${durMin}m ${durSec}s · avg ${avgReturn >= 0 ? '+' : ''}${avgReturn.toFixed(3)} bps`;
 
-  // Draw sparkline
   drawBiasSparkline();
 }
 
