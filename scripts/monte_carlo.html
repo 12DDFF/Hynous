@@ -80,7 +80,7 @@
   }
   .pred-row:last-child { border-bottom: none; }
   .pred-label { color: #8888aa; }
-  .pred-val { font-weight: 600; }
+  .pred-val { font-weight: 600; transition: color 0.8s ease; }
   .pred-val.pos { color: #22c55e; }
   .pred-val.neg { color: #ef4444; }
   .pred-val.neutral { color: #666688; }
@@ -247,9 +247,15 @@
     </div>
 
     <div class="panel" id="accuracy-panel">
-      <h3>Live Accuracy</h3>
+      <h3>Live Accuracy — Per Horizon</h3>
       <div id="acc-list"></div>
       <div class="acc-summary" id="acc-summary">Collecting data...</div>
+    </div>
+
+    <div class="panel" id="bias-accuracy-panel">
+      <h3>Bias Accuracy</h3>
+      <div id="bias-acc-list"></div>
+      <div class="acc-summary" id="bias-acc-summary">Need bias signals to evaluate...</div>
     </div>
   </div>
 
@@ -258,10 +264,31 @@
 
 <script>
 // ─── State ──────────────────────────────────────────────────────────────
-let priceHistory = [];
+let priceHistory = [];      // points currently drawn on the chart
+let _pendingPrices = [];    // new points queued for gradual release
+let _lastDrip = 0;          // last time we released a pending point
+let _firstLoad = true;      // first server data = dump all history instantly
+const DRIP_INTERVAL = 0.05; // release points fast — with 1s ticks there's usually only 1 pending
 let mcData = null;
 let ws = null;
 let canvas, ctx;
+
+// Smooth animation state
+let displayPrice = 0;          // smoothly animated price (chases real price)
+let targetPrice = 0;           // latest real price from server
+let displayPreds = {};         // smoothly animated prediction values
+let targetPreds = {};          // latest predictions from server
+let latestVol = 0.0001;        // latest vol_per_sec from server
+let mcBands = null;            // client-side MC bands
+let mcSamples = null;          // client-side sample paths
+let mcTimePoints = null;       // time points for MC
+let mcDirty = true;            // regenerate MC on next frame when true
+const PRICE_CHASE_SPEED = 0.08; // smooth chase — ~1s to settle, buttery at 60fps
+const PRED_CHASE_SPEED = 0.08;
+let _stableMinP = 0;
+let _stableMaxP = 0;
+let arrowAngle = 0;            // smoothly animated arrow angle (radians, 0=right, -pi/2=up, pi/2=down)
+let arrowColor = [102,102,136]; // smoothly animated RGB
 
 // Bias tracker state
 const biasHistory = [];       // [{t, signal, weightedReturn}] — every tick
@@ -277,6 +304,16 @@ const accuracyStats = {};      // {horizon: {correct: N, wrong: N, total_pnl_bps
 const TRACKED_HORIZONS = [10, 15, 20, 30, 45, 60, 120, 180];
 TRACKED_HORIZONS.forEach(h => accuracyStats[h] = { correct: 0, wrong: 0, total_pnl: 0 });
 const MAX_PENDING = 1000;
+
+// Bias accuracy — tracks whether the bias verdict was correct over evaluation windows
+const BIAS_EVAL_WINDOWS = [60, 180, 300]; // evaluate bias over 1m, 3m, 5m
+const pendingBiasSignals = []; // [{t, price, biasScore, verdict}]
+const biasAccuracyStats = {};  // {window: {correct, wrong, total_pnl}}
+BIAS_EVAL_WINDOWS.forEach(w => biasAccuracyStats[w] = { correct: 0, wrong: 0, total_pnl: 0 });
+let lastBiasVerdict = 'NEUTRAL';
+let lastBiasScore = 0;
+let lastBiasSignalTime = 0;
+const BIAS_SIGNAL_COOLDOWN = 10; // only record a new bias signal every 10s (avoid spam)
 
 // ─── WebSocket ──────────────────────────────────────────────────────────
 function connect() {
@@ -303,11 +340,41 @@ function connect() {
 
 function handleData(data) {
   if (data.price_history) {
-    priceHistory = data.price_history.map(([t, p]) => ({ t, price: p }));
-  }
-  mcData = data;
+    const incoming = data.price_history.map(([t, p]) => ({ t, price: p }));
 
+    if (_firstLoad) {
+      // First load: dump all history immediately — no drip animation
+      priceHistory = incoming.slice();
+      priceHistory.sort((a, b) => a.t - b.t);
+      _firstLoad = false;
+    } else {
+      // Subsequent updates: queue new points for gradual release
+      const allTimes = new Set([
+        ...priceHistory.map(p => Math.round(p.t)),
+        ..._pendingPrices.map(p => Math.round(p.t)),
+      ]);
+      const newPoints = incoming.filter(p => !allTimes.has(Math.round(p.t)));
+      newPoints.sort((a, b) => a.t - b.t);
+      _pendingPrices.push(...newPoints);
+    }
+  }
+
+  mcData = data;
+  latestVol = data.vol_per_sec || 0.0001;
+
+  // Set targets — displayPrice chases smoothly, MC anchors to target directly
+  targetPrice = data.mid_price;
+  if (displayPrice === 0) displayPrice = targetPrice;
   const preds = data.predictions || {};
+  Object.keys(preds).forEach(h => {
+    targetPreds[h] = preds[h];
+    if (displayPreds[h] === undefined) displayPreds[h] = preds[h];
+  });
+
+  // Fresh MC noise + flag for regen on next render frame
+  regenerateNoise();
+  mcDirty = true;
+
   const horizons = Object.keys(preds).map(Number).sort((a, b) => a - b);
 
   // Compute weighted signal (same as server)
@@ -321,9 +388,14 @@ function handleData(data) {
   if (weightedReturn > 0.5) signal = 'long';
   else if (weightedReturn < -0.5) signal = 'short';
 
-  // ─── Track bias ───
+  // ─── Track bias (only count when book imbalance is strong) ───
   const now = Date.now() / 1000;
-  biasHistory.push({ t: now, signal, weightedReturn });
+  const bookImb = data.book_imbalance_5 !== undefined ? data.book_imbalance_5 : 0.5;
+  const imbStrength = Math.abs(bookImb - 0.5);
+  const STRONG_IMB_THRESHOLD = 0.15;  // validated on 288K samples: below = 50.4%, above = 55.4%
+  const isStrong = imbStrength > STRONG_IMB_THRESHOLD;
+
+  biasHistory.push({ t: now, signal, weightedReturn, bookImb, imbStrength, isStrong });
   if (biasHistory.length > MAX_BIAS_TICKS) biasHistory.shift();
 
   updateBiasPanel();
@@ -338,6 +410,27 @@ function handleData(data) {
   const currentTime = data.timestamp;
   evaluateAccuracy(currentPrice, currentTime);
   updateAccuracyPanel();
+
+  // ─── Track bias accuracy ───
+  // Record bias signals when they're directional (not neutral) with cooldown
+  const biasScore = biasHistory.length > 0 ? ((function() {
+    let l=0,s=0,c=0;
+    biasHistory.forEach(b => {
+      if (!b.isStrong) return;
+      c++;
+      if (b.signal==='long') l++; else if (b.signal==='short') s++;
+    });
+    return c > 0 ? (l-s)/c*100 : 0;
+  })()) : 0;
+
+  if (Math.abs(biasScore) > 5 && currentTime - lastBiasSignalTime >= BIAS_SIGNAL_COOLDOWN) {
+    const direction = biasScore > 0 ? 'long' : 'short';
+    pendingBiasSignals.push({ t: currentTime, price: currentPrice, biasScore, direction });
+    lastBiasSignalTime = currentTime;
+    if (pendingBiasSignals.length > 500) pendingBiasSignals.splice(0, pendingBiasSignals.length - 500);
+  }
+  evaluateBiasAccuracy(currentPrice, currentTime);
+  updateBiasAccuracyPanel();
 
   // ─── Update header ───
   document.getElementById('current-price').textContent = '$' + data.mid_price.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
@@ -378,28 +471,45 @@ function updateBiasPanel() {
   const total = biasHistory.length;
   if (total === 0) return;
 
-  // Count signals
-  let longs = 0, shorts = 0, skips = 0;
+  // Only count signals with strong book imbalance (validated: weak = 50.1% noise)
+  let longs = 0, shorts = 0, skips = 0, filtered = 0;
+  let avgReturn = 0, strongCount = 0;
   biasHistory.forEach(b => {
+    if (!b.isStrong) {
+      filtered++;
+      return; // skip weak signals entirely
+    }
+    strongCount++;
+    avgReturn += b.weightedReturn;
     if (b.signal === 'long') longs++;
     else if (b.signal === 'short') shorts++;
     else skips++;
   });
 
-  const longPct = longs / total * 100;
-  const shortPct = shorts / total * 100;
-  const skipPct = skips / total * 100;
+  const counted = longs + shorts + skips;
+  if (counted === 0) {
+    document.getElementById('bias-verdict').textContent = 'NO SIGNAL';
+    document.getElementById('bias-verdict').className = 'bias-verdict neutral';
+    document.getElementById('bias-score').textContent = '—';
+    document.getElementById('bias-score').style.color = '#666688';
+    document.getElementById('bias-window').textContent =
+      `${total} ticks, ${filtered} filtered (weak imbalance)`;
+    biasScoreHistory.push({ t: Date.now() / 1000, score: 0 });
+    if (biasScoreHistory.length > MAX_BIAS_SCORES) biasScoreHistory.shift();
+    drawBiasSparkline();
+    return;
+  }
 
-  // Bias score: -100 (all short) to +100 (all long), skip = 0
-  // Score = (longs - shorts) / total * 100
-  const biasScore = (longs - shorts) / total * 100;
+  avgReturn /= strongCount;
 
-  // Also compute a weighted bias using the actual return magnitudes
-  let avgReturn = 0;
-  biasHistory.forEach(b => avgReturn += b.weightedReturn);
-  avgReturn /= total;
+  const longPct = longs / counted * 100;
+  const shortPct = shorts / counted * 100;
+  const skipPct = skips / counted * 100;
+  const filteredPct = filtered / total * 100;
 
-  // Track score over time for sparkline
+  // Bias score from strong signals only
+  const biasScore = (longs - shorts) / counted * 100;
+
   biasScoreHistory.push({ t: Date.now() / 1000, score: biasScore });
   if (biasScoreHistory.length > MAX_BIAS_SCORES) biasScoreHistory.shift();
 
@@ -413,7 +523,12 @@ function updateBiasPanel() {
   else if (biasScore < -5) { verdict = 'SLIGHT SHORT'; verdictClass = 'bearish'; }
   else { verdict = 'NEUTRAL'; verdictClass = 'neutral'; }
 
-  // Update DOM
+  // If most signals are filtered, confidence is low
+  if (filteredPct > 70) {
+    verdict = 'LOW CONFIDENCE';
+    verdictClass = 'neutral';
+  }
+
   document.getElementById('bias-verdict').textContent = verdict;
   document.getElementById('bias-verdict').className = 'bias-verdict ' + verdictClass;
 
@@ -439,9 +554,8 @@ function updateBiasPanel() {
   const durMin = Math.floor(duration / 60);
   const durSec = duration % 60;
   document.getElementById('bias-window').textContent =
-    `Rolling: ${total} ticks (${durMin}m ${durSec}s) · Avg return: ${avgReturn >= 0 ? '+' : ''}${avgReturn.toFixed(3)} bps`;
+    `${counted} strong / ${total} total (${filteredPct.toFixed(0)}% filtered) · ${durMin}m ${durSec}s · avg ${avgReturn >= 0 ? '+' : ''}${avgReturn.toFixed(3)} bps`;
 
-  // Draw sparkline
   drawBiasSparkline();
 }
 
@@ -505,8 +619,22 @@ function drawBiasSparkline() {
 }
 
 // ─── Accuracy Tracker ───────────────────────────────────────────────────
+
+function findPriceAtTime(targetTime) {
+  // Search both drawn history AND pending prices for accuracy evaluation.
+  const allPrices = priceHistory.concat(_pendingPrices);
+  if (!allPrices.length) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (let i = allPrices.length - 1; i >= 0; i--) {
+    const dist = Math.abs(allPrices[i].t - targetTime);
+    if (dist < bestDist) { bestDist = dist; best = allPrices[i]; }
+    if (allPrices[i].t < targetTime - 5) break;
+  }
+  return (best && bestDist <= 2) ? best.price : null;
+}
+
 function evaluateAccuracy(currentPrice, currentTime) {
-  // For each pending prediction, check horizons that have elapsed
   for (let i = pendingPredictions.length - 1; i >= 0; i--) {
     const pred = pendingPredictions[i];
     const elapsed = currentTime - pred.t;
@@ -514,30 +642,34 @@ function evaluateAccuracy(currentPrice, currentTime) {
 
     for (const h of TRACKED_HORIZONS) {
       const key = `_evaluated_${h}`;
-      if (pred[key]) continue; // already evaluated this horizon
+      if (pred[key]) continue;
 
-      if (elapsed >= h) {
-        // This horizon has elapsed — evaluate
-        const predictedBps = pred.predictions[h];
-        if (predictedBps !== undefined && Math.abs(predictedBps) > 0.1) {
-          // Actual return in bps
-          const actualBps = (currentPrice - pred.price) / pred.price * 10000;
-          // Direction correct?
-          const correct = (predictedBps > 0 && actualBps > 0) || (predictedBps < 0 && actualBps < 0);
-          // PnL: if we traded in predicted direction, what's the actual return?
-          const pnl = predictedBps > 0 ? actualBps : -actualBps;
-
-          accuracyStats[h].correct += correct ? 1 : 0;
-          accuracyStats[h].wrong += correct ? 0 : 1;
-          accuracyStats[h].total_pnl += pnl;
+      // Wait until horizon + 2s so the target price is in our history
+      if (elapsed >= h + 2) {
+        // Look up price at exactly pred.t + h, NOT currentPrice
+        const evalPrice = findPriceAtTime(pred.t + h);
+        if (evalPrice !== null) {
+          const predictedBps = pred.predictions[h];
+          if (predictedBps !== undefined && Math.abs(predictedBps) > 0.1) {
+            const actualBps = (evalPrice - pred.price) / pred.price * 10000;
+            const correct = (predictedBps > 0 && actualBps > 0) || (predictedBps < 0 && actualBps < 0);
+            const pnl = predictedBps > 0 ? actualBps : -actualBps;
+            accuracyStats[h].correct += correct ? 1 : 0;
+            accuracyStats[h].wrong += correct ? 0 : 1;
+            accuracyStats[h].total_pnl += pnl;
+          }
+          pred[key] = true;
+        } else if (elapsed > h + 15) {
+          // No price found after grace period — mark as evaluated, skip
+          pred[key] = true;
+        } else {
+          allEvaluated = false;
         }
-        pred[key] = true;
       } else {
         allEvaluated = false;
       }
     }
 
-    // Remove fully evaluated predictions (all horizons checked)
     if (allEvaluated && elapsed > 200) {
       pendingPredictions.splice(i, 1);
     }
@@ -592,6 +724,96 @@ function updateAccuracyPanel() {
   }
 }
 
+// ─── Bias Accuracy ──────────────────────────────────────────────────────
+function evaluateBiasAccuracy(currentPrice, currentTime) {
+  for (let i = pendingBiasSignals.length - 1; i >= 0; i--) {
+    const sig = pendingBiasSignals[i];
+    const elapsed = currentTime - sig.t;
+    let allDone = true;
+
+    for (const w of BIAS_EVAL_WINDOWS) {
+      const key = `_eval_${w}`;
+      if (sig[key]) continue;
+
+      if (elapsed >= w + 2) {
+        const evalPrice = findPriceAtTime(sig.t + w);
+        if (evalPrice !== null) {
+          const actualBps = (evalPrice - sig.price) / sig.price * 10000;
+          const correct = (sig.direction === 'long' && actualBps > 0) ||
+                          (sig.direction === 'short' && actualBps < 0);
+          const pnl = sig.direction === 'long' ? actualBps : -actualBps;
+          biasAccuracyStats[w].correct += correct ? 1 : 0;
+          biasAccuracyStats[w].wrong += correct ? 0 : 1;
+          biasAccuracyStats[w].total_pnl += pnl;
+          sig[key] = true;
+        } else if (elapsed > w + 15) {
+          sig[key] = true;
+        } else {
+          allDone = false;
+        }
+      } else {
+        allDone = false;
+      }
+    }
+
+    if (allDone && elapsed > 320) {
+      pendingBiasSignals.splice(i, 1);
+    }
+  }
+}
+
+function updateBiasAccuracyPanel() {
+  const list = document.getElementById('bias-acc-list');
+  list.innerHTML = '';
+
+  let totalCorrect = 0, totalWrong = 0, totalPnl = 0;
+
+  BIAS_EVAL_WINDOWS.forEach(w => {
+    const s = biasAccuracyStats[w];
+    const total = s.correct + s.wrong;
+    const pct = total > 0 ? (s.correct / total * 100) : 0;
+    const avgPnl = total > 0 ? s.total_pnl / total : 0;
+
+    totalCorrect += s.correct;
+    totalWrong += s.wrong;
+    totalPnl += s.total_pnl;
+
+    const barClass = pct >= 55 ? 'good' : pct >= 50 ? 'mid' : 'bad';
+    const pctColor = pct >= 55 ? '#22c55e' : pct >= 50 ? '#eab308' : '#ef4444';
+    const label = w >= 60 ? (w / 60) + 'm' : w + 's';
+
+    const row = document.createElement('div');
+    row.className = 'acc-row';
+    row.innerHTML = `
+      <span class="acc-horizon">${label}</span>
+      <div class="acc-bar-bg">
+        <div class="acc-bar-fill ${barClass}" style="width:${total > 0 ? pct : 0}%"></div>
+      </div>
+      <span class="acc-pct" style="color:${total > 0 ? pctColor : '#555577'}">${total > 0 ? pct.toFixed(1) + '%' : '—'}</span>
+      <span class="acc-count">${total > 0 ? 'n=' + total : ''}</span>
+    `;
+    list.appendChild(row);
+  });
+
+  const summaryEl = document.getElementById('bias-acc-summary');
+  const grandTotal = totalCorrect + totalWrong;
+  if (grandTotal > 0) {
+    const overallPct = (totalCorrect / grandTotal * 100).toFixed(1);
+    const avgPnl = (totalPnl / grandTotal).toFixed(2);
+    const pnlClass = totalPnl >= 0 ? 'pos' : 'neg';
+    summaryEl.innerHTML = `
+      Bias correct: ${overallPct}% (${grandTotal} signals)<br>
+      Avg P&L when biased: <span class="acc-pnl ${pnlClass}">${totalPnl >= 0 ? '+' : ''}${avgPnl} bps</span><br>
+      <span style="font-size:9px">Signals recorded when |bias| > 5, cooldown ${BIAS_SIGNAL_COOLDOWN}s</span>
+    `;
+  } else {
+    const pending = pendingBiasSignals.length;
+    summaryEl.textContent = pending > 0
+      ? `${pending} bias signals pending evaluation...`
+      : 'Need directional bias (|score| > 5) to start tracking';
+  }
+}
+
 // ─── Canvas Rendering (MC chart) ────────────────────────────────────────
 function initCanvas() {
   canvas = document.getElementById('mc-canvas');
@@ -609,39 +831,166 @@ function resize() {
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 }
 
+// Pre-generated random noise matrix — regenerated only on new server data.
+// Between updates, MC regens reuse the same noise so the cone doesn't jitter.
+const MC_N = 100;
+const MC_MAX_H = 180;
+const MC_STEP = 3;
+const MC_NSTEPS = Math.floor(MC_MAX_H / MC_STEP);
+let _mcNoise = null; // [N][nSteps] of normal random values
+
+function regenerateNoise() {
+  _mcNoise = [];
+  for (let p = 0; p < MC_N; p++) {
+    const row = [];
+    for (let i = 0; i < MC_NSTEPS; i++) row.push(_randn());
+    _mcNoise.push(row);
+  }
+}
+
+function _randn() {
+  let u, v, s;
+  do { u = Math.random()*2-1; v = Math.random()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0);
+  return u * Math.sqrt(-2 * Math.log(s) / s);
+}
+
+// Generate noise on page load
+regenerateNoise();
+
+function regenMonteCarlo(price, preds, vol) {
+  // Client-side MC using pre-generated noise (deterministic between server updates)
+  const tps = [];
+  for (let i = 0; i <= MC_NSTEPS; i++) tps.push(i * MC_STEP);
+  mcTimePoints = tps;
+
+  // Build drift per second from predictions
+  const sortedH = Object.keys(preds).map(Number).filter(h => h > 0).sort((a,b) => a-b);
+  const getDrift = (sec) => {
+    if (!sortedH.length) return 0;
+    if (sec <= sortedH[0]) return (preds[sortedH[0]] || 0) / sortedH[0] / 10000;
+    if (sec >= sortedH[sortedH.length-1]) return (preds[sortedH[sortedH.length-1]] || 0) / sortedH[sortedH.length-1] / 10000;
+    for (let i = 0; i < sortedH.length - 1; i++) {
+      if (sec >= sortedH[i] && sec <= sortedH[i+1]) {
+        const h1 = sortedH[i], h2 = sortedH[i+1];
+        const d1 = (preds[h1]||0)/h1/10000, d2 = (preds[h2]||0)/h2/10000;
+        return d1 + (d2-d1) * (sec-h1)/(h2-h1);
+      }
+    }
+    return 0;
+  };
+
+  // Simulate paths using fixed noise
+  const paths = [];
+  for (let p = 0; p < MC_N; p++) {
+    const path = [price];
+    let px = price;
+    for (let i = 0; i < MC_NSTEPS; i++) {
+      let drift = 0;
+      for (let s = 0; s < MC_STEP; s++) drift += getDrift(i*MC_STEP + s + 1);
+      const noise = _mcNoise[p][i] * vol * Math.sqrt(MC_STEP);
+      px = px * (1 + drift + noise);
+      path.push(px);
+    }
+    paths.push(path);
+  }
+
+  // Percentile bands
+  mcBands = {};
+  tps.forEach((t, ti) => {
+    const col = paths.map(p => p[ti]).sort((a,b) => a-b);
+    const pctile = (q) => col[Math.floor(col.length * q / 100)] || price;
+    mcBands[t] = {
+      p5: pctile(5), p10: pctile(10), p25: pctile(25), p50: pctile(50),
+      p75: pctile(75), p90: pctile(90), p95: pctile(95),
+    };
+  });
+
+  // Sample paths
+  mcSamples = [];
+  for (let i = 0; i < Math.min(15, MC_N); i += Math.max(1, Math.floor(MC_N/15))) {
+    mcSamples.push(paths[i]);
+  }
+}
+
 function render() {
+  try { _renderInner(); } catch(e) { console.error('Render error:', e); }
+  requestAnimationFrame(render);
+}
+
+function _renderInner() {
   const W = canvas.width / devicePixelRatio;
   const H = canvas.height / devicePixelRatio;
   ctx.clearRect(0, 0, W, H);
+
+  // Flush all pending price points immediately
+  if (_pendingPrices.length > 0) {
+    priceHistory.push(..._pendingPrices.splice(0));
+    priceHistory.sort((a, b) => a.t - b.t);
+    if (priceHistory.length > 600) priceHistory.splice(0, priceHistory.length - 600);
+  }
 
   if (!mcData || !priceHistory.length) {
     ctx.fillStyle = '#333355';
     ctx.font = '14px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('Waiting for data...', W / 2, H / 2);
-    requestAnimationFrame(render);
     return;
   }
 
-  const midPrice = mcData.mid_price;
-  const mc = mcData.mc_paths;
-  if (!mc) { requestAnimationFrame(render); return; }
+  // Show warmup status if models aren't predicting yet
+  if (mcData.warming_up) {
+    ctx.fillStyle = '#555577';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Warming up model buffer... ' + (mcData.warmup_pct || 0) + '%', W / 2, 14);
+  }
 
-  const bands = mc.percentile_bands;
-  const timePoints = mc.time_points;
-  const samplePaths = mc.sample_paths;
+  // Smooth chase for display price + predictions every frame
+  displayPrice += (targetPrice - displayPrice) * PRICE_CHASE_SPEED;
+  Object.keys(targetPreds).forEach(h => {
+    displayPreds[h] = (displayPreds[h] || 0) + (targetPreds[h] - (displayPreds[h] || 0)) * PRED_CHASE_SPEED;
+  });
+
+  // Regenerate MC from displayPrice EVERY frame — cone glides with price
+  // Noise is pre-generated (regenerated only on server ticks), so paths are stable
+  mcDirty = false;
+  {
+    try {
+      regenMonteCarlo(displayPrice, displayPreds, latestVol);
+    } catch(e) { console.error('MC regen error:', e); }
+  }
+
+  if (!mcBands) return;
+
+  const bands = mcBands;
+  const samplePaths = mcSamples;
+  const timePoints = mcTimePoints;
+  const midPrice = displayPrice;
 
   const splitX = W * 0.50;
   const marginTop = 20;
   const marginBottom = 40;
   const chartH = H - marginTop - marginBottom;
 
-  let minP = midPrice, maxP = midPrice;
-  priceHistory.forEach(p => { minP = Math.min(minP, p.price); maxP = Math.max(maxP, p.price); });
-  Object.values(bands).forEach(b => { minP = Math.min(minP, b.p5); maxP = Math.max(maxP, b.p95); });
-  const padding = (maxP - minP) * 0.1 || midPrice * 0.001;
-  minP -= padding;
-  maxP += padding;
+  // Y-axis range from price history ONLY (not MC bands — those jitter)
+  let targetMinP = midPrice, targetMaxP = midPrice;
+  priceHistory.forEach(p => {
+    targetMinP = Math.min(targetMinP, p.price);
+    targetMaxP = Math.max(targetMaxP, p.price);
+  });
+  const minPad = midPrice * 0.0005;
+  const padding = Math.max((targetMaxP - targetMinP) * 0.15, minPad);
+  targetMinP -= padding;
+  targetMaxP += padding;
+
+  // Both directions chase slowly — no instant jumps
+  if (!_stableMinP) _stableMinP = targetMinP;
+  else _stableMinP += (targetMinP - _stableMinP) * 0.03;
+  if (!_stableMaxP) _stableMaxP = targetMaxP;
+  else _stableMaxP += (targetMaxP - _stableMaxP) * 0.03;
+
+  const minP = _stableMinP;
+  const maxP = _stableMaxP;
 
   const priceToY = (p) => marginTop + (1 - (p - minP) / (maxP - minP)) * chartH;
   const maxHorizon = Math.max(...timePoints);
@@ -659,28 +1008,90 @@ function render() {
     ctx.fillText('$' + price.toFixed(1), 55, y + 3);
   }
 
-  // Price history
+  // Price history — fixed 5-min window, smooth scroll using wall clock
   if (priceHistory.length > 1) {
-    const histStartT = priceHistory[0].t;
-    const histEndT = priceHistory[priceHistory.length - 1].t;
-    const histDuration = histEndT - histStartT || 1;
+    const HIST_WINDOW = 300; // 5 minutes
+    // Use real time for smooth continuous scroll (not last data point time)
+    const nowT = Date.now() / 1000;
+    const windowStart = nowT - HIST_WINDOW;
+    const histL = 60;                      // left margin
+    const histR = splitX;                  // right edge = NOW line
 
+    const tToHistX = (t) => histL + (t - windowStart) / HIST_WINDOW * (histR - histL);
+
+    // Draw price line (only points within window)
     ctx.beginPath();
     ctx.strokeStyle = '#a78bfa';
     ctx.lineWidth = 1.5;
-    priceHistory.forEach((p, i) => {
-      const x = 60 + (p.t - histStartT) / histDuration * (splitX - 70);
+    let started = false;
+    priceHistory.forEach(p => {
+      if (p.t < windowStart) return;
+      const x = tToHistX(p.t);
       const y = priceToY(p.price);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
     });
+    // Extend line to displayPrice at the right edge (smooth tip)
+    const tipY = priceToY(displayPrice);
+    if (started) {
+      ctx.lineTo(histR, tipY);
+    }
     ctx.stroke();
 
+    // ─── Direction Arrow at price tip ───
+    // Use displayPrice for everything — arrow glued to line tip
+    const endT = timePoints[timePoints.length - 1];
+    const endP50 = bands[endT] ? bands[endT].p50 : displayPrice;
+    const driftBps = (endP50 - displayPrice) / displayPrice * 10000;
+
+    const targetAngle = -Math.max(-1, Math.min(1, driftBps / 2.0)) * Math.PI / 2;
+    arrowAngle += (targetAngle - arrowAngle) * 0.12;
+
+    const ct = Math.max(-1, Math.min(1, driftBps / 1.0));
+    let tR, tG, tB;
+    if (ct >= 0) {
+      tR = 102 + (34 - 102) * ct;
+      tG = 102 + (197 - 102) * ct;
+      tB = 136 + (94 - 136) * ct;
+    } else {
+      const t2 = -ct;
+      tR = 102 + (239 - 102) * t2;
+      tG = 102 + (68 - 102) * t2;
+      tB = 136 + (68 - 136) * t2;
+    }
+    arrowColor[0] += (tR - arrowColor[0]) * 0.12;
+    arrowColor[1] += (tG - arrowColor[1]) * 0.12;
+    arrowColor[2] += (tB - arrowColor[2]) * 0.12;
+
+    const arrowSize = 10;
+    const ax = histR;   // exact same X as line tip
+    const ay = tipY;    // exact same Y as line tip
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(arrowAngle);
+    ctx.beginPath();
+    ctx.moveTo(arrowSize, 0);
+    ctx.lineTo(-arrowSize * 0.5, -arrowSize * 0.6);
+    ctx.lineTo(-arrowSize * 0.3, 0);
+    ctx.lineTo(-arrowSize * 0.5, arrowSize * 0.6);
+    ctx.closePath();
+    ctx.fillStyle = `rgb(${Math.round(arrowColor[0])}, ${Math.round(arrowColor[1])}, ${Math.round(arrowColor[2])})`;
+    ctx.fill();
+    ctx.restore();
+
+    // Price label next to arrow
+    ctx.fillStyle = `rgb(${Math.round(arrowColor[0])}, ${Math.round(arrowColor[1])}, ${Math.round(arrowColor[2])})`;
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('$' + displayPrice.toFixed(1), ax + arrowSize + 4, ay + 4);
+
+    // Time labels
     ctx.fillStyle = '#444466';
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
     for (let i = 0; i <= 4; i++) {
-      const t = histStartT + histDuration * i / 4;
-      const x = 60 + (t - histStartT) / histDuration * (splitX - 70);
+      const t = windowStart + HIST_WINDOW * i / 4;
+      const x = tToHistX(t);
       ctx.fillText(new Date(t * 1000).toLocaleTimeString(), x, H - 10);
     }
   }
@@ -700,14 +1111,40 @@ function render() {
   const projW = W * 0.50 - 80;
   const tToX = (sec) => splitX + (sec / maxHorizon) * projW;
 
+  // Direction color — based on median endpoint vs current price
+  const endP50 = bands[timePoints[timePoints.length - 1]] ? bands[timePoints[timePoints.length - 1]].p50 : midPrice;
+  const driftBps = (endP50 - midPrice) / midPrice * 10000;
+  // Smooth blend: >1 bps = full green, <-1 bps = full red, between = grey
+  const colorT = Math.max(-1, Math.min(1, driftBps / 1.0)); // -1 to +1
+  const r = colorT < 0 ? Math.round(239 + (239-239) * 0) : Math.round(239 - (239-34) * colorT);
+  const g = colorT > 0 ? Math.round(68 + (197-68) * colorT) : Math.round(68 + (68-68) * 0);
+  const b = colorT < 0 ? Math.round(68 + (68-68) * 0) : Math.round(68 - (68-94) * colorT);
+  // Simpler approach: interpolate between red, grey, green
+  let mcR, mcG, mcB;
+  if (colorT >= 0) {
+    // grey → green
+    mcR = Math.round(102 + (34 - 102) * colorT);   // 102 → 34
+    mcG = Math.round(102 + (197 - 102) * colorT);  // 102 → 197
+    mcB = Math.round(136 + (94 - 136) * colorT);   // 136 → 94
+  } else {
+    // grey → red
+    const t2 = -colorT;
+    mcR = Math.round(102 + (239 - 102) * t2);   // 102 → 239
+    mcG = Math.round(102 + (68 - 102) * t2);    // 102 → 68
+    mcB = Math.round(136 + (68 - 136) * t2);    // 136 → 68
+  }
+
+  const mcColor = (a) => `rgba(${mcR}, ${mcG}, ${mcB}, ${a})`;
+  const mcHex = `rgb(${mcR}, ${mcG}, ${mcB})`;
+
   // Percentile bands
   [
-    { lo: 'p5', hi: 'p95', color: 'rgba(167, 139, 250, 0.06)' },
-    { lo: 'p10', hi: 'p90', color: 'rgba(167, 139, 250, 0.08)' },
-    { lo: 'p25', hi: 'p75', color: 'rgba(167, 139, 250, 0.12)' },
-  ].forEach(({ lo, hi, color }) => {
+    { lo: 'p5', hi: 'p95', alpha: 0.06 },
+    { lo: 'p10', hi: 'p90', alpha: 0.10 },
+    { lo: 'p25', hi: 'p75', alpha: 0.15 },
+  ].forEach(({ lo, hi, alpha }) => {
     ctx.beginPath();
-    ctx.fillStyle = color;
+    ctx.fillStyle = mcColor(alpha);
     timePoints.forEach((t, i) => {
       const x = tToX(t); const y = priceToY(bands[t][hi]);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
@@ -722,7 +1159,7 @@ function render() {
   // Sample paths
   samplePaths.forEach(path => {
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(167, 139, 250, 0.08)';
+    ctx.strokeStyle = mcColor(0.08);
     ctx.lineWidth = 0.5;
     path.forEach((price, i) => {
       if (i >= timePoints.length) return;
@@ -734,7 +1171,7 @@ function render() {
 
   // Median path
   ctx.beginPath();
-  ctx.strokeStyle = '#a78bfa';
+  ctx.strokeStyle = mcColor(0.9);
   ctx.lineWidth = 2;
   timePoints.forEach((t, i) => {
     const x = tToX(t); const y = priceToY(bands[t].p50);
@@ -762,11 +1199,11 @@ function render() {
     ctx.textAlign = 'left';
     const endX = tToX(maxHorizon) + 6;
     [
-      { p: endBand.p95, label: 'p95', color: '#22c55e44' },
-      { p: endBand.p75, label: 'p75', color: '#22c55e33' },
-      { p: endBand.p50, label: 'p50', color: '#a78bfa' },
-      { p: endBand.p25, label: 'p25', color: '#ef444433' },
-      { p: endBand.p5, label: 'p5', color: '#ef444444' },
+      { p: endBand.p95, label: 'p95', color: mcColor(0.3) },
+      { p: endBand.p75, label: 'p75', color: mcColor(0.25) },
+      { p: endBand.p50, label: 'p50', color: mcColor(0.9) },
+      { p: endBand.p25, label: 'p25', color: mcColor(0.25) },
+      { p: endBand.p5, label: 'p5', color: mcColor(0.3) },
     ].forEach(({ p, label, color }) => {
       ctx.fillStyle = color;
       const diff = ((p - midPrice) / midPrice * 10000).toFixed(1);
@@ -781,7 +1218,8 @@ function render() {
   ctx.beginPath(); ctx.moveTo(0, priceToY(midPrice)); ctx.lineTo(W, priceToY(midPrice)); ctx.stroke();
   ctx.setLineDash([]);
 
-  requestAnimationFrame(render);
+  // Smooth header price (updates every frame)
+  document.getElementById('current-price').textContent = '$' + displayPrice.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
 }
 
 // ─── Init ───

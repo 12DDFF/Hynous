@@ -35,41 +35,8 @@ from scipy.stats import spearmanr
 log = logging.getLogger(__name__)
 
 # ─── Tick Feature Names ─────────────────────────────────────────────────────
-# Must match data-layer/src/hynous_data/engine/tick_collector.py exactly.
-
-BASE_TICK_FEATURES = [
-    "book_imbalance_5", "book_imbalance_10", "book_imbalance_20",
-    "bid_depth_usd_5", "ask_depth_usd_5", "spread_pct", "mid_price",
-    "buy_vwap_deviation", "sell_vwap_deviation",
-    "flow_imbalance_10s", "flow_imbalance_30s", "flow_imbalance_60s",
-    "flow_intensity_10s", "flow_intensity_30s",
-    "trade_volume_10s_usd", "trade_volume_30s_usd",
-    "price_change_10s", "price_change_30s", "price_change_60s",
-    "large_trade_imbalance",
-    "book_imbalance_delta_5s", "book_imbalance_delta_10s",
-    "depth_ratio_change_5s",
-    "max_trade_usd_60s", "trade_count_60s", "trade_count_10s",
-]
-
-# Rolling aggregate features computed from base features during loading.
-# These capture trends and volatility at multiple timescales.
-ROLLING_FEATURES = [
-    # 5-second rolling mean (smoothed signal)
-    "book_imbalance_5_mean5",
-    "flow_imbalance_10s_mean5",
-    "price_change_10s_mean5",
-    # 10-second rolling mean
-    "book_imbalance_5_mean10",
-    "flow_imbalance_10s_mean10",
-    # 30-second rolling std (microstructure volatility)
-    "book_imbalance_5_std30",
-    "flow_imbalance_10s_std30",
-    "price_change_10s_std30",
-    # 60-second slope (trend)
-    "book_imbalance_5_slope60",
-    "flow_imbalance_10s_slope60",
-    "mid_price_slope60",
-]
+# Canonical source: satellite/tick_features.py
+from satellite.tick_features import TICK_FEATURE_NAMES as BASE_TICK_FEATURES, ROLLING_FEATURES
 
 ALL_FEATURES = BASE_TICK_FEATURES + ROLLING_FEATURES
 
