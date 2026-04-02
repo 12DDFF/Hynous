@@ -379,6 +379,14 @@ def train_tick_direction(
         else:
             dir_acc = 50.0
 
+        # Production-realistic accuracy — matches live MC evaluation:
+        # All non-zero moves where model has a direction opinion (|pred| > 0.1 bps).
+        # Excludes zero actual returns (structurally unevaluable).
+        prod_mask = (np.abs(y_pred) > 0.1) & (np.abs(y_test) > 0.01)
+        prod_dir_acc = float(np.mean(
+            np.sign(y_test[prod_mask]) == np.sign(y_pred[prod_mask])
+        )) * 100 if prod_mask.sum() > 100 else 50.0
+
         # Profit simulation: if we trade in predicted direction, what's the avg P&L?
         # Positive = model makes money, negative = loses money
         avg_pnl_bps = float(np.mean(np.sign(y_pred) * y_test))
@@ -389,8 +397,10 @@ def train_tick_direction(
             "spearman_pval": round(float(sp_pval), 6),
             "mae_bps": round(mae, 2),
             "dir_accuracy": round(dir_acc, 1),
+            "prod_dir_accuracy": round(prod_dir_acc, 1),
             "avg_pnl_bps": round(avg_pnl_bps, 3),
             "sig_moves": int(sig_mask.sum()),
+            "prod_moves": int(prod_mask.sum()),
             "rounds": model.best_iteration + 1 if hasattr(model, "best_iteration") else NUM_BOOST_ROUNDS,
             "train_size": len(X_train),
             "test_size": len(X_test),
@@ -399,9 +409,9 @@ def train_tick_direction(
         })
 
         log.info(
-            "  Gen %d: sp=%.4f  dir=%.1f%%  pnl=%.3f bps  mae=%.1f bps  rounds=%d  (train=%d test=%d sig=%d)",
-            gen, sp, dir_acc, avg_pnl_bps, mae,
-            results[-1]["rounds"], len(X_train), len(X_test), int(sig_mask.sum()),
+            "  Gen %d: sp=%.4f  dir=%.1f%%  prod=%.1f%%  pnl=%.3f bps  mae=%.1f bps  rounds=%d  (train=%d test=%d sig=%d prod=%d)",
+            gen, sp, dir_acc, prod_dir_acc, avg_pnl_bps, mae,
+            results[-1]["rounds"], len(X_train), len(X_test), int(sig_mask.sum()), int(prod_mask.sum()),
         )
 
     if not results:
@@ -411,12 +421,13 @@ def train_tick_direction(
     # Summary
     avg_sp = float(np.mean([r["spearman"] for r in results]))
     avg_dir = float(np.mean([r["dir_accuracy"] for r in results]))
+    avg_prod_dir = float(np.mean([r["prod_dir_accuracy"] for r in results]))
     avg_pnl = float(np.mean([r["avg_pnl_bps"] for r in results]))
     std_sp = float(np.std([r["spearman"] for r in results]))
 
     log.info(
-        "%s RESULT: sp=%.4f±%.4f  dir=%.1f%%  pnl=%.3f bps  (%d gens)",
-        target.name, avg_sp, std_sp, avg_dir, avg_pnl, len(results),
+        "%s RESULT: sp=%.4f±%.4f  dir=%.1f%%  prod=%.1f%%  pnl=%.3f bps  (%d gens)",
+        target.name, avg_sp, std_sp, avg_dir, avg_prod_dir, avg_pnl, len(results),
     )
 
     # Assess
@@ -471,6 +482,7 @@ def train_tick_direction(
             "validation_spearman": round(avg_sp, 4),
             "validation_spearman_std": round(std_sp, 4),
             "validation_dir_accuracy": round(avg_dir, 1),
+            "validation_prod_dir_accuracy": round(avg_prod_dir, 1),
             "validation_avg_pnl_bps": round(avg_pnl, 3),
             "xgboost_params": XGBOOST_PARAMS,
             "downsample_interval": DOWNSAMPLE_INTERVAL,
@@ -489,6 +501,7 @@ def train_tick_direction(
         "avg_spearman": avg_sp,
         "spearman_std": std_sp,
         "avg_dir_accuracy": avg_dir,
+        "avg_prod_dir_accuracy": avg_prod_dir,
         "avg_pnl_bps": avg_pnl,
         "generations": len(results),
         "training_samples": len(X_valid),
@@ -556,9 +569,10 @@ def main():
     for r in all_results:
         sp = r.get("avg_spearman", 0)
         da = r.get("avg_dir_accuracy", 0)
+        pda = r.get("avg_prod_dir_accuracy", 0)
         pnl = r.get("avg_pnl_bps", 0)
-        log.info("  %-20s sp=%.4f  dir=%.1f%%  pnl=%.3f bps  [%s]",
-                 r["name"], sp, da, pnl, r["status"])
+        log.info("  %-20s sp=%.4f  dir=%.1f%%  prod=%.1f%%  pnl=%.3f bps  [%s]",
+                 r["name"], sp, da, pda, pnl, r["status"])
 
     # Save summary
     summary_path = output_dir / "training_summary.json"
