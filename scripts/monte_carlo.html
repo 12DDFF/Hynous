@@ -257,6 +257,24 @@
       <div id="bias-acc-list"></div>
       <div class="acc-summary" id="bias-acc-summary">Need bias signals to evaluate...</div>
     </div>
+
+    <div class="panel" id="exp-regime-panel" style="border-left: 2px solid #eab308;">
+      <h3 style="color:#eab308;">EXP: Regime Accuracy (60s)</h3>
+      <div id="exp-regime-list"></div>
+      <div class="acc-summary" id="exp-regime-summary">Collecting data...</div>
+    </div>
+
+    <div class="panel" id="exp-confidence-panel" style="border-left: 2px solid #eab308;">
+      <h3 style="color:#eab308;">EXP: Confidence Buckets (60s)</h3>
+      <div id="exp-conf-list"></div>
+      <div class="acc-summary" id="exp-conf-summary">Collecting data...</div>
+    </div>
+
+    <div class="panel" id="exp-rolling-panel" style="border-left: 2px solid #eab308;">
+      <h3 style="color:#eab308;">EXP: Rolling 2-min Accuracy (60s)</h3>
+      <div id="exp-rolling-list"></div>
+      <div class="acc-summary" id="exp-rolling-summary">Collecting data...</div>
+    </div>
   </div>
 
   <div id="connection-status" class="disconnected">Disconnected</div>
@@ -314,6 +332,22 @@ let lastBiasVerdict = 'NEUTRAL';
 let lastBiasScore = 0;
 let lastBiasSignalTime = 0;
 const BIAS_SIGNAL_COOLDOWN = 10; // only record a new bias signal every 10s (avoid spam)
+
+// ─── EXPERIMENT: Regime + Confidence + Rolling Accuracy ─────────────────
+// All tracked at 60s horizon only (best balance of signal and sample size)
+const EXP_HORIZON = 60;
+const expRegimeStats = {
+  trending: { correct: 0, wrong: 0, pnl: 0 },
+  ranging:  { correct: 0, wrong: 0, pnl: 0 },
+};
+const expConfStats = {
+  high:   { correct: 0, wrong: 0, pnl: 0 },  // |pred| > 1.0 bps
+  medium: { correct: 0, wrong: 0, pnl: 0 },  // 0.3 < |pred| <= 1.0
+  low:    { correct: 0, wrong: 0, pnl: 0 },  // |pred| <= 0.3
+};
+// Rolling: store last 200 individual eval results with timestamps
+const expRollingEvals = []; // [{t, correct: bool, pnl}]
+const EXP_ROLLING_WINDOW = 120; // seconds for rolling accuracy
 
 // ─── WebSocket ──────────────────────────────────────────────────────────
 function connect() {
@@ -401,8 +435,20 @@ function handleData(data) {
   updateBiasPanel();
 
   // ─── Track accuracy ───
+  // Compute regime label from recent price history (last 30 points)
+  let _expRegime = 'ranging';
+  if (priceHistory.length >= 30) {
+    const _tail = priceHistory.slice(-30);
+    const _p0 = _tail[0].price, _p1 = _tail[_tail.length - 1].price;
+    const _netBps = Math.abs((_p1 - _p0) / _p0 * 10000);
+    let _maxP = -Infinity, _minP = Infinity;
+    _tail.forEach(p => { if (p.price > _maxP) _maxP = p.price; if (p.price < _minP) _minP = p.price; });
+    const _rangeBps = (_maxP - _minP) / _p0 * 10000;
+    if (_rangeBps > 0 && _netBps / _rangeBps > 0.5 && _netBps > 2) _expRegime = 'trending';
+  }
+
   // Store this prediction for future evaluation
-  pendingPredictions.push({ t: data.timestamp, price: data.mid_price, predictions: { ...preds } });
+  pendingPredictions.push({ t: data.timestamp, price: data.mid_price, predictions: { ...preds }, _expRegime });
   if (pendingPredictions.length > MAX_PENDING) pendingPredictions.splice(0, pendingPredictions.length - MAX_PENDING);
 
   // Evaluate past predictions whose horizon has elapsed
@@ -410,6 +456,7 @@ function handleData(data) {
   const currentTime = data.timestamp;
   evaluateAccuracy(currentPrice, currentTime);
   updateAccuracyPanel();
+  updateExpPanels();
 
   // ─── Track bias accuracy ───
   // Record bias signals when they're directional (not neutral) with cooldown
@@ -658,6 +705,24 @@ function evaluateAccuracy(currentPrice, currentTime) {
               accuracyStats[h].correct += correct ? 1 : 0;
               accuracyStats[h].wrong += correct ? 0 : 1;
               accuracyStats[h].total_pnl += pnl;
+
+              // ── Experiment tracking (60s horizon only) ──
+              if (h === EXP_HORIZON) {
+                // Regime
+                const regime = pred._expRegime || 'ranging';
+                expRegimeStats[regime].correct += correct ? 1 : 0;
+                expRegimeStats[regime].wrong += correct ? 0 : 1;
+                expRegimeStats[regime].pnl += pnl;
+                // Confidence bucket
+                const absPred = Math.abs(predictedBps);
+                const bucket = absPred > 1.0 ? 'high' : absPred > 0.3 ? 'medium' : 'low';
+                expConfStats[bucket].correct += correct ? 1 : 0;
+                expConfStats[bucket].wrong += correct ? 0 : 1;
+                expConfStats[bucket].pnl += pnl;
+                // Rolling
+                expRollingEvals.push({ t: pred.t, correct, pnl });
+                if (expRollingEvals.length > 2000) expRollingEvals.splice(0, expRollingEvals.length - 2000);
+              }
             }
           }
           pred[key] = true;
@@ -815,6 +880,69 @@ function updateBiasAccuracyPanel() {
     summaryEl.textContent = pending > 0
       ? `${pending} bias signals pending evaluation...`
       : 'Need directional bias (|score| > 5) to start tracking';
+  }
+}
+
+// ─── EXPERIMENT: Display Functions ──────────────────────────────────────
+function _expRow(label, s, color) {
+  const n = s.correct + s.wrong;
+  const pct = n > 0 ? (s.correct / n * 100) : 0;
+  const avgPnl = n > 0 ? (s.pnl / n) : 0;
+  const barClass = pct >= 55 ? 'good' : pct >= 50 ? 'mid' : 'bad';
+  const pctColor = pct >= 55 ? '#22c55e' : pct >= 50 ? '#eab308' : '#ef4444';
+  return `<div class="acc-row">
+    <span class="acc-horizon" style="color:${color || '#aaa'}">${label}</span>
+    <div class="acc-bar-bg"><div class="acc-bar-fill ${barClass}" style="width:${n > 0 ? pct : 0}%"></div></div>
+    <span class="acc-pct" style="color:${n > 0 ? pctColor : '#555577'}">${n > 0 ? pct.toFixed(1) + '%' : '—'}</span>
+    <span class="acc-count">${n > 0 ? 'n=' + n : ''}</span>
+    <span class="acc-count" style="margin-left:4px;color:#666">${n > 5 ? (avgPnl >= 0 ? '+' : '') + avgPnl.toFixed(2) + 'bp' : ''}</span>
+  </div>`;
+}
+
+function updateExpPanels() {
+  // Regime panel
+  const regimeList = document.getElementById('exp-regime-list');
+  regimeList.innerHTML = _expRow('Trending', expRegimeStats.trending, '#22c55e')
+    + _expRow('Ranging', expRegimeStats.ranging, '#ef4444');
+  const rn = (expRegimeStats.trending.correct + expRegimeStats.trending.wrong) + (expRegimeStats.ranging.correct + expRegimeStats.ranging.wrong);
+  const tn = expRegimeStats.trending.correct + expRegimeStats.trending.wrong;
+  document.getElementById('exp-regime-summary').innerHTML = rn > 0
+    ? `${tn} trending / ${rn - tn} ranging evals (${rn} total)`
+    : 'Need 60s+ of data...';
+
+  // Confidence panel
+  const confList = document.getElementById('exp-conf-list');
+  confList.innerHTML = _expRow('|pred|>1bp', expConfStats.high, '#c084fc')
+    + _expRow('0.3-1bp', expConfStats.medium, '#818cf8')
+    + _expRow('≤0.3bp', expConfStats.low, '#555577');
+  const cn = Object.values(expConfStats).reduce((a, s) => a + s.correct + s.wrong, 0);
+  document.getElementById('exp-conf-summary').textContent = cn > 0 ? `${cn} total evals` : 'Need 60s+ of data...';
+
+  // Rolling panel
+  const rollList = document.getElementById('exp-rolling-list');
+  if (expRollingEvals.length > 0) {
+    const now = expRollingEvals[expRollingEvals.length - 1].t;
+    const cutoff = now - EXP_ROLLING_WINDOW;
+    const recent = expRollingEvals.filter(e => e.t >= cutoff);
+    const rc = recent.filter(e => e.correct).length;
+    const rn = recent.length;
+    const rpct = rn > 0 ? (rc / rn * 100) : 0;
+    const rpnl = rn > 0 ? recent.reduce((a, e) => a + e.pnl, 0) / rn : 0;
+    const allC = expRollingEvals.filter(e => e.correct).length;
+    const allN = expRollingEvals.length;
+    const allPct = allN > 0 ? (allC / allN * 100) : 0;
+    rollList.innerHTML = _expRow('Last 2min', { correct: rc, wrong: rn - rc, pnl: recent.reduce((a, e) => a + e.pnl, 0) }, '#eab308')
+      + _expRow('All time', { correct: allC, wrong: allN - allC, pnl: expRollingEvals.reduce((a, e) => a + e.pnl, 0) }, '#aaa');
+    const peak = Math.max(...[2, 5, 10, 20, 30].map(w => {
+      const wc = now - w * 60;
+      const wr = expRollingEvals.filter(e => e.t >= wc);
+      return wr.length > 10 ? (wr.filter(e => e.correct).length / wr.length * 100) : 0;
+    }));
+    document.getElementById('exp-rolling-summary').innerHTML =
+      `Rolling: ${rpct.toFixed(1)}% (${rn} in 2min) | Peak window: ${peak.toFixed(1)}%`;
+  } else {
+    rollList.innerHTML = '';
+    document.getElementById('exp-rolling-summary').textContent = 'Need 60s+ of data...';
   }
 }
 
