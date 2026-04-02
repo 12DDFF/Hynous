@@ -73,6 +73,15 @@ TICK_FEATURE_COUNT = len(TICK_FEATURE_NAMES)
 # v2: added book pressure delta + trade size distribution (6 features)
 TICK_SCHEMA_VERSION = 2
 
+# Rolling features computed during training and inference from base features.
+# Window sizes at DOWNSAMPLE_INTERVAL=5: w5=1, w10=2, w30=6, w60=12.
+ROLLING_FEATURES = [
+    "book_imbalance_5_mean5", "flow_imbalance_10s_mean5", "price_change_10s_mean5",
+    "book_imbalance_5_mean10", "flow_imbalance_10s_mean10",
+    "book_imbalance_5_std30", "flow_imbalance_10s_std30", "price_change_10s_std30",
+    "book_imbalance_5_slope60", "flow_imbalance_10s_slope60", "mid_price_slope60",
+]
+
 
 @dataclass
 class TickSnapshot:

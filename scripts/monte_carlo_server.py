@@ -24,6 +24,14 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+import hashlib
+import sys
+sys.path.insert(0, str(PROJECT_ROOT))
+from satellite.tick_features import TICK_FEATURE_NAMES as BASE_TICK_FEATURES, ROLLING_FEATURES
+
+_CODE_MODEL_FEATURES = [f for f in BASE_TICK_FEATURES + ROLLING_FEATURES if f != "mid_price"]
+_CODE_FEATURE_HASH = hashlib.sha256("|".join(_CODE_MODEL_FEATURES).encode()).hexdigest()[:16]
+
 ARTIFACTS_DIR = PROJECT_ROOT / "satellite" / "artifacts" / "tick_models"
 FRONTEND_PATH = PROJECT_ROOT / "scripts" / "monte_carlo.html"
 
@@ -65,6 +73,12 @@ class TickPredictor:
                     "features": meta["feature_names"],
                 }
                 log.info("Loaded %s (%ds)", meta["name"], meta["horizon_seconds"])
+                _model_hash = meta.get("feature_hash", "")
+                if _CODE_FEATURE_HASH != _model_hash:
+                    log.warning(
+                        "Feature hash mismatch for %s: code=%s model=%s",
+                        meta["name"], _CODE_FEATURE_HASH, _model_hash,
+                    )
             except Exception as e:
                 log.warning("Failed to load %s: %s", model_dir.name, e)
         log.info("%d tick models loaded", len(self._models))
@@ -99,6 +113,21 @@ class TickPredictor:
 
         # Build features
         features = self._build_features()
+
+        # Feature quality check — skip prediction if too many base features are zero
+        _zero_count = sum(1 for f in BASE_TICK_FEATURES if features.get(f, 0.0) == 0.0)
+        if _zero_count >= 10:
+            log.warning("Tick features: %d/%d base features are 0.0 — skipping prediction", _zero_count, len(BASE_TICK_FEATURES))
+            return {
+                "timestamp": ts,
+                "mid_price": mid_price,
+                "predictions": {},
+                "mc_paths": None,
+                "vol_per_sec": 0.0001,
+                "price_history": list(self._price_history),
+                "warming_up": True,
+                "warmup_pct": 0,
+            }
 
         # Run models
         predictions = {}
@@ -144,20 +173,6 @@ class TickPredictor:
         return count
 
     def _build_features(self) -> dict:
-        BASE_TICK_FEATURES = [
-            "book_imbalance_5", "book_imbalance_10", "book_imbalance_20",
-            "bid_depth_usd_5", "ask_depth_usd_5", "spread_pct", "mid_price",
-            "buy_vwap_deviation", "sell_vwap_deviation",
-            "flow_imbalance_10s", "flow_imbalance_30s", "flow_imbalance_60s",
-            "flow_intensity_10s", "flow_intensity_30s",
-            "trade_volume_10s_usd", "trade_volume_30s_usd",
-            "price_change_10s", "price_change_30s", "price_change_60s",
-            "large_trade_imbalance",
-            "book_imbalance_delta_5s", "book_imbalance_delta_10s",
-            "depth_ratio_change_5s",
-            "max_trade_usd_60s", "trade_count_60s", "trade_count_10s",
-        ]
-
         rows = list(self._tick_buffer)
 
         # Downsample to 5s resolution to match training
@@ -221,12 +236,6 @@ class TickPredictor:
                 else:
                     features[slope_name] = 0.0
         else:
-            ROLLING_FEATURES = [
-                "book_imbalance_5_mean5", "flow_imbalance_10s_mean5", "price_change_10s_mean5",
-                "book_imbalance_5_mean10", "flow_imbalance_10s_mean10",
-                "book_imbalance_5_std30", "flow_imbalance_10s_std30", "price_change_10s_std30",
-                "book_imbalance_5_slope60", "flow_imbalance_10s_slope60", "mid_price_slope60",
-            ]
             for rf in ROLLING_FEATURES:
                 features.setdefault(rf, 0.0)
 

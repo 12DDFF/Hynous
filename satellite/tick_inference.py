@@ -26,27 +26,8 @@ import xgboost as xgb
 
 log = logging.getLogger(__name__)
 
-# Must match train_tick_direction.py exactly
-BASE_TICK_FEATURES = [
-    "book_imbalance_5", "book_imbalance_10", "book_imbalance_20",
-    "bid_depth_usd_5", "ask_depth_usd_5", "spread_pct", "mid_price",
-    "buy_vwap_deviation", "sell_vwap_deviation",
-    "flow_imbalance_10s", "flow_imbalance_30s", "flow_imbalance_60s",
-    "flow_intensity_10s", "flow_intensity_30s",
-    "trade_volume_10s_usd", "trade_volume_30s_usd",
-    "price_change_10s", "price_change_30s", "price_change_60s",
-    "large_trade_imbalance",
-    "book_imbalance_delta_5s", "book_imbalance_delta_10s",
-    "depth_ratio_change_5s",
-    "max_trade_usd_60s", "trade_count_60s", "trade_count_10s",
-]
-
-ROLLING_FEATURES = [
-    "book_imbalance_5_mean5", "flow_imbalance_10s_mean5", "price_change_10s_mean5",
-    "book_imbalance_5_mean10", "flow_imbalance_10s_mean10",
-    "book_imbalance_5_std30", "flow_imbalance_10s_std30", "price_change_10s_std30",
-    "book_imbalance_5_slope60", "flow_imbalance_10s_slope60", "mid_price_slope60",
-]
+# Canonical source: satellite/tick_features.py
+from satellite.tick_features import TICK_FEATURE_NAMES as BASE_TICK_FEATURES, ROLLING_FEATURES
 
 # Model features = base + rolling, minus mid_price (used for labels, not prediction)
 CODE_MODEL_FEATURES = [f for f in BASE_TICK_FEATURES + ROLLING_FEATURES if f != "mid_price"]
@@ -323,6 +304,18 @@ class TickInferenceEngine:
                 ]
                 for rf in ROLLING:
                     features.setdefault(rf, 0.0)
+
+            # ── Feature quality check ──────────────────────────────
+            # Most base features are non-zero in steady-state (book_imbalance
+            # defaults to 0.5, mid_price is always positive). A high zero count
+            # means missing or corrupt data — skip instead of predicting on garbage.
+            _zero_count = sum(1 for f in BASE_TICK_FEATURES if features.get(f, 0.0) == 0.0)
+            if _zero_count >= 10:
+                log.warning(
+                    "Tick features for %s: %d/%d base features are 0.0 — likely corrupt, skipping",
+                    coin, _zero_count, len(BASE_TICK_FEATURES),
+                )
+                return None, 0.0
 
             return features, tick_ts
 

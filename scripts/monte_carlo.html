@@ -414,8 +414,13 @@ function handleData(data) {
   // ─── Track bias accuracy ───
   // Record bias signals when they're directional (not neutral) with cooldown
   const biasScore = biasHistory.length > 0 ? ((function() {
-    let l=0,s=0; biasHistory.forEach(b => { if(b.signal==='long')l++; else if(b.signal==='short')s++; });
-    return (l-s)/biasHistory.length*100;
+    let l=0,s=0,c=0;
+    biasHistory.forEach(b => {
+      if (!b.isStrong) return;
+      c++;
+      if (b.signal==='long') l++; else if (b.signal==='short') s++;
+    });
+    return c > 0 ? (l-s)/c*100 : 0;
   })()) : 0;
 
   if (Math.abs(biasScore) > 5 && currentTime - lastBiasSignalTime >= BIAS_SIGNAL_COOLDOWN) {
