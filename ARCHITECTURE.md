@@ -1,5 +1,19 @@
 # Hynous Architecture
 
+> ⚠️ **v2 branch notice — this document describes v1**
+>
+> You are reading this on the `v2` branch. This file describes the v1 Hynous
+> system as it existed before the v2 refactor (3-process topology, Nous memory
+> server, LLM-in-the-loop trading, 28 agent tools, decision-injection layer).
+> v2 is a ground-up rebuild that replaces those pieces with a mechanical
+> trading loop and a post-trade analysis agent.
+>
+> **For v2 architecture and plan, read `v2-planning/00-master-plan.md` instead.**
+> Do not trust this document for v2 design decisions — use it for historical
+> context only. Phase 4 of the v2 plan rewrites this file to reflect v2 reality.
+
+---
+
 > How the system fits together. Read this before making changes.
 
 ---

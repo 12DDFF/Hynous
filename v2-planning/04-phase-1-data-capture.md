@@ -47,6 +47,7 @@ In addition to the base reading list from `01-pre-implementation-reading.md`, ph
 
 ### In Scope
 
+- **Step 0: create `scripts/run_daemon.py`** — the phase 0 engineer discovered this file does not exist despite being referenced by Makefile, CLAUDE.md, and every phase plan. Phase 1 creates it as a proper standalone entry point (see master plan Amendment 1).
 - A new `src/hynous/journal/schema.py` containing all dataclass definitions for entry/exit snapshots, events, and the staging table DDL. This file is shared with phase 2 — phase 2 will add the real journal tables alongside the staging table.
 - A new `src/hynous/journal/staging_store.py` containing a thin SQLite wrapper for the phase 1 staging table (`trade_events_staging` and `trade_snapshots_staging`). Phase 2 deletes this in favor of the full journal store.
 - A new `src/hynous/journal/capture.py` containing the capture builder helpers: `build_entry_snapshot(...)`, `build_exit_snapshot(...)`, `emit_lifecycle_event(...)`.
@@ -65,6 +66,166 @@ In addition to the base reading list from `01-pre-implementation-reading.md`, ph
 - Any entry decision refactoring (phase 5)
 - Dashboard changes (phase 7)
 - Backfilling historical trades (no migration — fresh start per plan)
+
+---
+
+## Step 0: Create `scripts/run_daemon.py`
+
+Phase 0's smoke test instructions referenced `python -m scripts.run_daemon` but the file didn't exist. Phase 0 engineer used an inline runner. Phase 1 creates the real file so every subsequent phase can rely on a consistent smoke test command.
+
+The file is a minimal standalone entry point that loads config, constructs the agent and daemon, and idles safely with clean shutdown on Ctrl-C. It does NOT start the Reflex dashboard. It does NOT start a web server. It is purely the daemon subsystem for smoke testing.
+
+**Create `scripts/run_daemon.py` with this content:**
+
+```python
+"""Standalone daemon runner for smoke tests and development.
+
+In v1 the daemon runs in-process inside the Reflex dashboard
+(scripts/run_dashboard.py). This script exists so phase smoke tests can
+exercise the daemon subsystem without booting the full Reflex stack.
+
+Usage:
+    python -m scripts.run_daemon [--duration <seconds>]
+
+By default runs until Ctrl-C. With --duration, exits cleanly after N seconds
+(useful for automated smoke tests: `timeout 300 python -m scripts.run_daemon`
+is equivalent to `python -m scripts.run_daemon --duration 300`).
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import signal
+import sys
+import time
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _setup_logging(level: int = logging.INFO) -> None:
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
+
+
+def _build_daemon() -> tuple[Any, Any]:
+    """Construct Agent + Daemon the same way the Reflex dashboard does.
+
+    Returns (agent, daemon). Imports happen inside the function so
+    `python -m scripts.run_daemon --help` works without a full env.
+    """
+    from hynous.core.config import load_config
+    from hynous.intelligence.agent import Agent
+    from hynous.intelligence.daemon import HynousDaemon
+    
+    cfg = load_config()
+    logger.info("config loaded: mode=%s", cfg.execution.mode)
+    
+    agent = Agent(config=cfg)
+    logger.info("agent constructed: model=%s", cfg.agent.model)
+    
+    daemon = HynousDaemon(agent=agent, config=cfg)
+    logger.info("daemon constructed")
+    
+    return agent, daemon
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run the Hynous daemon (standalone)")
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=0,
+        help="Exit cleanly after N seconds (0 = run until Ctrl-C)",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+    )
+    args = parser.parse_args()
+    
+    _setup_logging(getattr(logging, args.log_level))
+    
+    try:
+        agent, daemon = _build_daemon()
+    except Exception:
+        logger.exception("daemon construction failed")
+        return 1
+    
+    # Graceful shutdown handler
+    _stop = {"flag": False}
+    def _handle_signal(signum: int, frame: Any) -> None:
+        logger.info("received signal %s, stopping", signum)
+        _stop["flag"] = True
+    
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+    
+    # Start the daemon's internal loop if the class exposes one.
+    # HynousDaemon.start() is the v1 API; if it changes, update here.
+    if hasattr(daemon, "start"):
+        try:
+            daemon.start()
+            logger.info("daemon.start() called")
+        except Exception:
+            logger.exception("daemon.start() failed")
+            return 1
+    
+    # Idle heartbeat loop
+    started = time.monotonic()
+    last_heartbeat = started
+    logger.info("daemon running (duration=%s)", args.duration or "infinite")
+    
+    try:
+        while not _stop["flag"]:
+            time.sleep(1)
+            now = time.monotonic()
+            if now - last_heartbeat >= 60:
+                logger.info("heartbeat: %.0fs elapsed", now - started)
+                last_heartbeat = now
+            if args.duration > 0 and (now - started) >= args.duration:
+                logger.info("duration reached, stopping")
+                break
+    except KeyboardInterrupt:
+        logger.info("keyboard interrupt, stopping")
+    
+    # Graceful stop
+    if hasattr(daemon, "stop"):
+        try:
+            daemon.stop()
+            logger.info("daemon.stop() called")
+        except Exception:
+            logger.exception("daemon.stop() raised (continuing)")
+    
+    elapsed = time.monotonic() - started
+    logger.info("run_daemon complete: %.0fs elapsed, no fatal errors", elapsed)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+**Adapt to reality before committing.** The phase 0 engineer's report shows that `HynousDaemon(agent=..., config=...)` is the constructor shape (they used this in their inline runner) and `daemon.start()` / `daemon.stop()` are the lifecycle methods. Verify these against the current `daemon.py` before writing the file — if the constructor signature has drifted, adjust. If `start()` doesn't exist, the daemon may initialize in its `__init__` and be idle-safe without an explicit start. In that case, just skip the `daemon.start()` call and rely on the idle loop to keep the process alive.
+
+**Test it yourself before committing:**
+
+```bash
+# Short smoke run
+python -m scripts.run_daemon --duration 10
+# Expected: clean startup logs, one heartbeat at best, clean shutdown
+
+# Help text
+python -m scripts.run_daemon --help
+# Expected: argparse help, no imports triggered
+```
+
+After committing, phase 1's smoke test section (below) uses this command verbatim.
 
 ---
 
@@ -1611,7 +1772,7 @@ print('Entry snapshot schema valid')
 - [ ] `daemon.py` builds and persists exit snapshot in the trigger close path
 - [ ] All 13 unit tests in `test_v2_capture.py` pass
 - [ ] All 3 integration tests in `test_v2_capture_integration.py` pass
-- [ ] Full regression `pytest tests/` passes with zero new failures
+- [ ] Full regression `pytest tests/ --ignore=tests/e2e` passes with zero new failures (baseline: 810 passed / 1 pre-existing failure — see master plan Amendment 2)
 - [ ] mypy error count ≤ baseline
 - [ ] ruff error count ≤ baseline
 - [ ] 15-minute smoke test produces at least one complete entry snapshot in staging.db

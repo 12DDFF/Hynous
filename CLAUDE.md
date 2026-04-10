@@ -1,5 +1,26 @@
 # CLAUDE.md — Hynous Project Guide
 
+> ⚠️ **v2 branch notice — this document describes v1 conventions**
+>
+> You are reading this on the `v2` branch. The "5 runtime components", "28
+> agent tools", Nous memory system, and `python -m scripts.run_daemon`
+> references below all describe the v1 system. v2 is a ground-up rebuild
+> that deletes ~100K LOC of that infrastructure and replaces it with a
+> mechanical trading loop + post-trade analysis agent.
+>
+> **For v2 conventions, read `v2-planning/00-master-plan.md` instead.**
+> Specifically the "Cross-Cutting Conventions" and "Engineer Protocol"
+> sections supersede the v1 content below. Phase 4 of the v2 plan rewrites
+> this file to reflect v2 reality.
+>
+> Known-stale items in this file:
+> - `scripts/run_daemon` reference (doesn't exist on main; phase 1 creates it)
+> - The 5-component architecture table (v2 removes Nous, reducing to 4)
+> - Memory tool listings (phase 4 deletes 8 of them)
+> - "Running" section (partial — dashboard command still works, daemon command doesn't)
+
+---
+
 > Essential conventions for AI agents working on this codebase.
 > For detailed knowledge, see `~/.claude/projects/.../memory/MEMORY.md`.
 

@@ -21,6 +21,19 @@ Don't skim. Read each file fully. Make notes. If you don't understand something,
 
 These docs explain the v1 system. Even though v2 changes it significantly, you need to understand what you're changing.
 
+> ⚠️ **IMPORTANT — all v1 documentation has a stale v2 notice prepended.**
+>
+> On the `v2` branch, these v1 docs have a warning block at the top telling you
+> they describe v1 and should not be trusted for v2 design decisions. Read them
+> for **historical context and orientation** — understanding what v2 is rebuilding
+> — NOT as authoritative descriptions of the current v2 target state.
+>
+> The authoritative source for v2 is `v2-planning/00-master-plan.md` plus your
+> assigned phase plan. When v1 docs and v2 plans conflict, v2 plans win.
+>
+> Phase 4 rewrites these v1 docs to match v2 reality. Until phase 4, the v2
+> notice headers remain as a reminder.
+
 ### Required
 
 1. **`ARCHITECTURE.md`** (project root) — full read
@@ -311,7 +324,8 @@ Verify your environment works before starting:
 cd /Users/bauthoi/Documents/Hynous  # or your checkout location
 source .venv/bin/activate
 python -c "import hynous; print('import ok')"
-pytest tests/ --collect-only > /dev/null && echo "pytest collection ok"
+# NOTE: --ignore=tests/e2e is required until phase 4 (see master plan Amendment 2)
+pytest tests/ --ignore=tests/e2e --collect-only > /dev/null && echo "pytest collection ok"
 mypy src/hynous/ --no-error-summary > /dev/null 2>&1; echo "mypy exit: $?"
 ruff check src/hynous/ > /dev/null 2>&1; echo "ruff exit: $?"
 ```

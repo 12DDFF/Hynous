@@ -1483,7 +1483,7 @@ Expected: trades, events, entry_snapshots populated. Analyses, edges, patterns e
 - [ ] Daemon now writes to `JournalStore` instead of `StagingStore` (the `_journal_store` reference swaps)
 - [ ] All 23 unit tests pass
 - [ ] All 7 integration tests pass
-- [ ] Full regression `pytest tests/` passes
+- [ ] Full regression `pytest tests/ --ignore=tests/e2e` passes with zero new failures (baseline: 810 passed / 1 pre-existing failure — see master plan Amendment 2)
 - [ ] mypy baseline preserved
 - [ ] ruff baseline preserved
 - [ ] Smoke test produces at least one trade written via the new store

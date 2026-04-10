@@ -308,6 +308,44 @@ These are not acceptance criteria for individual phases — they're the gate for
 
 ---
 
+## Amendments Log
+
+Plan amendments discovered post-writing. Every engineer must read this before starting their assigned phase — it captures reality checks that invalidate parts of the original plan.
+
+### Amendment 1 — `scripts/run_daemon` does not exist on main (discovered in phase 0)
+
+The plan documents reference `python -m scripts.run_daemon` for smoke tests. That module does not exist in the repository and has not existed for some time — the Makefile and CLAUDE.md also reference it but point at nothing. In v1, the daemon runs in-process inside the Reflex dashboard (`scripts/run_dashboard.py` → Reflex stack → daemon subsystem).
+
+**Resolution:** Phase 1 creates a real `scripts/run_daemon.py` as its first step (see phase 1 plan step 0). Every phase from 1 onward can then use `python -m scripts.run_daemon` as written in the plans. Phase 0 engineers had to substitute an inline runner and that's documented in the phase 0 report-back.
+
+### Amendment 2 — `tests/e2e/test_live_orchestrator.py` breaks pytest collection (discovered in phase 0)
+
+The file at `tests/e2e/test_live_orchestrator.py` executes module-level code (`client = NousClient(); h = client.health()`) at import time, which requires the Nous server to be running on `localhost:3100` for pytest to even **collect** the file. When Nous is not running (which is most of the time during v2 development), pytest collection fails, which aborts the entire test run. This file has been broken on main for some time.
+
+**Resolution (short-term):** Every phase regression test command uses `pytest tests/ --ignore=tests/e2e` instead of the plain `pytest tests/` written in the original plan. Phase plan docs 1–8 have been updated to reflect this.
+
+**Resolution (permanent):** Phase 4 explicitly deletes `tests/e2e/test_live_orchestrator.py` as part of its test cleanup step (it tests Nous, which phase 4 removes entirely). Starting with phase 5, the `--ignore=tests/e2e` flag is no longer needed because the offending file is gone.
+
+### Amendment 3 — Regression baseline is `810 passed / 1 pre-existing failure` (established in phase 0)
+
+The phase 0 engineer verified that `tests/unit/test_token_optimization.py::TestCrossCutting::test_load_config_produces_valid_config` fails on both main and v2 with an identical stale-model-name assertion (expects `"claude-sonnet-4-5-20250929"` but the actual model is `"openrouter/x-ai/grok-4.1-fast"`). This is documented as pre-existing drift in `docs/revisions/feature-trimming/README.md` and was never fixed.
+
+**Resolution (short-term):** Every phase's "zero new failures" acceptance criterion means **zero new failures compared to the 810 passed / 1 failed baseline**. The 1 pre-existing failure does NOT block phase acceptance as long as it is the same single failure and no new ones appear.
+
+**Resolution (permanent):** Phase 4 explicitly deletes `tests/unit/test_token_optimization.py` as part of its test cleanup step (token optimization was a v1 LLM-in-the-loop prompt reduction effort — the feature and its tests are both removed in phase 4). Starting with phase 5, the regression baseline is `811 passed / 0 failed`.
+
+### Amendment 4 — Non-v2 untracked files on main are deliberately left untracked
+
+When you check out the v2 branch from main, these files appear as untracked in `git status`:
+
+- `docs/revisions/mc-fixes/implementation-guide.md`
+- `docs/revisions/tick-system-audit/future-entry-timing.md`
+- `satellite/artifacts/tick_models/`
+
+These are pre-existing uncommitted work on main. They are **not** part of v2's scope and are **not** staged in any v2 phase commit. Leave them alone. They continue to appear as untracked across all v2 phases and that is expected.
+
+---
+
 ## Document Index
 
 - `00-master-plan.md` — this document

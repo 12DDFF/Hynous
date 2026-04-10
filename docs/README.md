@@ -1,5 +1,17 @@
 # Hynous Documentation
 
+> ⚠️ **v2 branch notice — this hub describes v1 documentation**
+>
+> You are reading this on the `v2` branch. The navigation and descriptions
+> below reference v1 systems (Nous memory graph, LLM decision layer, 28 agent
+> tools, the v1 three-process topology). v2 is a ground-up rebuild.
+>
+> **For v2 documentation, start at `v2-planning/00-master-plan.md`.**
+> Do not trust this doc for v2 navigation. Phase 4 of the v2 plan rewrites
+> this hub (or archives it entirely).
+
+---
+
 > Central navigation hub for all Hynous project documentation.
 
 Hynous is a personal crypto intelligence system with an autonomous LLM trading agent. It combines real-time market data ingestion, a knowledge-graph memory system, ML-based feature computation, and an event-driven agent that reasons about trades using Claude.

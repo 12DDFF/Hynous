@@ -221,14 +221,24 @@ def test_full_trade_lifecycle_produces_complete_journal_record(tmp_path):
 After every phase, run the full existing test suite:
 
 ```bash
-pytest tests/ -v
+# Phases 1–3: must exclude tests/e2e because test_live_orchestrator.py
+# executes module-level code at import time that requires Nous to be running.
+# See master plan Amendment 2.
+pytest tests/ --ignore=tests/e2e -v
+
+# Phase 4 deletes tests/e2e/test_live_orchestrator.py entirely.
+# Phase 5 onward: plain `pytest tests/ -v` works again.
 ```
 
-**Zero new failures allowed.** If a v1 test fails because v2 changed behavior, one of two things is true:
+**Regression baseline (established by phase 0):** `810 passed / 1 pre-existing failure`. The 1 pre-existing failure is `tests/unit/test_token_optimization.py::TestCrossCutting::test_load_config_produces_valid_config` which has a stale model-name assertion. This fails identically on main and v2 and is documented in `docs/revisions/feature-trimming/README.md`. It does NOT block phase acceptance. See master plan Amendment 3.
+
+**Zero NEW failures allowed.** "New" is relative to the 810/1 baseline. If a phase introduces a second failure, that's a regression. If a v1 test fails because v2 changed behavior, one of two things is true:
 1. The v1 test was testing something v2 intentionally removes — delete the test in the same phase that removes the feature
 2. The v2 change broke something it shouldn't have — fix the v2 change
 
 Do not skip, xfail, or mark tests as `@pytest.mark.skip` to make them pass. Either delete the test (with justification in the phase report-back) or fix the code.
+
+**Phase 4 is the baseline cleanup:** it explicitly deletes `tests/e2e/test_live_orchestrator.py` AND `tests/unit/test_token_optimization.py`. After phase 4, the regression baseline is `811 passed / 0 failed` and the `--ignore=tests/e2e` flag is no longer required.
 
 ### Smoke test
 
@@ -297,7 +307,7 @@ Example acceptance criteria block:
 
 - [ ] All new unit tests pass (`pytest tests/unit/test_journal.py`)
 - [ ] All new integration tests pass (`pytest tests/integration/test_journal_integration.py`)
-- [ ] Full test suite passes (`pytest tests/`)
+- [ ] Full test suite passes (`pytest tests/ --ignore=tests/e2e` for phases 1–3, `pytest tests/` for phases 5+; phase 4 makes the transition)
 - [ ] mypy baseline preserved (`mypy src/hynous/` count ≤ baseline)
 - [ ] ruff baseline preserved (`ruff check src/hynous/` count ≤ baseline)
 - [ ] Smoke test runs for 5 minutes without ERROR-level logs

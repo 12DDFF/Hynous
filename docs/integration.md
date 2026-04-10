@@ -1,5 +1,21 @@
 # Cross-System Data Flows
 
+> ⚠️ **v2 branch notice — this document describes v1 data flows**
+>
+> You are reading this on the `v2` branch. The data flows documented below
+> (satellite ↔ data-layer ↔ daemon push loops, Nous ↔ agent retrieval paths,
+> coach/consolidation/playbook injection into LLM context) describe v1.
+> v2 deletes most of these flows in phase 4 and replaces them with direct
+> journal writes and a post-trade analysis pipeline.
+>
+> **For v2 data flows, read `v2-planning/00-master-plan.md`** plus the
+> relevant phase plan (phase 1 for capture flows, phase 3 for analysis flows,
+> phase 6 for consolidation flows). Phase 4 of the v2 plan rewrites this file
+> to reflect v2 reality — or archives it if the v2 phase docs cover it
+> adequately.
+
+---
+
 > Documents every data flow that crosses system boundaries in Hynous.
 > These integrations are the most important undocumented relationships in the project.
 

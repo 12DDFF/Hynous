@@ -91,7 +91,7 @@ In `src/hynous/intelligence/tools/trading.py`:
 
 **Delete helper functions inside trading.py:** `_store_trade_memory` (line 1405-1556), `_store_to_nous` (line 1282-1377), `_find_trade_entry` (line 1377-1405), `_strengthen_trade_edge` (line 2331-2358), `_update_playbook_metrics` (line 2358-2420). Keep `_place_triggers`, `_record_trade_span`, `_check_trading_allowed`, `_get_ml_conditions`, `_get_trading_provider`, `_retry_exchange_call`, `_is_rate_limit_error`.
 
-Run: `mypy src/hynous/intelligence/tools/trading.py` — must pass. `pytest tests/unit/test_trading*.py` — must still pass (some tests may need updates in step 7).
+Run: `mypy src/hynous/intelligence/tools/trading.py` — must pass. `pytest tests/unit/test_trading*.py --ignore=tests/e2e` — must still pass (some tests may need updates in step 7).
 
 Commit: `[phase-4] remove nous/coach/trade_history calls from trading.py`
 
@@ -161,7 +161,7 @@ rm src/hynous/intelligence/context_snapshot.py   # verify no remaining imports
 
 Run: `grep -r "from .coach" src/hynous/` must return nothing. Same for each deleted module.
 
-Run: `pytest tests/` — expect some test failures for tests that reference deleted modules. Those tests get deleted in step 7.
+Run: `pytest tests/ --ignore=tests/e2e` — expect some test failures for tests that reference deleted modules. Those tests get deleted in step 7.
 
 Commit: `[phase-4] delete decision-injection modules`
 
@@ -224,11 +224,35 @@ Update `deploy/nous.service`: delete this file.
 
 Update `deploy/setup.sh` to remove references to installing pnpm, building Nous, starting nous.service.
 
-Update `CLAUDE.md` to remove references to Nous, the 3-process architecture note, the nous systemd service. This is important — CLAUDE.md is a conventions doc for future engineers.
+Update `CLAUDE.md` to remove references to Nous, the 3-process architecture note, the nous systemd service. This is important — CLAUDE.md is a conventions doc for future engineers. Remove the v2 branch notice that was prepended in the `[v2-docs]` cleanup — it's no longer needed because the body now describes v2 directly.
 
-Update `README.md` to remove Nous references and update the tech stack table.
+Update `README.md` to remove Nous references and update the tech stack table. Same thing re: the v2 notice — remove it now that the body is accurate.
 
-Update `ARCHITECTURE.md` to replace the Nous section with a pointer to `src/hynous/journal/`.
+Update `ARCHITECTURE.md` to replace the Nous section with a pointer to `src/hynous/journal/`. Remove the v2 notice prepended in `[v2-docs]` cleanup.
+
+**Additional documentation updates (added after phase 0 audit found these were missing from the original plan):**
+
+Update `docs/README.md`:
+- Remove the v2 notice prepended in `[v2-docs]` cleanup
+- Either rewrite as a v2 documentation hub pointing at `v2-planning/` and the surviving v1 archives, OR delete entirely in favor of `v2-planning/00-master-plan.md` as the canonical entry point. Engineer picks based on what makes the navigation cleanest.
+
+Update `docs/integration.md`:
+- Remove the v2 notice prepended in `[v2-docs]` cleanup
+- The current v1 content describes cross-system flows that v2 deletes (satellite ↔ data-layer historical push, Nous retrieval paths, coach/consolidation injection). Rewrite as a shorter doc describing v2's remaining cross-system flows: daemon ↔ journal (write path), daemon ↔ satellite (ML inference path), journal ↔ analysis agent (post-trade pipeline), journal ↔ dashboard (API path). OR delete if `v2-planning/04-phase-1-...md` and `v2-planning/06-phase-3-...md` cover the same ground.
+
+Update `Makefile`:
+- Fix or remove the `init-db` target — currently references `from hynous.nous import NousStore` which phase 4 is deleting. Either point it at `hynous.journal.store.JournalStore` (if v2 needs an explicit init step) or delete the target entirely (if the journal store auto-initializes on first use, which phase 2 makes it do).
+- Verify the `daemon` target works — it should, because phase 1 step 0 created `scripts/run_daemon.py`.
+- Remove any other targets that reference deleted modules.
+
+Update `pyproject.toml`:
+- Review the `description` field — if it mentions Nous, LLM memory graph, or the v1 architecture, rewrite to a v2-appropriate description.
+- Review the `[project.dependencies]` list for Nous-specific packages that can be removed (unlikely — Nous was TypeScript — but confirm).
+- Review `[project.scripts]` entries if any reference deleted modules.
+
+Update `deploy/README.md` (if it exists):
+- Currently references the 3-service systemd setup (hynous + nous + hynous-data). Phase 4 deletes `nous.service`. Update the deployment doc to describe the 2-service setup (hynous + hynous-data) with a note that the journal runs in-process.
+- Update `deploy/setup.sh` to remove the `pnpm install` + `cd nous-server && pnpm build` steps.
 
 Run: `grep -rn "nous" src/hynous/ dashboard/ config/ deploy/ --include="*.py" --include="*.yaml" --include="*.md"`. Expect only references in phase 2's comments ("replaced Nous in phase 2").
 
@@ -259,9 +283,30 @@ rm tests/unit/test_delete_memory*.py 2>/dev/null
 rm tests/unit/test_trade_stats*.py 2>/dev/null
 rm tests/integration/test_nous*.py 2>/dev/null
 rm tests/integration/test_memory*.py 2>/dev/null
+
+# Also delete these two baseline-cleanup files (see master plan amendments 2 and 3):
+#
+# tests/e2e/test_live_orchestrator.py — runs module-level code that requires
+# Nous to be running, breaking pytest collection. Nous is gone after step 6,
+# so this file's imports will fail regardless. Delete it.
+rm tests/e2e/test_live_orchestrator.py 2>/dev/null
+
+# tests/unit/test_token_optimization.py — tests v1 token optimization (TO-1
+# through TO-4) which was a v1 LLM-in-the-loop prompt reduction effort.
+# v2 removes the LLM from the trading loop entirely, so the feature AND the
+# test are both obsolete. Has been pre-existing-failing on main for some
+# time with a stale model-name assertion. Delete it.
+rm tests/unit/test_token_optimization.py 2>/dev/null
 ```
 
-Run `pytest tests/` — must pass. If any failures remain, find the root cause and fix it.
+**After this step the regression baseline changes:**
+
+- **Before phase 4:** `810 passed / 1 pre-existing failure / tests/e2e ignored` (use `pytest tests/ --ignore=tests/e2e`)
+- **After phase 4:** `811 passed / 0 failed` (use plain `pytest tests/`)
+
+Starting with phase 5, the `--ignore=tests/e2e` flag is no longer required in any phase command because the offending file has been deleted.
+
+Run `pytest tests/` (no `--ignore` needed now) — must pass. If any failures remain, find the root cause and fix it.
 
 Commit: `[phase-4] delete tests for removed modules`
 
@@ -314,7 +359,7 @@ grep -rn "Nous\|nous_client\|NousClient\|get_client()\|\.coach\|trade_history\|m
 
 Remnants should only be in comments referencing the deletion. If any active code appears, remove it.
 
-Run full test suite: `pytest tests/`. All pass.
+Run full test suite: `pytest tests/` (note: `--ignore=tests/e2e` no longer needed after step 7 deleted the offending file). All pass at the new baseline of `811 passed / 0 failed`.
 
 Run mypy: `mypy src/hynous/`. Error count must be ≤ baseline.
 
@@ -364,11 +409,12 @@ Commit: `[phase-4] final cleanup of deletion leftovers`
 
 ### Regression test
 
-After every deletion step, `pytest tests/` must pass.
+After every deletion step, `pytest tests/ --ignore=tests/e2e` must pass at the 810/1 baseline until step 7 completes. After step 7 (which deletes `tests/e2e/test_live_orchestrator.py` and `tests/unit/test_token_optimization.py`), run plain `pytest tests/` and expect the new 811/0 baseline.
 
 After step 10, run the complete test suite with:
 
 ```bash
+# After step 7 deleted the broken e2e file, plain pytest tests/ works
 pytest tests/ -v --tb=short
 ```
 
@@ -432,12 +478,19 @@ Verify the home and chat pages still load even if memory pages are broken.
 - [ ] `daemon.py` trimmed: no cron jobs for decay/conflicts/consolidation/fading/curiosity
 - [ ] `grep "from hynous.nous"` returns nothing
 - [ ] `grep "from .coach"` returns nothing (and similar for all deleted modules)
-- [ ] All tests pass (`pytest tests/`)
+- [ ] All tests pass at the post-phase-4 baseline (`pytest tests/` = `811 passed / 0 failed`)
+- [ ] `tests/e2e/test_live_orchestrator.py` deleted
+- [ ] `tests/unit/test_token_optimization.py` deleted
 - [ ] mypy baseline preserved
 - [ ] ruff baseline preserved
 - [ ] 30-minute smoke test completes without errors
 - [ ] Journal and analysis still producing records during smoke test
-- [ ] CLAUDE.md and ARCHITECTURE.md updated to reflect v2
+- [ ] `CLAUDE.md`, `ARCHITECTURE.md`, `docs/README.md`, `docs/integration.md` all updated to reflect v2 (v2 branch notices removed, body rewritten or archived)
+- [ ] `Makefile` `init-db` target fixed or deleted (no Nous references)
+- [ ] `Makefile` `daemon` target verified working (phase 1 step 0 created `scripts/run_daemon.py`)
+- [ ] `pyproject.toml` description + dependencies reviewed, v1 references removed
+- [ ] `deploy/README.md` (if exists) updated from 3-service to 2-service setup
+- [ ] `deploy/setup.sh` updated to remove Nous build steps
 - [ ] Phase 4 commits tagged `[phase-4]`
 
 ---

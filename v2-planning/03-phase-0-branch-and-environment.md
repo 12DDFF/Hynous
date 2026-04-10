@@ -720,10 +720,16 @@ All 8 tests must pass.
 **Regression:**
 
 ```bash
-pytest tests/ -v
+# NOTE: --ignore=tests/e2e is required because tests/e2e/test_live_orchestrator.py
+# runs module-level code at import time that requires Nous to be running,
+# breaking pytest collection. See master plan Amendment 2. Phase 4 deletes
+# the offending file; phase 5 onward can drop the --ignore flag.
+pytest tests/ --ignore=tests/e2e -v
 ```
 
-Full test suite must pass with no new failures.
+Baseline (established by phase 0 engineer): **810 passed / 1 pre-existing failure**. The pre-existing failure is `tests/unit/test_token_optimization.py::TestCrossCutting::test_load_config_produces_valid_config` with a stale model-name assertion. This does NOT block phase 0 acceptance. See master plan Amendment 3.
+
+Zero new failures allowed beyond that baseline.
 
 **Smoke test:**
 
@@ -760,7 +766,7 @@ Expected: daemon behaves exactly as on main because phase 0 only adds config sca
 - [ ] `tests/unit/test_v2_config.py` has the 8 tests listed above and all pass
 - [ ] `mypy src/hynous/` error count is equal or lower than baseline
 - [ ] `ruff check src/hynous/` error count is equal or lower than baseline
-- [ ] `pytest tests/` runs with zero new failures compared to main
+- [ ] `pytest tests/ --ignore=tests/e2e` runs at the 810/1 baseline with zero new failures (see master plan Amendment 2, 3)
 - [ ] Smoke test runs for 5 minutes with no ERROR-level log lines
 - [ ] Phase 0 is committed as a single commit on the v2 branch tagged `[phase-0]`
 
