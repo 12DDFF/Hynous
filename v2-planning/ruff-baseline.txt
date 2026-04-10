@@ -1,0 +1,1387 @@
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/core/__init__.py:15:1
+   |
+13 |   """
+14 |
+15 | / from .config import Config, load_config
+16 | | from . import clock
+17 | | from . import persistence
+   | |_________________________^
+18 |
+19 |   __all__ = ["Config", "load_config", "clock", "persistence"]
+   |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/core/config.py:7:1
+   |
+ 5 |   """
+ 6 |
+ 7 | / import os
+ 8 | | import yaml
+ 9 | | from pathlib import Path
+10 | | from dataclasses import dataclass, field
+11 | | from typing import Optional
+   | |___________________________^
+   |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/core/daemon_log.py:17:1
+   |
+15 |   """
+16 |
+17 | / import json
+18 | | import threading
+19 | | import time
+20 | | from dataclasses import dataclass, asdict
+21 | | from datetime import datetime, timezone
+22 | | from pathlib import Path
+23 | |
+24 | | from .config import _find_project_root
+   | |______________________________________^
+25 |
+26 |   _MAX_EVENTS = 500
+   |
+help: Organize imports
+
+F401 [*] `dataclasses.field` imported but unused
+  --> src/hynous/core/memory_tracker.py:25:36
+   |
+23 | import logging
+24 | import threading
+25 | from dataclasses import dataclass, field
+   |                                    ^^^^^
+26 |
+27 | logger = logging.getLogger(__name__)
+   |
+help: Remove unused import: `dataclasses.field`
+
+E402 Module level import not at top of file
+  --> src/hynous/core/request_tracer.py:27:1
+   |
+25 | """
+26 |
+27 | import logging
+   | ^^^^^^^^^^^^^^
+28 | import threading
+29 | import time
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/request_tracer.py:28:1
+   |
+27 | import logging
+28 | import threading
+   | ^^^^^^^^^^^^^^^^
+29 | import time
+30 | import uuid
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/request_tracer.py:29:1
+   |
+27 | import logging
+28 | import threading
+29 | import time
+   | ^^^^^^^^^^^
+30 | import uuid
+31 | from datetime import datetime, timezone
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/request_tracer.py:30:1
+   |
+28 | import threading
+29 | import time
+30 | import uuid
+   | ^^^^^^^^^^^
+31 | from datetime import datetime, timezone
+32 | from typing import Optional
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/request_tracer.py:31:1
+   |
+29 | import time
+30 | import uuid
+31 | from datetime import datetime, timezone
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+32 | from typing import Optional
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/request_tracer.py:32:1
+   |
+30 | import uuid
+31 | from datetime import datetime, timezone
+32 | from typing import Optional
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+33 |
+34 | logger = logging.getLogger(__name__)
+   |
+
+F401 [*] `typing.Optional` imported but unused
+  --> src/hynous/core/request_tracer.py:32:20
+   |
+30 | import uuid
+31 | from datetime import datetime, timezone
+32 | from typing import Optional
+   |                    ^^^^^^^^
+33 |
+34 | logger = logging.getLogger(__name__)
+   |
+help: Remove unused import: `typing.Optional`
+
+E402 Module level import not at top of file
+   --> src/hynous/core/request_tracer.py:277:1
+    |
+275 | # When a trace is active in the current thread, tools and helpers
+276 | # can record spans without explicit trace_id passing.
+277 | import threading as _threading
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+278 | _thread_local = _threading.local()
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/core/request_tracer.py:277:1
+    |
+275 | # When a trace is active in the current thread, tools and helpers
+276 | # can record spans without explicit trace_id passing.
+277 | import threading as _threading
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+278 | _thread_local = _threading.local()
+    |
+help: Organize imports
+
+E402 Module level import not at top of file
+  --> src/hynous/core/trace_log.py:19:1
+   |
+17 | """
+18 |
+19 | import hashlib
+   | ^^^^^^^^^^^^^^
+20 | import json
+21 | import logging
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/core/trace_log.py:19:1
+   |
+17 |   """
+18 |
+19 | / import hashlib
+20 | | import json
+21 | | import logging
+22 | | import threading
+23 | | import time
+24 | | from datetime import datetime, timezone, timedelta
+25 | | from pathlib import Path
+26 | |
+27 | | from .config import _find_project_root
+   | |______________________________________^
+28 |
+29 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+E402 Module level import not at top of file
+  --> src/hynous/core/trace_log.py:20:1
+   |
+19 | import hashlib
+20 | import json
+   | ^^^^^^^^^^^
+21 | import logging
+22 | import threading
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/trace_log.py:21:1
+   |
+19 | import hashlib
+20 | import json
+21 | import logging
+   | ^^^^^^^^^^^^^^
+22 | import threading
+23 | import time
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/trace_log.py:22:1
+   |
+20 | import json
+21 | import logging
+22 | import threading
+   | ^^^^^^^^^^^^^^^^
+23 | import time
+24 | from datetime import datetime, timezone, timedelta
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/trace_log.py:23:1
+   |
+21 | import logging
+22 | import threading
+23 | import time
+   | ^^^^^^^^^^^
+24 | from datetime import datetime, timezone, timedelta
+25 | from pathlib import Path
+   |
+
+F401 [*] `time` imported but unused
+  --> src/hynous/core/trace_log.py:23:8
+   |
+21 | import logging
+22 | import threading
+23 | import time
+   |        ^^^^
+24 | from datetime import datetime, timezone, timedelta
+25 | from pathlib import Path
+   |
+help: Remove unused import: `time`
+
+E402 Module level import not at top of file
+  --> src/hynous/core/trace_log.py:24:1
+   |
+22 | import threading
+23 | import time
+24 | from datetime import datetime, timezone, timedelta
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+25 | from pathlib import Path
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/trace_log.py:25:1
+   |
+23 | import time
+24 | from datetime import datetime, timezone, timedelta
+25 | from pathlib import Path
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+26 |
+27 | from .config import _find_project_root
+   |
+
+E402 Module level import not at top of file
+  --> src/hynous/core/trace_log.py:27:1
+   |
+25 | from pathlib import Path
+26 |
+27 | from .config import _find_project_root
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+28 |
+29 | logger = logging.getLogger(__name__)
+   |
+
+F401 [*] `datetime.timezone` imported but unused
+  --> src/hynous/core/trade_analytics.py:14:32
+   |
+12 | import time
+13 | from dataclasses import dataclass, field
+14 | from datetime import datetime, timezone
+   |                                ^^^^^^^^
+15 |
+16 | logger = logging.getLogger(__name__)
+   |
+help: Remove unused import: `datetime.timezone`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/core/trade_analytics.py:26:5
+   |
+24 |   def _get_stats_reset_at() -> str | None:
+25 |       """Read stats_reset_at from paper-state.json (walk up from this file)."""
+26 | /     import os
+27 | |     import json as _json
+   | |________________________^
+28 |       d = os.path.dirname(os.path.abspath(__file__))
+29 |       for _ in range(8):
+   |
+help: Organize imports
+
+F401 [*] `dataclasses.field` imported but unused
+  --> src/hynous/core/trading_settings.py:12:44
+   |
+10 | import tempfile
+11 | import threading
+12 | from dataclasses import asdict, dataclass, field
+   |                                            ^^^^^
+13 | from pathlib import Path
+   |
+help: Remove unused import: `dataclasses.field`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/data/providers/coinglass.py:27:1
+   |
+25 |   """
+26 |
+27 | / import os
+28 | | import logging
+29 | | from typing import Optional
+30 | |
+31 | | import requests
+   | |_______________^
+32 |
+33 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/data/providers/cryptocompare.py:14:1
+   |
+12 |   """
+13 |
+14 | / import os
+15 | | import logging
+16 | | import time
+17 | | from typing import Optional
+18 | |
+19 | | import requests
+   | |_______________^
+20 |
+21 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+F401 [*] `time` imported but unused
+  --> src/hynous/data/providers/cryptocompare.py:16:8
+   |
+14 | import os
+15 | import logging
+16 | import time
+   |        ^^^^
+17 | from typing import Optional
+   |
+help: Remove unused import: `time`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/data/providers/hyperliquid.py:20:1
+   |
+18 |   """
+19 |
+20 | / import logging
+21 | | import os
+22 | | import threading
+23 | | import time
+24 | | from typing import Optional
+25 | |
+26 | | from hyperliquid.info import Info
+27 | | from hyperliquid.exchange import Exchange
+28 | | from eth_account import Account
+29 | |
+30 | | from hynous.data.providers.ws_feeds import MarketDataFeed
+   | |_________________________________________________________^
+31 |
+32 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/data/providers/paper.py:21:1
+   |
+19 |   """
+20 |
+21 | / import hashlib
+22 | | import json
+23 | | import logging
+24 | | import os
+25 | | import threading
+26 | | import time
+27 | | from dataclasses import dataclass, asdict
+28 | | from datetime import datetime, timezone
+29 | | from typing import Optional
+   | |___________________________^
+30 |
+31 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/data/providers/perplexity.py:17:1
+   |
+15 |   """
+16 |
+17 | / import os
+18 | | import logging
+19 | | from typing import Optional
+20 | |
+21 | | import requests
+   | |_______________^
+22 |
+23 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+F401 [*] `dataclasses.field` imported but unused
+  --> src/hynous/data/providers/ws_feeds.py:25:36
+   |
+23 | import threading
+24 | import time
+25 | from dataclasses import dataclass, field
+   |                                    ^^^^^
+26 |
+27 | logger = logging.getLogger(__name__)
+   |
+help: Remove unused import: `dataclasses.field`
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/discord/bot.py:197:13
+    |
+195 |           """Build the stats embed from live data (sync, runs in executor)."""
+196 |           try:
+197 | /             from .stats import build_stats_embed
+198 | |             from ..data.providers.hyperliquid import get_provider
+199 | |             from ..intelligence.daemon import get_active_daemon
+    | |_______________________________________________________________^
+200 |
+201 |               provider = get_provider()
+    |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/discord/stats.py:151:9
+    |
+149 |     # 7. Trade performance (from Nous — zero cost)
+150 |     try:
+151 |         from ..core.trade_analytics import get_trade_stats, format_stats_compact
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+152 |         stats = get_trade_stats()
+153 |         if stats and stats.total_trades > 0:
+    |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/agent.py:10:1
+   |
+ 8 |   """
+ 9 |
+10 | / import logging
+11 | | import json
+12 | | import os
+13 | | import re
+14 | | import threading
+15 | | import time
+16 | | from concurrent.futures import ThreadPoolExecutor
+17 | | from datetime import datetime, timezone
+18 | | from typing import Generator
+19 | |
+20 | | import litellm
+21 | |
+22 | | from .prompts import build_system_prompt
+23 | | from .memory_manager import MemoryManager
+24 | | from .tools.registry import ToolRegistry, get_registry
+25 | | from .tools.memory import enable_queue_mode, disable_queue_mode, flush_memory_queue
+26 | | from ..core.config import Config, load_config
+27 | | from ..core.clock import stamp
+28 | | from ..core import persistence
+29 | | from ..core.costs import record_llm_usage
+30 | | from ..core.memory_tracker import get_tracker
+31 | | from ..core.request_tracer import get_tracer, SPAN_CONTEXT, SPAN_LLM_CALL, SPAN_TOOL_EXEC
+   | |_________________________________________________________________________________________^
+32 |
+33 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+F841 Local variable `provider` is assigned to but never used
+   --> src/hynous/intelligence/agent.py:103:9
+    |
+101 |         # Initialize Hyperliquid provider with config (picks testnet URL + private key)
+102 |         from ..data.providers.hyperliquid import get_provider
+103 |         provider = get_provider(config=self.config)
+    |         ^^^^^^^^
+104 |
+105 |         # Build system prompt — live portfolio data comes from [Live State]
+    |
+help: Remove assignment to unused variable `provider`
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/agent.py:198:13
+    |
+196 |           """
+197 |           try:
+198 | /             from ..data.providers.hyperliquid import get_provider
+199 | |             from .daemon import get_active_daemon
+200 | |             from ..nous.client import get_client
+201 | |             from .context_snapshot import build_snapshot, extract_symbols
+    | |_________________________________________________________________________^
+202 |
+203 |               provider = get_provider()
+    |
+help: Organize imports
+
+F841 Local variable `finish` is assigned to but never used
+   --> src/hynous/intelligence/agent.py:934:29
+    |
+933 |                             delta = chunk.choices[0].delta
+934 |                             finish = chunk.choices[0].finish_reason
+    |                             ^^^^^^
+935 |
+936 |                             # Text chunk
+    |
+help: Remove assignment to unused variable `finish`
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/briefing.py:749:9
+    |
+747 |     """Performance stats one-liner from trade analytics."""
+748 |     try:
+749 |         from ..core.trade_analytics import get_trade_stats, format_stats_compact
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+750 |         stats = get_trade_stats()
+751 |         if stats.total_trades > 0:
+    |
+help: Organize imports
+
+F401 [*] `datetime.timezone` imported but unused
+   --> src/hynous/intelligence/briefing.py:798:56
+    |
+796 |                     age_s = 0
+797 |                     try:
+798 |                         from datetime import datetime, timezone
+    |                                                        ^^^^^^^^
+799 |                         closed_dt = datetime.fromisoformat(
+800 |                             t.closed_at.replace("Z", "+00:00")
+    |
+help: Remove unused import: `datetime.timezone`
+
+F401 [*] `time` imported but unused
+  --> src/hynous/intelligence/coach.py:14:8
+   |
+13 | import logging
+14 | import time
+   |        ^^^^
+15 |
+16 | import litellm
+   |
+help: Remove unused import: `time`
+
+E741 Ambiguous variable name: `l`
+   --> src/hynous/intelligence/coach.py:297:47
+    |
+295 |                         # Extract PnL from body
+296 |                         if "PnL:" in body:
+297 |                             pnl_line = [l for l in body.split("\n") if "PnL:" in l]
+    |                                               ^
+298 |                             if pnl_line:
+299 |                                 lines.append(f"Recent: {title[:50]} — {pnl_line[0].strip()}")
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/consolidation.py:20:1
+   |
+18 |   """
+19 |
+20 | / import json
+21 | | import logging
+22 | | import re
+23 | | import time
+24 | | from datetime import datetime, timezone, timedelta
+25 | |
+26 | | import litellm
+27 | |
+28 | | from ..core.config import Config
+29 | | from ..core.costs import record_llm_usage
+   | |_________________________________________^
+30 |
+31 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+F401 [*] `time` imported but unused
+  --> src/hynous/intelligence/consolidation.py:23:8
+   |
+21 | import logging
+22 | import re
+23 | import time
+   |        ^^^^
+24 | from datetime import datetime, timezone, timedelta
+   |
+help: Remove unused import: `time`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/daemon.py:23:1
+   |
+21 |   """
+22 |
+23 | / import collections
+24 | | import json
+25 | | import logging
+26 | | import math
+27 | | import queue as _queue_module
+28 | | import re
+29 | | import threading
+30 | | import time
+31 | | from datetime import datetime, timezone
+32 | | from pathlib import Path
+33 | |
+34 | | from ..core.config import Config
+35 | | from ..core.daemon_log import log_event, DaemonEvent, flush as flush_daemon_log
+36 | | from ..core.trading_settings import get_trading_settings
+   | |________________________________________________________^
+37 |
+38 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+E741 Ambiguous variable name: `l`
+   --> src/hynous/intelligence/daemon.py:133:31
+    |
+131 |         raw_line = next(
+132 |             (
+133 |                 l.strip() for l in result.split("\n")
+    |                               ^
+134 |                 if l.strip() and len(l.strip()) > 5
+135 |                 and not l.strip().endswith(":")
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/daemon.py:432:17
+    |
+430 |           if config.satellite.enabled:
+431 |               try:
+432 | /                 from satellite.config import SatelliteConfig as SatCfg
+433 | |                 from satellite.store import SatelliteStore
+434 | |                 import sqlite3
+    | |______________________________^
+435 |
+436 |                   # Resolve relative paths against project root (not cwd,
+    |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/daemon.py:477:17
+    |
+475 |           if self._satellite_store:
+476 |               try:
+477 | /                 from satellite.training.artifact import ModelArtifact
+478 | |                 from satellite.inference import InferenceEngine
+479 | |                 from satellite.safety import KillSwitch
+    | |_______________________________________________________^
+480 |
+481 |                   # Find latest artifact version
+    |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/daemon.py:663:13
+    |
+661 |               return True  # already running
+662 |           try:
+663 | /             from satellite.config import SatelliteConfig as SatCfg
+664 | |             from satellite.store import SatelliteStore
+665 | |             import sqlite3
+    | |__________________________^
+666 |
+667 |               config = self.config
+    |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/daemon.py:1806:29
+     |
+1804 |                         # --- Compute composite entry score ---
+1805 |                         try:
+1806 |                             from satellite.entry_score import compute_entry_score, EntryScoreConfig
+     |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1807 |
+1808 |                             # Use feedback-adjusted weights if available
+     |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/daemon.py:3292:13
+     |
+3290 |         """
+3291 |         try:
+3292 |             from .tools.trading import _store_to_nous, _find_trade_entry
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3293 |
+3294 |             coin = event["coin"]
+     |
+help: Organize imports
+
+E701 Multiple statements on one line (colon)
+    --> src/hynous/intelligence/daemon.py:3449:80
+     |
+3447 |         # Phase 2 (after successful SL placement). If Phase 2 failed, the trail SL was never placed
+3448 |         # and classifying as "trailing_stop" would be wrong — fall through to breakeven checks.
+3449 |         if self._trailing_active.get(coin) and self._trailing_stop_px.get(coin): return "trailing_stop"
+     |                                                                                ^
+3450 |         if self._breakeven_set.get(coin):
+3451 |             return "breakeven_stop"
+     |
+
+F841 Local variable `symbols` is assigned to but never used
+    --> src/hynous/intelligence/daemon.py:4224:17
+     |
+4222 |                 client = get_client()
+4223 |                 # Collect symbols from anomalies (for matching entries)
+4224 |                 symbols = set(
+     |                 ^^^^^^^
+4225 |                     a.symbol.upper() for a in anomalies if a.symbol != "MARKET"
+4226 |                 )
+     |
+help: Remove assignment to unused variable `symbols`
+
+N806 Variable `_24H` in function should be lowercase
+    --> src/hynous/intelligence/daemon.py:4689:9
+     |
+4687 |         """
+4688 |         now = time.time()
+4689 |         _24H = 86_400
+     |         ^^^^
+4690 |
+4691 |         # Only ACTIVE → WEAK, and only nodes not recently alerted
+     |
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/daemon.py:4952:13
+     |
+4951 |               # Persist results for dashboard/inspection (atomic write)
+4952 | /             import json as _json
+4953 | |             import tempfile
+4954 | |             import os
+     | |_____________________^
+4955 |               results_path = self.config.project_root / "storage" / "validation_results.json"
+4956 |               tmp = tempfile.NamedTemporaryFile(
+     |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/daemon.py:4986:13
+     |
+4984 |           """
+4985 |           try:
+4986 | /             from satellite.weight_updater import update_weights
+4987 | |             from satellite.signal_evaluator import compute_rolling_ic, compute_calibration_error
+     | |________________________________________________________________________________________________^
+4988 |
+4989 |               # Log current signal quality
+     |
+help: Organize imports
+
+N806 Variable `_FULL_CONTEXT` in function should be lowercase
+    --> src/hynous/intelligence/daemon.py:5497:13
+     |
+5496 |             # === Source-aware context tiers ===
+5497 |             _FULL_CONTEXT = {"daemon:scanner", "daemon:ml_conditions", "daemon:review", "daemon:manual"}
+     |             ^^^^^^^^^^^^^
+5498 |             _POSITION_CONTEXT = {"daemon:profit", "daemon:watchpoint", "daemon:fill"}
+5499 |             needs_full = source in _FULL_CONTEXT
+     |
+
+N806 Variable `_POSITION_CONTEXT` in function should be lowercase
+    --> src/hynous/intelligence/daemon.py:5498:13
+     |
+5496 |             # === Source-aware context tiers ===
+5497 |             _FULL_CONTEXT = {"daemon:scanner", "daemon:ml_conditions", "daemon:review", "daemon:manual"}
+5498 |             _POSITION_CONTEXT = {"daemon:profit", "daemon:watchpoint", "daemon:fill"}
+     |             ^^^^^^^^^^^^^^^^^
+5499 |             needs_full = source in _FULL_CONTEXT
+5500 |             needs_positions = needs_full or source in _POSITION_CONTEXT
+     |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/memory_manager.py:17:1
+   |
+15 |   """
+16 |
+17 | / import json
+18 | | import logging
+19 | | import threading
+20 | | import time
+21 | | from typing import Optional
+22 | |
+23 | | import litellm
+24 | | from litellm.exceptions import APIError as LitellmAPIError
+25 | |
+26 | | from ..core.config import Config
+27 | | from ..core.costs import record_llm_usage
+28 | | from ..core.request_tracer import get_tracer, SPAN_RETRIEVAL, SPAN_COMPRESSION, SPAN_QUEUE_FLUSH
+29 | | from ..nous.sections import get_section_for_subtype
+   | |___________________________________________________^
+30 |
+31 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+F401 [*] `..core.request_tracer.SPAN_QUEUE_FLUSH` imported but unused
+  --> src/hynous/intelligence/memory_manager.py:28:81
+   |
+26 | from ..core.config import Config
+27 | from ..core.costs import record_llm_usage
+28 | from ..core.request_tracer import get_tracer, SPAN_RETRIEVAL, SPAN_COMPRESSION, SPAN_QUEUE_FLUSH
+   |                                                                                 ^^^^^^^^^^^^^^^^
+29 | from ..nous.sections import get_section_for_subtype
+   |
+help: Remove unused import: `..core.request_tracer.SPAN_QUEUE_FLUSH`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/prompts/builder.py:15:1
+   |
+13 |   """
+14 |
+15 | / import logging
+16 | | import time
+17 | | import threading
+   | |________________^
+18 |
+19 |   _logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+F401 [*] `dataclasses.field` imported but unused
+  --> src/hynous/intelligence/scanner.py:20:36
+   |
+18 | import time
+19 | from collections import defaultdict, deque
+20 | from dataclasses import dataclass, field
+   |                                    ^^^^^
+21 |
+22 | logger = logging.getLogger(__name__)
+   |
+help: Remove unused import: `dataclasses.field`
+
+F841 Local variable `body` is assigned to but never used
+    --> src/hynous/intelligence/scanner.py:1310:13
+     |
+1308 |             cats = (article.get("categories", "") or "").upper()
+1309 |             title = (article.get("title", "") or "").upper()
+1310 |             body = (article.get("body", "") or "").upper()
+     |             ^^^^
+1311 |
+1312 |             relevant_syms = []
+     |
+help: Remove assignment to unused variable `body`
+
+F541 [*] f-string without any placeholders
+   --> src/hynous/intelligence/tools/conflicts.py:160:34
+    |
+158 |                         lines.append(f"  Content: {display_body}")
+159 |                 else:
+160 |                     lines.append(f"  NEW CONTENT:")
+    |                                  ^^^^^^^^^^^^^^^^^
+161 |                     display_content = new_content[:1000]
+162 |                     if len(new_content) > 1000:
+    |
+help: Remove extraneous `f` prefix
+
+F841 Local variable `settlements_per_day` is assigned to but never used
+   --> src/hynous/intelligence/tools/funding.py:136:5
+    |
+134 |     # Cumulative = sum of all rates in period
+135 |     cumulative = sum(funding_vals)
+136 |     settlements_per_day = 3
+    |     ^^^^^^^^^^^^^^^^^^^
+137 |     days = delta.total_seconds() / 86400
+138 |     annualized = (cumulative / days) * 365 if days > 0 else 0
+    |
+help: Remove assignment to unused variable `settlements_per_day`
+
+F841 Local variable `price` is assigned to but never used
+   --> src/hynous/intelligence/tools/institutional.py:147:9
+    |
+145 |         ts = day.get("timestamp") or day.get("t")
+146 |         flow_usd = day.get("flow_usd") or day.get("totalNetFlow") or 0
+147 |         price = day.get("price_usd") or day.get("price") or 0
+    |         ^^^^^
+148 |
+149 |         # Parse timestamp
+    |
+help: Remove assignment to unused variable `price`
+
+F841 Local variable `total_change_1d` is assigned to but never used
+   --> src/hynous/intelligence/tools/institutional.py:277:5
+    |
+276 |     total_balance = 0
+277 |     total_change_1d = 0
+    |     ^^^^^^^^^^^^^^^
+278 |     net_flow_count_1d = {"inflow": 0, "outflow": 0}
+    |
+help: Remove assignment to unused variable `total_change_1d`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/tools/memory.py:24:1
+   |
+22 |   """
+23 |
+24 | / import json
+25 | | import logging
+26 | | import re
+27 | | import threading
+28 | | from typing import Optional
+29 | |
+30 | | from ...core.request_tracer import get_tracer, SPAN_MEMORY_OP, SPAN_QUEUE_FLUSH
+   | |_______________________________________________________________________________^
+31 |
+32 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/tools/memory.py:75:9
+   |
+73 |       # Record queue flush span (before background thread starts)
+74 |       try:
+75 | /         from datetime import datetime, timezone
+76 | |         from ...core.request_tracer import get_active_trace
+   | |___________________________________________________________^
+77 |           _tid = get_active_trace()
+78 |           if _tid:
+   |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/tools/memory.py:431:17
+    |
+429 |               # Record rejected memory op span
+430 |               try:
+431 | /                 from datetime import datetime, timezone
+432 | |                 from ...core.request_tracer import get_active_trace
+    | |___________________________________________________________________^
+433 |                   _tid = get_active_trace()
+434 |                   if _tid:
+    |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/tools/memory.py:536:21
+    |
+534 |                   # Record dedup rejection span
+535 |                   try:
+536 | /                     from datetime import datetime, timezone
+537 | |                     from ...core.request_tracer import get_active_trace
+    | |_______________________________________________________________________^
+538 |                       _tid = get_active_trace()
+539 |                       if _tid:
+    |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/tools/memory.py:649:13
+    |
+647 |           # Record successful memory op span
+648 |           try:
+649 | /             from datetime import datetime, timezone
+650 | |             from ...core.request_tracer import get_active_trace
+    | |_______________________________________________________________^
+651 |               _tid = get_active_trace()
+652 |               if _tid:
+    |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/tools/memory.py:855:17
+    |
+853 |               # Record recall span (browse)
+854 |               try:
+855 | /                 from datetime import datetime, timezone
+856 | |                 from ...core.request_tracer import get_active_trace
+    | |___________________________________________________________________^
+857 |                   _tid = get_active_trace()
+858 |                   if _tid:
+    |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/tools/memory.py:928:17
+    |
+926 |               # Record recall span
+927 |               try:
+928 | /                 from datetime import datetime, timezone
+929 | |                 from ...core.request_tracer import get_active_trace
+    | |___________________________________________________________________^
+930 |                   _tid = get_active_trace()
+931 |                   if _tid:
+    |
+help: Organize imports
+
+F841 Local variable `labels` is assigned to but never used
+   --> src/hynous/intelligence/tools/multi_timeframe.py:212:5
+    |
+210 |     lines = []
+211 |     trends = [tf["trend"] for tf in tf_data]
+212 |     labels = [tf["label"] for tf in tf_data]
+    |     ^^^^^^
+213 |
+214 |     # --- Trend Alignment ---
+    |
+help: Remove assignment to unused variable `labels`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/tools/pruning.py:16:1
+   |
+14 |   """
+15 |
+16 | / import logging
+17 | | import time
+18 | | from collections import Counter, defaultdict
+19 | | from concurrent.futures import ThreadPoolExecutor, as_completed
+20 | | from datetime import datetime, timezone
+21 | | from typing import Optional
+22 | |
+23 | | from ...core.memory_tracker import get_tracker
+24 | | from ...core.request_tracer import get_tracer, SPAN_MEMORY_OP, get_active_trace
+   | |_______________________________________________________________________________^
+25 |
+26 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+F401 [*] `typing.Optional` imported but unused
+  --> src/hynous/intelligence/tools/pruning.py:21:20
+   |
+19 | from concurrent.futures import ThreadPoolExecutor, as_completed
+20 | from datetime import datetime, timezone
+21 | from typing import Optional
+   |                    ^^^^^^^^
+22 |
+23 | from ...core.memory_tracker import get_tracker
+   |
+help: Remove unused import: `typing.Optional`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/tools/registry.py:15:1
+   |
+13 |   """
+14 |
+15 | / from dataclasses import dataclass, field
+16 | | from typing import Callable, Any
+   | |________________________________^
+   |
+help: Organize imports
+
+F401 [*] `dataclasses.field` imported but unused
+  --> src/hynous/intelligence/tools/registry.py:15:36
+   |
+13 | """
+14 |
+15 | from dataclasses import dataclass, field
+   |                                    ^^^^^
+16 | from typing import Callable, Any
+   |
+help: Remove unused import: `dataclasses.field`
+
+F401 [*] `datetime.datetime` imported but unused
+  --> src/hynous/intelligence/tools/sentiment.py:24:22
+   |
+23 | import logging
+24 | from datetime import datetime
+   |                      ^^^^^^^^
+25 |
+26 | from .registry import Tool
+   |
+help: Remove unused import: `datetime.datetime`
+
+F841 Local variable `coin_margin` is assigned to but never used
+   --> src/hynous/intelligence/tools/sentiment.py:177:9
+    |
+175 |         chg_4h = aggregate.get("open_interest_change_percent_4h", 0)
+176 |         chg_24h = aggregate.get("open_interest_change_percent_24h", 0)
+177 |         coin_margin = aggregate.get("open_interest_by_coin_margin", 0)
+    |         ^^^^^^^^^^^
+178 |         stable_margin = aggregate.get("open_interest_by_stable_coin_margin", 0)
+    |
+help: Remove assignment to unused variable `coin_margin`
+
+F841 Local variable `prices` is assigned to but never used
+   --> src/hynous/intelligence/tools/sentiment.py:351:5
+    |
+349 |     # Data structure: {data_list, price_list, time_list}
+350 |     values = data.get("data_list") or data.get("dataList") or []
+351 |     prices = data.get("price_list") or data.get("priceList") or []
+    |     ^^^^^^
+352 |     times = data.get("time_list") or data.get("timeList") or []
+    |
+help: Remove assignment to unused variable `prices`
+
+F841 Local variable `times` is assigned to but never used
+   --> src/hynous/intelligence/tools/sentiment.py:352:5
+    |
+350 |     values = data.get("data_list") or data.get("dataList") or []
+351 |     prices = data.get("price_list") or data.get("priceList") or []
+352 |     times = data.get("time_list") or data.get("timeList") or []
+    |     ^^^^^
+353 |
+354 |     if not values:
+    |
+help: Remove assignment to unused variable `times`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/tools/trade_stats.py:80:9
+   |
+78 |       account_pnl = None
+79 |       try:
+80 | /         from ...data.providers.hyperliquid import get_provider
+81 | |         from ...core.config import load_config
+   | |______________________________________________^
+82 |           config = load_config()
+83 |           provider = get_provider(config=config)
+   |
+help: Organize imports
+
+F401 [*] `typing.Optional` imported but unused
+  --> src/hynous/intelligence/tools/trading.py:30:20
+   |
+28 | import time
+29 | from datetime import datetime, timezone
+30 | from typing import Optional
+   |                    ^^^^^^^^
+31 |
+32 | logger = logging.getLogger(__name__)
+   |
+help: Remove unused import: `typing.Optional`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/tools/trading.py:57:9
+   |
+55 |     """
+56 |     try:
+57 |         from ...core.request_tracer import get_tracer, get_active_trace, SPAN_TRADE_STEP
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+58 |         trace_id = get_active_trace()
+59 |         if not trace_id:
+   |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/hynous/intelligence/tools/trading.py:113:5
+    |
+111 |   def _get_trading_provider():
+112 |       """Get the Hyperliquid provider with trading capabilities."""
+113 | /     from ...data.providers.hyperliquid import get_provider
+114 | |     from ...core.config import load_config
+    | |__________________________________________^
+115 |       config = load_config()
+116 |       provider = get_provider(config=config)
+    |
+help: Organize imports
+
+F541 [*] f-string without any placeholders
+    --> src/hynous/intelligence/tools/trading.py:1095:16
+     |
+1093 |     if not isinstance(result, dict):
+1094 |         _record_trade_span("execute_trade", "order_fill", False, "Unexpected order response", duration_ms=int((time.monotonic() - _o…
+1095 |         return f"Unexpected order response. Try again."
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1096 |
+1097 |     fill_px = result.get("avg_px", price)
+     |
+help: Remove extraneous `f` prefix
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/tools/trading.py:1117:9
+     |
+1115 |       # Invalidate snapshot + briefing cache so next chat() gets fresh position data
+1116 |       try:
+1117 | /         from ..context_snapshot import invalidate_snapshot
+1118 | |         from ..briefing import invalidate_briefing_cache
+     | |________________________________________________________^
+1119 |           invalidate_snapshot()
+1120 |           invalidate_briefing_cache()
+     |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/tools/trading.py:1303:5
+     |
+1301 |       Returns node_id or None.
+1302 |       """
+1303 | /     from ...nous.client import get_client
+1304 | |     from ...core.memory_tracker import get_tracker
+     | |__________________________________________________^
+1305 |
+1306 |       tracker = get_tracker()
+     |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/tools/trading.py:1474:13
+     |
+1472 |       def _link_theses():
+1473 |           try:
+1474 | /             from ...nous.client import get_client
+1475 | |             from ...core.memory_tracker import get_tracker
+     | |__________________________________________________________^
+1476 |               client = get_client()
+1477 |               tracker = get_tracker()
+     |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/tools/trading.py:1714:9
+     |
+1712 |       # Invalidate snapshot + briefing cache so next chat() gets fresh position data
+1713 |       try:
+1714 | /         from ..context_snapshot import invalidate_snapshot
+1715 | |         from ..briefing import invalidate_briefing_cache
+     | |________________________________________________________^
+1716 |           invalidate_snapshot()
+1717 |           invalidate_briefing_cache()
+     |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/tools/trading.py:1795:21
+     |
+1793 |                 entry_time = type_info.get("entry_time", 0)
+1794 |                 if entry_time > 0:
+1795 |                     from datetime import datetime as _dt, timezone as _tz
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1796 |                     opened_at = _dt.fromtimestamp(entry_time, tz=_tz.utc).isoformat()
+1797 |         except Exception:
+     |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/tools/trading.py:2071:13
+     |
+2069 |         _ts_mod = _gts()
+2070 |         if _ts_mod.autonomous_close_lockout:
+2071 |             from ...core.request_tracer import get_active_trace as _gat, get_tracer as _gt
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2072 |             _tid = _gat()
+2073 |             if _tid:
+     |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> src/hynous/intelligence/tools/trading.py:2234:9
+     |
+2232 |       # Invalidate snapshot + briefing cache so next chat() gets fresh data
+2233 |       try:
+2234 | /         from ..context_snapshot import invalidate_snapshot
+2235 | |         from ..briefing import invalidate_briefing_cache
+     | |________________________________________________________^
+2236 |           invalidate_snapshot()
+2237 |           invalidate_briefing_cache()
+     |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/intelligence/tools/watchpoints.py:24:1
+   |
+22 |   """
+23 |
+24 | / import json
+25 | | import logging
+26 | | from datetime import datetime, timezone, timedelta
+27 | | from typing import Optional
+   | |___________________________^
+28 |
+29 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+F401 [*] `math` imported but unused
+  --> src/hynous/intelligence/trade_history.py:14:8
+   |
+12 | import json
+13 | import logging
+14 | import math
+   |        ^^^^
+15 | import threading
+16 | import time
+   |
+help: Remove unused import: `math`
+
+N806 Variable `_MIN_SAMPLES` in function should be lowercase
+   --> src/hynous/intelligence/trade_history.py:349:5
+    |
+348 |     # Thresholds — only fire on patterns that almost always lose
+349 |     _MIN_SAMPLES = 15   # Need real sample size to trust the signal
+    |     ^^^^^^^^^^^^
+350 |     _MAX_WR = 0.15      # <=15% win rate = nearly always loses
+351 |     _COMBO_MIN = 10     # Combos need fewer since they're more specific
+    |
+
+N806 Variable `_MAX_WR` in function should be lowercase
+   --> src/hynous/intelligence/trade_history.py:350:5
+    |
+348 |     # Thresholds — only fire on patterns that almost always lose
+349 |     _MIN_SAMPLES = 15   # Need real sample size to trust the signal
+350 |     _MAX_WR = 0.15      # <=15% win rate = nearly always loses
+    |     ^^^^^^^
+351 |     _COMBO_MIN = 10     # Combos need fewer since they're more specific
+352 |     _COMBO_MAX_WR = 0.10  # <=10% for combos (stricter since smaller n)
+    |
+
+N806 Variable `_COMBO_MIN` in function should be lowercase
+   --> src/hynous/intelligence/trade_history.py:351:5
+    |
+349 |     _MIN_SAMPLES = 15   # Need real sample size to trust the signal
+350 |     _MAX_WR = 0.15      # <=15% win rate = nearly always loses
+351 |     _COMBO_MIN = 10     # Combos need fewer since they're more specific
+    |     ^^^^^^^^^^
+352 |     _COMBO_MAX_WR = 0.10  # <=10% for combos (stricter since smaller n)
+    |
+
+N806 Variable `_COMBO_MAX_WR` in function should be lowercase
+   --> src/hynous/intelligence/trade_history.py:352:5
+    |
+350 |     _MAX_WR = 0.15      # <=15% win rate = nearly always loses
+351 |     _COMBO_MIN = 10     # Combos need fewer since they're more specific
+352 |     _COMBO_MAX_WR = 0.10  # <=10% for combos (stricter since smaller n)
+    |     ^^^^^^^^^^^^^
+353 |
+354 |     # --- Keyword patterns (squeeze, etc.) ---
+    |
+
+E741 Ambiguous variable name: `l`
+   --> src/hynous/intelligence/wake_warnings.py:503:13
+    |
+501 |     if lessons:
+502 |         lines = ["Recent Lessons:"]
+503 |         for l in lessons:
+    |             ^
+504 |             lines.append(f"  - {l.get('content_title', 'Untitled')}")
+505 |         sections.append("\n".join(lines))
+    |
+
+F401 [*] `json` imported but unused
+  --> src/hynous/nous/client.py:11:8
+   |
+ 9 | """
+10 |
+11 | import json
+   |        ^^^^
+12 | import logging
+13 | from typing import Optional
+   |
+help: Remove unused import: `json`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hynous/nous/sections.py:17:1
+   |
+15 |   """
+16 |
+17 | / from __future__ import annotations
+18 | |
+19 | | from enum import Enum
+20 | | from dataclasses import dataclass, field
+21 | | from typing import Optional
+   | |___________________________^
+   |
+help: Organize imports
+
+F401 [*] `dataclasses.field` imported but unused
+  --> src/hynous/nous/sections.py:20:36
+   |
+19 | from enum import Enum
+20 | from dataclasses import dataclass, field
+   |                                    ^^^^^
+21 | from typing import Optional
+   |
+help: Remove unused import: `dataclasses.field`
+
+F401 [*] `typing.Optional` imported but unused
+  --> src/hynous/nous/sections.py:21:20
+   |
+19 | from enum import Enum
+20 | from dataclasses import dataclass, field
+21 | from typing import Optional
+   |                    ^^^^^^^^
+   |
+help: Remove unused import: `typing.Optional`
+
+Found 107 errors.
+[*] 70 fixable with the `--fix` option (11 hidden fixes can be enabled with the `--unsafe-fixes` option).

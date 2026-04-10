@@ -213,3 +213,55 @@ tick_collector:
 logging:
   level: "INFO"              # DEBUG | INFO | WARNING | ERROR
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# ============================================================================
+# v2 configuration
+# These sections are only consumed by v2 branch code. They are ignored by
+# v1 code. Do not remove or modify without approval from v2 plan.
+# ============================================================================
+v2:
+  enabled: true  # Master switch for v2 features (must be true on v2 branch)
+
+  # Journal module (phase 2)
+  journal:
+    db_path: "storage/v2/journal.db"
+    embeddings_model: "openai/text-embedding-3-small"
+    embeddings_dim: 1536
+    comparison_dim: 512  # matryoshka truncation for fast similarity
+    wal_mode: true
+    busy_timeout_ms: 5000
+
+  # Analysis agent (phase 3)
+  analysis_agent:
+    model: "anthropic/claude-sonnet-4.5"
+    max_tokens: 4096
+    temperature: 0.2
+    retry_on_failure: false  # one-shot; manual re-analyze button available
+    batch_rejection_interval_s: 3600  # hourly batch analysis of rejected signals
+    timeout_s: 60
+    prompt_version: "v1"  # bump when prompt changes
+
+  # Mechanical entry (phase 5)
+  mechanical_entry:
+    trigger_source: "ml_signal_driven"  # or "hybrid_scanner_ml" when implemented
+    composite_entry_threshold: 50       # minimum composite score to trigger entry
+    direction_confidence_threshold: 0.55 # minimum direction model confidence
+    require_entry_quality_pctl: 60       # minimum entry quality percentile
+    max_vol_regime: "high"               # reject if vol is extreme
+    roe_target_pct: 10.0                 # fixed TP target as ROE %
+    coin: "BTC"                          # single coin for phase 1
+
+  # Consolidation (phase 6)
+  consolidation:
+    edges_enabled: true
+    edge_types: ["preceded_by", "followed_by", "same_regime_bucket", "same_rejection_reason", "rejection_vs_contemporaneous_trade"]
+    pattern_rollup_enabled: true
+    pattern_rollup_interval_hours: 168  # weekly
+    pattern_rollup_window_days: 30
+
+  # User chat (simplified journal query interface)
+  user_chat:
+    enabled: true
+    model: "anthropic/claude-sonnet-4.5"
+    max_tokens: 2048
+    tool_surface: ["search_trades", "get_trade_by_id", "get_market_data"]

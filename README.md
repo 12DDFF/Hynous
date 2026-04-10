@@ -1,5 +1,9 @@
 # Hynous
 
+> ⚠️ **v2 branch notice:** This is the `v2` branch of Hynous, a ground-up refactor.
+> v2 will never be merged into `main`. For v1 architecture and usage, see `main`.
+> For the v2 rebuild plan, see `v2-planning/00-master-plan.md`.
+
 > Personal crypto intelligence system with an autonomous LLM trading agent.
 
 ---

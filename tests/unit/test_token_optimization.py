@@ -48,13 +48,20 @@ class TestTO1DynamicMaxTokens:
         assert cfg.max_tokens == 2048
 
     def test_load_config_fallback_max_tokens_is_2048(self):
-        """load_config() fallback for max_tokens must be 2048 (not 4096)."""
+        """load_config() fallback for the v1 agent's max_tokens must be 2048 (not 4096).
+
+        v2 phase 0 added `v2_raw.get("analysis_agent", {}).get("max_tokens", 4096)`
+        for the separate V2AnalysisAgentConfig, so the old blanket string check
+        `'get("max_tokens", 4096)' not in source` is no longer valid. The assertion
+        is narrowed to the v1 `agent_raw` section specifically, which is the
+        substring this test has always cared about.
+        """
         # Read the source to check the hardcoded fallback
         from src.hynous.core import config as config_module
         source = inspect.getsource(config_module.load_config)
-        # The fallback should be 2048, not 4096
-        assert 'get("max_tokens", 2048)' in source
-        assert 'get("max_tokens", 4096)' not in source
+        # The v1 agent fallback should be 2048, not 4096
+        assert 'agent_raw.get("max_tokens", 2048)' in source
+        assert 'agent_raw.get("max_tokens", 4096)' not in source
 
     # -- Agent signatures --
 

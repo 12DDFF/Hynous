@@ -212,6 +212,74 @@ class SatelliteConfig:
     inference_shadow_mode: bool = True
 
 
+# ============================================================================
+# v2 configuration dataclasses
+# ============================================================================
+
+@dataclass
+class V2JournalConfig:
+    db_path: str = "storage/v2/journal.db"
+    embeddings_model: str = "openai/text-embedding-3-small"
+    embeddings_dim: int = 1536
+    comparison_dim: int = 512
+    wal_mode: bool = True
+    busy_timeout_ms: int = 5000
+
+
+@dataclass
+class V2AnalysisAgentConfig:
+    model: str = "anthropic/claude-sonnet-4.5"
+    max_tokens: int = 4096
+    temperature: float = 0.2
+    retry_on_failure: bool = False
+    batch_rejection_interval_s: int = 3600
+    timeout_s: int = 60
+    prompt_version: str = "v1"
+
+
+@dataclass
+class V2MechanicalEntryConfig:
+    trigger_source: str = "ml_signal_driven"
+    composite_entry_threshold: int = 50
+    direction_confidence_threshold: float = 0.55
+    require_entry_quality_pctl: int = 60
+    max_vol_regime: str = "high"
+    roe_target_pct: float = 10.0
+    coin: str = "BTC"
+
+
+@dataclass
+class V2ConsolidationConfig:
+    edges_enabled: bool = True
+    edge_types: list[str] = field(default_factory=lambda: [
+        "preceded_by", "followed_by", "same_regime_bucket",
+        "same_rejection_reason", "rejection_vs_contemporaneous_trade",
+    ])
+    pattern_rollup_enabled: bool = True
+    pattern_rollup_interval_hours: int = 168
+    pattern_rollup_window_days: int = 30
+
+
+@dataclass
+class V2UserChatConfig:
+    enabled: bool = True
+    model: str = "anthropic/claude-sonnet-4.5"
+    max_tokens: int = 2048
+    tool_surface: list[str] = field(default_factory=lambda: [
+        "search_trades", "get_trade_by_id", "get_market_data",
+    ])
+
+
+@dataclass
+class V2Config:
+    enabled: bool = True
+    journal: V2JournalConfig = field(default_factory=V2JournalConfig)
+    analysis_agent: V2AnalysisAgentConfig = field(default_factory=V2AnalysisAgentConfig)
+    mechanical_entry: V2MechanicalEntryConfig = field(default_factory=V2MechanicalEntryConfig)
+    consolidation: V2ConsolidationConfig = field(default_factory=V2ConsolidationConfig)
+    user_chat: V2UserChatConfig = field(default_factory=V2UserChatConfig)
+
+
 @dataclass
 class Config:
     """Main application configuration."""
@@ -233,6 +301,7 @@ class Config:
     data_layer: DataLayerConfig = field(default_factory=DataLayerConfig)
     sections: SectionsConfig = field(default_factory=SectionsConfig)
     satellite: SatelliteConfig = field(default_factory=SatelliteConfig)
+    v2: V2Config = field(default_factory=V2Config)
 
     # Paths
     project_root: Path = field(default_factory=_find_project_root)
@@ -272,6 +341,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
     dl_raw = raw.get("data_layer", {})
     sections_raw = raw.get("sections", {})
     sat_raw = raw.get("satellite", {})
+    v2_raw = raw.get("v2", {}) or {}
 
     return Config(
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
@@ -406,6 +476,53 @@ def load_config(config_path: Optional[str] = None) -> Config:
             inference_entry_threshold=sat_raw.get("inference_entry_threshold", 3.0),
             inference_conflict_margin=sat_raw.get("inference_conflict_margin", 1.0),
             inference_shadow_mode=sat_raw.get("inference_shadow_mode", True),
+        ),
+        v2=V2Config(
+            enabled=v2_raw.get("enabled", True),
+            journal=V2JournalConfig(
+                db_path=v2_raw.get("journal", {}).get("db_path", "storage/v2/journal.db"),
+                embeddings_model=v2_raw.get("journal", {}).get("embeddings_model", "openai/text-embedding-3-small"),
+                embeddings_dim=v2_raw.get("journal", {}).get("embeddings_dim", 1536),
+                comparison_dim=v2_raw.get("journal", {}).get("comparison_dim", 512),
+                wal_mode=v2_raw.get("journal", {}).get("wal_mode", True),
+                busy_timeout_ms=v2_raw.get("journal", {}).get("busy_timeout_ms", 5000),
+            ),
+            analysis_agent=V2AnalysisAgentConfig(
+                model=v2_raw.get("analysis_agent", {}).get("model", "anthropic/claude-sonnet-4.5"),
+                max_tokens=v2_raw.get("analysis_agent", {}).get("max_tokens", 4096),
+                temperature=v2_raw.get("analysis_agent", {}).get("temperature", 0.2),
+                retry_on_failure=v2_raw.get("analysis_agent", {}).get("retry_on_failure", False),
+                batch_rejection_interval_s=v2_raw.get("analysis_agent", {}).get("batch_rejection_interval_s", 3600),
+                timeout_s=v2_raw.get("analysis_agent", {}).get("timeout_s", 60),
+                prompt_version=v2_raw.get("analysis_agent", {}).get("prompt_version", "v1"),
+            ),
+            mechanical_entry=V2MechanicalEntryConfig(
+                trigger_source=v2_raw.get("mechanical_entry", {}).get("trigger_source", "ml_signal_driven"),
+                composite_entry_threshold=v2_raw.get("mechanical_entry", {}).get("composite_entry_threshold", 50),
+                direction_confidence_threshold=v2_raw.get("mechanical_entry", {}).get("direction_confidence_threshold", 0.55),
+                require_entry_quality_pctl=v2_raw.get("mechanical_entry", {}).get("require_entry_quality_pctl", 60),
+                max_vol_regime=v2_raw.get("mechanical_entry", {}).get("max_vol_regime", "high"),
+                roe_target_pct=v2_raw.get("mechanical_entry", {}).get("roe_target_pct", 10.0),
+                coin=v2_raw.get("mechanical_entry", {}).get("coin", "BTC"),
+            ),
+            consolidation=V2ConsolidationConfig(
+                edges_enabled=v2_raw.get("consolidation", {}).get("edges_enabled", True),
+                edge_types=v2_raw.get("consolidation", {}).get("edge_types", [
+                    "preceded_by", "followed_by", "same_regime_bucket",
+                    "same_rejection_reason", "rejection_vs_contemporaneous_trade",
+                ]),
+                pattern_rollup_enabled=v2_raw.get("consolidation", {}).get("pattern_rollup_enabled", True),
+                pattern_rollup_interval_hours=v2_raw.get("consolidation", {}).get("pattern_rollup_interval_hours", 168),
+                pattern_rollup_window_days=v2_raw.get("consolidation", {}).get("pattern_rollup_window_days", 30),
+            ),
+            user_chat=V2UserChatConfig(
+                enabled=v2_raw.get("user_chat", {}).get("enabled", True),
+                model=v2_raw.get("user_chat", {}).get("model", "anthropic/claude-sonnet-4.5"),
+                max_tokens=v2_raw.get("user_chat", {}).get("max_tokens", 2048),
+                tool_surface=v2_raw.get("user_chat", {}).get("tool_surface", [
+                    "search_trades", "get_trade_by_id", "get_market_data",
+                ]),
+            ),
         ),
         project_root=root,
     )

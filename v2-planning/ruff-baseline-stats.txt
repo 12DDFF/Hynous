@@ -1,0 +1,10 @@
+48	I001	[*] unsorted-imports
+20	F401	[*] unused-import
+15	E402	[ ] module-import-not-at-top-of-file
+11	F841	[ ] unused-variable
+ 7	N806	[ ] non-lowercase-variable-in-function
+ 3	E741	[ ] ambiguous-variable-name
+ 2	F541	[*] f-string-missing-placeholders
+ 1	E701	[ ] multiple-statements-on-one-line-colon
+Found 107 errors.
+[*] 70 fixable with the `--fix` option (11 hidden fixes can be enabled with the `--unsafe-fixes` option).

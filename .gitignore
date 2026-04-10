@@ -42,7 +42,7 @@ ENV/
 data/*.db
 data/*.sqlite
 data/*.sqlite3
-storage/
+**/storage/**
 *.db
 
 # Logs
@@ -66,3 +66,12 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+# v2 state storage (runtime data)
+# NOTE: parent rule above uses **/storage/** (file glob, not directory exclusion)
+# so these negation rules can actually re-include .gitkeep. The order matters —
+# !storage/v2/ first to re-include the directory, then storage/v2/* re-excludes
+# contents, then !storage/v2/.gitkeep re-includes the placeholder file.
+!storage/v2/
+storage/v2/*
+!storage/v2/.gitkeep
