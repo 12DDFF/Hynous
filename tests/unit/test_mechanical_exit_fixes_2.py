@@ -140,39 +140,53 @@ class TestBugATrailSLRollback:
 
 # ── Bug B: check_triggers close path ──────────────────────────────────────────
 
+
+def _extract_events_block() -> str:
+    """Extract the full 'if events:' indented block from _fast_trigger_check.
+
+    Uses indentation to find the block boundary instead of a hardcoded
+    character window, so the test survives code insertions within the block.
+    """
+    source = _fast_trigger_check_source()
+    start = source.find("if events:")
+    if start == -1:
+        return ""
+    lines = source[start:].split("\n")
+    block_lines = [lines[0]]
+    # Measure the indent of 'if events:' itself
+    base_indent = len(lines[0]) - len(lines[0].lstrip())
+    for line in lines[1:]:
+        # Stop at the first non-empty line that is at or below base indent
+        if line.strip() and (len(line) - len(line.lstrip())) <= base_indent:
+            break
+        block_lines.append(line)
+    return "\n".join(block_lines)
+
+
 class TestBugBCheckTriggersCleanup:
     """check_triggers close must clear trailing state from memory and persist."""
 
     def test_trailing_active_popped_in_events_block(self):
         """_trailing_active must be popped for closed coins in the events block."""
-        source = _fast_trigger_check_source()
-        # Find the events block
-        events_block_start = source.find("if events:")
-        events_block = source[events_block_start:events_block_start + 1500]
+        events_block = _extract_events_block()
         assert "_trailing_active.pop(" in events_block, \
             "_trailing_active must be popped in the if events: block of _fast_trigger_check"
 
     def test_trailing_stop_px_popped_in_events_block(self):
         """_trailing_stop_px must be popped for closed coins in the events block."""
-        source = _fast_trigger_check_source()
-        events_block_start = source.find("if events:")
-        events_block = source[events_block_start:events_block_start + 1500]
+        events_block = _extract_events_block()
         assert "_trailing_stop_px.pop(" in events_block, \
             "_trailing_stop_px must be popped in the if events: block of _fast_trigger_check"
 
     def test_peak_roe_popped_in_events_block(self):
         """_peak_roe must be popped for closed coins in the events block."""
-        source = _fast_trigger_check_source()
-        events_block_start = source.find("if events:")
-        events_block = source[events_block_start:events_block_start + 1500]
+        events_block = _extract_events_block()
         assert "_peak_roe.pop(" in events_block, \
             "_peak_roe must be popped in the if events: block of _fast_trigger_check"
 
     def test_persist_called_after_eviction_in_events_block(self):
         """_persist_mechanical_state must be called in the events block."""
-        source = _fast_trigger_check_source()
-        events_block_start = source.find("if events:")
-        events_block = source[events_block_start:events_block_start + 2000]
+        events_block = _extract_events_block()
         assert "_persist_mechanical_state()" in events_block, \
             "_persist_mechanical_state must be called in the if events: block"
 
@@ -181,9 +195,7 @@ class TestBugBCheckTriggersCleanup:
 
         Order: pop _prev_positions → pop trailing state → persist → get_user_state.
         """
-        source = _fast_trigger_check_source()
-        events_block_start = source.find("if events:")
-        events_block = source[events_block_start:events_block_start + 2000]
+        events_block = _extract_events_block()
         idx_persist = events_block.find("_persist_mechanical_state()")
         idx_get_user_state = events_block.find("provider.get_user_state()")
         assert idx_persist != -1, "_persist_mechanical_state must exist in events block"

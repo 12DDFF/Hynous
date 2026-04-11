@@ -13,11 +13,14 @@
 > sections supersede the v1 content below. Phase 4 of the v2 plan rewrites
 > this file to reflect v2 reality.
 >
+> **Phase 1 complete (2026-04-10):** `scripts/run_daemon.py` now exists.
+> `src/hynous/journal/` has schema, staging_store, capture, counterfactuals.
+> daemon.py emits lifecycle events. trading.py captures entry snapshots.
+>
 > Known-stale items in this file:
-> - `scripts/run_daemon` reference (doesn't exist on main; phase 1 creates it)
 > - The 5-component architecture table (v2 removes Nous, reducing to 4)
 > - Memory tool listings (phase 4 deletes 8 of them)
-> - "Running" section (partial — dashboard command still works, daemon command doesn't)
+> - "Running" section (partial — dashboard command still works; daemon standalone: `python -m scripts.run_daemon`)
 
 ---
 

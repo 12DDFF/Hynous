@@ -344,6 +344,30 @@ When you check out the v2 branch from main, these files appear as untracked in `
 
 These are pre-existing uncommitted work on main. They are **not** part of v2's scope and are **not** staged in any v2 phase commit. Leave them alone. They continue to appear as untracked across all v2 phases and that is expected.
 
+### Amendment 5 — `entry_score` key naming mismatch in plan code sketches (discovered in phase 1)
+
+The phase 1 plan's `_build_ml_snapshot` code sketch uses `preds.get("_entry_score")` (with underscore prefix). The daemon stores the composite entry score as `entry_score` (no underscore) at daemon.py line 1825. The `_get_ml_conditions()` helper in trading.py re-keys it with an underscore prefix (`_entry_score`) when copying into the `ml_cond` dict. Since `capture.py` reads `_latest_predictions` directly (not via `ml_cond`), the plan's code would silently return `None` for `composite_entry_score` on every snapshot.
+
+**Resolution:** Phase 1 implementation uses the correct key `preds.get("entry_score")` (no underscore). Future phases that read from `_latest_predictions` directly must use the no-underscore keys: `entry_score`, `entry_score_label`, `entry_score_components`, `entry_score_line`. Code that reads from the `ml_cond` dict returned by `_get_ml_conditions()` uses the underscore-prefixed keys: `_entry_score`, `_entry_score_label`, `_entry_score_components`.
+
+### Amendment 6 — Source-code-introspection tests are fragile (discovered in phase 1)
+
+`tests/unit/test_mechanical_exit_fixes_2.py::TestBugBCheckTriggersCleanup` searches daemon.py source code with hardcoded character windows after `"if events:"`. Phase 1's insertion of ~40 lines of v2 exit capture code pushed the cleanup logic beyond the original 1500/2000-char windows, breaking 5 tests.
+
+**Resolution:** Replaced hardcoded character windows with `_extract_events_block()` helper that uses indentation-based block extraction. This captures the full `if events:` block regardless of size. Future phases that insert or remove code in this block will not break the tests.
+
+### Amendment 7 — Counterfactuals computed at exit time are incomplete (discovered in phase 1)
+
+`compute_counterfactuals()` requests candles from entry to `exit_ts + counterfactual_window_s`, but at exit time the post-exit candles don't exist yet. The counterfactual window (2-12 hours) looks ahead after exit, but the data isn't available when called synchronously. The fields `did_tp_hit_later` and `did_sl_get_hunted` are always `False` at capture time.
+
+**Resolution:** Phase 1 adds `_recompute_pending_counterfactuals()` to the daemon, running every 30 minutes. It finds exit snapshots whose counterfactual window has elapsed, recomputes with the full candle range, and updates the snapshot in-place. This ensures counterfactuals are complete before phase 3's analysis agent needs them.
+
+### Amendment 8 — Regression baseline after phase 1 is `824 passed / 1 pre-existing failure`
+
+Phase 1 adds 14 new unit tests (test_v2_capture.py). Combined with the 8 phase 0 config tests and the 2 additional tests from fixing the introspection test helper, the regression baseline is now `824 passed / 1 failed`. The 1 failure remains the pre-existing `test_token_optimization.py` stale model assertion (Amendment 3).
+
+ruff baseline: 108 errors (was 107). The +1 is an I001 (unsorted-imports) from inline imports in `_recompute_pending_counterfactuals()`, following the same pattern as 8 existing inline import blocks in daemon.py.
+
 ---
 
 ## Document Index

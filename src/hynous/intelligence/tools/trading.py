@@ -1112,6 +1112,41 @@ def handle_execute_trade(
         slippage_pct=round(_slippage_pct, 4), status="filled",
     )
 
+    # v2: capture rich entry snapshot (phase 1) — parallel to existing Nous store
+    try:
+        from ...intelligence.daemon import get_active_daemon as _get_daemon_v2
+        _daemon_v2 = _get_daemon_v2()
+        if _daemon_v2 and _daemon_v2._journal_store:
+            from hynous.journal.capture import build_entry_snapshot
+            _v2_snapshot = build_entry_snapshot(
+                symbol=symbol,
+                side=side,
+                trade_type=trade_type,
+                fill_px=fill_px,
+                fill_sz=fill_sz,
+                leverage=leverage,
+                sl_px=stop_loss,
+                tp_px=take_profit,
+                size_usd=effective_usd,
+                reference_price=price,
+                fees_paid_usd=effective_usd * (ts.taker_fee_pct / 100),
+                daemon=_daemon_v2,
+                trigger_source="manual",
+                trigger_type="unknown",
+            )
+            _daemon_v2._journal_store.insert_entry_snapshot(_v2_snapshot)
+            _daemon_v2._open_trade_ids[symbol] = _v2_snapshot.trade_basics.trade_id
+            _record_trade_span(
+                "execute_trade", "v2_capture", True,
+                f"Entry snapshot captured: {_v2_snapshot.trade_basics.trade_id}",
+                trade_id=_v2_snapshot.trade_basics.trade_id,
+            )
+    except Exception as _v2_err:
+        logger.exception("Failed to capture v2 entry snapshot")
+        _record_trade_span(
+            "execute_trade", "v2_capture", False, f"Capture failed: {_v2_err}",
+        )
+
     # Invalidate snapshot + briefing cache so next chat() gets fresh position data
     try:
         from ..context_snapshot import invalidate_snapshot

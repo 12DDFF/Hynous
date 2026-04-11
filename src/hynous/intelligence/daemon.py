@@ -353,6 +353,15 @@ class Daemon:
         # Populated by trading tool via register_position_type(), inferred on restart
         self._position_types: dict[str, dict] = {}
 
+        # v2: trade journal capture (phase 1)
+        self._open_trade_ids: dict[str, str] = {}        # coin → trade_id (active snapshot)
+        self._journal_store = None                            # StagingStore (phase 1) / JournalStore (phase 2)
+        self._peak_roe_ts: dict[str, str] = {}            # coin → ISO timestamp of peak ROE
+        self._trough_roe_ts: dict[str, str] = {}          # coin → ISO timestamp of trough ROE
+        self._peak_roe_price: dict[str, float] = {}       # coin → price at peak ROE
+        self._trough_roe_price: dict[str, float] = {}     # coin → price at trough ROE
+        self._last_vol_regime: str | None = None          # last observed vol regime (for change detection)
+
         # Volume delta tracking (24h rolling → 5m delta for volume_history parity)
         self._prev_day_volume: dict[str, float] = {}
 
@@ -1044,6 +1053,18 @@ class Daemon:
         self._last_fill_check = time.time()
         self._load_daily_pnl()
 
+        # v2: initialize staging journal store for data capture (phase 1)
+        try:
+            from hynous.journal.staging_store import StagingStore
+            _staging_path = self.config.v2.journal.db_path.replace(
+                "journal.db", "staging.db",
+            )
+            self._journal_store = StagingStore(db_path=_staging_path)
+            logger.info("v2 staging journal initialized: %s", _staging_path)
+        except Exception:
+            logger.exception("Failed to initialize v2 staging journal store")
+            self._journal_store = None
+
         # Start WebSocket market data feed via provider
         if self.config.daemon.ws_price_feed:
             provider = self._get_provider()
@@ -1281,6 +1302,17 @@ class Daemon:
                             name="hynous-feedback",
                         )
                         self._feedback_thread.start()
+
+                # 14. v2: Deferred counterfactual recomputation (every 30 min)
+                if (
+                    self._journal_store
+                    and now - getattr(self, "_last_cf_recompute", 0) >= 1800
+                ):
+                    self._last_cf_recompute = now
+                    try:
+                        self._recompute_pending_counterfactuals()
+                    except Exception:
+                        logger.debug("Counterfactual recompute failed", exc_info=True)
 
             except Exception as e:
                 log_event(DaemonEvent("error", "Loop error", str(e)))
@@ -2190,6 +2222,46 @@ class Daemon:
                 ).start()
 
             if events:
+                # v2: emit trade_exit events + build exit snapshots BEFORE eviction
+                for event in events:
+                    _trade_id = self._open_trade_ids.get(event["coin"])
+                    if _trade_id and self._journal_store:
+                        try:
+                            from hynous.journal.capture import (
+                                build_exit_snapshot,
+                                emit_lifecycle_event,
+                            )
+                            emit_lifecycle_event(
+                                journal_store=self._journal_store,
+                                trade_id=_trade_id,
+                                event_type="trade_exit",
+                                payload={
+                                    "exit_px": event.get("exit_px", 0),
+                                    "exit_classification": event.get("classification", "unknown"),
+                                    "realized_pnl_usd": event.get("realized_pnl", 0),
+                                    "peak_roe": self._peak_roe.get(event["coin"], 0),
+                                    "trough_roe": self._trough_roe.get(event["coin"], 0),
+                                    "entry_px": event.get("entry_px", 0),
+                                    "side": event.get("side", ""),
+                                },
+                            )
+                            # Build and persist exit snapshot
+                            _entry_json = self._journal_store.get_entry_snapshot_json(
+                                _trade_id,
+                            )
+                            if _entry_json:
+                                _exit_snap = build_exit_snapshot(
+                                    trade_id=_trade_id,
+                                    entry_snapshot_json=_entry_json,
+                                    exit_event=event,
+                                    daemon=self,
+                                )
+                                self._journal_store.insert_exit_snapshot(_exit_snap)
+                        except Exception:
+                            logger.exception(
+                                "v2 exit capture failed for %s", event["coin"],
+                            )
+
                 for event in events:
                     self._position_types.pop(event["coin"], None)
                 self._persist_position_types()
@@ -2210,6 +2282,12 @@ class Daemon:
                     self._peak_roe.pop(_coin, None)
                     self._breakeven_set.pop(_coin, None)
                     self._dynamic_sl_set.pop(_coin, None)
+                    # v2: clean trade journal state
+                    self._open_trade_ids.pop(_coin, None)
+                    self._peak_roe_ts.pop(_coin, None)
+                    self._trough_roe_ts.pop(_coin, None)
+                    self._peak_roe_price.pop(_coin, None)
+                    self._trough_roe_price.pop(_coin, None)
                 self._persist_mechanical_state()
                 # Try to get the full fresh state (also picks up any new positions)
                 try:
@@ -2221,6 +2299,35 @@ class Daemon:
                     }
                 except Exception as e:
                     logger.warning("get_user_state() failed after trigger close, using event-based eviction: %s", e)
+
+            # v2: detect vol regime changes and emit lifecycle events
+            try:
+                with self._latest_predictions_lock:
+                    _btc_pred = dict(self._latest_predictions.get("BTC", {}))
+                _btc_cond = _btc_pred.get("conditions", {})
+                _current_vol_regime = _btc_cond.get("vol_1h", {}).get("regime")
+                if (
+                    _current_vol_regime
+                    and self._last_vol_regime is not None
+                    and _current_vol_regime != self._last_vol_regime
+                ):
+                    for _sym in position_syms:
+                        _trade_id = self._open_trade_ids.get(_sym)
+                        if _trade_id and self._journal_store:
+                            from hynous.journal.capture import emit_lifecycle_event
+                            emit_lifecycle_event(
+                                journal_store=self._journal_store,
+                                trade_id=_trade_id,
+                                event_type="vol_regime_change",
+                                payload={
+                                    "old_regime": self._last_vol_regime,
+                                    "new_regime": _current_vol_regime,
+                                },
+                            )
+                if _current_vol_regime:
+                    self._last_vol_regime = _current_vol_regime
+            except Exception:
+                pass  # non-critical
 
             # Track peak ROE + current ROE on every check (not just every 60s)
             for sym in position_syms:
@@ -2243,8 +2350,33 @@ class Daemon:
                 self._current_roe[sym] = roe_pct  # Always update — scanner uses this
                 if roe_pct > self._peak_roe.get(sym, 0):
                     self._peak_roe[sym] = roe_pct
+                    # v2: track timestamp/price of peak for exit snapshot
+                    _now_iso = datetime.now(timezone.utc).isoformat()
+                    self._peak_roe_ts[sym] = _now_iso
+                    self._peak_roe_price[sym] = px
+                    _trade_id = self._open_trade_ids.get(sym)
+                    if _trade_id and self._journal_store:
+                        from hynous.journal.capture import emit_lifecycle_event
+                        emit_lifecycle_event(
+                            journal_store=self._journal_store,
+                            trade_id=_trade_id,
+                            event_type="peak_roe_new",
+                            payload={"peak_roe": roe_pct, "price": px},
+                        )
                 if roe_pct < self._trough_roe.get(sym, 0):
                     self._trough_roe[sym] = roe_pct
+                    _now_iso = datetime.now(timezone.utc).isoformat()
+                    self._trough_roe_ts[sym] = _now_iso
+                    self._trough_roe_price[sym] = px
+                    _trade_id = self._open_trade_ids.get(sym)
+                    if _trade_id and self._journal_store:
+                        from hynous.journal.capture import emit_lifecycle_event
+                        emit_lifecycle_event(
+                            journal_store=self._journal_store,
+                            trade_id=_trade_id,
+                            event_type="trough_roe_new",
+                            payload={"trough_roe": roe_pct, "price": px},
+                        )
 
                 # Breakeven stop: dynamic protective SL + fee-BE protection system
                 # ── Dynamic Protective SL (replaces capital-breakeven) ────────
@@ -2331,6 +2463,22 @@ class Daemon:
                                     "Dynamic SL placed: %s %s | %.2f ROE%% (%s vol) | SL @ $%.4f",
                                     sym, side, sl_roe, _vol_regime, sl_px,
                                 )
+                                # v2: lifecycle event
+                                _trade_id = self._open_trade_ids.get(sym)
+                                if _trade_id and self._journal_store:
+                                    from hynous.journal.capture import emit_lifecycle_event
+                                    emit_lifecycle_event(
+                                        journal_store=self._journal_store,
+                                        trade_id=_trade_id,
+                                        event_type="dynamic_sl_placed",
+                                        payload={
+                                            "vol_regime": _vol_regime,
+                                            "sl_roe_distance": sl_roe,
+                                            "sl_px": sl_px,
+                                            "existing_sl_was_tighter": False,
+                                            "side": side,
+                                        },
+                                    )
                             else:
                                 # ── Rollback: restore old SL on failure ──
                                 if old_sl_px and old_sl_oid:
@@ -2414,6 +2562,20 @@ class Daemon:
                                     "profit", f"fee_breakeven: {sym} {side}",
                                     f"SL @ ${be_price:,.2f} | ROE {roe_pct:+.1f}%",
                                 ))
+                                # v2: lifecycle event
+                                _trade_id = self._open_trade_ids.get(sym)
+                                if _trade_id and self._journal_store:
+                                    from hynous.journal.capture import emit_lifecycle_event
+                                    emit_lifecycle_event(
+                                        journal_store=self._journal_store,
+                                        trade_id=_trade_id,
+                                        event_type="fee_be_set",
+                                        payload={
+                                            "new_sl_px": be_price,
+                                            "roe_at_trigger": roe_pct,
+                                            "trade_type": trade_type,
+                                        },
+                                    )
                             except Exception as be_err:
                                 logger.warning("Fee-breakeven failed for %s: %s", sym, be_err)
                                 # Rollback: restore old SL if placement failed
@@ -2475,6 +2637,20 @@ class Daemon:
                                 "Trailing stop ACTIVATED: %s %s | ROE %.1f%% >= %.1f%% threshold (vol=%s)",
                                 sym, side, roe_pct, activation_roe, _vol_regime,
                             )
+                            # v2: lifecycle event
+                            _trade_id = self._open_trade_ids.get(sym)
+                            if _trade_id and self._journal_store:
+                                from hynous.journal.capture import emit_lifecycle_event
+                                emit_lifecycle_event(
+                                    journal_store=self._journal_store,
+                                    trade_id=_trade_id,
+                                    event_type="trail_activated",
+                                    payload={
+                                        "vol_regime": _vol_regime,
+                                        "activation_roe": activation_roe,
+                                        "roe_at_activation": roe_pct,
+                                    },
+                                )
 
                         # Phase 2: Update trailing stop price (only if active)
                         if self._trailing_active.get(sym) and peak > 0:
@@ -2541,6 +2717,22 @@ class Daemon:
                                     # Update in-memory state AFTER confirmed successful placement
                                     self._trailing_stop_px[sym] = new_trail_px
                                     self._persist_mechanical_state()
+                                    # v2: lifecycle event
+                                    _trade_id = self._open_trade_ids.get(sym)
+                                    if _trade_id and self._journal_store:
+                                        from hynous.journal.capture import emit_lifecycle_event
+                                        emit_lifecycle_event(
+                                            journal_store=self._journal_store,
+                                            trade_id=_trade_id,
+                                            event_type="trail_updated",
+                                            payload={
+                                                "peak_roe": peak,
+                                                "old_trail_px": old_trail_px,
+                                                "new_trail_px": new_trail_px,
+                                                "retracement_pct": effective_retracement,
+                                                "vol_regime": _vol_regime,
+                                            },
+                                        )
                                     if old_trail_px > 0:
                                         logger.info(
                                             "Trailing stop UPDATED: %s %s | $%,.2f → $%,.2f (peak ROE %.1f%%, trail ROE %.1f%%)",
@@ -4439,6 +4631,10 @@ class Daemon:
                 "peak_roe": self._peak_roe,
                 "trailing_stop_px": self._trailing_stop_px,
                 "trailing_active": self._trailing_active,
+                "peak_roe_ts": self._peak_roe_ts,
+                "trough_roe_ts": self._trough_roe_ts,
+                "peak_roe_price": self._peak_roe_price,
+                "trough_roe_price": self._trough_roe_price,
             }
             _atomic_write(path, _json.dumps(data))
         except Exception as e:
@@ -4474,6 +4670,18 @@ class Daemon:
             for sym, val in saved.get("trailing_active", {}).items():
                 if sym in open_syms:
                     self._trailing_active[sym] = val
+            for sym, val in saved.get("peak_roe_ts", {}).items():
+                if sym in open_syms:
+                    self._peak_roe_ts[sym] = val
+            for sym, val in saved.get("trough_roe_ts", {}).items():
+                if sym in open_syms:
+                    self._trough_roe_ts[sym] = val
+            for sym, val in saved.get("peak_roe_price", {}).items():
+                if sym in open_syms:
+                    self._peak_roe_price[sym] = val
+            for sym, val in saved.get("trough_roe_price", {}).items():
+                if sym in open_syms:
+                    self._trough_roe_price[sym] = val
 
             if restored:
                 logger.info(
@@ -4485,6 +4693,80 @@ class Daemon:
                 )
         except Exception as e:
             logger.debug("Failed to load mechanical state: %s", e)
+
+    def _recompute_pending_counterfactuals(self) -> None:
+        """Recompute counterfactuals for exits whose window has elapsed."""
+        if not self._journal_store:
+            return
+        if not hasattr(self._journal_store, "list_exit_snapshots_needing_counterfactuals"):
+            return
+
+        from hynous.journal.counterfactuals import compute_counterfactuals
+        from hynous.journal.schema import (
+            MLExitComparison, MarketState, ROETrajectory,
+            TradeExitSnapshot, TradeOutcome,
+        )
+        from dataclasses import asdict
+
+        pending = self._journal_store.list_exit_snapshots_needing_counterfactuals()
+        if not pending:
+            return
+
+        provider = self._get_provider()
+        now = time.time()
+        recomputed = 0
+
+        for item in pending:
+            snap = item["snapshot"]
+            exit_ts = item["exit_ts"]
+            cf = snap.get("counterfactuals", {})
+            window_s = cf.get("counterfactual_window_s", 7200)
+
+            try:
+                exit_dt = datetime.fromisoformat(exit_ts.replace("Z", "+00:00"))
+                window_end = exit_dt.timestamp() + window_s
+                if now < window_end:
+                    continue
+            except Exception:
+                continue
+
+            basics = snap.get("trade_basics", {})
+            try:
+                new_cf = compute_counterfactuals(
+                    provider=provider,
+                    symbol=basics.get("symbol", "BTC"),
+                    side=basics.get("side", "long"),
+                    entry_px=basics.get("entry_px", 0),
+                    entry_ts=basics.get("entry_ts", exit_ts),
+                    exit_px=snap.get("trade_outcome", {}).get("exit_px", 0),
+                    exit_ts=exit_ts,
+                    sl_px=basics.get("sl_px"),
+                    tp_px=basics.get("tp_px"),
+                )
+                if new_cf.did_tp_hit_later or new_cf.did_sl_get_hunted:
+                    snap["counterfactuals"] = asdict(new_cf)
+                    updated = TradeExitSnapshot(
+                        trade_id=item["trade_id"],
+                        trade_outcome=TradeOutcome(**snap.get("trade_outcome", {})),
+                        roe_trajectory=ROETrajectory(**snap.get("roe_trajectory", {})),
+                        counterfactuals=new_cf,
+                        ml_exit_comparison=MLExitComparison(**snap.get("ml_exit_comparison", {})),
+                        market_state_at_exit=MarketState(**snap.get("market_state_at_exit", {})),
+                        price_path_1m=snap.get("price_path_1m", []),
+                    )
+                    self._journal_store.update_exit_snapshot(item["trade_id"], updated)
+                    recomputed += 1
+                    logger.info(
+                        "Counterfactuals recomputed for %s: tp_hit=%s sl_hunted=%s",
+                        item["trade_id"], new_cf.did_tp_hit_later, new_cf.did_sl_get_hunted,
+                    )
+            except Exception:
+                logger.debug(
+                    "Counterfactual recompute failed for %s", item["trade_id"], exc_info=True,
+                )
+
+        if recomputed:
+            logger.info("Recomputed counterfactuals for %d exit(s)", recomputed)
 
     def _persist_daily_pnl(self):
         """Save daily PnL + counters to disk (survives restarts)."""
