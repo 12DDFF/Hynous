@@ -26,8 +26,24 @@
 > `storage/v2/journal.db` directly. 881 tests passing / 1 pre-existing
 > failure (baseline 824 + 57 new). Amendments 9 + 10 implemented.
 >
-> **Phase 3 next:** LLM post-trade analysis agent writing into the
-> `trade_analyses` table. See `v2-planning/06-phase-3-analysis-agent.md`.
+> **Phase 3 complete (2026-04-12):** Hybrid deterministic + LLM post-trade
+> analysis pipeline lives under `src/hynous/analysis/`:
+> `finding_catalog.py`, `mistake_tags.py`, `rules_engine.py` (12 rules),
+> `prompts.py`, `llm_pipeline.py` (litellm synthesis, single-attempt, no
+> retry), `validation.py` (evidence/tag/grade stripping),
+> `wake_integration.py` (daemon calls `trigger_analysis_async` after every
+> exit snapshot — background thread named `analysis-<trade_id[:8]>`),
+> `embeddings.py` (reuses journal's OpenAI 512-dim client),
+> `batch_rejection.py` (hourly cron thread `rejection-analysis-cron`
+> batch-judges pending rejections with `prompt_version='rejection-v1'`).
+> Persisted rows carry narrative, citations, merged deterministic + LLM
+> findings, mistake tags, grades, `process_quality_score`, and
+> `unverified_claims`. Baselines: unit 869/1, tests 924/1 (+4 new
+> integration, same pre-existing token-optimization failure),
+> mypy 333 errors / 89 source files, ruff 108.
+>
+> **Phase 4 next:** Tier 1 deletions — Nous server + v1 memory tools +
+> discord chat. See `v2-planning/07-phase-4-tier1-deletions.md`.
 >
 > Known-stale items in this file:
 > - The 5-component architecture table (v2 removes Nous, reducing to 4)

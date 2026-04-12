@@ -76,6 +76,24 @@ No phase may start before its predecessors are fully accepted.
 
 ---
 
+## Phase Status
+
+Live roll-up of phase completion. Updated by the engineer on close of each phase; coordinator verifies at review.
+
+| # | Phase | Status | Completion | Commits | Notes |
+|---|-------|--------|------------|---------|-------|
+| 0 | Branch & environment | complete | 2026-04-09 | 1 | V2Config + 5 sub-configs, baselines pinned |
+| 1 | Data capture expansion | complete | 2026-04-10 | — | rich entry/exit snapshots, 8 lifecycle events, StagingStore, counterfactuals, `scripts/run_daemon.py` |
+| 2 | Journal module | complete | 2026-04-12 | 8 (M1–M8) | `JournalStore`, 9-table schema, embeddings, FastAPI routes, staging→journal migration, daemon swap |
+| 3 | Analysis agent | **complete** | 2026-04-12 | 5 (M1–M5) | `src/hynous/analysis/` — finding catalog + rules engine + mistake tags + LLM pipeline + validation + wake integration + batch rejection cron. 2 cron threads: per-trade `analysis-<trade_id[:8]>` on close, hourly `rejection-analysis-cron`. Files: `batch_rejection.py`, `embeddings.py`, `finding_catalog.py`, `llm_pipeline.py`, `mistake_tags.py`, `prompts.py`, `rules_engine.py`, `validation.py`, `wake_integration.py`. Baselines: unit 869/1, tests 924/1, mypy 333/89 files, ruff 108. |
+| 4 | Tier 1 deletions | pending | — | — | Nous server + v1 memory tools + discord chat — next |
+| 5 | Mechanical entry | pending | — | — | |
+| 6 | Consolidation & patterns | pending | — | — | |
+| 7 | Dashboard rework | pending | — | — | |
+| 8 | Quantitative improvements | pending | — | — | |
+
+---
+
 ## Terminology Glossary
 
 These terms appear across all plan documents. They have precise meanings in v2:
