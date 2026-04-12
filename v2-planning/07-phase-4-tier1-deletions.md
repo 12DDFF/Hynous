@@ -354,6 +354,23 @@ rm tests/unit/test_trade_stats*.py 2>/dev/null
 rm tests/integration/test_nous*.py 2>/dev/null
 rm tests/integration/test_memory*.py 2>/dev/null
 
+# Plan expansion (architect authority, phase-4 M6b 2026-04-12):
+# During phase-4 execution the canonical CE-ignore list grew to 13 files as
+# modules were deleted. Eight of those files are NOT covered by the globs
+# above because the plan's original glob set was drafted before the exact
+# file names were known. They test deleted v1 subsystems and are authorized
+# for deletion at M6b. Additionally, two of the three post-M5 failure files
+# are integration counterparts whose unit siblings are already covered
+# above. All 8 listed explicitly so no glob guesswork is needed at M6b.
+rm tests/unit/test_sections.py 2>/dev/null
+rm tests/unit/test_intent_boost.py 2>/dev/null
+rm tests/unit/test_trade_retrieval.py 2>/dev/null
+rm tests/integration/test_orchestrator_integration.py 2>/dev/null
+rm tests/integration/test_pruning_integration.py 2>/dev/null
+rm tests/integration/test_gate_filter_integration.py 2>/dev/null
+rm tests/integration/test_playbook_integration.py 2>/dev/null
+rm tests/integration/test_trade_retrieval_integration.py 2>/dev/null
+
 # Also delete these two baseline-cleanup files (see master plan amendments 2 and 3):
 #
 # tests/e2e/test_live_orchestrator.py — runs module-level code that requires
