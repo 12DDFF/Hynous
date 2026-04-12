@@ -1,7 +1,7 @@
 [project]
 name = "hynous"
 version = "0.1.0"
-description = "Personal crypto intelligence system with autonomous LLM trading agent"
+description = "Personal crypto trading system with mechanical entry/exit loop + post-trade LLM analysis"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

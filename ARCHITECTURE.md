@@ -1,431 +1,261 @@
 # Hynous Architecture
 
-> ⚠️ **v2 branch notice — this document describes v1**
->
-> You are reading this on the `v2` branch. This file describes the v1 Hynous
-> system as it existed before the v2 refactor (3-process topology, Nous memory
-> server, LLM-in-the-loop trading, 28 agent tools, decision-injection layer).
-> v2 is a ground-up rebuild that replaces those pieces with a mechanical
-> trading loop and a post-trade analysis agent.
->
-> **For v2 architecture and plan, read `v2-planning/00-master-plan.md` instead.**
-> Do not trust this document for v2 design decisions — use it for historical
-> context only. Phase 4 of the v2 plan rewrites this file to reflect v2 reality.
->
-> **Phase 2 complete (2026-04-12).** The Nous TypeScript memory server is
-> still running alongside (phase 4 deletes it) but the daemon now writes
-> trades into a local SQLite journal at `storage/v2/journal.db` via
-> `src/hynous/journal/store.py::JournalStore`. FastAPI routes at
-> `/api/v2/journal/*` are mounted in `dashboard/dashboard/dashboard.py`
-> exposing trades / events / analysis / stats / search / tags. See
-> `src/hynous/journal/README.md` for the v2 journal surface and
-> `v2-planning/05-phase-2-journal-module.md` for the authoritative plan.
-
----
-
 > How the system fits together. Read this before making changes.
+>
+> This document describes the v2 architecture (mechanical trading loop +
+> post-trade LLM analysis agent). Authoritative v2 plan:
+> `v2-planning/00-master-plan.md`.
 
 ---
 
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      REFLEX DASHBOARD (Python)                              │
-│                           localhost:3000                                     │
-│  ┌──────┐ ┌──────┐ ┌────────┐ ┌───────┐ ┌─────────┐ ┌──────┐              │
-│  │ Home │ │ Chat │ │ Memory │ │ Graph │ │ Journal │ │Debug │              │
-│  └──┬───┘ └──┬───┘ └───┬────┘ └───┬───┘ └────┬────┘ └──┬───┘              │
-│  ┌──────┐ ┌──────┐ ┌────────┐ ┌───────┐                                    │
-│  │ Data │ │  ML  │ │Settings│ │ Login │                                    │
-│  └──┬───┘ └──┬───┘ └───┬────┘ └───┬───┘                                    │
-└─────────┼────────────────┼──────────────────────────────────────────────────┘
-          │                │
-          └───────┬────────┘
-                  │
-┌─────────────────┼───────────────────────────────────────────────────────────┐
-│                 │        FASTAPI GATEWAY (Python)                            │
-│                 │           localhost:8000                                   │
-│                 ▼                                                            │
-│  ┌─────────────────────────┐                                                │
-│  │      HYNOUS AGENT       │ ◄── Hynous lives here                          │
-│  │  • Claude reasoning     │                                                │
-│  │  • Tool calling loop    │                                                │
-│  │  • Scanner + cron       │                                                │
-│  └───────────┬─────────────┘                                                │
-│              │                                                               │
-│      ┌───────┼───────┬──────────────┬──────────────┐                        │
-│      │       │       │              │              │                        │
-│      ▼       ▼       ▼              ▼              ▼                        │
-│  ┌───────┐ ┌───────┐ ┌────────┐ ┌──────────┐ ┌─────────┐                   │
-│  │ Hydra │ │ Nous  │ │Scanner │ │ Daemon   │ │ Discord │                   │
-│  │ Tools │ │Client │ │anomaly │ │          │ │   Bot   │                   │
-│  │(direct)│ │(HTTP) │ │detect  │ │24/7 loop │ │  relay  │                   │
-│  └───┬───┘ └───┬───┘ └────────┘ └─────┬────┘ └─────────┘                   │
-└──────┼─────────┼───────────────────────┼────────────────────────────────────┘
-       │         │                       │
-       │         │ HTTP (~5ms)           │ satellite.tick() (every 300s)
-       │         ▼                       ▼
-       │  ┌─────────────────────┐ ┌──────────────────────────────┐
-       │  │   NOUS API (TS)     │ │     SATELLITE (Python)       │
-       │  │  Hono :3100         │ │  ML feature engine           │
-       │  │                     │ │  28 structural features      │
-       │  │  • SSA retrieval    │ │  Training + inference        │
-       │  │  • Two-phase cogn.  │ │  Reads from data-layer DB    │
-       │  │  • FSRS decay       │ └──────────────┬───────────────┘
-       │  │  • Vector embed.    │                │
-       │  └────────┬────────────┘                │ reads
-       │           │                             ▼
-       │           ▼                  ┌──────────────────────────┐
-       │   ┌───────────────┐         │  DATA-LAYER (Python)     │
-       │   │    SQLite     │         │  FastAPI :8100            │
-       │   │   (nous.db)   │         │                           │
-       │   └───────────────┘         │  • Trade stream           │
-       │                             │  • L2 orderbook           │
-       │                             │  • Liq heatmap            │
-       ▼                             │  • Order flow             │
-┌──────────────────────────────┐     │  • Position tracking      │
-│        HYDRA (Python)        │     └──────────────────────────┘
-│                              │
-│  ┌──────────────────┐ ┌──────────────────┐
-│  │  Data Sources    │ │   Execution      │
-│  │                  │ │                  │
-│  │ • Hyperliquid    │ │ • Order place    │
-│  │ • Coinglass      │ │ • Position mgmt  │
-│  │ • CryptoCompare  │ │ • Risk controls  │
-│  │ • Perplexity     │ │                  │
-│  └──────────────────┘ └──────────────────┘
-└──────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│                      REFLEX DASHBOARD (Python)                        │
+│                           localhost:3000                              │
+│  Pages + Starlette routes:                                            │
+│    /api/data/*        → data-layer (:8100) proxy                       │
+│    /api/ml/*          → satellite.db (read-only)                       │
+│    /api/v2/journal/*  → journal router (in-process)                    │
+└──────────────┬─────────────────────────────────────────────────────────┘
+               │
+┌──────────────┼─────────────────────────────────────────────────────────┐
+│              │          FASTAPI GATEWAY (Python)                       │
+│              │             localhost:8000                              │
+│              ▼                                                         │
+│  ┌─────────────────────────────────────────────────────────────┐      │
+│  │            DAEMON (intelligence/daemon.py)                  │      │
+│  │  • Fast trigger loop (~1s): SL/TP fills, trailing stop,     │      │
+│  │    dynamic protective SL, fee-BE                            │      │
+│  │  • Price poll loop (60s): scanner, L2 books, 5m candles     │      │
+│  │  • Derivatives poll loop (300s): funding, OI, sentiment,    │      │
+│  │    satellite.tick(), inference, historical snapshot push    │      │
+│  │  • Journal writes: entry/exit snapshots + lifecycle events  │      │
+│  │  • Post-trade analysis triggered after every exit           │      │
+│  └───────┬─────────────────────────────────────────────────────┘      │
+│          │                                                             │
+│     ┌────┴─────┬────────────┬───────────────┬──────────────────┐      │
+│     ▼          ▼            ▼               ▼                  ▼      │
+│ ┌───────┐ ┌─────────┐ ┌───────────┐ ┌────────────────┐ ┌───────────┐  │
+│ │Journal│ │Analysis │ │ Scanner   │ │  Satellite     │ │  Discord  │  │
+│ │store  │ │agent    │ │ (anomaly  │ │  (feature +    │ │    bot    │  │
+│ │(SQLite│ │(rules + │ │  detect)  │ │   inference)   │ │  relay    │  │
+│ │ 9 tbl)│ │  LLM)   │ │           │ │                │ │           │  │
+│ └───┬───┘ └────┬────┘ └─────┬─────┘ └────────┬───────┘ └───────────┘  │
+└─────┼──────────┼────────────┼────────────────┼────────────────────────┘
+      │          │            │                │
+      ▼          ▼            │                │  satellite.tick()
+┌───────────────────┐         │                │  (every 300s)
+│ storage/v2/       │         │                ▼
+│   journal.db      │         │     ┌──────────────────────────┐
+│   staging.db      │         │     │   DATA-LAYER (Python)    │
+│   (migrated once) │         │     │   FastAPI :8100          │
+└───────────────────┘         │     │                          │
+                              │     │  • Trade stream (WS)     │
+                              │     │  • L2 orderbook (WS)     │
+                              │     │  • Liq heatmap           │
+                              │     │  • Order flow            │
+                              │     │  • Smart money tracker   │
+                              │     │  • Historical push:      │
+                              │     │    funding / OI / vol    │
+                              │     └──────────┬───────────────┘
+                              │                │
+                              ▼                ▼ read-only SQLite
+                ┌────────────────────────────────────────┐
+                │   Hyperliquid (REST + WebSocket)       │
+                │   wss://api.hyperliquid.xyz/ws         │
+                └────────────────────────────────────────┘
 ```
 
 ---
 
 ## Component Responsibilities
 
-### `src/hynous/intelligence/` -- The Brain
+### `src/hynous/intelligence/` — daemon + trading tools
 
-The LLM agent that thinks, reasons, and acts.
-
-| Module | Responsibility |
-|--------|----------------|
-| `agent.py` | LiteLLM multi-provider wrapper (Claude via OpenRouter), tool calling loop |
-| `prompts/` | System prompts (identity, trading knowledge, tool strategy) |
-| `tools/` | Tool definitions and handlers (22 modules, 29 tools) |
-| `events/` | Event type definitions |
-| `daemon.py` | Background loop for autonomous operation (24/7 wake cycle) |
-| `scanner.py` | Market-wide anomaly detection across all Hyperliquid pairs (macro + micro detectors) |
-| `briefing.py` | Pre-built briefing injection for daemon wakes |
-| `coach.py` | Haiku sharpener for daemon wake quality |
-| `context_snapshot.py` | Live state snapshot builder (portfolio, positions, market, memory) -- injected into every agent message |
-| `regime.py` | Regime detection v4: hybrid macro/micro dual scoring, 6 combined labels (zero LLM cost) |
-| `wake_warnings.py` | Deterministic code-based checks injected before agent responds (zero LLM cost) |
-| `memory_manager.py` | Tiered memory: working window + Nous-backed compression |
-| `retrieval_orchestrator.py` | Intelligent multi-pass retrieval: classify -> decompose -> parallel search -> quality gate -> merge |
-| `gate_filter.py` | Pre-storage quality gate (rejects gibberish, filler, etc.) |
-| `memory_tracker.py` | In-process audit log of all Nous writes per chat cycle (creates, archives, deletes) |
-| `consolidation.py` | Cross-episode generalization: clusters related episodes, extracts patterns via LLM, creates knowledge/playbook nodes |
-| `playbook_matcher.py` | Procedural memory: loads playbook nodes, evaluates structured trigger conditions against scanner anomalies |
-| `trade_history.py` | Trade history analyzer: learns from Nous trade memory, computes per-pattern win rates, warns on weak setups |
-
-### `src/hynous/nous/` -- The Memory Client
-
-Python client for the Nous TypeScript API.
+Drives the mechanical loop, emits journal events, wakes the analysis agent.
 
 | Module | Responsibility |
 |--------|----------------|
-| `client.py` | HTTP client for Nous API |
-| `sections.py` | Memory section definitions: 4 sections (Episodic, Signals, Knowledge, Procedural), subtype->section mapping, per-section weight/decay/encoding profiles |
-| `server.py` | Auto-start Nous TypeScript server as background subprocess |
+| `daemon.py` | Fast trigger loop, poll loops, journal writes, analysis triggers, mechanical exits |
+| `scanner.py` | Market-wide anomaly detection across Hyperliquid pairs |
+| `regime.py` | Regime detection (hybrid macro/micro dual scoring, zero LLM cost) |
+| `agent.py` | LiteLLM wrapper (kept for user chat + analysis agent; not used for trade decisions in v2) |
+| `prompts/` | System prompts (identity + tool strategy) |
+| `tools/` | Tool handlers. Trading, scanner ops, and market-data reads remain; v1 memory tools were removed in phase 4 |
+| `briefing.py` | Pre-built context injection (evolving in phase 7 when dashboard reworks) |
+| `context_snapshot.py` | Live state block (portfolio, positions, regime, ML predictions) |
 
-**Note:** Nous itself is a TypeScript service. We call it via HTTP API.
-See `storm-013-nous-http-api.md` in the brainstorm for the full API spec.
+### `src/hynous/journal/` — trade journal (v2)
 
-### `src/hynous/data/` -- The Senses
-
-Market data from external sources.
-
-| Module | Responsibility |
-|--------|----------------|
-| `providers/` | Data source wrappers (6 providers + WS feed manager) |
-| `hyperliquid.py` | Hyperliquid API (WS-first market data reads, REST execution) |
-| `ws_feeds.py` | WebSocket feed manager — `MarketDataFeed` class manages `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m) channels on one connection with 30s staleness gating and REST fallback |
-| `paper.py` | Paper trading simulator (local order matching) |
-| `coinglass.py` | Coinglass API (derivatives data: OI, liquidations, funding) |
-| `cryptocompare.py` | CryptoCompare API (news feed, sentiment) |
-| `hynous_data.py` | Client for the data-layer service (:8100) |
-| `perplexity.py` | Perplexity API (AI-powered web search) |
-
-### `src/hynous/core/` -- The Foundation
-
-Shared utilities used everywhere.
+In-process SQLite store replacing the v1 Nous memory graph.
 
 | Module | Responsibility |
 |--------|----------------|
-| `config.py` | Configuration loading (YAML -> dataclasses) |
+| `schema.py` | 9-table schema: `trades`, `trade_events`, `entry_snapshots`, `exit_snapshots`, `trade_analyses`, `rejection_analyses`, `trade_edges`, `pattern_rollups`, `journal_metadata` |
+| `store.py` | `JournalStore` — CRUD + daemon-compat surface (`get_entry_snapshot_json`, `list_exit_snapshots_needing_counterfactuals`, `update_exit_snapshot`) + semantic search |
+| `capture.py` | Builds `TradeEntrySnapshot` / `TradeExitSnapshot` dataclasses from daemon state |
+| `counterfactuals.py` | Deferred counterfactual computation (re-runs ~30min post-exit) |
+| `embeddings.py` | `EmbeddingClient` — OpenAI `text-embedding-3-small` with matryoshka truncation to 512 dims (strips `openai/` prefix so OpenRouter-style config works with OpenAI direct API) |
+| `migrate_staging.py` | One-shot idempotent migration from `staging.db` to `journal.db` (flag-guarded, runs at daemon startup) |
+| `router.py` | FastAPI `/api/v2/journal/*` routes: trades / events / analysis / stats / search / tags |
+
+Backing store: `storage/v2/journal.db` (WAL mode, busy_timeout 5s).
+
+### `src/hynous/analysis/` — post-trade analysis agent (v2)
+
+Hybrid deterministic-rules + LLM synthesis pipeline. Triggered after every
+exit snapshot (background thread) and hourly for rejection batches.
+
+| Module | Responsibility |
+|--------|----------------|
+| `finding_catalog.py` | Enumerated finding codes + severities |
+| `mistake_tags.py` | Mistake taxonomy |
+| `rules_engine.py` | 12 deterministic rules over entry/exit snapshots + counterfactuals |
+| `prompts.py` | Analysis + rejection prompt templates (versioned) |
+| `llm_pipeline.py` | `litellm` synthesis (single attempt, no retry, lazy import) |
+| `validation.py` | Evidence / tag / grade stripping; rejects unsupported claims |
+| `wake_integration.py` | Daemon calls `trigger_analysis_async` after every exit; thread name `analysis-<trade_id[:8]>` |
+| `batch_rejection.py` | Hourly cron thread `rejection-analysis-cron` batches pending rejections |
+| `embeddings.py` | Shares journal's 512-dim OpenAI embedding client |
+
+Persisted rows carry narrative, citations, merged deterministic + LLM
+findings, mistake tags, grades, `process_quality_score`, and
+`unverified_claims`.
+
+### `src/hynous/data/` — market data
+
+| Module | Responsibility |
+|--------|----------------|
+| `providers/hyperliquid.py` | Hyperliquid API (WS-first reads, REST execution) |
+| `providers/ws_feeds.py` | `MarketDataFeed` — one WS connection managing `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m) with 30s staleness gating and REST fallback |
+| `providers/paper.py` | Paper trading simulator (local order matching) |
+| `providers/coinglass.py` | Coinglass derivatives API |
+| `providers/cryptocompare.py` | News feed / sentiment |
+| `providers/hynous_data.py` | Client for the data-layer service (:8100) |
+| `providers/perplexity.py` | Perplexity web search |
+
+### `src/hynous/core/` — shared utilities
+
+| Module | Responsibility |
+|--------|----------------|
+| `config.py` | YAML → dataclasses (`load_config()`). Top-level config dataclasses enumerated in CLAUDE.md |
 | `types.py` | Shared type definitions |
-| `errors.py` | Custom exceptions |
-| `logging.py` | Logging setup |
-| `clock.py` | Time awareness -- all timestamps Pacific (America/Los_Angeles) |
-| `costs.py` | Cost tracker for LLM API usage, Perplexity, subscriptions |
-| `daemon_log.py` | Persistent JSON log of daemon events (500-event cap, buffered flush) |
-| `equity_tracker.py` | Append-only equity curve persistence (~5 min snapshots, 30-day prune) |
-| `persistence.py` | Chat persistence (save/load conversation state across restarts) |
-| `trade_analytics.py` | Performance tracking from Nous trade_close nodes (30s cache) |
 | `trading_settings.py` | Runtime-adjustable trading parameters (thread-safe singleton, JSON-persisted) |
-| `request_tracer.py` | Debug trace collector -- records 8 span types per `agent.chat()` call |
-| `memory_tracker.py` | Mutation audit log -- tracks node creates, edge creates, archives, deletes per chat cycle |
+| `request_tracer.py` | Debug trace collector (8 span types per call) |
 | `trace_log.py` | Trace persistence + SHA256 content-addressed payload storage |
 
-### `src/hynous/discord/` -- The Relay
+### `src/hynous/discord/` — Discord bot
 
-Discord bot for chat and daemon notifications.
+Chat relay + daemon notifications. Shares process space with daemon, uses
+its own asyncio event loop on a background thread.
 
-| Module | Responsibility |
-|--------|----------------|
-| `bot.py` | Chat relay (message -> agent.chat() -> response), daemon notifications (fills, watchpoints, reviews), background thread with own event loop |
-| `stats.py` | Stats embed builder -- live-updating panel (portfolio, positions, regime, trade performance, scanner status) every 30s |
+### `dashboard/` — Reflex UI
 
-Shares the same Agent singleton as the dashboard -- same memory, same positions, same conversation context.
+Pages, state management, Starlette API routes. The `/api/v2/journal/*`
+router is mounted at startup and serves the v2 journal surface
+(trades, events, analysis results, stats, search, tags).
 
-### `dashboard/` -- The Face
+### `satellite/` — ML feature engine
 
-User interface built with Reflex (Python -> React).
-
-| Module | Responsibility |
-|--------|----------------|
-| `rxconfig.py` | Reflex configuration |
-| `dashboard/dashboard.py` | App entry point, routing, Nous API proxy |
-| `dashboard/state.py` | Reactive state management |
-| `dashboard/components/` | Reusable UI components (card, chat, nav, ticker) |
-| `dashboard/pages/` | 10 page components (see below) |
-| `assets/` | Static assets served by Reflex |
-
-**Pages** (10):
-
-| Page | Route | Purpose |
-|------|-------|---------|
-| `home.py` | `/` | Portfolio overview, equity curve, positions |
-| `chat.py` | `/chat` | Conversational interface with Hynous |
-| `memory.py` | `/memory` | Memory browser with Sections tab (brain visualization) |
-| `graph.py` | `/graph` | Force-directed knowledge graph |
-| `journal.py` | `/journal` | Trade journal + activity log |
-| `debug.py` | `/debug` | Trace timeline, span inspector |
-| `data.py` | `/data` | Data-layer dashboards (trade stream, order flow, heatmap) |
-| `ml.py` | `/ml` | ML satellite monitoring (features, training, inference) |
-| `settings.py` | `/settings` | Runtime-adjustable trading parameters |
-| `login.py` | `/login` | Authentication |
-
-**Assets** (5):
-
-| File | Purpose |
-|------|---------|
-| `graph.html` | Standalone force-graph visualization with cluster layout |
-| `brain.html` | Sagittal brain SVG + per-section force graphs (1373 lines, self-contained) |
-| `ml.html` | ML satellite feature visualization |
-| `data.html` | Data-layer real-time dashboards |
-| `hynous-avatar.png` | Agent avatar image |
-
-Run with: `cd dashboard && reflex run`
-
-### `satellite/` -- The Feature Engine
-
-ML feature computation and condition prediction engine. Computes 28 structural features from data-layer engines, trains per-model curated feature subsets, and runs 14 condition models for real-time market state prediction.
+In-process feature computation and inference. `tick()` is called by daemon
+every 300s after derivatives poll. Reads data-layer historical tables via
+read-only SQLite, writes snapshots + predictions to `storage/satellite.db`.
 
 | Module | Responsibility |
 |--------|----------------|
-| `__init__.py` | `tick()` entry point -- called by daemon every 300s after `_poll_derivatives()` |
-| `features.py` | Feature computation -- 28 features across 9 categories (SINGLE SOURCE OF TRUTH for training, inference, backfill) |
-| `conditions.py` | `ConditionEngine` -- loads condition model artifacts, runs all 14 predictions in ~10ms |
-| `condition_alerts.py` | Alert generation from condition predictions (regime transitions, extremes) |
-| `config.py` | SatelliteConfig dataclass |
-| `schema.py` | Database schema definitions |
-| `store.py` | SQLite persistence (satellite.db) |
-| `normalize.py` | Feature normalization |
-| `labeler.py` | Label generation for training data |
+| `__init__.py` | `tick()` entry point |
+| `features.py` | Feature computation (single source of truth for training + inference) |
+| `conditions.py` | `ConditionEngine` — runs all condition models in ~10ms |
 | `inference.py` | Real-time inference from trained models |
-| `monitor.py` | Feature drift and health monitoring |
-| `safety.py` | Safety checks and guardrails |
-| `training/` | Training pipeline (train.py, walkforward.py, explain.py, artifact.py, pipeline.py, train_conditions.py, validate_conditions.py, feature_sets.py, condition_artifact.py) |
-| `experiments/` | Experiment framework -- 12 experiment scripts with shared harness, feature ablation |
-| `artemis/` | Advanced analysis (layer2.py, pipeline.py, profiler.py, reconstruct.py, seeder.py) |
-| `tests/` | 6 test modules |
+| `store.py` | SQLite persistence (`satellite.db`) |
+| `training/` | Training pipeline |
+| `artemis/` | Historical data backfill |
 
-### `data-layer/` -- The Market Data Pipeline
+### `data-layer/` — market data service
 
-Standalone FastAPI service for real-time market data collection and processing. Runs on `:8100`.
-
-| Module | Responsibility |
-|--------|----------------|
-| `src/hynous_data/api/` | FastAPI application factory + routes |
-| `src/hynous_data/collectors/` | Real-time data collectors (trade_stream, l2_subscriber, position_poller, hlp_tracker) |
-| `src/hynous_data/engine/` | Processing engines (liq_heatmap, order_flow, position_tracker, smart_money, whale_tracker, profiler) |
-| `src/hynous_data/core/` | Core utilities (database, config) |
-| `tests/` | 5 test modules |
+Standalone FastAPI service on `:8100`. Collectors, engines, REST API.
+Accessed via `hynous_data.py` provider from the daemon and `/api/data/*`
+proxy from the dashboard.
 
 ---
 
 ## Data Flow
 
-### User Chat Flow
+### Daemon wake flow (v2)
 
 ```
-User types message (Dashboard or Discord)
+daemon.py (continuous loops)
     │
-    ▼
-dashboard/pages/chat.py  OR  discord/bot.py
-    │
-    ▼
-intelligence/agent.py (process_message)
-    │
-    ├──► Claude API (reasoning)
-    │
-    ├──► tools/market.py (if needs price)
-    │       │
-    │       ▼
-    │    data/hyperliquid.py
-    │
-    ├──► tools/memory.py (if needs memory)
-    │       │
-    │       ▼
-    │    retrieval_orchestrator.py (classify → decompose → parallel search → quality gate → merge)
-    │       │
-    │       ▼
-    │    nous/client.py → Nous API (:3100)
-    │
-    ├──► tools/data_layer.py (if needs trade stream / order flow / heatmap)
-    │       │
-    │       ▼
-    │    data/providers/hynous_data.py → Data-Layer API (:8100)
-    │
-    ├──► tools/pruning.py (if memory hygiene)
-    │       │
-    │       ├── analyze_memory: get_graph() → BFS components → staleness scoring
-    │       └── batch_prune: ThreadPoolExecutor(10) → concurrent archive/delete
-    │
-    ▼
-Response returned to dashboard / Discord channel
-    │
-    ▼
-User sees Hynous response
-```
-
-### Daemon Wake Flow
-
-```
-daemon.py (continuous loop)
-    │
-    ├── _fast_trigger_check() (every 1s — WS prices via provider.get_all_prices(), WS-first)
+    ├── _fast_trigger_check() (~1s)
     │     ├── check_triggers() → SL/TP fill detection
-    │     ├── Capital-breakeven (Layer 1, 0.5% ROE → SL at entry price)
-    │     ├── Fee-breakeven (Layer 2, fee-proportional ROE → SL at entry + buffer)
-    │     └── Trailing stop (Phase 1/2/3, ML-adaptive vol-regime activation, tiered retracement)
+    │     ├── Dynamic protective SL (vol-regime distances, at entry)
+    │     ├── Fee-breakeven (layer 2, fee-proportional ROE)
+    │     └── Trailing stop v3 (continuous exponential retracement)
     │
-    ├── _poll_prices() (every 60s)
-    │     ├── scanner.py (macro anomaly detection across all pairs)
-    │     └── L2 book + 5m candle polling (micro detectors)
+    ├── _poll_prices() (60s)
+    │     ├── scanner.py (macro + micro anomaly detection)
+    │     └── L2 + 5m candle updates
     │
-    ├── _poll_derivatives() (every 300s)
-    │     ├── Funding, OI, sentiment data
-    │     ├── satellite.tick() → compute 28 features → satellite.db
+    ├── _poll_derivatives() (300s)
+    │     ├── Funding, OI, sentiment polls
+    │     ├── Push historical snapshot → data-layer (POST /v1/historical/record)
+    │     ├── satellite.tick() → 28 features → satellite.db
+    │     ├── _run_satellite_inference() → XGBoost + SHAP → satellite.db
     │     └── news polling (CryptoCompare)
     │
-    ├── _check_positions() → fill detection → _wake_for_fill()
-    ├── _check_profit_levels() → tiered profit alerts → _wake_for_profit()
-    ├── _check_watchpoints() → price level triggers → _wake_for_watchpoint()
-    ├── _check_pending_watches() → deferred watchpoint creation
+    ├── _check_positions() → fill detection
+    │     ├── Entry detected: journal.capture_entry() → write entry_snapshot + trade row
+    │     ├── Exit detected: journal.capture_exit() → write exit_snapshot + close trade
+    │     │                 → trigger_analysis_async(trade_id) (background thread)
+    │     │                 → schedule counterfactual recompute at T+30min
+    │     └── Side flip: close + reopen chain
     │
-    ├── scanner anomalies above threshold → _wake_for_scanner()
-    │     └── playbook_matcher: match anomalies against procedural playbooks
-    │
-    ├── periodic review (every 60 min) → _wake_for_review()
-    ├── curiosity check (every 15 min) → _wake_agent(source="daemon:learning")
-    │
-    ├── _run_decay_cycle() (every 6 hours, background thread)
-    │     └── _check_fading_transitions() → _wake_for_fading_memories()
-    │
-    ├── _check_conflicts() (every 30 min, background thread)
-    │     └── tier-1 auto-resolve → _wake_for_conflicts() (remaining)
-    │
-    ├── _check_health() (every 1 hour) → Nous health check
-    │
-    ▼ (if wake triggered)
-intelligence/agent.py (chat with max_tokens cap per wake type)
-    │
-    ├──► wake_warnings.py (deterministic pre-checks, zero cost)
-    ├──► Briefing injection (pre-built, free)
-    ├──► context_snapshot.py (portfolio + market state, ~150 tokens)
-    ├──► regime.py (market regime label, zero cost)
-    ├──► Nous context retrieval (via retrieval orchestrator)
-    ├──► Reason + tool calls
-    │
-    ▼ (if trade decision)
-tools/trading.py (execute_trade)
-    │
-    ▼
-data/hyperliquid.py (place order)
+    └── Background threads:
+          • rejection-analysis-cron (hourly): batch-judge pending rejections
+          • counterfactual check (30min): recompute deferred exit counterfactuals
+          • ML-signal wake (if not shadow mode): calls scanner/analysis
 ```
 
-### Debug Trace Flow
+### Post-trade analysis flow
 
 ```
-agent.chat() / chat_stream() called
+Exit snapshot written → wake_integration.trigger_analysis_async(trade_id)
     │
-    ├── request_tracer.begin_trace(source, input_summary)
-    │
-    ├── Context span (briefing/snapshot injection, user_message, wrapped_hash)
-    ├── Retrieval span (query, results with content bodies)
-    ├── LLM Call span (model, tokens, messages_hash, response_hash)
-    ├── Tool Execution span (tool_name, input_args, output_preview)
-    ├── Trade Step span (trade_tool, step, success, detail, duration_ms)
-    ├── Memory Op span (store/recall/update, gate_filter result)
-    ├── Compression span (exchanges_evicted, window_size)
-    ├── Queue Flush span (items_count)
-    │
-    ├── request_tracer.end_trace(status, output_summary)
+    ▼ (background thread analysis-<trade_id[:8]>)
+analysis/rules_engine.py — run 12 deterministic rules over
+                           entry_snapshot, exit_snapshot, counterfactuals
     │
     ▼
-trace_log.save_trace() → storage/traces.json
-                        → storage/payloads/*.json (content-addressed)
+analysis/prompts.py — build prompt with evidence references
     │
     ▼
-Dashboard Debug page reads traces + resolves payload hashes
+analysis/llm_pipeline.py — litellm synthesis (single attempt)
+    │
+    ▼
+analysis/validation.py — strip unsupported claims, validate tags/grades
+    │
+    ▼
+journal.store.write_trade_analysis() → trade_analyses table
+                                       (narrative, citations, findings,
+                                        mistake tags, grades,
+                                        process_quality_score)
 ```
 
-Memory Op spans include `analyze` and `prune` operations from the pruning tools, recording node counts, stale groups found, and archive/delete success/failure metrics.
+### Cross-system boundaries
 
-Trade step spans provide sub-step visibility into `execute_trade` (7+ spans: circuit breaker, validation, leverage, order fill, cache, daemon, memory), `close_position` (7 spans), and `modify_position` (5 spans). Each span includes timing, success/failure, and a human-readable detail string. Recorded via `_record_trade_span()` helper in `tools/trading.py` using thread-local trace context.
-
-Large content (LLM messages, responses, injected context) is stored via SHA256 content-addressed payloads in `storage/payloads/`. The dashboard's `debug_spans_display` computed var resolves `*_hash` fields to actual content before rendering.
+See `docs/integration.md` for the enumerated list.
 
 ---
 
 ## Tools Reference
 
-21 tool modules registering 28 tools:
-
-| Module | Tools | Description |
-|--------|-------|-------------|
-| `market.py` | `get_market_data` | Current price, 24h change, volume |
-| `orderbook.py` | `get_orderbook` | L2 orderbook depth |
-| `funding.py` | `get_funding_history` | Funding rate history |
-| `multi_timeframe.py` | `get_multi_timeframe` | Multi-timeframe candle analysis |
-| `liquidations.py` | `get_liquidations` | Liquidation data |
-| `sentiment.py` | `get_global_sentiment` | Fear & Greed, social sentiment |
-| `options.py` | `get_options_flow` | Options market data |
-| `institutional.py` | `get_institutional_flow` | ETF flows, whale movements |
-| `web_search.py` | `search_web` | Perplexity-powered web search |
-| `costs.py` | `get_my_costs` | Operational cost tracking |
-| `memory.py` | `store_memory`, `recall_memory`, `update_memory` | Memory CRUD operations |
-| `trading.py` | `execute_trade`, `close_position`, `modify_position`, `get_account` | Trade execution + account info |
-| `delete_memory.py` | `delete_memory` | Memory deletion |
-| `watchpoints.py` | `manage_watchpoints` | Price alert watchpoints |
-| `trade_stats.py` | `get_trade_stats` | Trade performance analytics |
-| `explore_memory.py` | `explore_memory` | Graph traversal + memory browsing |
-| `conflicts.py` | `manage_conflicts` | Contradiction queue management |
-| `clusters.py` | `manage_clusters` | Memory cluster CRUD |
-| `pruning.py` | `analyze_memory`, `batch_prune` | Memory hygiene (staleness analysis + batch archive/delete) |
-| `data_layer.py` | `data_layer` | Query data-layer service (trade stream, order flow, heatmap, smart money) |
-| `market_watch.py` | `get_book_history`, `monitor_signal` | L2 book history + signal monitoring |
+Tools live in `src/hynous/intelligence/tools/` and register in
+`registry.py`. The current surface is pared down after phase 4's tier-1
+deletions (v1 memory tools removed). Consult `registry.py` for the
+authoritative list — it changes during phase 4 milestones. Phase 5 will
+remove trade-execution tools as the LLM exits the trading loop entirely.
 
 ---
 
@@ -433,16 +263,14 @@ Large content (LLM messages, responses, injected context) is stored via SHA256 c
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| UI Framework | Reflex | Python-native, compiles to React |
-| Memory System | Nous (TypeScript) via HTTP | Too complex to reimplement, ~5ms overhead acceptable |
-| LLM | LiteLLM via OpenRouter | Multi-provider (Claude, GPT-4, DeepSeek, etc.), single API key |
-| Market Data | WS-first via `ws_feeds.py` | Sub-second prices/L2/contexts/candles, REST fallback if stale (>30s). Verified via live soak test. |
-| Agent-Hydra | Direct import | Zero overhead, same Python process |
-| Agent-Nous | HTTP API | Nous is TypeScript, clean separation |
-| Agent-Discord | Shared singleton | Same Agent instance, background thread with own event loop |
-| Data-Layer | Separate FastAPI service | Isolates high-frequency market data from agent process |
-| Satellite | In-process module | Called by daemon via `satellite.tick()`, reads data-layer DB directly |
-| Config | YAML files | Human readable, easy to edit |
+| UI framework | Reflex | Python-native, compiles to React |
+| Journal | In-process SQLite (`JournalStore`) | Replaces v1's TypeScript Nous memory server; same process, zero HTTP overhead, easier migration path |
+| LLM access | LiteLLM via OpenRouter | Multi-provider, single API key |
+| Market data | WS-first via `ws_feeds.py` | Sub-second prices / L2 / contexts / candles, REST fallback on staleness |
+| Data-layer | Separate FastAPI service | Isolates high-frequency market data from the daemon process |
+| Satellite | In-process module | Called by daemon via `satellite.tick()`; reads data-layer DB directly |
+| Trading loop | Mechanical (v2) | LLM is out of the trade-execution path; analysis runs post-close only |
+| Config | YAML dataclasses | Human readable, single source of truth |
 
 ---
 
@@ -452,32 +280,25 @@ Large content (LLM messages, responses, injected context) is stored via SHA256 c
 
 1. Create handler in `src/hynous/intelligence/tools/`
 2. Register in `tools/registry.py`
-3. Add to `prompts/builder.py` `TOOL_STRATEGY` section -- registering alone is not enough; the agent won't know to use the tool without system prompt guidance
-4. Tool is now available to agent
+3. Add to `prompts/builder.py` TOOL_STRATEGY
 
 ### Adding a New Page
 
-1. Create page in `dashboard/pages/`
-2. Add route in `dashboard/app.py`
-3. Page is automatically available
+1. Create page in `dashboard/dashboard/pages/`
+2. Add route in `dashboard/dashboard/dashboard.py`
+3. Add nav item in `dashboard/dashboard/components/nav.py`
 
 ### Adding a New Data Source
 
 1. Create provider in `src/hynous/data/providers/`
 2. Export in `data/__init__.py`
-3. Create corresponding tools in `intelligence/tools/`
-
-### Adding a New Node Type
-
-1. Add to enum in `nous/nodes.py`
-2. Update schemas if needed
-3. Nodes of new type can be created immediately
+3. Create corresponding tool in `intelligence/tools/`
 
 ---
 
 ## Configuration
 
-All config lives in `config/` directory:
+All config lives in `config/`:
 
 ```
 config/
@@ -485,28 +306,7 @@ config/
 └── theme.yaml       # UI styling
 ```
 
-Config is loaded once at startup and passed through the system.
-
-### `default.yaml` Sections
-
-| Section | Purpose |
-|---------|---------|
-| `app` | Name, version |
-| `execution` | Mode (paper/testnet/live), symbols, paper balance |
-| `hyperliquid` | Leverage, position caps, slippage |
-| `agent` | Model, max_tokens, temperature |
-| `coinglass` | API plan tier |
-| `daemon` | All daemon intervals, circuit breakers, rate limits |
-| `scanner` | Anomaly thresholds (macro + micro), news polling |
-| `discord` | Bot config, channel IDs, allowed users |
-| `data_layer` | Data-layer service URL, timeout |
-| `nous` | Nous server URL, DB path, auto-retrieve limit |
-| `orchestrator` | Multi-pass retrieval settings (quality threshold, max sub-queries, timeout) |
-| `memory` | Window size, context token budget, compression model |
-| `sections` | Memory section bias layer (intent boost, default section) |
-| `satellite` | Feature engine config (snapshot interval, coins, thresholds, funding hours) |
-| `events` | Funding/price event thresholds, cooldown |
-| `logging` | Log level, format |
+Loaded by `src/hynous/core/config.py::load_config()` at startup.
 
 ---
 
@@ -516,11 +316,10 @@ VPS deployment via systemd services and Caddy reverse proxy.
 
 ```
 deploy/
-├── hynous.service       # Main app (dashboard + agent + daemon + discord bot)
-├── nous.service          # Nous TypeScript memory server (:3100)
-├── hynous-data.service   # Data-layer FastAPI service (:8100)
-├── setup.sh              # VPS provisioning script
-└── README.md             # Deployment instructions
+├── hynous.service       # Main app (dashboard + daemon + journal + discord)
+├── hynous-data.service  # Data-layer FastAPI service (:8100)
+├── setup.sh             # VPS provisioning script
+└── README.md            # Deployment instructions
 ```
 
 ---
@@ -533,153 +332,26 @@ tests/                    # Main Python test suite
 ├── integration/          # Test component interactions
 └── e2e/                  # Test full user flows
 
-satellite/tests/          # Satellite-specific tests (6 modules)
-├── test_features.py
-├── test_labeler.py
-├── test_normalize.py
-├── test_safety.py
-├── test_training.py
-└── test_artemis.py
-
-data-layer/tests/         # Data-layer tests (5 modules)
-├── test_smoke.py
-├── test_historical_tables.py
-├── test_liq_heatmap.py
-├── test_order_flow.py
-└── test_rate_limiter.py
-
-nous-server/core/         # TypeScript test suite (4270+ tests, vitest)
+satellite/tests/          # Satellite-specific tests
+data-layer/tests/         # Data-layer tests
 ```
 
----
-
-## Known Issues & Revisions
-
-The `docs/archive/` directory contains documented issues and their resolutions, organized by scope. (Formerly `revisions/`, moved to `docs/archive/`.)
-
-### `docs/archive/revision-exploration.md`
-
-Master list of 21 issues across the entire codebase, prioritized P0 through P3. Covers retrieval bugs, daemon failures, missing tools, and system prompt inaccuracies.
-
-### `docs/archive/nous-wiring/`
-
-Focused on the Nous <-> Python integration layer. Start with `executive-summary.md` for the high-level issue categories, then dive into:
-
-- **`nous-wiring-revisions.md`** -- 10 wiring issues (NW-1 to NW-10) -- **all 10 FIXED** (field name mismatches, retrieval truncation, silent failures, missing tools)
-- **`more-functionality.md`** -- 16 Nous capabilities (MF-0 to MF-15). **14 DONE, 2 SKIPPED (MF-11, MF-14), 0 remaining.**
-
-**If you're working on Nous integration, read the executive summary first.**
-
-### `docs/archive/memory-search/`
-
-Intelligent Retrieval Orchestrator -- multi-pass memory search. **IMPLEMENTED.**
-
-### `docs/archive/trade-recall/` -- ALL FIXED
-
-Trade retrieval failures -- three root causes identified and resolved.
-
-### `docs/archive/graph-changes/`
-
-Graph visualization enhancements -- cluster layout. **DONE.**
-
-### `docs/archive/trade-debug-interface/` -- IMPLEMENTED
-
-Trade execution telemetry -- sub-step visibility into all trade operations. Added `trade_step` span type (8th span type) to the debug system.
-
-### `docs/archive/token-optimization/`
-
-Token cost reduction measures:
-- **TO-1** -- Dynamic max_tokens per wake type (512-2048) -- **DONE**
-- **TO-2** -- Schema trimming for store/recall_memory (~70% smaller) -- **DONE**
-- **TO-3** -- Tiered stale tool-result truncation (150/300/400/600/800) -- **DONE**
-- **TO-4** -- Window size 6->4 with Haiku compression -- **DONE**
-- TO-5 through TO-8 -- Deferred
-
-### `docs/archive/memory-sections/` -- IMPLEMENTED (2026-02-21)
-
-Brain-inspired memory sectioning -- 4 sections (Episodic, Signals, Knowledge, Procedural) with per-section retrieval weights, decay curves, encoding modulation, consolidation, and procedural pattern-matching. All 7 issues implemented (Issues 0-6).
-
-### `docs/archive/memory-pruning/`
-
-Two-phase memory pruning (analyze_memory + batch_prune). **IMPLEMENTED.**
-
-### `docs/archive/debugging/`
-
-Debug Dashboard planning and implementation. **IMPLEMENTED.**
-
-### `docs/archive/portfolio-tracking/`
-
-Three paper trading portfolio bugs fixed (2026-03-01): (1) `stats_reset_at` auto-stamped on first run + `reset_paper_stats()` method + dashboard Reset Stats button; (2) initial balance now read from `provider._initial_balance` in context snapshot and briefing (not YAML config); (3) daemon-wake-initiated agent closes now update `_daily_realized_pnl` via fill lookup in `_wake_agent()` finally block. **ALL 3 BUGS FIXED.**
-
-### `docs/ML-wiring/`
-
-ML inference pipeline wired into live daemon (2026-03-05): model loading at startup, `_run_satellite_inference()` after each `satellite.tick()`, prediction persistence to `satellite.db`, briefing injection via `_latest_predictions` cache, kill switch safety checks, shadow mode default. **IMPLEMENTED.**
+Run: `PYTHONPATH=src pytest tests/` (satellite/data-layer use their own
+`PYTHONPATH`).
 
 ---
 
-### `docs/revisions/mechanical-exits/`
+## Revisions
 
-Mechanical exit system (2026-03-05, updated 2026-03-15): trailing stops (v2: ML-adaptive vol-regime activation 1.5–3.0%, tiered retracement 30–45%, agent exit lockout), breakeven stops (two-layer capital + fee, re-enabled), stop-tightening lockout, MFE/MAE tracking. Code handles exits deterministically; LLM handles entries. LLM cannot close positions once trailing is active. **IMPLEMENTED.**
+Active revision guides in `docs/revisions/`. Archived v1 revisions (all
+completed) in `docs/archive/`. Highlights:
 
-### `docs/revisions/realtime-price-data/`
-
-1-minute candle high/low enhancement (2026-03-05): uses candle extremes to catch MFE/MAE peaks missed by 10s polling gaps. Supplements polling-based tracking. **IMPLEMENTED.**
-
-### `docs/revisions/agent-trade-memory/`
-
-Agent trade memory (2026-03-05): in-memory deque of recent trade closes injected into briefing, with Nous fallback for cold starts. **IMPLEMENTED.**
-
-### `docs/revisions/trade-mechanism-debug/`
-
-Trade mechanism debug (2026-03-06): 6 bugs + 1 systemic issue in the mechanical exit system. 5 fix guides covering stale position/trigger caches after 429, Phase 3 backup close safety, 429 rate-limit resilience for HyperliquidProvider, trailing stop / breakeven exit classification, and cancel-before-place for breakeven SL. Key finding: PaperProvider delegates all price reads to mainnet HTTP — 429s affect paper mode too. Phase 3 preserved as legitimate Phase 2 failure backup. **IMPLEMENTED.**
-
-### `docs/revisions/ws-price-feed/`
-
-WebSocket price feed (2026-03-09): originally implemented as `daemon._run_ws_price_feed()` for `allMids` only. **SUPERSEDED** by `docs/revisions/ws-migration/` (2026-03-14) — allMids now managed by `MarketDataFeed` in `ws_feeds.py` alongside `l2Book` and `activeAssetCtx`. Daemon no longer manages WS directly.
-
-### `docs/revisions/ws-migration/`
-
-WebSocket migration Phase 1 (2026-03-14): market data WS via `src/hynous/data/providers/ws_feeds.py`. `MarketDataFeed` class manages `allMids`, `l2Book`, `activeAssetCtx` channels on one connection. Provider methods (`get_all_prices`, `get_price`, `get_l2_book`, `get_asset_context`, `get_multi_asset_contexts`) check WS cache first (<30s fresh), REST fallback. Daemon WS code removed (~120 lines). Phase 2 (account data: `clearinghouseState`, `openOrders`, `userFills`) planned for live trading. **PHASE 1 IMPLEMENTED.** 690 tests passing.
-
-### `docs/revisions/breakeven-fix/`
-
-Two-layer capital + fee breakeven system (2026-03-10) + Round 2 bug fixes (2026-03-12). **IMPLEMENTED.**
-
-**Round 1 — Two-layer redesign:**
-- Capital-breakeven (Layer 1): fixed 0.5% ROE threshold, SL at entry price, accepts fee loss (~0.7% ROE at 20x)
-- Fee-breakeven (Layer 2): fee-proportional threshold (1.4% at 20x), SL at entry + 0.07% buffer, nets ~$0
-- Both layers: fully mechanical (no `_wake_agent()`), rollback on failure, `_refresh_trigger_cache()` after placement
-- Candle peak tracking re-evaluates capital-BE on wick detection
-- 3 bundled bug fixes: A (missing cache refresh), B (blocking wake removed), C (cancel-replace rollback)
-
-**Round 2 — 9 bugs fixed (mechanical-exit-fixes-2.md):**
-- **A** (Phase 2 trail rollback): save/restore old SL info on trail update failure
-- **B** (ghost-state persistence): separate `_closed_coins` loop + unconditional `_persist_mechanical_state()` on close eviction
-- **C** (side-flip persist): `_persist_mechanical_state()` inside side-flip cleanup block
-- **D** (cleanup loop persist): conditional `_persist_mechanical_state()` after stale trailing cleanup
-- **E** (candle peak persist): `_persist_mechanical_state()` after `_update_peaks_from_candles()` updates peak
-- **F** (Phase 3 success persist): `_persist_mechanical_state()` after Phase 3 pop block
-- **G** (classification one-liner): trailing check as single-line condition + return
-- **H** (`taker_fee_pct` unification): all 6 daemon.py + scanner.py references → `get_trading_settings().taker_fee_pct`; field removed from `DaemonConfig` and `ScannerConfig`
-- **I** (load_config wiring): 9 `DaemonConfig` fields + 2 `ScannerConfig` fields that existed in YAML + dataclass but were never wired through constructor
-
-State persistence: `_persist_mechanical_state()` writes `_peak_roe`, `_trailing_active`, `_trailing_stop_px` to `storage/mechanical_state.json`; `_load_mechanical_state()` restores on startup (filtered by open positions). All 655 unit tests pass.
+- `docs/revisions/mechanical-exits/` — trailing stops, breakeven stops, stop-tightening lockout, MFE/MAE tracking
+- `docs/revisions/breakeven-fix/` — two-layer breakeven + dynamic protective SL (vol-regime distances)
+- `docs/revisions/trailing-stop-fix/` — Adaptive Trailing Stop v3 (continuous exponential retracement)
+- `docs/revisions/ws-migration/` — Phase 1 market data WS (verified); Phase 2 (account data) deferred to live trading
+- `docs/revisions/entry-quality-rework/` — composite entry score, ML pipeline fixes, adaptive weights
 
 ---
 
-## For Future Agents
-
-When working on this codebase:
-
-1. **Check docs/archive/ first** -- contains documented issues and their resolutions (formerly `revisions/`)
-2. **Most revisions complete** -- Nous wiring, memory search, trade recall, trade debug interface, token optimization, memory pruning, memory sections, brain visualization, portfolio tracking, ML wiring, mechanical exits, real-time price data, agent trade memory, trade mechanism debug, WS price feed, and breakeven-fix (Round 1 + Round 2) are all fully implemented
-4. **Check existing patterns** -- Don't reinvent, extend
-5. **Keep modules focused** -- One responsibility per file
-6. **Update this doc** -- If you change architecture, document it
-7. **Test your changes** -- Don't break what works
-8. **System prompt matters** -- Tools registered in `registry.py` also need guidance in `prompts/builder.py` TOOL_STRATEGY or the agent won't use them
-9. **Nous dist rebuild** -- When changing `@nous/core` exports, run `pnpm build` in `nous-server/core/` to update `dist/`
-
----
-
-Last updated: 2026-03-15
+Last updated: 2026-04-12 (phase 4 M6a — Nous server deleted, 5→4 component architecture)

@@ -29,14 +29,6 @@ class AgentConfig:
 
 
 @dataclass
-class NousConfig:
-    url: str = "http://localhost:3100"
-    server_dir: str = "~/Desktop/nous-build/packages/server"
-    db_path: str = "storage/nous.db"
-    auto_retrieve_limit: int = 5
-
-
-@dataclass
 class ExecutionConfig:
     mode: str = "paper"  # paper | testnet | live_confirm | live_auto
     paper_balance: float = 50000
@@ -290,7 +282,6 @@ class Config:
 
     # Sub-configs
     agent: AgentConfig = field(default_factory=AgentConfig)
-    nous: NousConfig = field(default_factory=NousConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     hyperliquid: HyperliquidConfig = field(default_factory=HyperliquidConfig)
@@ -330,7 +321,6 @@ def load_config(config_path: Optional[str] = None) -> Config:
 
     # Build config
     agent_raw = raw.get("agent", {})
-    nous_raw = raw.get("nous", {})
     exec_raw = raw.get("execution", {})
     mem_raw = raw.get("memory", {})
     hl_raw = raw.get("hyperliquid", {})
@@ -350,12 +340,6 @@ def load_config(config_path: Optional[str] = None) -> Config:
             model=agent_raw.get("model", "openrouter/x-ai/grok-4.1-fast"),
             max_tokens=agent_raw.get("max_tokens", 2048),
             temperature=agent_raw.get("temperature", 0.7),
-        ),
-        nous=NousConfig(
-            url=nous_raw.get("url", "http://localhost:3100"),
-            server_dir=nous_raw.get("server_dir", "~/Desktop/nous-build/packages/server"),
-            db_path=nous_raw.get("db_path", "storage/nous.db"),
-            auto_retrieve_limit=nous_raw.get("auto_retrieve_limit", 5),
         ),
         execution=ExecutionConfig(
             mode=exec_raw.get("mode", "paper"),

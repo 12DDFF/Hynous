@@ -1,73 +1,26 @@
 # CLAUDE.md — Hynous Project Guide
 
-> ⚠️ **v2 branch notice — this document describes v1 conventions**
->
-> You are reading this on the `v2` branch. The "5 runtime components", "28
-> agent tools", Nous memory system, and `python -m scripts.run_daemon`
-> references below all describe the v1 system. v2 is a ground-up rebuild
-> that deletes ~100K LOC of that infrastructure and replaces it with a
-> mechanical trading loop + post-trade analysis agent.
->
-> **For v2 conventions, read `v2-planning/00-master-plan.md` instead.**
-> Specifically the "Cross-Cutting Conventions" and "Engineer Protocol"
-> sections supersede the v1 content below. Phase 4 of the v2 plan rewrites
-> this file to reflect v2 reality.
->
-> **Phase 1 complete (2026-04-10):** `scripts/run_daemon.py` now exists.
-> `src/hynous/journal/` has schema, staging_store, capture, counterfactuals.
-> daemon.py emits lifecycle events. trading.py captures entry snapshots.
->
-> **Phase 2 complete (2026-04-12):** Full `JournalStore` at
-> `src/hynous/journal/store.py` replaces StagingStore. 9-table SQLite schema,
-> CRUD, embeddings (OpenAI text-embedding-3-small, matryoshka 512-dim),
-> semantic search, FastAPI routes at `/api/v2/journal/*` mounted in
-> `dashboard/dashboard/dashboard.py`. Staging→journal migration
-> (idempotent, flag-guarded) runs at daemon startup. Daemon now writes to
-> `storage/v2/journal.db` directly. 881 tests passing / 1 pre-existing
-> failure (baseline 824 + 57 new). Amendments 9 + 10 implemented.
->
-> **Phase 3 complete (2026-04-12):** Hybrid deterministic + LLM post-trade
-> analysis pipeline lives under `src/hynous/analysis/`:
-> `finding_catalog.py`, `mistake_tags.py`, `rules_engine.py` (12 rules),
-> `prompts.py`, `llm_pipeline.py` (litellm synthesis, single-attempt, no
-> retry), `validation.py` (evidence/tag/grade stripping),
-> `wake_integration.py` (daemon calls `trigger_analysis_async` after every
-> exit snapshot — background thread named `analysis-<trade_id[:8]>`),
-> `embeddings.py` (reuses journal's OpenAI 512-dim client),
-> `batch_rejection.py` (hourly cron thread `rejection-analysis-cron`
-> batch-judges pending rejections with `prompt_version='rejection-v1'`).
-> Persisted rows carry narrative, citations, merged deterministic + LLM
-> findings, mistake tags, grades, `process_quality_score`, and
-> `unverified_claims`. Baselines: unit 869/1, tests 924/1 (+4 new
-> integration, same pre-existing token-optimization failure),
-> mypy 333 errors / 89 source files, ruff 108.
->
-> **Phase 4 next:** Tier 1 deletions — Nous server + v1 memory tools +
-> discord chat. See `v2-planning/07-phase-4-tier1-deletions.md`.
->
-> Known-stale items in this file:
-> - The 5-component architecture table (v2 removes Nous, reducing to 4)
-> - Memory tool listings (phase 4 deletes 8 of them)
-> - "Running" section (partial — dashboard command still works; daemon standalone: `python -m scripts.run_daemon`)
-
----
-
-> Essential conventions for AI agents working on this codebase.
-> For detailed knowledge, see `~/.claude/projects/.../memory/MEMORY.md`.
+> Essential conventions for AI agents working on the `v2` branch.
+> Authoritative v2 plan lives in `v2-planning/00-master-plan.md`.
 
 ---
 
 ## Project Overview
 
-Hynous is a personal crypto intelligence system with an autonomous LLM trading agent. Python 3.11+.
+Hynous (v2) is a personal crypto trading system with a mechanical entry/exit
+loop and a post-trade LLM analysis pipeline. Python 3.11+.
 
-**5 runtime components:**
+The v1 LLM-in-the-loop trading agent, TypeScript Nous memory server, and most
+memory tooling have been removed. The current system writes every trade
+lifecycle event to a local SQLite journal at `storage/v2/journal.db` and
+analyzes trades after they close.
+
+**4 runtime components:**
 
 | Component | Port | Language | Purpose |
 |-----------|------|----------|---------|
-| Reflex Dashboard | `:3000` | Python → React | UI (10 pages) |
-| FastAPI Gateway | `:8000` | Python | Agent brain, daemon, tools |
-| Nous API | `:3100` | TypeScript/Hono | Memory system (SSA, FSRS, embeddings) |
+| Reflex Dashboard | `:3000` | Python → React | UI |
+| FastAPI Gateway | `:8000` | Python | Agent brain, daemon, journal (in-process), analysis agent |
 | Data Layer | `:8100` | Python/FastAPI | Market data collection + analytics |
 | Satellite | (in-process) | Python | ML feature engine + XGBoost inference |
 
@@ -79,20 +32,22 @@ Hynous is a personal crypto intelligence system with an autonomous LLM trading a
 hynous/
 ├── src/hynous/          # Main Python application
 │   ├── intelligence/    # Agent brain (agent, daemon, scanner, tools, prompts)
-│   ├── data/            # Market data providers (6 providers + WS feed manager)
-│   ├── nous/            # Python HTTP client for Nous API
+│   ├── journal/         # v2 trade journal (schema, store, capture, counterfactuals, embeddings, migrate_staging)
+│   ├── analysis/        # v2 post-trade analysis agent (rules engine + LLM synthesis + wake integration)
+│   ├── data/            # Market data providers (Hyperliquid, Coinglass, etc. + WS feed manager)
 │   ├── discord/         # Discord bot (chat relay, notifications, stats)
-│   └── core/            # Shared utilities (config, types, tracing)
-├── dashboard/           # Reflex UI (10 pages, 4 standalone HTML visualizations)
-├── satellite/           # ML feature engine (28 features, 14 condition models, XGBoost, walk-forward)
+│   └── core/            # Shared utilities (config, types, tracing, trading_settings)
+├── dashboard/           # Reflex UI + `/api/v2/journal/*` FastAPI router
+├── satellite/           # ML feature engine (XGBoost condition models, walk-forward)
 ├── data-layer/          # Standalone data collection service
-├── nous-server/         # TypeScript memory system monorepo
 ├── config/              # YAML configuration (default.yaml, theme.yaml)
-├── deploy/              # VPS deployment (3 systemd services, setup.sh)
-├── scripts/             # Entry points (run_dashboard.py, shell scripts)
+├── deploy/              # VPS deployment (2 systemd services: hynous, hynous-data; setup.sh)
+├── scripts/             # Entry points (run_dashboard.py, run_daemon.py)
 ├── tests/               # Test suites (unit, integration, e2e)
 ├── docs/                # Documentation hub + archived revisions
+├── v2-planning/         # v2 rebuild plan (phase docs, master plan, testing standards)
 └── storage/             # Runtime data (gitignored)
+    └── v2/              # journal.db + staging.db (migrated then retired)
 ```
 
 ---
@@ -101,8 +56,6 @@ hynous/
 
 ### Adding a New Tool
 
-Three steps — all three are required:
-
 1. **Create handler** in `src/hynous/intelligence/tools/my_tool.py`
 2. **Register** in `src/hynous/intelligence/tools/registry.py`:
    ```python
@@ -110,6 +63,8 @@ Three steps — all three are required:
    my_tool.register(registry)
    ```
 3. **Add to system prompt** in `src/hynous/intelligence/prompts/builder.py` TOOL_STRATEGY section — registering alone is NOT enough; the agent won't know to use a tool without system prompt guidance.
+
+Tools registered in `registry.py` are the canonical surface; keep scope narrow.
 
 ### Adding a New Dashboard Page
 
@@ -130,13 +85,17 @@ Three steps — all three are required:
 
 All config in `config/default.yaml`. Loaded by `src/hynous/core/config.py` → `load_config()`.
 
-**13 config dataclasses:** AgentConfig, NousConfig, ExecutionConfig, HyperliquidConfig, MemoryConfig, OrchestratorConfig, SectionsConfig, DaemonConfig, ScannerConfig, DataLayerConfig, DiscordConfig, SatelliteConfig, Config (root).
+Top-level dataclasses include AgentConfig, ExecutionConfig, HyperliquidConfig,
+MemoryConfig, OrchestratorConfig, SectionsConfig, DaemonConfig, ScannerConfig,
+DataLayerConfig, DiscordConfig, SatelliteConfig, V2Config (journal /
+analysis_agent / mechanical_entry / consolidation / user_chat sub-configs),
+and Config (root).
 
 **Environment variables** (in `.env`, never committed):
 ```
 OPENROUTER_API_KEY=sk-or-...        # LLM providers via OpenRouter
 HYPERLIQUID_PRIVATE_KEY=...          # Exchange wallet
-OPENAI_API_KEY=...                   # Nous vector embeddings
+OPENAI_API_KEY=...                   # Journal + analysis-agent embeddings (text-embedding-3-small)
 DISCORD_BOT_TOKEN=...               # Discord bot (optional)
 COINGLASS_API_KEY=...               # Derivatives data (optional)
 CRYPTOCOMPARE_API_KEY=...           # News feed (optional)
@@ -146,22 +105,23 @@ CRYPTOCOMPARE_API_KEY=...           # News feed (optional)
 
 ## Branches & Deployment
 
-**Single branch: `main`.** All development and production on `main`.
+v2 lives on the `v2` branch. It will never merge back into `main` — main
+tracks the v1 system and is being retired.
 
 | Branch | Purpose | VPS Path | Deploys to |
 |--------|---------|----------|------------|
-| `main` | **Production** — live trading agent | `/opt/hynous` | Ports 3000/8000/3100 |
+| `v2` | v2 trading system (mechanical loop + analysis agent) | `/opt/hynous` | Ports 3000 / 8000 |
 
 **Deploy workflow:**
 ```bash
-git push origin main
+git push origin v2
 ssh vps "cd /opt/hynous && sudo -u hynous git pull && sudo systemctl restart hynous"
 ```
 
 **VPS services:**
 ```bash
-sudo systemctl restart hynous        # Dashboard + daemon
-sudo systemctl restart nous          # Memory server
+sudo systemctl restart hynous        # Dashboard + daemon + journal (in-process)
+sudo systemctl restart hynous-data   # Data layer (:8100)
 ```
 
 ---
@@ -172,11 +132,8 @@ sudo systemctl restart nous          # Memory server
 # Dashboard (development)
 cd dashboard && reflex run
 
-# Daemon (background agent)
+# Daemon (background mechanical loop)
 python -m scripts.run_daemon
-
-# Nous server
-cd nous-server && pnpm --filter server start
 
 # Data layer
 cd data-layer && make run
@@ -195,10 +152,11 @@ PYTHONPATH=. pytest satellite/tests/
 
 # Data layer tests
 cd data-layer && pytest tests/
-
-# TypeScript tests (Nous)
-cd nous-server && pnpm test
 ```
+
+During phase 4 a canonical CE-ignore list is used to keep the baseline clean.
+See the active phase-4 directive or `v2-planning/07-phase-4-tier1-deletions.md`
+for the current list; it shrinks as orphan tests are deleted.
 
 ---
 
@@ -208,7 +166,6 @@ cd nous-server && pnpm test
 - **No over-engineering.** Only make changes that are directly requested.
 - **Tools need system prompt mention.** Registry alone doesn't make the agent use a tool.
 - **Config dataclass defaults must match YAML.** If you change one, change the other.
-- **Nous dist must be rebuilt** when `core/src/` exports change: `cd nous-server/core && pnpm build`
 - **Atomic file writes** for persistence: write to temp file, then rename.
 - **Thread safety** for shared state: use locks (see `trading_settings.py` pattern).
 
@@ -216,16 +173,19 @@ cd nous-server && pnpm test
 
 ## Documentation
 
-- `ARCHITECTURE.md` — System overview, component responsibilities, data flows
-- `docs/README.md` — Central documentation hub
-- `docs/integration.md` — Cross-system data flows (satellite ↔ data-layer ↔ daemon)
-- `docs/revisions/trade-mechanism-debug/` — 5 fix guides for mechanical exit bugs (implemented)
-- `docs/revisions/breakeven-fix/` — Two-layer breakeven system + Round 3 (stale flag fix, background wakes) + ML-adaptive trailing stop v2 (regime-based activation, tiered retracement, agent exit lockout) + Dynamic Protective SL (2026-03-17, replaces capital-BE: vol-regime distances Low=2.5%/Normal=7.0%/High=8.0%/Extreme=3.0% ROE, placed at entry detection). Capital-BE **DEPRECATED** (`capital_breakeven_enabled: false`). Fee-BE layer remains active. Trailing stop v2 **SUPERSEDED** by v3 (see below).
-- `docs/revisions/trailing-stop-fix/` — Adaptive Trailing Stop v3 (2026-03-18): continuous exponential retracement `r(p) = 0.20 + 0.30 × exp(-k × p)` replaces 3-tier discrete system. Vol regime absorbed into decay rate k (extreme=0.160, high=0.100, normal=0.080, low=0.040). Eliminates tier boundary discontinuities and floor violations. 6 new TradingSettings fields: `trail_ret_floor`, `trail_ret_amplitude`, `trail_ret_k_extreme/high/normal/low`. 800 unit tests passing.
-- `docs/revisions/ws-migration/` — WebSocket migration: Phase 1 (market data) implemented & verified. `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m) via `ws_feeds.py`. All 4 channels have staleness gating. Live soak test passed. Phase 2 (account data) planned for live trading.
-- `docs/archive/` — Completed revision guides (all resolved, kept for reference)
+- `v2-planning/00-master-plan.md` — authoritative v2 plan (read first)
+- `v2-planning/05-phase-2-journal-module.md` — journal schema, store, migration, embeddings
+- `v2-planning/06-phase-3-analysis-agent.md` — post-trade analysis pipeline (rules + LLM + validation)
+- `v2-planning/07-phase-4-tier1-deletions.md` — current phase (deletions of v1 infrastructure)
+- `ARCHITECTURE.md` — system overview, component responsibilities, data flows
+- `docs/README.md` — documentation hub (points at v2-planning for live design docs)
+- `docs/integration.md` — cross-system data flows
+- `docs/revisions/breakeven-fix/` — two-layer breakeven + dynamic protective SL (vol-regime distances Low 2.5% / Normal 7.0% / High 8.0% / Extreme 3.0% ROE). Capital-BE deprecated, fee-BE active.
+- `docs/revisions/trailing-stop-fix/` — Adaptive Trailing Stop v3: continuous exponential retracement `r(p) = 0.20 + 0.30 × exp(-k × p)` with k by vol regime (extreme 0.160 / high 0.100 / normal 0.080 / low 0.040). Replaces v2 tiers.
+- `docs/revisions/ws-migration/` — WS migration Phase 1 (market data via `ws_feeds.py`): `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m), staleness-gated with REST fallback. Phase 2 (account data) deferred.
+- `docs/archive/` — completed v1 revision guides, kept for historical reference only
 - Each major directory has its own `README.md`
 
 ---
 
-Last updated: 2026-04-12 (phase 2 complete)
+Last updated: 2026-04-12 (phase 4 M6a — Nous server + systemd unit deleted, 5→4 component architecture)

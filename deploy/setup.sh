@@ -20,7 +20,7 @@ echo "=== Hynous VPS Setup ==="
 echo ""
 
 # ── 1. System packages ─────────────────────────────────────
-echo "[1/7] Installing system packages..."
+echo "[1/5] Installing system packages..."
 apt-get update -qq
 apt-get install -y -qq \
     build-essential git curl wget \
@@ -28,23 +28,14 @@ apt-get install -y -qq \
     python3 python3-pip python3-venv \
     ca-certificates gnupg
 
-# ── 2. Node.js 22 LTS ──────────────────────────────────────
-echo "[2/7] Installing Node.js 22..."
-if ! command -v node &>/dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-    apt-get install -y -qq nodejs
-fi
-npm install -g pnpm
-echo "  Node: $(node --version), pnpm: $(pnpm --version)"
-
-# ── 3. Create app user ─────────────────────────────────────
-echo "[3/7] Creating app user..."
+# ── 2. Create app user ─────────────────────────────────────
+echo "[2/5] Creating app user..."
 if ! id "$APP_USER" &>/dev/null; then
     useradd -r -m -s /bin/bash "$APP_USER"
 fi
 
-# ── 4. Clone repo ──────────────────────────────────────────
-echo "[4/7] Cloning repository..."
+# ── 3. Clone repo ──────────────────────────────────────────
+echo "[3/5] Cloning repository..."
 if [ -d "$APP_DIR" ]; then
     echo "  $APP_DIR already exists, pulling latest..."
     cd "$APP_DIR" && git pull
@@ -53,8 +44,8 @@ else
 fi
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
-# ── 5. Python venv + dependencies ──────────────────────────
-echo "[5/7] Setting up Python environment..."
+# ── 4. Python venv + dependencies ──────────────────────────
+echo "[4/5] Setting up Python environment..."
 cd "$APP_DIR"
 sudo -u "$APP_USER" bash -c "
     cd $APP_DIR
@@ -66,15 +57,8 @@ sudo -u "$APP_USER" bash -c "
     cd dashboard && pip install -r requirements.txt
 "
 
-# ── 6. Nous server dependencies ────────────────────────────
-echo "[6/7] Installing Nous server dependencies..."
-sudo -u "$APP_USER" bash -c "
-    cd $APP_DIR/nous-server
-    pnpm install
-"
-
-# ── 7. Create .env (user fills in) ─────────────────────────
-echo "[7/7] Setting up configuration..."
+# ── 5. Create .env (user fills in) ─────────────────────────
+echo "[5/5] Setting up configuration..."
 ENV_FILE="$APP_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
     cp "$APP_DIR/.env.example" "$ENV_FILE"
@@ -86,15 +70,14 @@ if [ ! -f "$ENV_FILE" ]; then
     echo ""
 fi
 
-# ── 8. Storage directories ─────────────────────────────────
+# Storage directories
 sudo -u "$APP_USER" mkdir -p "$APP_DIR/storage"
 
-# ── 9. Install systemd services ────────────────────────────
+# Install systemd services
 echo "Installing systemd services..."
 cp "$APP_DIR/deploy/hynous.service" /etc/systemd/system/
-cp "$APP_DIR/deploy/nous.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable nous hynous
+systemctl enable hynous
 
 echo ""
 echo "============================================"
@@ -106,7 +89,6 @@ echo "  1. Edit your API keys:"
 echo "     nano $ENV_FILE"
 echo ""
 echo "  2. Start the services:"
-echo "     systemctl start nous"
 echo "     systemctl start hynous"
 echo ""
 echo "  3. Check status:"

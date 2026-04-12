@@ -260,6 +260,28 @@ Commit: `[phase-4] delete src/hynous/nous python client`
 
 ### Step 6 — Delete Nous TypeScript server
 
+**Split note (architect, 2026-04-12):** Step 6 was executed as two
+milestones rather than one, to ease rollback and audit review:
+
+- **M6a (commit `[phase-4] delete nous TypeScript server + config/docs rewrites`)**
+  touched the following files (10 items):
+  - Deleted `nous-server/` (entire directory)
+  - Deleted `deploy/nous.service`
+  - `config/default.yaml` — removed `nous:` block; rephrased `health_check_interval` comment
+  - `src/hynous/core/config.py` — removed `NousConfig` dataclass + root `nous` field + loader wiring
+  - `deploy/setup.sh` — rewrote: 7-step → 5-step (Node/pnpm + Nous build steps gone), `systemctl enable nous hynous` → `systemctl enable hynous`, tail commands updated
+  - `deploy/README.md` — 3-service → 2-service table; removed Nous row / start / restart / stop / log commands; updated Test Instance box (removed Nous row and nous-test references); updated `OPENAI_API_KEY` comment from "Nous vector embeddings" → "journal embeddings"
+  - `Makefile` — deleted `init-db` target (JournalStore auto-initializes, Option A per directive)
+  - `pyproject.toml` — updated `description` to v2-appropriate text
+  - `src/hynous/__init__.py` — scrubbed `NousStore` → `JournalStore` in the lazy-import comment
+  - `CLAUDE.md` / `README.md` / `ARCHITECTURE.md` / `docs/README.md` / `docs/integration.md` — v2-notice blocks removed, bodies rewritten to describe v2 directly (5-component → 4-component, Nous / coach / consolidation / playbook_matcher / memory-tool language purged, mechanical-exits / satellite / data-layer content preserved)
+- **M6b (next milestone, separate commit)**: mechanical `rm` of the 16
+  orphan test files enumerated in Step 7 below (plus
+  `test_live_orchestrator.py`, `test_token_optimization.py`,
+  `test_decay_conflict_fixes.py`).
+
+The split has no scope impact on the overall phase-4 deletion set.
+
 ```bash
 rm -rf nous-server/
 ```

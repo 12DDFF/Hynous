@@ -47,10 +47,6 @@ clean:
 	rm -rf htmlcov/
 	find . -type d -name __pycache__ -exec rm -rf {} +
 
-# Initialize database
-init-db:
-	python -c "from hynous.nous import NousStore; NousStore('data/intelligence.db')"
-
 # Help
 help:
 	@echo "Available commands:"

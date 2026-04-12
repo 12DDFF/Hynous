@@ -41,7 +41,7 @@ daemon:
   curiosity_check_interval: 900    # Curiosity queue check interval (seconds, 15 min)
   decay_interval: 21600              # FSRS batch decay cycle interval (seconds, 6 hours)
   conflict_check_interval: 1800      # Contradiction queue polling interval (seconds, 30 min)
-  health_check_interval: 3600        # Nous health check interval (seconds, 1 hour)
+  health_check_interval: 3600        # Daemon health check interval (seconds)
   embedding_backfill_interval: 43200 # Embedding backfill interval (seconds, 12 hours)
   consolidation_interval: 86400      # Cross-episode generalization (seconds, 24 hours)
   max_daily_loss_usd: 100            # Circuit breaker: pause trading after this daily loss
@@ -128,13 +128,6 @@ data_layer:
   url: "http://127.0.0.1:8100"    # hynous-data REST API
   enabled: true                     # Use data layer signals in briefing/scanner
   timeout: 5                        # HTTP timeout seconds
-
-# Memory (Nous) settings
-nous:
-  url: "http://localhost:3100"        # Nous server URL
-  server_dir: "nous-server/server"  # Path to Nous server (relative to project root)
-  db_path: "storage/nous.db"          # Server-side DB path
-  auto_retrieve_limit: 5              # Recent memories to auto-load
 
 # Intelligent Retrieval Orchestrator (multi-pass memory search)
 orchestrator:
