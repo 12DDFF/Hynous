@@ -467,6 +467,85 @@ def test_migrate_staging_no_source_db_returns_empty_counts(tmp_path: Any) -> Non
     }
 
 
+# ---------------------------------------------------------------------------
+# Amendment 10 — end-to-end order flow + smart money capture (plan test #8)
+# ---------------------------------------------------------------------------
+
+
+def test_full_trade_capture_populates_order_flow_and_smart_money(
+    tmp_journal_db: JournalStore,
+    sample_entry_snapshot: TradeEntrySnapshot,
+) -> None:
+    """Drive build_entry_snapshot with a mocked data-layer client and assert
+    the persisted entry snapshot has populated order_flow_state and
+    smart_money_context fields (not the empty-dataclass placeholders from
+    phase 1).
+    """
+    from unittest.mock import MagicMock, patch
+
+    from hynous.journal.capture import (
+        _build_order_flow_state,
+        _build_smart_money_context,
+    )
+
+    mock_client = MagicMock()
+    mock_client.order_flow.return_value = {
+        "windows": {
+            "1m":  {"cvd": 50.0, "buy_pct": 60.0},
+            "5m":  {"cvd": 250.0, "buy_pct": 55.0},
+            "15m": {"cvd": 600.0, "buy_pct": 50.0},
+            "30m": {"cvd": 900.0, "buy_pct": 48.0},
+            "1h":  {"cvd": 1500.0, "buy_pct": 53.0},
+        },
+    }
+    mock_client.large_trade_count.return_value = {"count": 4}
+    mock_client.hlp_positions.return_value = {
+        "positions": [
+            {"coin": "BTC", "side": "long", "size_usd": 7_500_000.0},
+        ],
+    }
+    mock_client.whales.return_value = {
+        "positions": [
+            {"wallet": "0xw1", "side": "long", "size_usd": 5_000_000.0},
+            {"wallet": "0xw2", "side": "short", "size_usd": 3_000_000.0},
+        ],
+    }
+    mock_client.sm_changes.return_value = {
+        "changes": [
+            {"coin": "BTC", "action": "entry", "side": "long"},
+            {"coin": "BTC", "action": "flip", "side": "short"},
+        ],
+    }
+
+    with patch(
+        "hynous.data.providers.hynous_data.get_client",
+        return_value=mock_client,
+    ):
+        of = _build_order_flow_state(daemon=MagicMock(), symbol="BTC")
+        sm = _build_smart_money_context(daemon=MagicMock(), symbol="BTC")
+
+    # Build a modified entry snapshot with the populated states and persist.
+    from dataclasses import replace as dc_replace
+    enriched = dc_replace(
+        sample_entry_snapshot, order_flow_state=of, smart_money_context=sm,
+    )
+    tmp_journal_db.insert_entry_snapshot(enriched)
+
+    # Read back and verify Amendment 10 acceptance criteria: non-None
+    # cvd_1h + buy_sell_ratio_1h + non-empty top_whale_positions.
+    bundle = tmp_journal_db.get_trade(enriched.trade_basics.trade_id)
+    assert bundle is not None
+    es = bundle["entry_snapshot"]
+    assert es.order_flow_state.cvd_1h == 1500.0
+    assert es.order_flow_state.cvd_30m == 900.0
+    assert es.order_flow_state.buy_sell_ratio_1h == 0.53
+    assert es.order_flow_state.large_trade_count_1h == 4
+    assert es.smart_money_context.hlp_side == "long"
+    assert es.smart_money_context.hlp_size_usd == 7_500_000.0
+    assert len(es.smart_money_context.top_whale_positions) == 2
+    assert es.smart_money_context.smart_money_opens_1h == 2
+
+
 def test_migrate_staging_skips_corrupt_row(tmp_path: Any) -> None:
     """A malformed JSON row in staging is logged + skipped, not fatal."""
     import sqlite3

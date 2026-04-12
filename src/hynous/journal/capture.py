@@ -471,16 +471,158 @@ def _build_liquidation_terrain(daemon: Any, symbol: str) -> LiquidationTerrain:
 
 
 def _build_order_flow_state(daemon: Any, symbol: str) -> OrderFlowState:
-    """Read order flow metrics."""
-    # CVD data is in the structural features, not conditions.
-    # Data-layer order flow endpoints are best-effort.
-    return OrderFlowState()
+    """Populate OrderFlowState from the data-layer service (:8100).
+
+    Reads ``/v1/orderflow/{coin}`` for windowed CVD / buy-sell ratios and
+    ``/v1/orderflow/{coin}/large-trade-count`` for the >1%-of-volume count.
+    Every individual call is try/except-wrapped — a single endpoint outage
+    cannot strand an entry snapshot. Missing fields become None.
+
+    ``cvd_acceleration`` is computed client-side as ``cvd_5m − cvd_15m / 3``
+    (5m actual vs one-third of the 15m accumulation — a trailing-baseline
+    proxy). Returns the dataclass in its all-None state if the data-layer
+    client itself is unreachable.
+    """
+    try:
+        from hynous.data.providers.hynous_data import get_client
+        client = get_client()
+    except Exception:
+        logger.debug("data-layer client unavailable for order flow", exc_info=True)
+        return OrderFlowState()
+
+    # Windowed CVD / buy-pct
+    flow = None
+    try:
+        flow = client.order_flow(symbol)
+    except Exception:
+        logger.debug("order_flow fetch failed", exc_info=True)
+
+    if not flow or "windows" not in flow:
+        # Populate only large_trade_count if we can, then bail.
+        ltc_only = _fetch_large_trade_count(client, symbol)
+        return OrderFlowState(large_trade_count_1h=ltc_only)
+
+    windows = flow["windows"]
+
+    def _ratio(label: str) -> float | None:
+        win = windows.get(label)
+        if not win:
+            return None
+        bp = win.get("buy_pct")
+        return bp / 100.0 if bp is not None else None
+
+    def _cvd(label: str) -> float | None:
+        win = windows.get(label)
+        return win.get("cvd") if win else None
+
+    cvd_5m = _cvd("5m")
+    cvd_15m = _cvd("15m")
+    if cvd_5m is not None and cvd_15m is not None:
+        cvd_accel: float | None = cvd_5m - (cvd_15m / 3.0)
+    else:
+        cvd_accel = None
+
+    ltc = _fetch_large_trade_count(client, symbol)
+
+    return OrderFlowState(
+        cvd_30m=_cvd("30m"),
+        cvd_1h=_cvd("1h"),
+        cvd_acceleration=cvd_accel,
+        buy_sell_ratio_1m=_ratio("1m"),
+        buy_sell_ratio_5m=_ratio("5m"),
+        buy_sell_ratio_15m=_ratio("15m"),
+        buy_sell_ratio_1h=_ratio("1h"),
+        large_trade_count_1h=ltc,
+    )
+
+
+def _fetch_large_trade_count(client: Any, symbol: str) -> int | None:
+    """Best-effort large-trade count over the 1h window. Returns None on failure."""
+    try:
+        resp = client.large_trade_count(symbol, window_s=3600)
+        if resp and isinstance(resp.get("count"), int):
+            return int(resp["count"])
+    except Exception:
+        logger.debug("large_trade_count fetch failed", exc_info=True)
+    return None
 
 
 def _build_smart_money_context(daemon: Any, symbol: str) -> SmartMoneyContext:
-    """Read HLP and whale data from data-layer."""
-    # Data-layer client access is best-effort
-    return SmartMoneyContext()
+    """Populate SmartMoneyContext from HLP, whale, and smart-money data-layer feeds.
+
+    Graceful degradation per-call — each endpoint is try/except-wrapped. A
+    ``sm_changes`` response uses the DB column name ``action`` with values
+    ``"entry"``, ``"flip"``, ``"increase"``, ``"exit"``; we count the first
+    three as position-opening events for the symbol (architect delta 2 —
+    plan sketch at lines 1820-1828 had the wrong key ``change_type`` and
+    wrong values ``"open"``/``"opened"``/``"new_position"``).
+    """
+    try:
+        from hynous.data.providers.hynous_data import get_client
+        client = get_client()
+    except Exception:
+        logger.debug("data-layer client unavailable for smart money", exc_info=True)
+        return SmartMoneyContext(top_whale_positions=[], smart_money_opens_1h=0)
+
+    hlp_net: float | None = None
+    hlp_size: float | None = None
+    hlp_side: str | None = None
+    try:
+        hlp = client.hlp_positions()
+        if hlp and isinstance(hlp.get("positions"), list):
+            long_usd = sum(
+                p.get("size_usd", 0)
+                for p in hlp["positions"]
+                if p.get("coin") == symbol and p.get("side") == "long"
+            )
+            short_usd = sum(
+                p.get("size_usd", 0)
+                for p in hlp["positions"]
+                if p.get("coin") == symbol and p.get("side") == "short"
+            )
+            hlp_net = long_usd - short_usd
+            hlp_size = long_usd + short_usd
+            if hlp_net > 0:
+                hlp_side = "long"
+            elif hlp_net < 0:
+                hlp_side = "short"
+            elif hlp_size == 0:
+                hlp_side = None  # no position on this coin
+            else:
+                hlp_side = "flat"  # equal longs and shorts — rare
+    except Exception:
+        logger.debug("hlp_positions fetch failed", exc_info=True)
+
+    top_whales: list[dict[str, Any]] = []
+    try:
+        whales = client.whales(symbol, top_n=5)
+        if whales and isinstance(whales.get("positions"), list):
+            top_whales = whales["positions"][:5]
+    except Exception:
+        logger.debug("whales fetch failed", exc_info=True)
+
+    sm_opens = 0
+    try:
+        changes = client.sm_changes(minutes=60)
+        if changes and isinstance(changes.get("changes"), list):
+            # Architect delta 2: real column is `action`, opening values are
+            # "entry" (new position), "flip" (reverse side), "increase"
+            # (size up). Excludes "exit" (closures).
+            sm_opens = sum(
+                1 for ch in changes["changes"]
+                if ch.get("coin") == symbol
+                and ch.get("action") in ("entry", "flip", "increase")
+            )
+    except Exception:
+        logger.debug("sm_changes fetch failed", exc_info=True)
+
+    return SmartMoneyContext(
+        hlp_net_delta_usd=hlp_net,
+        hlp_side=hlp_side,
+        hlp_size_usd=hlp_size,
+        top_whale_positions=top_whales,
+        smart_money_opens_1h=sm_opens,
+    )
 
 
 def _build_time_context() -> TimeContext:

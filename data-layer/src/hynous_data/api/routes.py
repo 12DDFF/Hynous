@@ -88,6 +88,23 @@ def create_router(c: dict) -> APIRouter:
         result["computed_at"] = time.time()
         return result
 
+    @router.get("/v1/orderflow/{coin}/large-trade-count")
+    def large_trade_count(
+        coin: str,
+        window_s: int = Query(3600, ge=60, le=86400),
+    ):
+        """Count trades in the window exceeding 1% of window volume.
+
+        Used by the v2 journal to populate order_flow_state.large_trade_count_1h.
+        """
+        if "order_flow" not in c:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Order flow engine not available"},
+            )
+        engine = c["order_flow"]
+        return engine.large_trade_count(coin.upper(), window_s=window_s)
+
     @router.get("/v1/whales/{coin}")
     def whales(coin: str, top_n: int = Query(50, ge=1, le=500)):
         if "whale_tracker" not in c:

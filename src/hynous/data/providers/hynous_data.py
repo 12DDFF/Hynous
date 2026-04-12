@@ -225,6 +225,18 @@ class HynousDataClient:
         """Get order flow / CVD for a coin."""
         return self._get(f"/v1/orderflow/{coin.upper()}")
 
+    def large_trade_count(self, coin: str, window_s: int = 3600) -> dict | None:
+        """Count of trades in the window exceeding 1% of window volume.
+
+        Returns ``{"coin", "window_s", "threshold_usd", "count"}`` or None
+        on any transport failure. Used by the v2 journal to populate
+        ``OrderFlowState.large_trade_count_1h``.
+        """
+        return self._get(
+            f"/v1/orderflow/{coin.upper()}/large-trade-count",
+            params={"window_s": window_s},
+        )
+
     def order_flow_summary(self, coin: str) -> str | None:
         """Compact CVD summary for context injection."""
         data = self.order_flow(coin)

@@ -713,3 +713,143 @@ def test_build_entry_embedding_text_produces_expected_format(
     assert "vol regime: normal" in text
     assert "direction signal: long" in text
     assert "|" in text  # pipe-separated
+
+
+# ---------------------------------------------------------------------------
+# M6 — Amendment 10 order flow + smart money backfill
+# ---------------------------------------------------------------------------
+
+
+def test_build_order_flow_state_populates_windows_from_mock_client() -> None:
+    """Mocked data-layer response → every window / ratio / CVD / large-trade
+    count populated correctly on OrderFlowState."""
+    from hynous.journal.capture import _build_order_flow_state
+
+    mock_client = MagicMock()
+    mock_client.order_flow.return_value = {
+        "coin": "BTC",
+        "windows": {
+            "1m":  {"cvd": 100.0, "buy_pct": 55.0},
+            "5m":  {"cvd": 300.0, "buy_pct": 52.0},
+            "15m": {"cvd": 600.0, "buy_pct": 48.0},
+            "30m": {"cvd": 900.0, "buy_pct": 47.0},
+            "1h":  {"cvd": 1200.0, "buy_pct": 51.0},
+        },
+    }
+    mock_client.large_trade_count.return_value = {"count": 7}
+
+    with patch(
+        "hynous.data.providers.hynous_data.get_client",
+        return_value=mock_client,
+    ):
+        state = _build_order_flow_state(daemon=MagicMock(), symbol="BTC")
+
+    assert state.cvd_30m == 900.0
+    assert state.cvd_1h == 1200.0
+    # cvd_acceleration = cvd_5m - cvd_15m / 3 = 300 - 200 = 100
+    assert state.cvd_acceleration == 100.0
+    assert state.buy_sell_ratio_1m == 0.55
+    assert state.buy_sell_ratio_5m == 0.52
+    assert state.buy_sell_ratio_15m == 0.48
+    assert state.buy_sell_ratio_1h == 0.51
+    assert state.large_trade_count_1h == 7
+
+
+def test_build_order_flow_state_graceful_when_data_layer_down() -> None:
+    """If ``get_client`` raises, return an all-None OrderFlowState (not raise)."""
+    from hynous.journal.capture import _build_order_flow_state
+
+    with patch(
+        "hynous.data.providers.hynous_data.get_client",
+        side_effect=RuntimeError("connection refused"),
+    ):
+        state = _build_order_flow_state(daemon=MagicMock(), symbol="BTC")
+
+    # Every field back to default (None / None / None / ... / None).
+    assert state.cvd_1h is None
+    assert state.cvd_30m is None
+    assert state.buy_sell_ratio_1h is None
+    assert state.large_trade_count_1h is None
+
+
+def test_build_smart_money_context_aggregates_hlp_per_symbol() -> None:
+    """HLP aggregation: only positions matching the target symbol count
+    toward net/size; cross-coin positions are ignored."""
+    from hynous.journal.capture import _build_smart_money_context
+
+    mock_client = MagicMock()
+    mock_client.hlp_positions.return_value = {
+        "positions": [
+            {"coin": "BTC", "side": "long", "size_usd": 5_000_000.0},
+            {"coin": "BTC", "side": "short", "size_usd": 2_000_000.0},
+            {"coin": "ETH", "side": "long", "size_usd": 10_000_000.0},  # ignored
+        ],
+    }
+    mock_client.whales.return_value = {
+        "positions": [{"wallet": "0x1", "size_usd": 3.0e6}],
+    }
+    mock_client.sm_changes.return_value = {"changes": []}
+
+    with patch(
+        "hynous.data.providers.hynous_data.get_client",
+        return_value=mock_client,
+    ):
+        ctx = _build_smart_money_context(daemon=MagicMock(), symbol="BTC")
+
+    assert ctx.hlp_net_delta_usd == 3_000_000.0  # 5M long - 2M short
+    assert ctx.hlp_size_usd == 7_000_000.0       # 5M + 2M (BTC only)
+    assert ctx.hlp_side == "long"
+    assert len(ctx.top_whale_positions) == 1
+
+
+def test_build_smart_money_context_counts_sm_opens_for_symbol_only() -> None:
+    """sm_changes response filters to target symbol; count includes
+    entry/flip/increase actions (architect delta 2); 'exit' is excluded."""
+    from hynous.journal.capture import _build_smart_money_context
+
+    mock_client = MagicMock()
+    mock_client.hlp_positions.return_value = {"positions": []}
+    mock_client.whales.return_value = {"positions": []}
+    mock_client.sm_changes.return_value = {
+        "changes": [
+            # Three opens on BTC (entry + flip + increase)
+            {"coin": "BTC", "action": "entry", "side": "long"},
+            {"coin": "BTC", "action": "flip", "side": "short"},
+            {"coin": "BTC", "action": "increase", "side": "long"},
+            # Exit on BTC — should NOT count
+            {"coin": "BTC", "action": "exit", "side": "long"},
+            # Entry on a different coin — filtered out
+            {"coin": "ETH", "action": "entry", "side": "long"},
+        ],
+    }
+
+    with patch(
+        "hynous.data.providers.hynous_data.get_client",
+        return_value=mock_client,
+    ):
+        ctx = _build_smart_money_context(daemon=MagicMock(), symbol="BTC")
+
+    assert ctx.smart_money_opens_1h == 3
+
+
+def test_build_smart_money_context_graceful_when_all_endpoints_down() -> None:
+    """Every data-layer endpoint raises → SmartMoneyContext comes back with
+    defaults, no exception escapes."""
+    from hynous.journal.capture import _build_smart_money_context
+
+    mock_client = MagicMock()
+    mock_client.hlp_positions.side_effect = RuntimeError("boom")
+    mock_client.whales.side_effect = RuntimeError("boom")
+    mock_client.sm_changes.side_effect = RuntimeError("boom")
+
+    with patch(
+        "hynous.data.providers.hynous_data.get_client",
+        return_value=mock_client,
+    ):
+        ctx = _build_smart_money_context(daemon=MagicMock(), symbol="BTC")
+
+    assert ctx.hlp_net_delta_usd is None
+    assert ctx.hlp_side is None
+    assert ctx.hlp_size_usd is None
+    assert ctx.top_whale_positions == []
+    assert ctx.smart_money_opens_1h == 0
