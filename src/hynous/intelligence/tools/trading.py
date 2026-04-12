@@ -22,9 +22,7 @@ Standard tool module pattern:
   3. register() wires into registry
 """
 
-import json
 import logging
-import threading
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -946,18 +944,7 @@ def handle_execute_trade(
                         f"within 30min. Tight stops in this environment get hunted."
                     )
 
-    # --- Trade history pattern warnings ---
-    if ts.trade_history_warnings:
-        try:
-            from ..trade_history import get_trade_warnings
-            _hour = datetime.now(timezone.utc).hour
-            _hist_warnings = get_trade_warnings(
-                symbol=symbol, side=side, confidence=confidence,
-                reasoning=reasoning or "", hour=_hour,
-            )
-            _warnings.extend(_hist_warnings)
-        except Exception as e:
-            logger.debug("Trade history warnings skipped: %s", e)
+    # v1 trade_history warnings removed — analysis agent now surfaces patterns post-hoc
 
     # --- Validation summary span ---
     _record_trade_span(
@@ -975,21 +962,7 @@ def handle_execute_trade(
         warnings=_warnings if _warnings else None,
     )
 
-    # --- Pre-mortem check (Haiku sanity check before execution) ---
-    try:
-        from ..coach import Coach
-        coach = Coach(config)
-        market_ctx = coach._build_pre_mortem_context(symbol, side)
-        pre_mortem_warning = coach.pre_mortem(
-            symbol=symbol, side=side, leverage=leverage,
-            stop_loss=stop_loss, take_profit=take_profit,
-            confidence=confidence, reasoning=reasoning,
-            market_context=market_ctx,
-        )
-        if pre_mortem_warning:
-            _warnings.append(f"Pre-mortem: {pre_mortem_warning}")
-    except Exception as e:
-        logger.debug("Pre-mortem check skipped: %s", e)
+    # v1 coach pre-mortem removed — analysis is post-trade only in v2
 
     # --- Set leverage if specified ---
     if leverage is not None:
@@ -1052,21 +1025,7 @@ def handle_execute_trade(
             if leverage is not None:
                 lines.append(f"Leverage: {leverage}x")
 
-            # Store in memory — every trade is documented
-            if is_buy:
-                risk = limit_price - stop_loss
-                reward = take_profit - limit_price
-            else:
-                risk = stop_loss - limit_price
-                reward = limit_price - take_profit
-            rr_val = round(reward / risk, 2) if risk > 0 else 0
-
-            _store_trade_memory(
-                side, symbol, f"LIMIT@{_fmt_price(limit_price)}",
-                limit_price, stop_loss, take_profit, confidence,
-                size_usd or (sz_placed * limit_price), sz_placed, rr_val, reasoning, lines,
-                trade_type=trade_type,
-            )
+            # v1 Nous memory store removed — phase 1 journal capture handles all trade persistence
 
             lines.extend(_warnings)
             return "\n".join(lines)
@@ -1147,15 +1106,13 @@ def handle_execute_trade(
             "execute_trade", "v2_capture", False, f"Capture failed: {_v2_err}",
         )
 
-    # Invalidate snapshot + briefing cache so next chat() gets fresh position data
+    # Invalidate briefing cache so next chat() gets fresh position data
     try:
-        from ..context_snapshot import invalidate_snapshot
         from ..briefing import invalidate_briefing_cache
-        invalidate_snapshot()
         invalidate_briefing_cache()
     except Exception:
         pass
-    _record_trade_span("execute_trade", "cache_invalidation", True, "Snapshot + briefing cache cleared")
+    _record_trade_span("execute_trade", "cache_invalidation", True, "Briefing cache cleared")
 
     # --- Build result ---
     effective_usd = size_usd if size_usd else fill_sz * fill_px
@@ -1203,64 +1160,8 @@ def handle_execute_trade(
     except Exception:
         pass
 
-    # --- Store trade in memory (always — every trade is documented) ---
-    rr_val = 0
-    if stop_loss is not None and take_profit is not None:
-        if is_buy:
-            risk = fill_px - stop_loss
-            reward = take_profit - fill_px
-        else:
-            risk = stop_loss - fill_px
-            reward = fill_px - take_profit
-        rr_val = round(reward / risk, 2) if risk > 0 else 0
-
-    _mem_start = time.monotonic()
-    _mem_node_id = _store_trade_memory(
-        side, symbol, _fmt_price(fill_px), fill_px,
-        stop_loss, take_profit, confidence,
-        effective_usd, fill_sz, rr_val, reasoning, lines,
-        trade_type=trade_type,
-    )
-    _record_trade_span(
-        "execute_trade", "memory_store",
-        _mem_node_id is not None,
-        f"Node {_mem_node_id} created" if _mem_node_id else "Memory store failed",
-        duration_ms=int((time.monotonic() - _mem_start) * 1000),
-        node_id=_mem_node_id, subtype="custom:trade_entry",
-    )
-
-    # --- Log entry conditions for feedback loop (Phase 3) ---
-    try:
-        if ml_cond and hasattr(daemon, '_satellite_store') and daemon._satellite_store:
-            import json as _json
-            daemon._satellite_store.conn.execute(
-                "INSERT INTO entry_snapshots ("
-                "trade_id, coin, side, entry_time, composite_score, "
-                "vol_1h_regime, vol_1h_pctl, entry_quality_pctl, "
-                "funding_4h_pctl, volume_1h_regime, mae_long_pctl, "
-                "mae_short_pctl, direction_signal, direction_long_roe, "
-                "direction_short_roe, score_components"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    _mem_node_id or "",
-                    symbol, side, time.time(),
-                    ml_cond.get("_entry_score", 50),
-                    ml_cond.get("vol_1h", {}).get("regime"),
-                    ml_cond.get("vol_1h", {}).get("percentile"),
-                    ml_cond.get("entry_quality", {}).get("percentile"),
-                    ml_cond.get("funding_4h", {}).get("percentile"),
-                    ml_cond.get("volume_1h", {}).get("regime"),
-                    ml_cond.get("mae_long", {}).get("percentile"),
-                    ml_cond.get("mae_short", {}).get("percentile"),
-                    ml_cond.get("direction_signal"),
-                    ml_cond.get("direction_long_roe", 0),
-                    ml_cond.get("direction_short_roe", 0),
-                    _json.dumps(ml_cond.get("_entry_score_components", {})),
-                ),
-            )
-            daemon._satellite_store.conn.commit()
-    except Exception:
-        logger.debug("Failed to log entry snapshot", exc_info=True)
+    # v1 Nous memory store removed — phase 1 journal capture handles all trade persistence
+    # (old satellite.db entry_snapshots insert also removed — v2 journal owns entry capture)
 
     lines.extend(_warnings)
     return "\n".join(lines)
@@ -1312,226 +1213,6 @@ def _place_triggers(
         except Exception as e:
             logger.error("Failed to place take profit: %s", e)
             lines.append(f"Take Profit: {_fmt_price(take_profit)} [FAILED: {e}]")
-
-
-def _store_to_nous(
-    subtype: str,
-    title: str,
-    content: str,
-    summary: str,
-    signals: dict | None = None,
-    link_to: str | None = None,
-    edge_type: str = "part_of",
-    event_time: str | None = None,
-) -> str | None:
-    """Store a trade memory node in Nous with proper structure and linking.
-
-    Creates a node with structured JSON body and optional edge to a related
-    node. Uses specific subtypes (trade_entry, trade_close, trade_modify)
-    and 'part_of' edges (SSA weight 0.85) to build the trade lifecycle graph.
-
-    Stakes weighting (Issue 4): calculates salience from the signals dict
-    and passes a stability override to Nous when the event is non-routine.
-
-    Returns node_id or None.
-    """
-    from ...nous.client import get_client
-    from ...core.memory_tracker import get_tracker
-
-    tracker = get_tracker()
-
-    # Build structured body — always JSON for trade memories
-    body_data: dict = {"text": content}
-    if signals:
-        body_data["signals"] = signals
-    body = json.dumps(body_data)
-
-    # Auto-set event_time if not provided (trade events happen NOW)
-    if not event_time:
-        from datetime import datetime, timezone
-        event_time = datetime.now(timezone.utc).isoformat()
-
-    # Stakes weighting: calculate salience-modulated stability
-    _neural_stability = None
-    try:
-        from ...nous.sections import calculate_salience, modulate_stability
-        salience = calculate_salience(subtype, signals)
-        _neural_stability = modulate_stability(subtype, salience)
-        if _neural_stability is not None:
-            logger.debug(
-                "Stakes weighting: %s salience=%.2f → stability=%.1f days",
-                subtype, salience, _neural_stability,
-            )
-    except Exception as e:
-        logger.debug("Stakes weighting skipped: %s", e)
-
-    try:
-        client = get_client()
-        node = client.create_node(
-            type="concept",
-            subtype=subtype,
-            title=title,
-            body=body,
-            summary=summary,
-            event_time=event_time,
-            event_confidence=1.0,
-            event_source="inferred",
-            neural_stability=_neural_stability,
-        )
-        node_id = node.get("id")
-
-        # Track mutation
-        if node_id:
-            tracker.record_create(subtype, title, node_id)
-
-        # Link to related trade node (entry → modify, entry → close)
-        if link_to and node_id:
-            try:
-                client.create_edge(
-                    source_id=link_to,
-                    target_id=node_id,
-                    type=edge_type,
-                )
-                tracker.record_edge(link_to, node_id, edge_type, "trade lifecycle")
-            except Exception as e:
-                logger.warning("Failed to create trade edge %s → %s: %s", link_to, node_id, e)
-                tracker.record_fail("create_edge", str(e))
-
-        # Auto-assign to clusters (subtype + keyword match, background)
-        if node_id:
-            from .memory import _auto_assign_clusters
-            _auto_assign_clusters(client, node_id, subtype, title=title, content=content)
-
-        return node_id
-    except Exception as e:
-        logger.error("Failed to store trade memory: %s", e)
-        tracker.record_fail("create_node", str(e))
-        return None
-
-
-def _find_trade_entry(symbol: str) -> str | None:
-    """Find the most recent trade_entry node for a symbol in Nous.
-
-    Used by close and modify handlers to link back to the original entry,
-    building the trade lifecycle graph: entry → modify → close.
-
-    Uses list_nodes (not search) because trade nodes often lack embeddings,
-    making semantic search return empty results.
-    """
-    from ...nous.client import get_client
-
-    try:
-        client = get_client()
-        # list_nodes returns newest first — find the most recent entry for this symbol
-        nodes = client.list_nodes(
-            subtype="custom:trade_entry",
-            limit=10,
-        )
-        symbol_upper = symbol.upper()
-        for node in nodes:
-            title = node.get("content_title", "")
-            if symbol_upper in title.upper():
-                return node.get("id")
-        return None
-    except Exception:
-        return None
-
-
-def _store_trade_memory(
-    side: str, symbol: str, price_label: str, entry_px: float,
-    stop_loss: float, take_profit: float,
-    confidence: float | None, size_usd: float, fill_sz: float,
-    rr_ratio: float, reasoning: str, lines: list[str],
-    trade_type: str = "macro",
-) -> str | None:
-    """Store trade entry in Nous memory. Returns node_id or None.
-
-    Creates a 'custom:trade_entry' node with:
-    - Structured content: thesis + all trade parameters
-    - Scannable summary for search results
-    - Signals dict for data-level recall
-    - FSRS: concept type → 21 day stability (durable — thesis should persist)
-    """
-    # Structured content — thesis + trade context in one body
-    content = (
-        f"Thesis: {reasoning}\n"
-        f"Entry: {price_label} | Size: {fill_sz:.6g} {symbol} (~{_fmt_big(size_usd)})\n"
-        f"Stop Loss: {_fmt_price(stop_loss)} | Take Profit: {_fmt_price(take_profit)}"
-    )
-    if rr_ratio:
-        content += f" | R:R: {rr_ratio}:1"
-    if confidence is not None:
-        content += f"\nConfidence: {confidence * 100:.0f}%"
-
-    # Scannable summary — one-liner for search previews
-    summary = (
-        f"{side.upper()} {symbol} @ {price_label} | "
-        f"SL {_fmt_price(stop_loss)} | TP {_fmt_price(take_profit)} | "
-        f"{_fmt_big(size_usd)}"
-    )
-    if rr_ratio:
-        summary += f" | R:R {rr_ratio}:1"
-
-    # Signals dict — structured data for programmatic access
-    signals = {
-        "action": "entry",
-        "side": side,
-        "symbol": symbol,
-        "entry": entry_px,
-        "stop": stop_loss,
-        "target": take_profit,
-        "size_usd": round(size_usd, 2),
-        "fill_sz": fill_sz,
-    }
-    if confidence is not None:
-        signals["confidence"] = confidence
-    if rr_ratio:
-        signals["rr_ratio"] = rr_ratio
-    signals["trade_type"] = trade_type
-
-    node_id = _store_to_nous(
-        subtype="custom:trade_entry",
-        title=f"{side.upper()} {symbol} @ {price_label}",
-        content=content,
-        summary=summary,
-        signals=signals,
-    )
-
-    if not node_id:
-        lines.append("Warning: trade memory store failed — trade executed but not recorded in Nous")
-        return None
-
-    lines.append(f"Trade stored in memory (id: {node_id})")
-
-    # Auto-link to active thesis about this symbol (background — doesn't block trade response)
-    def _link_theses():
-        try:
-            from ...nous.client import get_client
-            from ...core.memory_tracker import get_tracker
-            client = get_client()
-            tracker = get_tracker()
-            thesis_nodes = client.search(
-                query=symbol,
-                subtype="custom:thesis",
-                lifecycle="ACTIVE",
-                limit=3,
-            )
-            for thesis in thesis_nodes:
-                thesis_id = thesis.get("id")
-                if thesis_id and thesis_id != node_id:
-                    client.create_edge(
-                        source_id=node_id,
-                        target_id=thesis_id,
-                        type="supports",
-                        strength=0.8,
-                    )
-                    tracker.record_edge(node_id, thesis_id, "supports", "auto thesis link")
-        except Exception as e:
-            logger.debug("Auto-link thesis failed: %s", e)
-
-    threading.Thread(target=_link_theses, daemon=True).start()
-
-    return node_id
 
 
 # =============================================================================
@@ -1744,15 +1425,13 @@ def handle_close_position(
             symbol=symbol, exit_px=exit_px, closed_sz=closed_sz,
         )
 
-    # Invalidate snapshot + briefing cache so next chat() gets fresh position data
+    # Invalidate briefing cache so next chat() gets fresh position data
     try:
-        from ..context_snapshot import invalidate_snapshot
         from ..briefing import invalidate_briefing_cache
-        invalidate_snapshot()
         invalidate_briefing_cache()
     except Exception:
         pass
-    _record_trade_span("close_position", "cache_invalidation", True, "Snapshot + briefing cache cleared")
+    _record_trade_span("close_position", "cache_invalidation", True, "Briefing cache cleared")
 
     # --- Calculate realized PnL ---
     entry_px = position.get("entry_px", 0)
@@ -1804,140 +1483,15 @@ def handle_close_position(
             logger.error("Failed to cancel orders for %s: %s", symbol, e)
             _record_trade_span("close_position", "order_cancellation", False, f"Cancel failed: {e}", duration_ms=int((time.monotonic() - _cancel_start) * 1000), symbol=symbol, error=str(e))
 
-    # --- Store outcome in memory (always — every close is documented) ---
-    # Find the entry node to link this close back to it (builds trade lifecycle graph)
-    _entry_start = time.monotonic()
-    entry_node_id = _find_trade_entry(symbol)
-    _record_trade_span(
-        "close_position", "entry_lookup",
-        entry_node_id is not None,
-        f"Found entry node {entry_node_id}" if entry_node_id else f"No entry node found for {symbol}",
-        duration_ms=int((time.monotonic() - _entry_start) * 1000),
-        symbol=symbol, entry_node_id=entry_node_id,
-    )
-
-    # Resolve opened_at: position field → daemon registry → entry node timestamp
-    opened_at = position.get("opened_at", "")
-    if not opened_at:
-        # Hyperliquid live doesn't provide opened_at — get from daemon's position type registry
-        try:
-            from ...intelligence.daemon import get_active_daemon
-            daemon = get_active_daemon()
-            if daemon:
-                type_info = daemon.get_position_type(symbol)
-                entry_time = type_info.get("entry_time", 0)
-                if entry_time > 0:
-                    from datetime import datetime as _dt, timezone as _tz
-                    opened_at = _dt.fromtimestamp(entry_time, tz=_tz.utc).isoformat()
-        except Exception:
-            pass
-    if not opened_at and entry_node_id:
-        try:
-            from ...nous.client import get_client
-            entry_node = get_client().get_node(entry_node_id)
-            if entry_node:
-                opened_at = entry_node.get("created_at", "")
-        except Exception:
-            pass
+    # v1 Nous memory store removed — phase 1 journal capture handles all trade persistence
+    # (trade_history invalidate_cache, _strengthen_trade_edge, _update_playbook_metrics also removed)
 
     pnl_sign = "+" if realized_pnl_net >= 0 else ""
-    action_label = "Partial close" if partial_pct < 100 else "Closed"
     action_label_upper = "PARTIAL CLOSE" if partial_pct < 100 else "CLOSED"
-    outcome_content = (
-        f"{action_label} {close_label} {position['side']} {symbol}.\n"
-        f"Entry: {_fmt_price(entry_px)} → Exit: {_fmt_price(exit_px)}\n"
-        f"PnL: {pnl_sign}{_fmt_price(realized_pnl_net)} ({lev_return:+.1f}% on margin, {_fmt_pct(pnl_pct)} price)\n"
-        f"Reason: {reasoning}"
-    )
-
-    outcome_summary = (
-        f"{action_label_upper} {position['side'].upper()} {symbol} | "
-        f"{_fmt_price(entry_px)} → {_fmt_price(exit_px)} | "
-        f"PnL {pnl_sign}{_fmt_price(realized_pnl_net)} ({lev_return:+.1f}%)"
-    )
 
     # Detect fee-loss: directionally correct but fees ate the profit
     is_fee_loss  = realized_pnl > 0 and realized_pnl_net < 0
     is_fee_heavy = (not is_fee_loss) and realized_pnl > 0 and fee_estimate > realized_pnl * 0.5
-
-    # Get peak ROE (MFE) and trade_type from daemon before position cleanup
-    mfe_pct = 0.0
-    close_trade_type = "macro"
-    mae_pct = 0.0
-    try:
-        from ...intelligence.daemon import get_active_daemon
-        daemon = get_active_daemon()
-        if daemon:
-            mfe_pct = daemon.get_peak_roe(symbol)
-            mae_pct = daemon.get_trough_roe(symbol)
-            close_trade_type = daemon.get_position_type(symbol).get("type", "macro")
-    except Exception:
-        pass
-
-    _mem_start = time.monotonic()
-    close_node_id = _store_to_nous(
-        subtype="custom:trade_close",
-        title=f"{action_label_upper} {position['side'].upper()} {symbol} @ {_fmt_price(exit_px)}",
-        content=outcome_content,
-        summary=outcome_summary,
-        signals={
-            "action": "partial_close" if partial_pct < 100 else "close",
-            "side": position["side"],
-            "symbol": symbol,
-            "entry": entry_px,
-            "exit": exit_px,
-            "pnl_usd": round(realized_pnl_net, 2),
-            "pnl_pct": round(pnl_pct, 2),
-            "lev_return_pct": round(lev_return, 2),
-            "close_type": close_label,
-            "size_usd": round(closed_sz * exit_px, 2),
-            "opened_at": opened_at,
-            "mfe_pct": round(mfe_pct, 2),
-            "mae_pct": round(mae_pct, 2),
-            "trade_type": close_trade_type,
-            "fee_loss":    is_fee_loss,
-            "fee_heavy":   is_fee_heavy,
-            "pnl_gross":   round(realized_pnl, 2),
-            "fee_estimate": round(fee_estimate, 2),
-            "margin_used": round(margin_used, 2),
-            "leverage":    int(position.get("leverage", 0)),
-            "mfe_usd":     round(mfe_pct / 100 * margin_used, 2) if margin_used > 0 else 0.0,
-            "mae_usd":     round(mae_pct / 100 * margin_used, 2) if margin_used > 0 else 0.0,
-        },
-        link_to=entry_node_id,  # Edge: entry --part_of--> close (SSA 0.85)
-        edge_type="part_of",
-    )
-
-    # Hebbian: strengthen the trade lifecycle edge (MF-1)
-    if close_node_id and entry_node_id:
-        _strengthen_trade_edge(entry_node_id, close_node_id)
-        # Issue 5: update playbook metrics if this trade followed a playbook
-        _update_playbook_metrics(entry_node_id, pnl_pct > 0)
-
-    # Invalidate trade history cache so next trade picks up new stats
-    try:
-        from ..trade_history import invalidate_cache
-        invalidate_cache()
-    except Exception:
-        pass
-
-    _record_trade_span(
-        "close_position", "memory_store",
-        close_node_id is not None,
-        f"Node {close_node_id} created, linked to entry {entry_node_id}" if close_node_id and entry_node_id
-        else f"Node {close_node_id} created (no entry link)" if close_node_id
-        else "Memory store failed",
-        duration_ms=int((time.monotonic() - _mem_start) * 1000),
-        node_id=close_node_id, entry_node_id=entry_node_id,
-        subtype="custom:trade_close", edge_strengthened=bool(close_node_id and entry_node_id),
-    )
-
-    lines_append_id = None
-    if close_node_id:
-        msg = f"Outcome stored in memory (id: {close_node_id})"
-        if entry_node_id:
-            msg += f" [linked to entry {entry_node_id}]"
-        lines_append_id = msg
 
     # --- Build result ---
     lines = [
@@ -1962,8 +1516,6 @@ def handle_close_position(
     if cancelled > 0:
         lines.append(f"Cancelled {cancelled} associated order(s)")
     lines.append(f"Reason: {reasoning}")
-    if lines_append_id:
-        lines.append(lines_append_id)
 
     return "\n".join(lines)
 
@@ -2264,84 +1816,15 @@ def handle_modify_position(
         cancel_all=cancel_orders,
     )
 
-    # Invalidate snapshot + briefing cache so next chat() gets fresh data
+    # Invalidate briefing cache so next chat() gets fresh data
     try:
-        from ..context_snapshot import invalidate_snapshot
         from ..briefing import invalidate_briefing_cache
-        invalidate_snapshot()
         invalidate_briefing_cache()
     except Exception:
         pass
-    _record_trade_span("modify_position", "cache_invalidation", True, "Snapshot + briefing cache cleared")
+    _record_trade_span("modify_position", "cache_invalidation", True, "Briefing cache cleared")
 
-    # --- Store modification in memory (always — every adjustment is documented) ---
-    # Find the entry node to link this modification back to it
-    _entry_start = time.monotonic()
-    entry_node_id = _find_trade_entry(symbol)
-    _record_trade_span(
-        "modify_position", "entry_lookup",
-        entry_node_id is not None,
-        f"Found entry node {entry_node_id}" if entry_node_id else f"No entry node found for {symbol}",
-        duration_ms=int((time.monotonic() - _entry_start) * 1000),
-        symbol=symbol, entry_node_id=entry_node_id,
-    )
-
-    mod_details = "; ".join(changes) if changes else "no changes applied"
-    mod_content = (
-        f"Modified {position['side']} {symbol} position.\n"
-        f"Changes: {mod_details}\n"
-        f"Mark price: {_fmt_price(mark_px)} | Size: {sz:.6g} {symbol}\n"
-        f"Reason: {reasoning}"
-    )
-
-    mod_summary = f"MODIFIED {position['side'].upper()} {symbol} | {mod_details}"
-
-    # Get trade_type from daemon's position type registry
-    mod_trade_type = "macro"
-    try:
-        from ...intelligence.daemon import get_active_daemon
-        daemon = get_active_daemon()
-        if daemon:
-            mod_trade_type = daemon.get_position_type(symbol).get("type", "macro")
-    except Exception:
-        pass
-
-    mod_signals: dict = {
-        "action": "modify",
-        "side": position["side"],
-        "symbol": symbol,
-        "mark_px": mark_px,
-        "size": sz,
-        "trade_type": mod_trade_type,
-    }
-    if stop_loss is not None:
-        mod_signals["new_stop"] = stop_loss
-    if take_profit is not None:
-        mod_signals["new_target"] = take_profit
-    if leverage is not None:
-        mod_signals["new_leverage"] = leverage
-
-    _mem_start = time.monotonic()
-    mem_id = _store_to_nous(
-        subtype="custom:trade_modify",
-        title=f"MODIFIED {position['side'].upper()} {symbol}",
-        content=mod_content,
-        summary=mod_summary,
-        signals=mod_signals,
-        link_to=entry_node_id,  # Edge: entry --part_of--> modify (SSA 0.85)
-        edge_type="part_of",
-    )
-
-    _record_trade_span(
-        "modify_position", "memory_store",
-        mem_id is not None,
-        f"Node {mem_id} created, linked to entry {entry_node_id}" if mem_id and entry_node_id
-        else f"Node {mem_id} created (no entry link)" if mem_id
-        else "Memory store failed",
-        duration_ms=int((time.monotonic() - _mem_start) * 1000),
-        node_id=mem_id, entry_node_id=entry_node_id,
-        subtype="custom:trade_modify",
-    )
+    # v1 Nous memory store removed — phase 1 journal capture handles all trade persistence
 
     # --- Build result ---
     lines = [
@@ -2350,107 +1833,12 @@ def handle_modify_position(
     ]
     lines.extend(f"  {c}" for c in changes)
     lines.append(f"Reason: {reasoning}")
-    if mem_id:
-        msg = f"Modification stored in memory (id: {mem_id})"
-        if entry_node_id:
-            msg += f" [linked to entry {entry_node_id}]"
-        lines.append(msg)
 
     return "\n".join(lines)
 
 
 # =============================================================================
-# 5. HEBBIAN EDGE STRENGTHENING
-# =============================================================================
-
-def _strengthen_trade_edge(entry_node_id: str, close_node_id: str) -> None:
-    """Hebbian: strengthen the part_of edge between trade entry and close nodes.
-
-    The close event confirms the trade lifecycle connection is real and important.
-    Runs in background thread to avoid blocking the tool response.
-    """
-    def _do_strengthen():
-        try:
-            from ...nous.client import get_client
-            client = get_client()
-            edges = client.get_edges(entry_node_id, direction="out")
-            for edge in edges:
-                if edge.get("target_id") == close_node_id:
-                    eid = edge.get("id")
-                    if eid:
-                        client.strengthen_edge(eid, amount=0.1)
-                        logger.info(
-                            "Hebbian: strengthened trade lifecycle edge %s (entry→close)",
-                            eid,
-                        )
-                    break
-        except Exception as e:
-            logger.debug("Trade edge strengthening failed: %s", e)
-
-    threading.Thread(target=_do_strengthen, daemon=True).start()
-
-
-def _update_playbook_metrics(entry_node_id: str, was_profitable: bool) -> None:
-    """Update playbook success metrics after a trade close.
-
-    Checks if the trade entry has incoming `applied_to` edges from
-    playbook nodes (created by daemon._link_playbooks_to_trade when
-    the agent trades following a playbook match). For each linked
-    playbook, increments sample_size and optionally success_count.
-
-    Runs in background thread to avoid blocking the tool response.
-    """
-    def _do_update():
-        try:
-            from ...nous.client import get_client
-            client = get_client()
-            edges = client.get_edges(entry_node_id, direction="in")
-            for edge in edges:
-                # Edge route returns raw DB rows: field is "type" not "edge_type"
-                if edge.get("type") != "applied_to":
-                    continue
-                pb_id = edge.get("source_id")
-                if not pb_id:
-                    continue
-                pb_node = client.get_node(pb_id)
-                # Node route returns raw DB rows: field is "subtype" not "content_subtype"
-                if not pb_node or pb_node.get("subtype") != "custom:playbook":
-                    continue
-
-                # Parse body and update metrics
-                body = pb_node.get("content_body", "")
-                try:
-                    data = json.loads(body)
-                except (json.JSONDecodeError, TypeError):
-                    continue
-
-                data["sample_size"] = data.get("sample_size", 0) + 1
-                if was_profitable:
-                    data["success_count"] = data.get("success_count", 0) + 1
-
-                from datetime import datetime, timezone
-                data["last_applied"] = datetime.now(timezone.utc).isoformat()
-
-                client.update_node(pb_id, content_body=json.dumps(data))
-
-                # Hebbian: strengthen the applied_to edge on profitable trade
-                edge_id = edge.get("id")
-                if edge_id and was_profitable:
-                    client.strengthen_edge(edge_id, amount=0.10)
-
-                logger.info(
-                    "Playbook %s metrics updated: %d/%d (profitable: %s)",
-                    pb_id, data.get("success_count", 0),
-                    data["sample_size"], was_profitable,
-                )
-        except Exception as e:
-            logger.debug("Playbook metrics update failed: %s", e)
-
-    threading.Thread(target=_do_update, daemon=True, name="hynous-pb-metrics").start()
-
-
-# =============================================================================
-# 6. REGISTRATION
+# 5. REGISTRATION
 # =============================================================================
 
 def register(registry) -> None:
