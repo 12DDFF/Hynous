@@ -66,6 +66,8 @@ In addition to the base reading list from `01-pre-implementation-reading.md`, ph
 - Any entry decision refactoring (phase 5)
 - Dashboard changes (phase 7)
 - Backfilling historical trades (no migration — fresh start per plan)
+- **Dict → dataclass reconstruction helper** for snapshots. Phase 1 persists via `dataclasses.asdict` + `json.dumps` but only needs the raw dict back (for cross-reading during exit snapshot building). The `get_entry_snapshot_json()` method returns a dict intentionally. Hydration into typed `TradeEntrySnapshot` / `TradeExitSnapshot` instances is phase 2's responsibility — see master plan Amendment 9 and `v2-planning/05-phase-2-journal-module.md` → "Dataclass Reconstruction Helpers".
+- **Real data-layer wiring for `_build_order_flow_state()` / `_build_smart_money_context()`**. Phase 1 ships these as empty-dataclass placeholders (every field None / empty list). The decision on how to populate them was deferred to phase 2 and the gotcha is logged as master plan Amendment 10. Phase 2 backfills both builders against the existing `hynous_data.py` client — see `v2-planning/05-phase-2-journal-module.md` → "Order Flow & Smart Money Backfill".
 
 ---
 
@@ -120,7 +122,7 @@ def _build_daemon() -> tuple[Any, Any]:
     """
     from hynous.core.config import load_config
     from hynous.intelligence.agent import Agent
-    from hynous.intelligence.daemon import HynousDaemon
+    from hynous.intelligence.daemon import Daemon
     
     cfg = load_config()
     logger.info("config loaded: mode=%s", cfg.execution.mode)
@@ -128,7 +130,7 @@ def _build_daemon() -> tuple[Any, Any]:
     agent = Agent(config=cfg)
     logger.info("agent constructed: model=%s", cfg.agent.model)
     
-    daemon = HynousDaemon(agent=agent, config=cfg)
+    daemon = Daemon(agent=agent, config=cfg)
     logger.info("daemon constructed")
     
     return agent, daemon
@@ -167,7 +169,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     
     # Start the daemon's internal loop if the class exposes one.
-    # HynousDaemon.start() is the v1 API; if it changes, update here.
+    # Daemon.start() is the v1 API; if it changes, update here.
     if hasattr(daemon, "start"):
         try:
             daemon.start()
@@ -517,7 +519,7 @@ def build_entry_snapshot(
     size_usd: float,
     reference_price: float,
     fees_paid_usd: float,
-    daemon: Any,  # hynous.intelligence.daemon.HynousDaemon
+    daemon: Any,  # hynous.intelligence.daemon.Daemon
     trigger_source: str = "manual",
     trigger_type: str = "unknown",
     wake_source_id: str | None = None,

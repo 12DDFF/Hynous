@@ -55,6 +55,8 @@ In addition to the base reading list, phase 2 engineers must read:
 - Unit tests for every public method of `JournalStore`, `EmbeddingClient`
 - Integration tests for the API routes against a real `JournalStore` fixture
 - README at `src/hynous/journal/README.md` documenting the module
+- **Dataclass reconstruction helpers** in `src/hynous/journal/schema.py` (see "Dataclass Reconstruction Helpers" section below). Phase 1 persisted snapshots as JSON dicts and deliberately omitted the dict→dataclass reconstruction helper that the phase 1 plan had stubbed as `raise NotImplementedError`. Phase 2 ships them because `JournalStore.get_trade()` returns hydrated `TradeEntrySnapshot` / `TradeExitSnapshot` objects and phase 3's analysis agent reads those objects directly. See master plan Amendment 9.
+- **Order flow + smart money backfill** in `src/hynous/journal/capture.py` (see "Order Flow & Smart Money Backfill" section below). Phase 1 shipped `_build_order_flow_state()` and `_build_smart_money_context()` as empty-dataclass placeholders pending a decision on data-layer integration. Phase 2 wires them to the existing data-layer HTTP endpoints (`hynous_data.order_flow`, `hlp_positions`, `whales`, `sm_changes`) so every entry snapshot carries real CVD / HLP / whale / smart-money context. See master plan Amendment 10.
 
 ### Out of Scope
 
@@ -877,34 +879,42 @@ class JournalStore:
         """
         from .embeddings import cosine_similarity
         
-        conditions = ["embedding IS NOT NULL"]
+        # NOTE: the `embedding` column lives on a different table per scope
+        # (trade_entry_snapshots.embedding for "entry",
+        # trade_analyses.embedding for "analysis"). Qualify the column
+        # with its table alias in every branch — an unqualified
+        # `embedding IS NOT NULL` would be ambiguous once the JOINs
+        # are in place. Build the WHERE conditions per-branch rather
+        # than sharing a single list.
         params: list[Any] = []
-        
         if symbol:
-            conditions.append("t.symbol = ?")
             params.append(symbol)
-        
-        where = " AND ".join(conditions)
         
         conn = self._connect()
         try:
             if scope == "entry":
+                where_parts = ["tes.embedding IS NOT NULL"]
+                if symbol:
+                    where_parts.append("t.symbol = ?")
                 rows = conn.execute(
                     f"""
                     SELECT t.trade_id, t.symbol, t.side, tes.embedding
                     FROM trades t
                     JOIN trade_entry_snapshots tes ON t.trade_id = tes.trade_id
-                    WHERE {where}
+                    WHERE {" AND ".join(where_parts)}
                     """,
                     params,
                 ).fetchall()
             elif scope == "analysis":
+                where_parts = ["ta.embedding IS NOT NULL"]
+                if symbol:
+                    where_parts.append("t.symbol = ?")
                 rows = conn.execute(
                     f"""
                     SELECT t.trade_id, t.symbol, t.side, ta.embedding
                     FROM trades t
                     JOIN trade_analyses ta ON t.trade_id = ta.trade_id
-                    WHERE ta.{where.replace('embedding', 'embedding')}
+                    WHERE {" AND ".join(where_parts)}
                     """,
                     params,
                 ).fetchall()
@@ -1375,7 +1385,17 @@ def migrate_staging_to_journal(
 ) -> dict[str, int]:
     """Copy all data from the phase 1 staging DB into the phase 2 journal DB.
     
-    Idempotent: re-running is safe because journal uses ON CONFLICT DO UPDATE.
+    Idempotency is asymmetric:
+      - Snapshots use `ON CONFLICT(trade_id) DO UPDATE` — safe to re-run.
+      - Lifecycle events have an autoincrement PK and will RE-INSERT on
+        re-run, producing duplicates.
+    
+    Therefore callers MUST guard against re-runs. The daemon does this
+    via `journal_metadata.staging_migration_done` (set to `"true"` once)
+    and refuses to call this function a second time. If you call this
+    function directly (e.g. from a one-off script), ensure the journal
+    DB is fresh or drop `trade_events` rows first.
+    
     Returns counts of migrated records.
     """
     if not Path(staging_db_path).exists():
@@ -1399,6 +1419,476 @@ def migrate_staging_to_journal(
     
     return counts
 ```
+
+---
+
+## Dataclass Reconstruction Helpers
+
+> **Resolves master plan Amendment 9 (Gotcha 1).** Phase 1's `staging_store.py` ships `get_entry_snapshot_json(trade_id) -> dict | None` instead of the plan-sketched `get_entry_snapshot(trade_id) -> TradeEntrySnapshot | None`. The `_dict_to_entry_snapshot` helper was left unimplemented. Phase 2's `JournalStore.get_trade()` returns a hydrated bundle (with `entry_snapshot` and `exit_snapshot` as real dataclass instances, not dicts), so the reconstruction helpers must exist and must be verified empirically before the analysis agent in phase 3 reads them.
+
+### Step order
+
+Reconstruction helpers are the **first code written in phase 2**. They live in `src/hynous/journal/schema.py` alongside the dataclass definitions themselves (schema is the single source of truth for the round-trip contract). Phase 2 Step 1: add the helpers and their unit tests. Only then proceed to `store.py`.
+
+### File additions
+
+Add to the **bottom** of `src/hynous/journal/schema.py`:
+
+```python
+# ============================================================================
+# Reconstruction helpers (phase 2)
+#
+# Phase 1 persists dataclass instances as JSON (via dataclasses.asdict + json.dumps).
+# Phase 2 needs the reverse direction so JournalStore.get_trade() can return typed
+# objects to the analysis agent. These helpers are exhaustive — they enumerate
+# every nested dataclass field explicitly. Do NOT attempt to collapse into a
+# generic recursive walker; the dataclasses have irregular shapes (list[dict]
+# fields like `clusters_above`, `top_whale_positions`, `direction_shap_top5`,
+# `candles_1m_15min` stay as-is).
+# ============================================================================
+
+
+def entry_snapshot_from_dict(data: dict[str, Any]) -> TradeEntrySnapshot:
+    """Reconstruct a TradeEntrySnapshot from a JSON-loaded dict.
+
+    Args:
+        data: dict previously produced by dataclasses.asdict(snapshot). Must
+            contain every top-level key of TradeEntrySnapshot.
+
+    Raises:
+        KeyError: if a required top-level key is missing (indicates schema drift
+            or a corrupt row — caller should log and skip, not swallow).
+        TypeError: if a field has an unexpected shape.
+
+    Returns:
+        Fully-hydrated TradeEntrySnapshot with every nested dataclass instantiated.
+    """
+    return TradeEntrySnapshot(
+        trade_basics=TradeBasics(**data["trade_basics"]),
+        trigger_context=TriggerContext(**data["trigger_context"]),
+        ml_snapshot=MLSnapshot(**data["ml_snapshot"]),
+        market_state=MarketState(**data["market_state"]),
+        derivatives_state=DerivativesState(**data["derivatives_state"]),
+        liquidation_terrain=LiquidationTerrain(**data["liquidation_terrain"]),
+        order_flow_state=OrderFlowState(**data["order_flow_state"]),
+        smart_money_context=SmartMoneyContext(**data["smart_money_context"]),
+        time_context=TimeContext(**data["time_context"]),
+        account_context=AccountContext(**data["account_context"]),
+        settings_snapshot=SettingsSnapshot(**data["settings_snapshot"]),
+        price_history=PriceHistoryContext(**data["price_history"]),
+        schema_version=data.get("schema_version", "1.0.0"),
+    )
+
+
+def exit_snapshot_from_dict(data: dict[str, Any]) -> TradeExitSnapshot:
+    """Reconstruct a TradeExitSnapshot from a JSON-loaded dict. Contract mirrors
+    entry_snapshot_from_dict."""
+    return TradeExitSnapshot(
+        trade_id=data["trade_id"],
+        trade_outcome=TradeOutcome(**data["trade_outcome"]),
+        roe_trajectory=ROETrajectory(**data["roe_trajectory"]),
+        counterfactuals=Counterfactuals(**data["counterfactuals"]),
+        ml_exit_comparison=MLExitComparison(**data["ml_exit_comparison"]),
+        market_state_at_exit=MarketState(**data["market_state_at_exit"]),
+        price_path_1m=data.get("price_path_1m", []),
+        schema_version=data.get("schema_version", "1.0.0"),
+    )
+```
+
+### JournalStore integration
+
+`JournalStore.get_trade(trade_id)` uses the helpers to hydrate:
+
+```python
+def get_trade(self, trade_id: str) -> dict[str, Any] | None:
+    # ... (SELECT row + associated entry/exit/events/analysis)
+    bundle = {...}  # as per JournalStore class spec above
+
+    if entry_row is not None:
+        from .schema import entry_snapshot_from_dict
+        bundle["entry_snapshot"] = entry_snapshot_from_dict(
+            json.loads(entry_row["snapshot_json"])
+        )
+    else:
+        bundle["entry_snapshot"] = None
+
+    if exit_row is not None:
+        from .schema import exit_snapshot_from_dict
+        bundle["exit_snapshot"] = exit_snapshot_from_dict(
+            json.loads(exit_row["snapshot_json"])
+        )
+    else:
+        bundle["exit_snapshot"] = None
+
+    # counterfactuals separately queryable (stored in trade_exit_snapshots.counterfactuals_json)
+    # events, analysis, tags — unchanged
+    return bundle
+```
+
+**Why not hydrate during `get_entry_snapshot_json()` in the staging store?** Staging is ephemeral; phase 2 deletes it. Do not backport the helpers into `staging_store.py`.
+
+### Round-trip unit tests (mandatory)
+
+Add to `tests/unit/test_v2_journal.py` — the empirical verification the user specifically asked for. These tests **must pass before any other phase 2 code is written**:
+
+```python
+def test_entry_snapshot_round_trip_preserves_every_field(sample_entry_snapshot):
+    """asdict → json.dumps → json.loads → entry_snapshot_from_dict returns an
+    instance equal to the original (all nested fields preserved)."""
+    from dataclasses import asdict
+    import json
+    from hynous.journal.schema import entry_snapshot_from_dict
+    
+    original = sample_entry_snapshot
+    serialized = json.dumps(asdict(original), sort_keys=True, separators=(",", ":"), default=str)
+    restored = entry_snapshot_from_dict(json.loads(serialized))
+    
+    assert restored == original  # dataclass __eq__ walks all fields
+
+
+def test_exit_snapshot_round_trip_preserves_every_field(sample_exit_snapshot):
+    """Same contract for TradeExitSnapshot."""
+    from dataclasses import asdict
+    import json
+    from hynous.journal.schema import exit_snapshot_from_dict
+    
+    original = sample_exit_snapshot
+    serialized = json.dumps(asdict(original), sort_keys=True, separators=(",", ":"), default=str)
+    restored = exit_snapshot_from_dict(json.loads(serialized))
+    
+    assert restored == original
+
+
+def test_entry_snapshot_from_dict_raises_keyerror_on_missing_section():
+    """Missing a top-level section (schema drift / corrupt row) raises KeyError —
+    caller's responsibility to catch and skip, not swallow here."""
+    import pytest
+    from hynous.journal.schema import entry_snapshot_from_dict
+    
+    with pytest.raises(KeyError):
+        entry_snapshot_from_dict({"trade_basics": {}})  # missing everything else
+
+
+def test_get_trade_hydrates_nested_dataclasses(tmp_journal_db, sample_entry_snapshot):
+    """End-to-end: insert → get_trade → returned bundle has real dataclass instances
+    at entry_snapshot / exit_snapshot keys, not raw dicts."""
+    from hynous.journal.schema import TradeEntrySnapshot
+    
+    tmp_journal_db.insert_entry_snapshot(sample_entry_snapshot)
+    bundle = tmp_journal_db.get_trade(sample_entry_snapshot.trade_basics.trade_id)
+    
+    assert isinstance(bundle["entry_snapshot"], TradeEntrySnapshot)
+    assert bundle["entry_snapshot"].trade_basics.symbol == sample_entry_snapshot.trade_basics.symbol
+    assert bundle["entry_snapshot"].ml_snapshot.composite_entry_score == sample_entry_snapshot.ml_snapshot.composite_entry_score
+```
+
+Run these four tests in isolation:
+
+```bash
+pytest tests/unit/test_v2_journal.py -v -k "round_trip or hydrates or raises_keyerror"
+```
+
+All four must pass before phase 2 proceeds past Step 1.
+
+### Empirical verification during smoke test
+
+After the phase 2 15-minute smoke test completes and at least one trade has been written, run this ad-hoc check to confirm hydration works on real captured data (not just fixtures):
+
+```bash
+python -c "
+from hynous.journal.store import JournalStore
+from hynous.core.config import load_config
+cfg = load_config()
+store = JournalStore(cfg.v2.journal.db_path)
+trades = store.list_trades(limit=5)
+if not trades:
+    print('No trades captured during smoke — rerun with a longer window')
+else:
+    for t in trades:
+        bundle = store.get_trade(t['trade_id'])
+        assert bundle['entry_snapshot'] is not None
+        assert bundle['entry_snapshot'].trade_basics.trade_id == t['trade_id']
+        print(f'hydration ok: {t[\"trade_id\"]} ({t[\"symbol\"]} {t[\"side\"]})')
+"
+```
+
+Report the output as part of the phase 2 report-back.
+
+---
+
+## Order Flow & Smart Money Backfill
+
+> **Resolves master plan Amendment 10 (Gotcha 2).** Phase 1's `_build_order_flow_state()` and `_build_smart_money_context()` return empty `OrderFlowState()` / `SmartMoneyContext()` instances with every field `None` / empty list. Phase 2 backfills them against the existing data-layer service so entry snapshots carry real CVD / HLP / whale / smart-money context. Phase 3's analysis agent rules depend on these fields being populated.
+
+### Data-layer surface (verified 2026-04-12)
+
+The `hynous_data.py` client (`src/hynous/data/providers/hynous_data.py`) already exposes every method needed. No new client methods required for the fields marked "supported" below; the two unsupported fields require small data-layer additions called out in the "Data-layer additions" subsection.
+
+| `OrderFlowState` field | Source endpoint | Mapping |
+|------------------------|-----------------|---------|
+| `cvd_1h` | `order_flow(coin)` → `windows["1h"]["cvd"]` | direct |
+| `cvd_acceleration` | computed client-side | `windows["5m"]["cvd"] - (windows["15m"]["cvd"] / 3)` (5m actual vs. 1/3 of the 15m accumulation as a trailing baseline) |
+| `buy_sell_ratio_1m` | `order_flow(coin)` → `windows["1m"]["buy_pct"] / 100.0` | direct |
+| `buy_sell_ratio_5m` | `order_flow(coin)` → `windows["5m"]["buy_pct"] / 100.0` | direct |
+| `buy_sell_ratio_15m` | `order_flow(coin)` → `windows["15m"]["buy_pct"] / 100.0` | direct |
+| `buy_sell_ratio_1h` | `order_flow(coin)` → `windows["1h"]["buy_pct"] / 100.0` | direct |
+| `cvd_30m` | **requires data-layer addition** — see below | via new `windows["30m"]` key |
+| `large_trade_count_1h` | **requires data-layer addition** — see below | via new endpoint |
+
+| `SmartMoneyContext` field | Source endpoint | Mapping |
+|---------------------------|-----------------|---------|
+| `hlp_net_delta_usd` | `hlp_positions()` → sum(size_usd where coin=symbol AND side=="long") − sum(where side=="short"). If only one side present for the symbol, net equals signed size. | client-side filter + aggregate |
+| `hlp_side` | derived from `hlp_net_delta_usd`: `"long"` if > 0, `"short"` if < 0, `"flat"` if 0 or no positions | client-side |
+| `hlp_size_usd` | `hlp_positions()` → total size_usd for the symbol (ignores sign) | client-side filter + sum |
+| `top_whale_positions` | `whales(coin, top_n=5)` → `positions` list (already size-sorted DESC by `size_usd`) | direct, take all 5 |
+| `smart_money_opens_1h` | `sm_changes(minutes=60)` → count of entries in the response where the coin matches | client-side filter + count |
+
+The exact `order_flow()` response shape was verified against `data-layer/src/hynous_data/engine/order_flow.py`:
+
+```python
+{
+    "coin": str,
+    "total_trades": int,
+    "windows": {
+        "1m":  {"window_seconds": 60,   "buy_volume_usd": float, "sell_volume_usd": float, "cvd": float, "buy_count": int, "sell_count": int, "buy_pct": float},
+        "5m":  {"window_seconds": 300,  ...},
+        "15m": {"window_seconds": 900,  ...},
+        "1h":  {"window_seconds": 3600, ...},
+    }
+}
+```
+
+Default windows are `[60, 300, 900, 3600]` — no 30m key today.
+
+### Data-layer additions (required)
+
+Two small additions to `data-layer/src/hynous_data/engine/order_flow.py` to make the full schema populable. Both are purely additive and do not change existing endpoint contracts.
+
+**1. Add 1800s (30m) to the default windows list.**
+
+```python
+# data-layer/src/hynous_data/engine/order_flow.py, __init__
+def __init__(self, windows: list[int] | None = None):
+    self._windows = windows or [60, 300, 900, 1800, 3600]  # 1m, 5m, 15m, 30m, 1h
+```
+
+The existing label logic (`window_s // 60` for `< 3600`) produces `"30m"` automatically; no other code changes needed in the engine. `order_flow(coin)` now returns a `"30m"` key alongside the existing four.
+
+**2. Add a `large_trade_count(coin, window_s, threshold_pct_of_window_vol=0.01)` helper + route.**
+
+```python
+# data-layer/src/hynous_data/engine/order_flow.py — add a method
+def large_trade_count(
+    self,
+    coin: str,
+    window_s: int = 3600,
+    threshold_pct_of_window_vol: float = 0.01,
+) -> dict:
+    """Count trades in the window whose notional exceeds a percentage of the
+    window's total volume. Default: 1% of hourly volume.
+    """
+    import time
+    buf = get_trade_buffer(coin)
+    if not buf:
+        return {"coin": coin, "window_s": window_s, "count": 0, "threshold_usd": 0}
+
+    now_ms = int(time.time() * 1000)
+    cutoff_ms = now_ms - window_s * 1000
+    window_trades = [t for t in list(buf) if t["time"] >= cutoff_ms]
+    total_vol = sum(t["px"] * t["sz"] for t in window_trades)
+    threshold = total_vol * threshold_pct_of_window_vol
+    count = sum(1 for t in window_trades if t["px"] * t["sz"] >= threshold)
+    return {
+        "coin": coin,
+        "window_s": window_s,
+        "threshold_usd": round(threshold, 2),
+        "count": count,
+    }
+```
+
+```python
+# data-layer/src/hynous_data/api/routes.py — register the route
+@router.get("/v1/orderflow/{coin}/large-trade-count")
+def large_trade_count(coin: str, window_s: int = Query(3600, ge=60, le=86400)):
+    if "order_flow" not in c:
+        return JSONResponse(status_code=503, content={"error": "Order flow engine not available"})
+    engine = c["order_flow"]
+    return engine.large_trade_count(coin.upper(), window_s=window_s)
+```
+
+```python
+# src/hynous/data/providers/hynous_data.py — add a client method next to order_flow()
+def large_trade_count(self, coin: str, window_s: int = 3600) -> dict | None:
+    """Count of trades in window exceeding 1% of window volume."""
+    return self._get(
+        f"/v1/orderflow/{coin.upper()}/large-trade-count",
+        params={"window_s": window_s},
+    )
+```
+
+### Capture builder rewrites
+
+Replace the two placeholder builders in `src/hynous/journal/capture.py`:
+
+```python
+def _build_order_flow_state(daemon: Any, symbol: str) -> OrderFlowState:
+    """Read order flow metrics from the data-layer. Gracefully degrades if the
+    data-layer is down: every field becomes None."""
+    try:
+        from hynous.data.providers.hynous_data import get_client
+        client = get_client()
+    except Exception:
+        logger.debug("data-layer client unavailable for order flow", exc_info=True)
+        return OrderFlowState()
+
+    # Pull windowed CVD / buy_pct
+    flow = client.order_flow(symbol)
+    if not flow or "windows" not in flow:
+        return OrderFlowState()
+    w = flow["windows"]
+
+    def _ratio(label: str) -> float | None:
+        win = w.get(label)
+        if not win:
+            return None
+        bp = win.get("buy_pct")
+        return bp / 100.0 if bp is not None else None
+
+    def _cvd(label: str) -> float | None:
+        win = w.get(label)
+        return win.get("cvd") if win else None
+
+    cvd_5m = _cvd("5m") or 0.0
+    cvd_15m = _cvd("15m") or 0.0
+    cvd_accel = cvd_5m - (cvd_15m / 3.0) if (cvd_5m or cvd_15m) else None
+
+    # Large-trade count (best-effort)
+    ltc = None
+    try:
+        ltc_resp = client.large_trade_count(symbol, window_s=3600)
+        ltc = ltc_resp.get("count") if ltc_resp else None
+    except Exception:
+        logger.debug("large_trade_count fetch failed", exc_info=True)
+
+    return OrderFlowState(
+        cvd_30m=_cvd("30m"),
+        cvd_1h=_cvd("1h"),
+        cvd_acceleration=cvd_accel,
+        buy_sell_ratio_1m=_ratio("1m"),
+        buy_sell_ratio_5m=_ratio("5m"),
+        buy_sell_ratio_15m=_ratio("15m"),
+        buy_sell_ratio_1h=_ratio("1h"),
+        large_trade_count_1h=ltc,
+    )
+
+
+def _build_smart_money_context(daemon: Any, symbol: str) -> SmartMoneyContext:
+    """Read HLP, whale, and smart-money data from the data-layer. Gracefully
+    degrades if the data-layer is down: fields become None / empty list / 0."""
+    try:
+        from hynous.data.providers.hynous_data import get_client
+        client = get_client()
+    except Exception:
+        logger.debug("data-layer client unavailable for smart money", exc_info=True)
+        return SmartMoneyContext(top_whale_positions=[], smart_money_opens_1h=0)
+
+    # HLP
+    hlp_net: float | None = None
+    hlp_size: float | None = None
+    hlp_side: str | None = None
+    try:
+        hlp = client.hlp_positions()
+        if hlp and isinstance(hlp.get("positions"), list):
+            long_usd = sum(
+                p.get("size_usd", 0)
+                for p in hlp["positions"]
+                if p.get("coin") == symbol and p.get("side") == "long"
+            )
+            short_usd = sum(
+                p.get("size_usd", 0)
+                for p in hlp["positions"]
+                if p.get("coin") == symbol and p.get("side") == "short"
+            )
+            hlp_net = long_usd - short_usd
+            hlp_size = long_usd + short_usd
+            if hlp_net > 0:
+                hlp_side = "long"
+            elif hlp_net < 0:
+                hlp_side = "short"
+            elif hlp_size == 0:
+                hlp_side = None  # no position on this coin
+            else:
+                hlp_side = "flat"  # equal longs and shorts (rare)
+    except Exception:
+        logger.debug("hlp_positions fetch failed", exc_info=True)
+
+    # Top whale positions
+    top_whales: list[dict[str, Any]] = []
+    try:
+        whales = client.whales(symbol, top_n=5)
+        if whales and isinstance(whales.get("positions"), list):
+            top_whales = whales["positions"][:5]
+    except Exception:
+        logger.debug("whales fetch failed", exc_info=True)
+
+    # Smart money opens in last 1h on this coin
+    sm_opens = 0
+    try:
+        changes = client.sm_changes(minutes=60)
+        if changes and isinstance(changes.get("changes"), list):
+            # Each change entry is per-wallet; count opens of our symbol.
+            # Data-layer response shape (verified against
+            # data-layer/engine/position_tracker.py:120-155 and
+            # data-layer/api/routes.py:208): rows have the keys
+            # `action`, `coin`, `side`, `size_usd`, `price`, `detected_at`,
+            # plus wallet profile fields (`win_rate`, `style`, `is_bot`,
+            # `label`). The `action` column values are
+            # `entry` | `flip` | `increase` | `exit`. Count only
+            # position-OPENING events — do NOT count `exit`.
+            sm_opens = sum(
+                1 for ch in changes["changes"]
+                if ch.get("coin") == symbol
+                and ch.get("action") in ("entry", "flip", "increase")
+            )
+    except Exception:
+        logger.debug("sm_changes fetch failed", exc_info=True)
+
+    return SmartMoneyContext(
+        hlp_net_delta_usd=hlp_net,
+        hlp_side=hlp_side,
+        hlp_size_usd=hlp_size,
+        top_whale_positions=top_whales,
+        smart_money_opens_1h=sm_opens,
+    )
+```
+
+**Critical:** every data-layer call is individually `try/except`-wrapped so a single endpoint outage cannot strand an entry snapshot. A missing data-layer field becomes `None`, never raises.
+
+### Daemon client lifecycle
+
+The `hynous_data.get_client()` helper already returns a cached client instance. Capture builders reuse that cache; do not create per-call clients. No daemon state changes are needed for this backfill.
+
+### Defensive fields
+
+If the data-layer's `sm_changes` response changes its shape in future (this report verified the current client signature but did not exhaustively audit the engine response), the filtering loop above is intentionally permissive: if `ch.get("coin")` is not populated we undercount rather than raise. Document this in the capture.py module docstring so phase 3 analysis agent rules can decide whether to treat `smart_money_opens_1h == 0` as "none observed" vs. "data unavailable".
+
+### Verification during smoke test
+
+After the phase 2 smoke test, sample one entry snapshot and verify populated fields:
+
+```bash
+sqlite3 storage/v2/journal.db "SELECT snapshot_json FROM trade_entry_snapshots LIMIT 1;" \
+  | python -c "
+import sys, json
+data = json.loads(sys.stdin.read())
+of = data['order_flow_state']
+sm = data['smart_money_context']
+print('order flow:', {k: v for k, v in of.items() if v is not None})
+print('smart money:', {k: v for k, v in sm.items() if v is not None and v != [] and v != 0})
+"
+```
+
+At least `cvd_1h`, `buy_sell_ratio_1h`, and `top_whale_positions` must be populated in any smoke-test-captured snapshot. If all fields are None/empty, the data-layer is down or the backfill wiring regressed — pause and investigate before reporting phase 2 complete.
 
 ---
 
@@ -1431,6 +1921,15 @@ Create `tests/unit/test_v2_journal.py`:
 21. `test_cosine_similarity_identical_vectors` — should be 1.0
 22. `test_cosine_similarity_orthogonal_vectors` — should be 0.0
 23. `test_search_semantic_orders_by_score` — seed with known embeddings, verify ordering
+24. `test_entry_snapshot_round_trip_preserves_every_field` — asdict → json → from_dict roundtrip equals original (Amendment 9)
+25. `test_exit_snapshot_round_trip_preserves_every_field` — same contract (Amendment 9)
+26. `test_entry_snapshot_from_dict_raises_keyerror_on_missing_section` — schema drift raises, not swallowed (Amendment 9)
+27. `test_get_trade_hydrates_nested_dataclasses` — end-to-end, `get_trade()` returns real `TradeEntrySnapshot` instance (Amendment 9)
+28. `test_build_order_flow_state_populates_windows_from_mock_client` — mocked `order_flow` response returns shape with `windows` dict; all 5 windows (1m/5m/15m/30m/1h) map correctly; `cvd_acceleration` computed as `cvd_5m − cvd_15m/3` (Amendment 10)
+29. `test_build_order_flow_state_graceful_when_data_layer_down` — `get_client()` raises; returns empty `OrderFlowState()` without error (Amendment 10)
+30. `test_build_smart_money_context_aggregates_hlp_per_symbol` — mocked `hlp_positions` with mixed coins; only the target symbol's positions count toward net/size (Amendment 10)
+31. `test_build_smart_money_context_counts_sm_opens_for_symbol_only` — mocked `sm_changes` with entries across multiple coins; count filters to target symbol (Amendment 10)
+32. `test_build_smart_money_context_graceful_when_all_endpoints_down` — every data-layer call raises; returns `SmartMoneyContext` with all fields None/empty, does not raise (Amendment 10)
 
 ### Integration tests
 
@@ -1443,6 +1942,7 @@ Create `tests/integration/test_v2_journal_integration.py`:
 5. `test_api_stats_computes_aggregates` — populate 10 trades with known outcomes, assert stats math
 6. `test_migrate_staging_preserves_all_data` — populate staging, run migration, assert journal has identical data
 7. `test_concurrent_reads_during_write` — thread one reads while thread two writes; assert no busy errors thanks to WAL
+8. `test_full_trade_capture_populates_order_flow_and_smart_money` — run end-to-end with a live `PaperProvider` and a data-layer stub; assert captured entry snapshot has non-empty `cvd_1h`, `buy_sell_ratio_1h`, and `top_whale_positions` fields (Amendment 10)
 
 ### Smoke test
 
@@ -1475,14 +1975,24 @@ Expected: trades, events, entry_snapshots populated. Analyses, edges, patterns e
 - [ ] `src/hynous/journal/store.py` exists with full `JournalStore` class
 - [ ] `src/hynous/journal/embeddings.py` exists with `EmbeddingClient` and `cosine_similarity`
 - [ ] `src/hynous/journal/api.py` exists with all routes listed
-- [ ] `src/hynous/journal/migrate_staging.py` exists and is idempotent
+- [ ] `src/hynous/journal/migrate_staging.py` exists, is snapshot-idempotent (ON CONFLICT upsert), and is guarded against re-run by `journal_metadata.staging_migration_done` (events table would re-insert without that flag)
 - [ ] `src/hynous/journal/README.md` exists and explains the module
 - [ ] `storage/v2/journal.db` is created with all 8 tables on daemon startup
 - [ ] Journal router is mounted on the dashboard FastAPI app
 - [ ] Phase 1 staging data migrates cleanly (if present)
 - [ ] Daemon now writes to `JournalStore` instead of `StagingStore` (the `_journal_store` reference swaps)
-- [ ] All 23 unit tests pass
-- [ ] All 7 integration tests pass
+- [ ] All 32 unit tests pass (23 original + 4 reconstruction round-trip tests for Amendment 9 + 5 order-flow / smart-money tests for Amendment 10)
+- [ ] All 8 integration tests pass (7 original + 1 end-to-end order-flow / smart-money capture test for Amendment 10)
+- [ ] `entry_snapshot_from_dict` and `exit_snapshot_from_dict` exist in `src/hynous/journal/schema.py` and round-trip empirically verified (Amendment 9)
+- [ ] `JournalStore.get_trade()` returns bundle where `entry_snapshot` and `exit_snapshot` are real `TradeEntrySnapshot` / `TradeExitSnapshot` instances, not dicts (Amendment 9)
+- [ ] `_build_order_flow_state()` in `src/hynous/journal/capture.py` reads from `hynous_data.order_flow(coin)` + `hynous_data.large_trade_count(coin)` with per-call graceful degradation (Amendment 10)
+- [ ] `_build_smart_money_context()` in `src/hynous/journal/capture.py` reads from `hynous_data.hlp_positions()`, `hynous_data.whales(coin, top_n=5)`, `hynous_data.sm_changes(minutes=60)` with per-call graceful degradation (Amendment 10)
+- [ ] `data-layer/src/hynous_data/engine/order_flow.py` default windows include `1800` (30m) — new `"30m"` key appears in `order_flow()` response (Amendment 10)
+- [ ] `data-layer/src/hynous_data/engine/order_flow.py` exposes `large_trade_count(coin, window_s, threshold_pct_of_window_vol)` helper (Amendment 10)
+- [ ] `data-layer/src/hynous_data/api/routes.py` registers `GET /v1/orderflow/{coin}/large-trade-count` (Amendment 10)
+- [ ] `src/hynous/data/providers/hynous_data.py` exposes `large_trade_count(coin, window_s)` client method (Amendment 10)
+- [ ] Post-smoke verification: at least one captured entry snapshot has non-None `cvd_1h`, `buy_sell_ratio_1h`, and non-empty `top_whale_positions` (Amendment 10)
+- [ ] Post-smoke verification: `store.get_trade(trade_id)` hydrates at least one captured trade end-to-end (Amendment 9)
 - [ ] Full regression `pytest tests/ --ignore=tests/e2e` passes with zero new failures (baseline: 810 passed / 1 pre-existing failure — see master plan Amendment 2)
 - [ ] mypy baseline preserved
 - [ ] ruff baseline preserved

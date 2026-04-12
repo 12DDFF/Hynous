@@ -368,6 +368,29 @@ Phase 1 adds 14 new unit tests (test_v2_capture.py). Combined with the 8 phase 0
 
 ruff baseline: 108 errors (was 107). The +1 is an I001 (unsorted-imports) from inline imports in `_recompute_pending_counterfactuals()`, following the same pattern as 8 existing inline import blocks in daemon.py.
 
+### Amendment 9 — Snapshot dataclass reconstruction helpers deferred from phase 1 to phase 2 (discovered 2026-04-12)
+
+The phase 1 plan sketched `staging_store.get_entry_snapshot(trade_id) -> TradeEntrySnapshot | None` returning a hydrated dataclass via an unimplemented `_dict_to_entry_snapshot(data: dict) -> TradeEntrySnapshot` helper stubbed as `raise NotImplementedError("Implement dict→dataclass reconstruction")`. The phase 1 implementer deliberately sidestepped the reconstruction by shipping `get_entry_snapshot_json(trade_id) -> dict | None` instead — capture code only needs raw dicts for cross-reading during exit snapshot building, so dict-pass-through was sufficient for phase 1's scope.
+
+This leaves phase 2 needing real reconstruction helpers because `JournalStore.get_trade()` returns a hydrated bundle (with `entry_snapshot` and `exit_snapshot` as typed dataclass instances) that phase 3's analysis agent consumes directly.
+
+**Resolution:** Phase 2 step 1 adds `entry_snapshot_from_dict()` and `exit_snapshot_from_dict()` to `src/hynous/journal/schema.py`, with explicit nested-dataclass instantiation (no recursive generic walker — the dataclasses contain `list[dict]` fields like `clusters_above`, `top_whale_positions`, `direction_shap_top5`, `candles_1m_15min` that must stay as dicts). Four round-trip unit tests + one end-to-end hydration test are mandatory before the rest of phase 2 proceeds. Empirical verification of hydration on real smoke-captured data is part of the phase 2 report-back.
+
+See `v2-planning/05-phase-2-journal-module.md` → "Dataclass Reconstruction Helpers" section for the full spec. Staging store is NOT backported — it is deleted at the end of phase 2.
+
+### Amendment 10 — Order flow + smart money backfill scheduled in phase 2 (discovered 2026-04-12)
+
+Phase 1's `src/hynous/journal/capture.py` ships `_build_order_flow_state()` and `_build_smart_money_context()` as bare placeholders returning empty `OrderFlowState()` / `SmartMoneyContext()` instances. The phase 1 report-back documented this as "placeholders for data-layer integration" but no follow-up plan existed. Every entry snapshot captured through phase 1 therefore has all eight `OrderFlowState` fields and all five `SmartMoneyContext` fields set to None / empty list / 0. Phase 3's analysis agent rules depend on these fields being populated to fire findings like `entered_against_funding`, `entered_into_liq_cluster`, or HLP-alignment observations.
+
+**Resolution:** Phase 2 backfills both builders against the existing data-layer service (`:8100`). The `hynous_data.py` client already exposes every endpoint needed (`order_flow`, `hlp_positions`, `whales`, `sm_changes`). Two small additions to the data-layer engine are required to populate the currently-missing `cvd_30m` and `large_trade_count_1h` schema fields:
+
+1. `data-layer/src/hynous_data/engine/order_flow.py` — extend default windows from `[60, 300, 900, 3600]` to `[60, 300, 900, 1800, 3600]` so the response includes a `"30m"` key.
+2. `data-layer/src/hynous_data/engine/order_flow.py` — add `large_trade_count(coin, window_s, threshold_pct_of_window_vol)` helper + `GET /v1/orderflow/{coin}/large-trade-count` route + matching client method.
+
+Every data-layer call in the rewritten builders is individually try/except-wrapped; a single endpoint outage cannot strand an entry snapshot. Populated-field post-smoke verification is a phase 2 acceptance criterion: at least one captured snapshot must have non-None `cvd_1h`, `buy_sell_ratio_1h`, and non-empty `top_whale_positions`.
+
+See `v2-planning/05-phase-2-journal-module.md` → "Order Flow & Smart Money Backfill" section for the full spec including verified endpoint response shapes and graceful-degradation patterns.
+
 ---
 
 ## Document Index

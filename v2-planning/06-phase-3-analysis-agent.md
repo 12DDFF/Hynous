@@ -204,12 +204,32 @@ def run_rules(bundle: dict[str, Any]) -> list[Finding]:
     """Evaluate all rules against a trade bundle.
     
     Args:
-        bundle: full trade dict as returned by JournalStore.get_trade(),
-                containing entry_snapshot, exit_snapshot, events, counterfactuals.
+        bundle: full trade dict as returned by JournalStore.get_trade().
+                Per Amendment 9, `bundle["entry_snapshot"]` and
+                `bundle["exit_snapshot"]` are hydrated dataclass instances
+                (TradeEntrySnapshot / TradeExitSnapshot), NOT plain dicts.
+                Every rule body below assumes dict-style `.get(...)` access,
+                so this function COERCES both snapshots with `asdict(...)`
+                at the boundary. This is the single point of contract
+                adaptation — rule functions stay dict-only.
     
     Returns:
         list of Finding objects (deterministic source). May be empty.
     """
+    from dataclasses import asdict, is_dataclass
+    
+    # Coerce dataclass snapshots to dicts before dispatching to rules.
+    # Use `is_dataclass` guard so this function still works when callers
+    # pass a pre-dict'd bundle (e.g. synthetic test bundles, or a future
+    # store that returns dicts).
+    bundle = dict(bundle)  # shallow copy so we don't mutate the caller
+    entry_snap = bundle.get("entry_snapshot")
+    if is_dataclass(entry_snap) and not isinstance(entry_snap, type):
+        bundle["entry_snapshot"] = asdict(entry_snap)
+    exit_snap = bundle.get("exit_snapshot")
+    if is_dataclass(exit_snap) and not isinstance(exit_snap, type):
+        bundle["exit_snapshot"] = asdict(exit_snap)
+    
     findings: list[Finding] = []
     rule_fns = [
         _rule_signal_degraded,
@@ -362,7 +382,14 @@ def _rule_vol_regime_flipped(bundle: dict) -> Finding | None:
 
 
 def _rule_mechanical_correct(bundle: dict) -> Finding | None:
-    """Positive finding: exit classification matches expected layer given peak ROE."""
+    """Positive finding: exit classification matches expected layer given peak ROE.
+    
+    Trail activation is vol-regime-adaptive in production
+    (see `docs/revisions/breakeven-fix/ml-adaptive-trailing-stop.md`).
+    Thresholds: extreme=1.5%, high=2.0%, normal=2.5%, low=3.0%.
+    Using a hard-coded 2.5% would false-positive on extreme/high regime
+    trades that legitimately activated trail below 2.5% ROE.
+    """
     trade = bundle  # top-level trade row
     classification = trade.get("exit_classification")
     peak_roe = trade.get("peak_roe", 0)
@@ -370,9 +397,26 @@ def _rule_mechanical_correct(bundle: dict) -> Finding | None:
     if not classification:
         return None
     
+    # Resolve vol regime from the entry snapshot's ml_snapshot.
+    # Bundle entry_snapshot is already coerced to a dict by run_rules.
+    vol_regime = (
+        bundle.get("entry_snapshot", {})
+        .get("ml_snapshot", {})
+        .get("vol_1h_regime")
+    )
+    # Keep the threshold map in sync with `TradingSettings.trail_activation_*`
+    # in `src/hynous/core/trading_settings.py`.
+    TRAIL_ACTIVATION_BY_REGIME = {
+        "extreme": 1.5,
+        "high": 2.0,
+        "normal": 2.5,
+        "low": 3.0,
+    }
+    trail_threshold = TRAIL_ACTIVATION_BY_REGIME.get(vol_regime, 2.5)
+    
     # Determine expected layer
     expected = None
-    if peak_roe > 2.5:  # activation threshold for normal vol — ≈ trail_activation_normal
+    if peak_roe > trail_threshold:
         expected = "trailing_stop"
     elif peak_roe > 0:
         expected = "breakeven_stop"
@@ -392,10 +436,13 @@ def _rule_mechanical_correct(bundle: dict) -> Finding | None:
             "exit_classification": classification,
             "peak_roe": peak_roe,
             "expected_layer": expected,
+            "vol_1h_regime": vol_regime,
+            "trail_activation_threshold": trail_threshold,
         },
         interpretation=(
             f"Exit classification {classification!r} matches expected layer "
-            f"for peak ROE {peak_roe:.1f}%"
+            f"for peak ROE {peak_roe:.1f}% (vol_regime={vol_regime or 'unknown'}, "
+            f"trail_activation≥{trail_threshold:.1f}%)"
         ),
     )
 

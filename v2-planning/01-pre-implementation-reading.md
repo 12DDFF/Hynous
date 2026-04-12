@@ -245,6 +245,14 @@ Use this as a personal checklist. Check off each item before proceeding.
 - [ ] Full v1 Nous client for context: `src/hynous/nous/client.py` (you're replacing this)
 - [ ] `src/hynous/nous/sections.py` (understand section concept so you know why v2 removes it)
 - [ ] 5. docs/README.md (for documentation conventions)
+- [ ] `src/hynous/journal/schema.py` (full) — dataclass shapes you must round-trip for Amendment 9
+- [ ] `src/hynous/journal/staging_store.py` (full) — confirm `get_entry_snapshot_json()` returns a dict and note that `_dict_to_entry_snapshot` was never implemented (Amendment 9)
+- [ ] `src/hynous/journal/capture.py` — specifically `_build_order_flow_state()` and `_build_smart_money_context()` (~lines 473–483) to confirm they return empty placeholders (Amendment 10)
+- [ ] `src/hynous/data/providers/hynous_data.py` (full) — all methods you'll call from the backfill: `order_flow`, `hlp_positions`, `whales`, `sm_changes`, and the new `large_trade_count` you're adding (Amendment 10)
+- [ ] `data-layer/src/hynous_data/engine/order_flow.py` (full) — default windows list `[60, 300, 900, 3600]` that you'll extend with 1800 (30m) + add `large_trade_count` helper (Amendment 10)
+- [ ] `data-layer/src/hynous_data/engine/whale_tracker.py` (full) — confirm `get_whales()` response shape you'll consume
+- [ ] `data-layer/src/hynous_data/collectors/hlp_tracker.py` — `get_positions()` and `get_sentiment()` shapes
+- [ ] `data-layer/src/hynous_data/api/routes.py` (full) — route registration pattern you'll follow for `/v1/orderflow/{coin}/large-trade-count`
 
 ### Phase 3 engineer (analysis agent)
 
