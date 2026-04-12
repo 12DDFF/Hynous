@@ -350,3 +350,84 @@ class LifecycleEvent:
     ts: str
     event_type: str
     payload: dict[str, Any] = field(default_factory=dict)
+
+
+# ============================================================================
+# Reconstruction helpers (phase 2)
+#
+# Phase 1 persists dataclass instances as JSON (via dataclasses.asdict +
+# json.dumps). Phase 2 needs the reverse direction so JournalStore.get_trade()
+# can return typed objects to the analysis agent. These helpers are
+# exhaustive — they enumerate every nested dataclass field explicitly. Do NOT
+# attempt to collapse into a generic recursive walker; the dataclasses have
+# irregular shapes (list[dict] fields like ``clusters_above``,
+# ``top_whale_positions``, ``direction_shap_top5``, ``candles_1m_15min`` stay
+# as-is).
+# ============================================================================
+
+
+def entry_snapshot_from_dict(data: dict[str, Any]) -> TradeEntrySnapshot:
+    """Reconstruct a ``TradeEntrySnapshot`` from a JSON-loaded dict.
+
+    Args:
+        data: dict previously produced by ``dataclasses.asdict(snapshot)``.
+            Must contain every top-level key of :class:`TradeEntrySnapshot`.
+
+    Raises:
+        KeyError: if a required top-level section key is missing from the
+            payload (indicates schema drift or a corrupt row — caller should
+            log and skip, not swallow).
+        TypeError: if a top-level section is present but cannot be
+            reconstructed into its dataclass (missing required fields or
+            wrong shape). Treat this the same as schema drift — log and skip.
+
+    Returns:
+        Fully-hydrated :class:`TradeEntrySnapshot` with every nested dataclass
+        instantiated.
+    """
+    return TradeEntrySnapshot(
+        trade_basics=TradeBasics(**data["trade_basics"]),
+        trigger_context=TriggerContext(**data["trigger_context"]),
+        ml_snapshot=MLSnapshot(**data["ml_snapshot"]),
+        market_state=MarketState(**data["market_state"]),
+        derivatives_state=DerivativesState(**data["derivatives_state"]),
+        liquidation_terrain=LiquidationTerrain(**data["liquidation_terrain"]),
+        order_flow_state=OrderFlowState(**data["order_flow_state"]),
+        smart_money_context=SmartMoneyContext(**data["smart_money_context"]),
+        time_context=TimeContext(**data["time_context"]),
+        account_context=AccountContext(**data["account_context"]),
+        settings_snapshot=SettingsSnapshot(**data["settings_snapshot"]),
+        price_history=PriceHistoryContext(**data["price_history"]),
+        schema_version=data.get("schema_version", "1.0.0"),
+    )
+
+
+def exit_snapshot_from_dict(data: dict[str, Any]) -> TradeExitSnapshot:
+    """Reconstruct a ``TradeExitSnapshot`` from a JSON-loaded dict.
+
+    Args:
+        data: dict previously produced by ``dataclasses.asdict(snapshot)``.
+            Must contain every top-level key of :class:`TradeExitSnapshot`.
+
+    Raises:
+        KeyError: if a required top-level section key is missing from the
+            payload (indicates schema drift or a corrupt row — caller should
+            log and skip, not swallow).
+        TypeError: if a top-level section is present but cannot be
+            reconstructed into its dataclass (missing required fields or
+            wrong shape). Treat this the same as schema drift — log and skip.
+
+    Returns:
+        Fully-hydrated :class:`TradeExitSnapshot` with every nested dataclass
+        instantiated.
+    """
+    return TradeExitSnapshot(
+        trade_id=data["trade_id"],
+        trade_outcome=TradeOutcome(**data["trade_outcome"]),
+        roe_trajectory=ROETrajectory(**data["roe_trajectory"]),
+        counterfactuals=Counterfactuals(**data["counterfactuals"]),
+        ml_exit_comparison=MLExitComparison(**data["ml_exit_comparison"]),
+        market_state_at_exit=MarketState(**data["market_state_at_exit"]),
+        price_path_1m=data.get("price_path_1m", []),
+        schema_version=data.get("schema_version", "1.0.0"),
+    )
