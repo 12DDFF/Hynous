@@ -569,11 +569,12 @@ class Daemon:
         return self._hl_provider
 
     def _get_nous(self):
-        """Get cached Nous client."""
-        if self._nous_client is None:
-            from ..nous.client import get_client
-            self._nous_client = get_client()
-        return self._nous_client
+        """Get cached Nous client.
+
+        Phase 4 M5: nous python client deleted. Returns None permanently;
+        callers guard on truthiness. Full removal deferred to later step.
+        """
+        return None
 
     # ================================================================
     # Lifecycle
@@ -4727,6 +4728,10 @@ class Daemon:
         """
         try:
             nous = self._get_nous()
+            if nous is None:
+                # Phase 4 M5: nous client deleted; skip health reporting.
+                self._nous_healthy = False
+                return
             result = nous.health()
 
             self._nous_healthy = True
@@ -5070,7 +5075,6 @@ def run_standalone():
     import signal
 
     from ..core.config import load_config
-    from ..nous.server import ensure_running
     from .agent import Agent
 
     logging.basicConfig(
@@ -5079,10 +5083,6 @@ def run_standalone():
     )
 
     config = load_config()
-
-    # Start Nous server
-    if not ensure_running():
-        logger.warning("Nous server not available — memory tools will fail")
 
     # Initialize agent
     agent = Agent(config=config)

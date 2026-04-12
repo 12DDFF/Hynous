@@ -92,10 +92,14 @@ def fetch_trade_history(
     created_after: str | None = None,
     created_before: str | None = None,
 ) -> list[TradeRecord]:
-    """Query Nous for trade_close nodes and parse into TradeRecords."""
+    """Query Nous for trade_close nodes and parse into TradeRecords.
+
+    Phase 4 M5: nous python client deleted. When no explicit client is
+    passed, returns [] (trade history now lives in the v2 journal; rewiring
+    to JournalStore is a later-phase task). Callers tolerate empty list.
+    """
     if nous_client is None:
-        from ..nous.client import get_client
-        nous_client = get_client()
+        return []
 
     # Normalize timestamps to Nous storage format: "YYYY-MM-DD HH:MM:SS"
     # Nous stores without T-separator or timezone; ISO strings with T/+00:00 break string comparison

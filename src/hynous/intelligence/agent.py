@@ -195,12 +195,12 @@ class Agent:
         try:
             from ..data.providers.hyperliquid import get_provider
             from .daemon import get_active_daemon
-            from ..nous.client import get_client
             from .context_snapshot import build_snapshot, extract_symbols
 
             provider = get_provider()
             daemon = get_active_daemon()
-            nous = get_client()
+            # Phase 4 M5: nous python client deleted; build_snapshot tolerates None.
+            nous = None
             snapshot = build_snapshot(provider, daemon, nous, self.config)
             if snapshot:
                 self._last_snapshot = snapshot
