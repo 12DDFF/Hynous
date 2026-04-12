@@ -17,6 +17,18 @@
 > `src/hynous/journal/` has schema, staging_store, capture, counterfactuals.
 > daemon.py emits lifecycle events. trading.py captures entry snapshots.
 >
+> **Phase 2 complete (2026-04-12):** Full `JournalStore` at
+> `src/hynous/journal/store.py` replaces StagingStore. 9-table SQLite schema,
+> CRUD, embeddings (OpenAI text-embedding-3-small, matryoshka 512-dim),
+> semantic search, FastAPI routes at `/api/v2/journal/*` mounted in
+> `dashboard/dashboard/dashboard.py`. Staging→journal migration
+> (idempotent, flag-guarded) runs at daemon startup. Daemon now writes to
+> `storage/v2/journal.db` directly. 881 tests passing / 1 pre-existing
+> failure (baseline 824 + 57 new). Amendments 9 + 10 implemented.
+>
+> **Phase 3 next:** LLM post-trade analysis agent writing into the
+> `trade_analyses` table. See `v2-planning/06-phase-3-analysis-agent.md`.
+>
 > Known-stale items in this file:
 > - The 5-component architecture table (v2 removes Nous, reducing to 4)
 > - Memory tool listings (phase 4 deletes 8 of them)
@@ -200,4 +212,4 @@ cd nous-server && pnpm test
 
 ---
 
-Last updated: 2026-03-18
+Last updated: 2026-04-12 (phase 2 complete)

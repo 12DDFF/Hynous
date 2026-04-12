@@ -129,13 +129,32 @@ See `v2-planning/00-master-plan.md` for full plan details.
 
 - [x] Phase 0: Branch & environment (config scaffolding, storage layout, baselines)
 - [x] Phase 1: Data capture expansion (entry/exit snapshots, lifecycle events, counterfactuals)
-- [ ] Phase 2: Journal module (full SQLite store, embeddings, API routes)
-- [ ] Phase 3: Analysis agent (deterministic rules + LLM synthesis, evidence validation)
+- [x] Phase 2: Journal module (full SQLite store, embeddings, API routes, Amendments 9+10)
+- [ ] **Phase 3 (next): Analysis agent (deterministic rules + LLM synthesis, evidence validation)**
 - [ ] Phase 4: Tier 1 deletions (~106K LOC: Nous, coach, consolidation, memory tools)
 - [ ] Phase 5: Mechanical entry (EntryTriggerSource, ML-signal-driven, remove LLM from trading)
 - [ ] Phase 6: Consolidation & patterns (trade edges, weekly rollup cron)
 - [ ] Phase 7: Dashboard rework (journal page rewrite, delete memory/graph pages)
 - [ ] Phase 8: Quantitative improvements (tick model fix, MC fixes, composite calibration)
+
+### Phase 2 summary (done 2026-04-12)
+
+8 commits on `v2` (M1–M8, all tagged `[phase-2]`):
+
+| Milestone | Purpose |
+|---|---|
+| M1 `ee2c8d9` | Amendment 9 — `entry/exit_snapshot_from_dict` round-trip helpers |
+| M2 `e97453a` | `JournalStore` + 9-table schema + CRUD + daemon-compat methods |
+| M3 `ed3591f` | `EmbeddingClient` (OpenAI text-embedding-3-small, matryoshka 512) + cosine + semantic search |
+| M4 `d658bea` | FastAPI `/api/v2/journal/*` routes + dashboard mount |
+| M5 `6946bc7` | `migrate_staging.py` — idempotent, per-row corruption-isolated |
+| M6 `c0a9ed2` | Amendment 10 — data-layer 30m window + `large_trade_count` + backfill of `_build_order_flow_state` / `_build_smart_money_context` |
+| M7 `ee000a9` | Daemon `StagingStore → JournalStore` swap + auto-migration flag |
+| M8 `3f8b8f7` | `run_daemon.py` class-name fix + 30s smoke verified |
+
+Tests: 881 passed / 1 pre-existing failure (baseline 824 + 57 new).
+mypy: 333 baseline preserved.
+ruff: 108 baseline preserved.
 
 ---
 
@@ -153,4 +172,4 @@ See `v2-planning/00-master-plan.md` for full plan details.
 
 ---
 
-*Last updated: 2026-04-10 (v2 phase 1 complete)*
+*Last updated: 2026-04-12 (v2 phase 2 complete; phase 3 next)*

@@ -11,6 +11,15 @@
 > **For v2 architecture and plan, read `v2-planning/00-master-plan.md` instead.**
 > Do not trust this document for v2 design decisions — use it for historical
 > context only. Phase 4 of the v2 plan rewrites this file to reflect v2 reality.
+>
+> **Phase 2 complete (2026-04-12).** The Nous TypeScript memory server is
+> still running alongside (phase 4 deletes it) but the daemon now writes
+> trades into a local SQLite journal at `storage/v2/journal.db` via
+> `src/hynous/journal/store.py::JournalStore`. FastAPI routes at
+> `/api/v2/journal/*` are mounted in `dashboard/dashboard/dashboard.py`
+> exposing trades / events / analysis / stats / search / tags. See
+> `src/hynous/journal/README.md` for the v2 journal surface and
+> `v2-planning/05-phase-2-journal-module.md` for the authoritative plan.
 
 ---
 
