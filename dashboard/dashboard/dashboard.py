@@ -274,6 +274,29 @@ class _NoCacheHTMLMiddleware(BaseHTTPMiddleware):
 app._api.add_middleware(_NoCacheHTMLMiddleware)
 
 
+# v2 journal module — mount /api/v2/journal/* routes + inject a dashboard-owned
+# JournalStore. Daemon keeps its own StagingStore until phase-2 M7 swaps both
+# processes onto the same journal.db. Wrapped in try/except so a DB-init error
+# at dashboard startup is logged but doesn't brick the rest of the app.
+try:
+    from hynous.core.config import load_config as _load_cfg_for_journal
+    from hynous.journal.api import router as _journal_router, set_store as _set_journal_store
+    from hynous.journal.store import JournalStore as _JournalStore
+
+    _cfg = _load_cfg_for_journal()
+    _journal_store = _JournalStore(
+        db_path=_cfg.v2.journal.db_path,
+        busy_timeout_ms=_cfg.v2.journal.busy_timeout_ms,
+    )
+    _set_journal_store(_journal_store)
+    app._api.include_router(_journal_router)
+except Exception as _journal_mount_err:
+    import logging as _journal_mount_logging
+    _journal_mount_logging.getLogger(__name__).exception(
+        "v2 journal mount failed: %s", _journal_mount_err,
+    )
+
+
 # Proxy Nous API through the Reflex backend so the browser doesn't need
 # direct access to port 3100 (blocked by UFW).
 async def _nous_proxy(request):
