@@ -367,7 +367,144 @@ def test_full_trade_lifecycle_writes_all_tables(
     assert len(bundle["tags"]) == 1
 
 
-def _unused_marker() -> None:
-    """Silence F401 if tools think the Any import is unused — it isn't, the
-    fixtures return Any-typed values that pytest type-narrows at call sites."""
-    _ = Any
+# ---------------------------------------------------------------------------
+# Staging → journal migration (plan integration test #6)
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_staging_preserves_all_data(
+    tmp_path: Any,
+    sample_entry_snapshot: TradeEntrySnapshot,
+    sample_exit_snapshot: TradeExitSnapshot,
+) -> None:
+    """Seed a staging DB with entries+exits+events, migrate, assert journal
+    has identical counts and that the migration is idempotent on re-run.
+    """
+    from dataclasses import replace as dc_replace
+
+    from hynous.journal.migrate_staging import migrate_staging_to_journal
+    from hynous.journal.staging_store import StagingStore
+
+    staging_path = tmp_path / "staging.db"
+    journal_path = tmp_path / "journal.db"
+    staging = StagingStore(str(staging_path))
+
+    # Seed 2 entries with distinct trade_ids
+    entry_a = sample_entry_snapshot
+    basics_b = dc_replace(
+        sample_entry_snapshot.trade_basics, trade_id="trade_bbb2345678901234b",
+    )
+    entry_b = dc_replace(sample_entry_snapshot, trade_basics=basics_b)
+    staging.insert_entry_snapshot(entry_a)
+    staging.insert_entry_snapshot(entry_b)
+
+    # Seed 2 exits (matching trade_ids)
+    exit_a = sample_exit_snapshot  # trade_id already matches entry_a
+    exit_b = dc_replace(sample_exit_snapshot, trade_id="trade_bbb2345678901234b")
+    staging.insert_exit_snapshot(exit_a)
+    staging.insert_exit_snapshot(exit_b)
+
+    # Seed 5 lifecycle events (mixed trade_ids)
+    for i, tid in enumerate(
+        [entry_a.trade_basics.trade_id, entry_b.trade_basics.trade_id,
+         entry_a.trade_basics.trade_id, entry_b.trade_basics.trade_id,
+         entry_a.trade_basics.trade_id],
+    ):
+        staging.insert_lifecycle_event(
+            trade_id=tid, ts=f"2026-04-12T10:1{i}:00+00:00",
+            event_type="dynamic_sl_placed",
+            payload={"sl_px": 63500.0 + i},
+        )
+
+    # First migration
+    counts = migrate_staging_to_journal(str(staging_path), str(journal_path))
+    assert counts["entries"] == 2
+    assert counts["exits"] == 2
+    assert counts["events"] == 5
+    assert counts["skipped_entries"] == 0
+    assert counts["skipped_exits"] == 0
+    assert counts["skipped_events"] == 0
+
+    # Verify journal state
+    journal = JournalStore(str(journal_path))
+    trades = journal.list_trades()
+    assert len(trades) == 2
+    trade_ids = {t["trade_id"] for t in trades}
+    assert entry_a.trade_basics.trade_id in trade_ids
+    assert entry_b.trade_basics.trade_id in trade_ids
+    # Both trades closed (exit snapshots migrated)
+    assert all(t["status"] == "closed" for t in trades)
+
+    bundle_a = journal.get_trade(entry_a.trade_basics.trade_id)
+    assert bundle_a is not None
+    assert isinstance(bundle_a["entry_snapshot"], TradeEntrySnapshot)
+    assert isinstance(bundle_a["exit_snapshot"], TradeExitSnapshot)
+    # Entry A had 3 of the 5 events seeded
+    assert len(bundle_a["events"]) == 3
+
+    # Idempotent re-run: snapshots upsert, counts come back the same;
+    # events don't upsert (no idempotency key) but the function itself
+    # reports the same input count.
+    counts2 = migrate_staging_to_journal(str(staging_path), str(journal_path))
+    assert counts2["entries"] == 2
+    assert counts2["exits"] == 2
+    assert counts2["events"] == 5
+    # Trade count unchanged after re-run (upsert preserved identity)
+    assert len(journal.list_trades()) == 2
+
+
+def test_migrate_staging_no_source_db_returns_empty_counts(tmp_path: Any) -> None:
+    """Missing staging DB is not an error — migration reports zero counts."""
+    from hynous.journal.migrate_staging import migrate_staging_to_journal
+
+    result = migrate_staging_to_journal(
+        str(tmp_path / "does_not_exist.db"),
+        str(tmp_path / "journal.db"),
+    )
+    assert result == {
+        "entries": 0, "exits": 0, "events": 0,
+        "skipped_entries": 0, "skipped_exits": 0, "skipped_events": 0,
+    }
+
+
+def test_migrate_staging_skips_corrupt_row(tmp_path: Any) -> None:
+    """A malformed JSON row in staging is logged + skipped, not fatal."""
+    import sqlite3
+
+    from hynous.journal.migrate_staging import migrate_staging_to_journal
+
+    staging_path = tmp_path / "staging.db"
+    # Create minimal staging schema + inject a corrupt entry JSON
+    conn = sqlite3.connect(str(staging_path))
+    conn.executescript("""
+        CREATE TABLE trade_entry_snapshots_staging (
+            trade_id TEXT PRIMARY KEY,
+            symbol TEXT, side TEXT, entry_ts TEXT,
+            snapshot_json TEXT NOT NULL,
+            schema_version TEXT, created_at TEXT
+        );
+        CREATE TABLE trade_exit_snapshots_staging (
+            trade_id TEXT PRIMARY KEY,
+            exit_ts TEXT, exit_classification TEXT,
+            realized_pnl_usd REAL, snapshot_json TEXT NOT NULL,
+            schema_version TEXT, created_at TEXT
+        );
+        CREATE TABLE trade_events_staging (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_id TEXT, ts TEXT, event_type TEXT,
+            payload_json TEXT NOT NULL, created_at TEXT
+        );
+    """)
+    conn.execute(
+        "INSERT INTO trade_entry_snapshots_staging VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("bad_trade", "BTC", "long", "2026-04-12T10:00:00+00:00",
+         "{not valid json", "1.0.0", "2026-04-12T10:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    counts = migrate_staging_to_journal(
+        str(staging_path), str(tmp_path / "journal.db"),
+    )
+    assert counts["entries"] == 0
+    assert counts["skipped_entries"] == 1
