@@ -297,14 +297,25 @@ rm tests/e2e/test_live_orchestrator.py 2>/dev/null
 # test are both obsolete. Has been pre-existing-failing on main for some
 # time with a stale model-name assertion. Delete it.
 rm tests/unit/test_token_optimization.py 2>/dev/null
+
+# tests/unit/test_decay_conflict_fixes.py — 59 tests that directly call
+# daemon methods the M2 expanded deletion set removes (`_run_decay_cycle`,
+# `_check_conflicts`, `_run_embedding_backfill`, `_wake_for_fading_memories`,
+# `_check_fading_transitions`, `_check_curiosity`, `_run_consolidation`)
+# and assert on source text + internal state dicts (`_fading_alerted`,
+# `_decay_thread`, etc.). After M2 all of these are gone. Delete here.
+# NOTE: this file was added to the delete set during phase-4 execution
+# after the engineer surfaced that it was testing code the plan deletes.
+rm tests/unit/test_decay_conflict_fixes.py 2>/dev/null
 ```
 
 **After this step the regression baseline changes:**
 
-- **Before phase 4:** `810 passed / 1 pre-existing failure / tests/e2e ignored` (use `pytest tests/ --ignore=tests/e2e`)
-- **After phase 4:** `811 passed / 0 failed` (use plain `pytest tests/`)
+- **Before phase 4 (phase-3 end):** `5 failed / 920 passed / tests/e2e/test_live_orchestrator.py ignored` (use `pytest tests/ --ignore=tests/e2e/test_live_orchestrator.py`). The 5 failures are pre-existing on the v2 branch after phase 3 closed — all five are either stale-reference tests or tests that assert v1-specific behavior being replaced.
+- **During M2–M5 of phase 4:** the failure count is ALLOWED TO RISE above 5 as daemon internals get deleted. Specifically `tests/unit/test_decay_conflict_fixes.py` (59 tests) and ~6 assertions inside `tests/unit/test_token_optimization.py` will start failing the moment M2 deletes their subject methods / state fields. Engineer reports the exact delta after each milestone; architect ratifies the new ceiling. No milestone may ADD failures beyond what deleted methods/fields justify.
+- **After step 7 (this step):** Both offender files are gone. `pytest tests/` returns to a clean baseline of `passed / 0 failed` (exact passed-count drops by ~65 from the M1 baseline of 920 because 59 + ~6 tests were deleted; engineer reports the final number and architect pins it).
 
-Starting with phase 5, the `--ignore=tests/e2e` flag is no longer required in any phase command because the offending file has been deleted.
+Starting with phase 5, the `--ignore=tests/e2e/test_live_orchestrator.py` flag is no longer required in any phase command because the offending file has been deleted.
 
 Run `pytest tests/` (no `--ignore` needed now) — must pass. If any failures remain, find the root cause and fix it.
 
@@ -409,7 +420,14 @@ Commit: `[phase-4] final cleanup of deletion leftovers`
 
 ### Regression test
 
-After every deletion step, `pytest tests/ --ignore=tests/e2e` must pass at the 810/1 baseline until step 7 completes. After step 7 (which deletes `tests/e2e/test_live_orchestrator.py` and `tests/unit/test_token_optimization.py`), run plain `pytest tests/` and expect the new 811/0 baseline.
+Baselines are a MOVING TARGET through phase 4, not a single pinned number. The rule is: **no deletion step introduces a failure that is NOT explained by a deleted method/state/module.** Engineer reports the count after each milestone; architect ratifies a new ceiling.
+
+- **Through M1:** `5 failed / 920 passed` (phase-3 end baseline; preserved).
+- **After M2 (daemon internals deleted):** failure count rises. Expected delta = 59 (all of `test_decay_conflict_fixes.py`) + ~6 (source-inspect assertions inside `test_token_optimization.py`) = ~65 new failures. Engineer reports exact count; architect pins `M2_ceiling = 5 + exact_delta`.
+- **M3–M5:** baseline held at `M2_ceiling`. Any NEW failures must trace to code deleted in that milestone.
+- **After step 7 (both offender files deleted):** baseline drops to `0 failed / N passed` where N ≈ 920 − 65 ≈ 855. Engineer reports exact; architect ratifies final phase-4 baseline.
+
+All intermediate commands use `pytest tests/ --ignore=tests/e2e/test_live_orchestrator.py` until step 7; after step 7, plain `pytest tests/`.
 
 After step 10, run the complete test suite with:
 
@@ -478,9 +496,10 @@ Verify the home and chat pages still load even if memory pages are broken.
 - [ ] `daemon.py` trimmed: no cron jobs for decay/conflicts/consolidation/fading/curiosity
 - [ ] `grep "from hynous.nous"` returns nothing
 - [ ] `grep "from .coach"` returns nothing (and similar for all deleted modules)
-- [ ] All tests pass at the post-phase-4 baseline (`pytest tests/` = `811 passed / 0 failed`)
+- [ ] All tests pass at the post-phase-4 baseline (`pytest tests/` = `N passed / 0 failed` where N is ratified by architect after step 7; expected in the `~855` range — the 920-baseline minus the 65 tests deleted in step 7)
 - [ ] `tests/e2e/test_live_orchestrator.py` deleted
 - [ ] `tests/unit/test_token_optimization.py` deleted
+- [ ] `tests/unit/test_decay_conflict_fixes.py` deleted
 - [ ] mypy baseline preserved
 - [ ] ruff baseline preserved
 - [ ] 30-minute smoke test completes without errors
