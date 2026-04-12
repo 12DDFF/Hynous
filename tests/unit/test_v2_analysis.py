@@ -448,10 +448,15 @@ def test_run_rules_coerces_dataclass_entry_snapshot_to_dict(
 
     findings = run_rules(bundle)
 
-    # Sample fixtures: composite_entry_score=0.71 => low_composite fires.
+    # Sample fixtures: composite_entry_score=71.0 (production 0–100 scale,
+    # fixed in M2) => low_composite does NOT fire (71 >= 55 threshold).
     # composite_score_delta=-0.19 => signal_degraded does NOT fire (|delta|<20).
+    # The test's intent is that a real-dataclass bundle flows through
+    # run_rules without error and produces a well-formed finding list; the
+    # coercion boundary (is_dataclass guard + asdict) is exercised by the
+    # mere fact that rule bodies using `.get(...)` did not raise.
     types = {f.type for f in findings}
-    assert FindingType.LOW_COMPOSITE_AT_ENTRY.value in types
+    assert FindingType.LOW_COMPOSITE_AT_ENTRY.value not in types
 
 
 def test_run_rules_accepts_pre_dicted_bundle(
@@ -507,3 +512,229 @@ def test_rule_mechanical_correct_uses_regime_specific_threshold() -> None:
     assert extreme_finding is not None
     assert extreme_finding.evidence_values["trail_activation_threshold"] == 1.5
     assert low_finding is None
+
+
+# ---------------------------------------------------------------------------
+# M2 — LLM synthesis pipeline tests (prompts + llm_pipeline)
+# ---------------------------------------------------------------------------
+
+
+def _valid_llm_output() -> dict[str, Any]:
+    """Minimum-shape valid LLM response matching the required 7 top-level keys."""
+    return {
+        "narrative": "Entry fired on a clean composite score. Exit tripped trailing stop at peak retracement.",
+        "narrative_citations": [{"paragraph_idx": 0, "finding_ids": ["f1"]}],
+        "supplemental_findings": [],
+        "grades": {
+            "entry_quality_grade": 75,
+            "entry_timing_grade": 70,
+            "sl_placement_grade": 65,
+            "tp_placement_grade": 60,
+            "size_leverage_grade": 70,
+            "exit_quality_grade": 80,
+        },
+        "mistake_tags": [],
+        "process_quality_score": 78,
+        "one_line_summary": "Clean entry, mechanical exit hit target.",
+    }
+
+
+def _fake_response(
+    *,
+    content: str,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    response_cost: float = 0.0,
+) -> Any:
+    """Build a litellm-like response object using SimpleNamespace."""
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+        usage=SimpleNamespace(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        ),
+        _hidden_params={"response_cost": response_cost},
+    )
+
+
+def test_build_user_prompt_includes_trimmed_bundle() -> None:
+    """Fat price_history / price_path_1m get replaced with counts in the prompt.
+
+    Also: the serialized deterministic_findings block appears with the
+    expected id/type/severity keys. Proves :func:`_trim_bundle_for_prompt`
+    wired into :func:`build_user_prompt`.
+    """
+    from hynous.analysis.prompts import build_user_prompt
+
+    dummy_candle = [0.0, 1.0, 1.5, 0.9, 1.2, 10.0]
+    bundle: dict[str, Any] = {
+        "trade_id": "t_test",
+        "entry_snapshot": {
+            "ml_snapshot": {"composite_entry_score": 71.0},
+            "price_history": {
+                "candles_1m_15min": [dummy_candle] * 15,
+                "candles_5m_4h": [dummy_candle] * 48,
+            },
+        },
+        "exit_snapshot": {
+            "price_path_1m": [dummy_candle] * 30,
+        },
+        "events": [],
+    }
+    findings = [
+        Finding(
+            id="f1",
+            type=FindingType.LOW_COMPOSITE_AT_ENTRY.value,
+            severity="medium",
+            evidence_source="entry_snapshot.ml_snapshot",
+            evidence_ref={"field": "composite_entry_score"},
+            evidence_values={"composite_entry_score": 42.0},
+            interpretation="Entry fired with a marginal score.",
+        ),
+    ]
+
+    prompt = build_user_prompt(
+        trade_bundle=bundle,
+        deterministic_findings=findings,
+    )
+
+    # Candle counts are preserved; raw candle dicts are NOT in the prompt.
+    assert '"candles_1m_15min_count": 15' in prompt
+    assert '"candles_5m_4h_count": 48' in prompt
+    assert '"count": 30' in prompt  # price_path_1m count
+    # The raw candle list shouldn't appear — its stringified first element
+    # `1.5, 0.9, 1.2` would be easy to find; we assert the full repeated
+    # candles_1m_15min array is NOT spelled out verbatim.
+    assert '"candles_1m_15min": [' not in prompt
+
+    # Deterministic findings are serialized with the expected keys.
+    assert '"id": "f1"' in prompt
+    assert f'"type": "{FindingType.LOW_COMPOSITE_AT_ENTRY.value}"' in prompt
+    assert '"severity": "medium"' in prompt
+
+
+def test_run_analysis_parses_valid_llm_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A well-formed LLM response is returned with model_used + prompt_version annotated."""
+    import json as _json
+
+    from hynous.analysis import run_analysis
+
+    fake_resp = _fake_response(content=_json.dumps(_valid_llm_output()))
+
+    def fake_completion(**_kwargs: Any) -> Any:
+        return fake_resp
+
+    monkeypatch.setattr(
+        "hynous.analysis.llm_pipeline.litellm.completion",
+        fake_completion,
+    )
+
+    result = run_analysis(
+        trade_bundle={"trade_id": "t1", "entry_snapshot": {}, "exit_snapshot": {}, "events": []},
+        deterministic_findings=[],
+        model="anthropic/claude-sonnet-4.5",
+        prompt_version="v1",
+    )
+
+    required = {
+        "narrative",
+        "narrative_citations",
+        "supplemental_findings",
+        "grades",
+        "mistake_tags",
+        "process_quality_score",
+        "one_line_summary",
+    }
+    assert required.issubset(set(result.keys()))
+    assert result["model_used"] == "anthropic/claude-sonnet-4.5"
+    assert result["prompt_version"] == "v1"
+
+
+def test_run_analysis_raises_on_missing_required_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLM response missing any of the 7 required keys => ValueError naming them."""
+    import json as _json
+
+    from hynous.analysis import run_analysis
+
+    partial = _valid_llm_output()
+    del partial["grades"]
+    del partial["one_line_summary"]
+
+    monkeypatch.setattr(
+        "hynous.analysis.llm_pipeline.litellm.completion",
+        lambda **_kw: _fake_response(content=_json.dumps(partial)),
+    )
+
+    with pytest.raises(ValueError, match="missing required keys") as excinfo:
+        run_analysis(
+            trade_bundle={"trade_id": "t1", "entry_snapshot": {}, "exit_snapshot": {}, "events": []},
+            deterministic_findings=[],
+        )
+    msg = str(excinfo.value)
+    assert "grades" in msg
+    assert "one_line_summary" in msg
+
+
+def test_run_analysis_raises_on_non_json_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-JSON LLM content surfaces as ValueError with 'not parseable' match."""
+    from hynous.analysis import run_analysis
+
+    monkeypatch.setattr(
+        "hynous.analysis.llm_pipeline.litellm.completion",
+        lambda **_kw: _fake_response(content="this is not json"),
+    )
+
+    with pytest.raises(ValueError, match="not parseable"):
+        run_analysis(
+            trade_bundle={"trade_id": "t1", "entry_snapshot": {}, "exit_snapshot": {}, "events": []},
+            deterministic_findings=[],
+        )
+
+
+def test_run_analysis_records_cost_when_usage_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cost tracking must fire exactly once with the observed tokens + cost.
+
+    Guards against a silent regression where ``record_llm_usage`` stops being
+    called (e.g. due to an import path change in ``hynous.core.costs``).
+    """
+    import json as _json
+
+    from hynous.analysis import run_analysis
+
+    fake_resp = _fake_response(
+        content=_json.dumps(_valid_llm_output()),
+        prompt_tokens=500,
+        completion_tokens=200,
+        response_cost=0.0123,
+    )
+    monkeypatch.setattr(
+        "hynous.analysis.llm_pipeline.litellm.completion",
+        lambda **_kw: fake_resp,
+    )
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_record(**kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr("hynous.core.costs.record_llm_usage", fake_record)
+
+    run_analysis(
+        trade_bundle={"trade_id": "t1", "entry_snapshot": {}, "exit_snapshot": {}, "events": []},
+        deterministic_findings=[],
+        model="anthropic/claude-sonnet-4.5",
+    )
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["model"] == "anthropic/claude-sonnet-4.5"
+    assert call["input_tokens"] == 500
+    assert call["output_tokens"] == 200
+    assert call["cost_usd"] == 0.0123

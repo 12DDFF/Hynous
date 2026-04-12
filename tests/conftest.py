@@ -107,8 +107,8 @@ def sample_entry_snapshot() -> Any:
             scanner_detail={"book_flip": True, "depth_ratio": 1.8},
         ),
         ml_snapshot=MLSnapshot(
-            composite_entry_score=0.71,
-            composite_label="strong",
+            composite_entry_score=71.0,
+            composite_label="good",
             composite_components={"momentum": 0.4, "entry_quality": 0.9, "vol": 0.6},
             entry_quality_value=0.88,
             entry_quality_percentile=93,

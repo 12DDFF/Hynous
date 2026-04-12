@@ -709,7 +709,7 @@ def test_build_entry_embedding_text_produces_expected_format(
     text = build_entry_embedding_text(snap_dict)
     assert "BTC long 20x" in text
     assert "trigger: scanner composite_score" in text
-    assert "composite entry score: 0.71 strong" in text
+    assert "composite entry score: 71.0 good" in text
     assert "vol regime: normal" in text
     assert "direction signal: long" in text
     assert "|" in text  # pipe-separated
