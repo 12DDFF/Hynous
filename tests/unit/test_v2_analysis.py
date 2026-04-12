@@ -12,8 +12,21 @@ Architect-additional tests (noted in the M1 report):
 
 from __future__ import annotations
 
+import sys
+import types
 from dataclasses import asdict
 from typing import Any
+
+# Ensure a ``litellm`` module is importable in sys.modules even in test-only
+# environments where the real package isn't installed. Mirrors the stub
+# pattern used by v1 test modules (see ``test_consolidation.py``). The
+# ``llm_pipeline`` module lazily resolves ``litellm`` at call time, so this
+# stub is all that's required for ``monkeypatch.setattr("litellm.completion",
+# ...)`` to succeed without ``raising=False``.
+if "litellm" not in sys.modules:
+    sys.modules["litellm"] = types.ModuleType("litellm")
+    sys.modules["litellm.exceptions"] = types.ModuleType("litellm.exceptions")
+    sys.modules["litellm.exceptions"].APIError = Exception  # type: ignore[attr-defined]
 
 import pytest
 
@@ -626,8 +639,9 @@ def test_run_analysis_parses_valid_llm_response(monkeypatch: pytest.MonkeyPatch)
         return fake_resp
 
     monkeypatch.setattr(
-        "hynous.analysis.llm_pipeline.litellm.completion",
+        "litellm.completion",
         fake_completion,
+        raising=False,
     )
 
     result = run_analysis(
@@ -664,8 +678,9 @@ def test_run_analysis_raises_on_missing_required_keys(
     del partial["one_line_summary"]
 
     monkeypatch.setattr(
-        "hynous.analysis.llm_pipeline.litellm.completion",
+        "litellm.completion",
         lambda **_kw: _fake_response(content=_json.dumps(partial)),
+        raising=False,
     )
 
     with pytest.raises(ValueError, match="missing required keys") as excinfo:
@@ -685,8 +700,9 @@ def test_run_analysis_raises_on_non_json_response(
     from hynous.analysis import run_analysis
 
     monkeypatch.setattr(
-        "hynous.analysis.llm_pipeline.litellm.completion",
+        "litellm.completion",
         lambda **_kw: _fake_response(content="this is not json"),
+        raising=False,
     )
 
     with pytest.raises(ValueError, match="not parseable"):
@@ -715,8 +731,9 @@ def test_run_analysis_records_cost_when_usage_present(
         response_cost=0.0123,
     )
     monkeypatch.setattr(
-        "hynous.analysis.llm_pipeline.litellm.completion",
+        "litellm.completion",
         lambda **_kw: fake_resp,
+        raising=False,
     )
 
     calls: list[dict[str, Any]] = []
@@ -738,3 +755,272 @@ def test_run_analysis_records_cost_when_usage_present(
     assert call["input_tokens"] == 500
     assert call["output_tokens"] == 200
     assert call["cost_usd"] == 0.0123
+
+
+# ---------------------------------------------------------------------------
+# M3 — evidence validator (validation.py)
+# ---------------------------------------------------------------------------
+
+
+def _low_composite_finding(fid: str = "f1") -> Finding:
+    """Helper: a single deterministic finding that supports ``signal_weak_at_entry``."""
+    return Finding(
+        id=fid,
+        type=FindingType.LOW_COMPOSITE_AT_ENTRY.value,
+        severity="medium",
+        evidence_source="entry_snapshot.ml_snapshot",
+        evidence_ref={"field": "composite_entry_score"},
+        evidence_values={"composite_entry_score": 42.0},
+        interpretation="Entry fired with a marginal score.",
+    )
+
+
+def _valid_parsed(**overrides: Any) -> dict[str, Any]:
+    """Build a parsed-LLM-output dict with sane defaults, overridable."""
+    base: dict[str, Any] = {
+        "narrative": "Solid entry, clean exit.",
+        "narrative_citations": [],
+        "supplemental_findings": [],
+        "grades": {
+            "entry_quality_grade": 70,
+            "entry_timing_grade": 70,
+            "sl_placement_grade": 70,
+            "tp_placement_grade": 70,
+            "size_leverage_grade": 70,
+            "exit_quality_grade": 70,
+        },
+        "mistake_tags": [],
+        "process_quality_score": 70,
+        "one_line_summary": "Summary.",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_validate_analysis_output_strips_invalid_citations() -> None:
+    """Citation referencing an unknown finding id is stripped and logged."""
+    from hynous.analysis import validate_analysis_output
+
+    parsed = _valid_parsed(
+        narrative_citations=[
+            {"paragraph_idx": 0, "finding_ids": ["f1", "ghost_f99"]},
+        ],
+    )
+    validated, unverified = validate_analysis_output(
+        parsed=parsed,
+        deterministic_findings=[_low_composite_finding("f1")],
+        trade_bundle={},
+    )
+
+    # The known id survives; ghost_f99 is stripped.
+    assert validated["narrative_citations"] == [
+        {"paragraph_idx": 0, "finding_ids": ["f1"]}
+    ]
+    citation_entries = [u for u in unverified if u["kind"] == "narrative_citation"]
+    assert len(citation_entries) == 1
+    assert citation_entries[0]["paragraph_idx"] == 0
+    assert citation_entries[0]["bad_ids"] == ["ghost_f99"]
+
+
+def test_validate_analysis_output_strips_invalid_tags() -> None:
+    """Unknown tag AND tag-with-no-supporting-finding are both stripped."""
+    from hynous.analysis import validate_analysis_output
+
+    # `signal_weak_at_entry` requires LOW_COMPOSITE_AT_ENTRY — we provide a
+    # STOP_HUNT_DETECTED finding, so the tag loses its support and should be
+    # stripped alongside the nonsense tag.
+    stop_hunt_finding = Finding(
+        id="f1",
+        type=FindingType.STOP_HUNT_DETECTED.value,
+        severity="high",
+        evidence_source="counterfactuals",
+        evidence_ref={"field": "did_sl_get_hunted"},
+        evidence_values={},
+        interpretation="",
+    )
+    parsed = _valid_parsed(
+        mistake_tags=["not_a_real_tag", "signal_weak_at_entry", "stop_hunted"],
+    )
+
+    validated, unverified = validate_analysis_output(
+        parsed=parsed,
+        deterministic_findings=[stop_hunt_finding],
+        trade_bundle={},
+    )
+
+    assert validated["mistake_tags"] == ["stop_hunted"]
+    tag_entries = [u for u in unverified if u["kind"] == "mistake_tag"]
+    assert len(tag_entries) == 1
+    assert set(tag_entries[0]["invalid_tags"]) == {
+        "not_a_real_tag",
+        "signal_weak_at_entry",
+    }
+
+
+def test_validate_analysis_output_defaults_bad_grades() -> None:
+    """Non-integer grade and out-of-range grade both default to 50."""
+    from hynous.analysis import validate_analysis_output
+
+    parsed = _valid_parsed(
+        grades={
+            "entry_quality_grade": "A+",          # non-numeric
+            "entry_timing_grade": 150,            # out of range
+            "sl_placement_grade": 70,             # valid
+            "tp_placement_grade": 70,             # valid
+            "size_leverage_grade": 70,            # valid
+            "exit_quality_grade": 70,             # valid
+        },
+    )
+
+    validated, unverified = validate_analysis_output(
+        parsed=parsed,
+        deterministic_findings=[],
+        trade_bundle={},
+    )
+
+    assert validated["grades"]["entry_quality_grade"] == 50
+    assert validated["grades"]["entry_timing_grade"] == 50
+    assert validated["grades"]["sl_placement_grade"] == 70
+
+    grade_entries = [u for u in unverified if u["kind"] == "grade"]
+    keys = {u["key"] for u in grade_entries}
+    assert keys == {"entry_quality_grade", "entry_timing_grade"}
+    raws = {u["key"]: u["raw"] for u in grade_entries}
+    assert raws["entry_quality_grade"] == "A+"
+    assert raws["entry_timing_grade"] == 150
+
+
+def test_supplemental_finding_valid_ref_accepts_known_source() -> None:
+    """A supplemental with a known source + non-empty ref survives and gets an llm id."""
+    from hynous.analysis import validate_analysis_output
+
+    parsed = _valid_parsed(
+        supplemental_findings=[
+            {
+                "type": "custom_ml_finding",
+                "severity": "low",
+                "evidence_source": "entry_snapshot.ml_snapshot",
+                "evidence_ref": {"field": "vol_1h_regime"},
+                "evidence_values": {"vol_1h_regime": "extreme"},
+                "interpretation": "Entered during extreme vol.",
+            },
+        ],
+    )
+
+    validated, unverified = validate_analysis_output(
+        parsed=parsed,
+        deterministic_findings=[],
+        trade_bundle={},
+    )
+
+    assert len(validated["supplemental_findings"]) == 1
+    surviving = validated["supplemental_findings"][0]
+    assert surviving["id"] == "llm_f1"
+    assert surviving["source"] == "llm"
+    assert not [u for u in unverified if u["kind"] == "supplemental_finding"]
+
+
+def test_supplemental_finding_valid_ref_rejects_unknown_source() -> None:
+    """A supplemental with a fabricated evidence_source is stripped."""
+    from hynous.analysis import validate_analysis_output
+
+    parsed = _valid_parsed(
+        supplemental_findings=[
+            {
+                "type": "fabricated",
+                "severity": "high",
+                "evidence_source": "something_fabricated",
+                "evidence_ref": {"field": "whatever"},
+                "evidence_values": {},
+                "interpretation": "",
+            },
+        ],
+    )
+
+    validated, unverified = validate_analysis_output(
+        parsed=parsed,
+        deterministic_findings=[],
+        trade_bundle={},
+    )
+
+    assert validated["supplemental_findings"] == []
+    stripped = [u for u in unverified if u["kind"] == "supplemental_finding"]
+    assert len(stripped) == 1
+    assert stripped[0]["content"]["evidence_source"] == "something_fabricated"
+
+
+def test_validate_analysis_output_grade_clamp_boundary() -> None:
+    """Boundary check: 0 and 100 pass (inclusive); -1 and 101 default to 50."""
+    from hynous.analysis import validate_analysis_output
+
+    # Case A: inclusive boundaries — both 0 and 100 must pass unchanged.
+    parsed_inclusive = _valid_parsed(
+        grades={
+            "entry_quality_grade": 100,
+            "entry_timing_grade": 0,
+            "sl_placement_grade": 50,
+            "tp_placement_grade": 50,
+            "size_leverage_grade": 50,
+            "exit_quality_grade": 50,
+        },
+    )
+    validated_a, unverified_a = validate_analysis_output(
+        parsed=parsed_inclusive,
+        deterministic_findings=[],
+        trade_bundle={},
+    )
+    assert validated_a["grades"]["entry_quality_grade"] == 100
+    assert validated_a["grades"]["entry_timing_grade"] == 0
+    assert not [u for u in unverified_a if u["kind"] == "grade"]
+
+    # Case B: just outside (101, -1) must default to 50 and log.
+    parsed_outside = _valid_parsed(
+        grades={
+            "entry_quality_grade": 101,
+            "entry_timing_grade": -1,
+            "sl_placement_grade": 50,
+            "tp_placement_grade": 50,
+            "size_leverage_grade": 50,
+            "exit_quality_grade": 50,
+        },
+    )
+    validated_b, unverified_b = validate_analysis_output(
+        parsed=parsed_outside,
+        deterministic_findings=[],
+        trade_bundle={},
+    )
+    assert validated_b["grades"]["entry_quality_grade"] == 50
+    assert validated_b["grades"]["entry_timing_grade"] == 50
+    bad_keys = {u["key"] for u in unverified_b if u["kind"] == "grade"}
+    assert bad_keys == {"entry_quality_grade", "entry_timing_grade"}
+
+
+def test_validate_analysis_output_process_quality_score_defaulting() -> None:
+    """Missing key AND non-numeric value both default to 50 + log unverified."""
+    from hynous.analysis import validate_analysis_output
+
+    # Case A: missing key entirely (``pop`` rather than set to None so the
+    # ``.get(...)`` returns None, which fails the ``isinstance`` check).
+    parsed_missing = _valid_parsed()
+    parsed_missing.pop("process_quality_score")
+    validated_a, unverified_a = validate_analysis_output(
+        parsed=parsed_missing,
+        deterministic_findings=[],
+        trade_bundle={},
+    )
+    assert validated_a["process_quality_score"] == 50
+    pqs_entries_a = [u for u in unverified_a if u["kind"] == "process_quality_score"]
+    assert len(pqs_entries_a) == 1
+    assert pqs_entries_a[0]["raw"] is None
+
+    # Case B: non-numeric value (string).
+    parsed_non_numeric = _valid_parsed(process_quality_score="high")
+    validated_b, unverified_b = validate_analysis_output(
+        parsed=parsed_non_numeric,
+        deterministic_findings=[],
+        trade_bundle={},
+    )
+    assert validated_b["process_quality_score"] == 50
+    pqs_entries_b = [u for u in unverified_b if u["kind"] == "process_quality_score"]
+    assert len(pqs_entries_b) == 1
+    assert pqs_entries_b[0]["raw"] == "high"

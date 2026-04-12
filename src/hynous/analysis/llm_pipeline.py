@@ -13,8 +13,6 @@ import json
 import logging
 from typing import Any
 
-import litellm
-
 from .prompts import ANALYSIS_SYSTEM_PROMPT, build_user_prompt
 from .rules_engine import Finding
 
@@ -65,6 +63,15 @@ def run_analysis(
         {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
+
+    # Lazy import: v1 test modules (e.g. ``test_trade_retrieval.py``,
+    # ``test_pruning.py``) stub ``sys.modules["litellm"]`` at import time when
+    # the real package is absent. Alphabetical collection puts those before
+    # ``test_v2_analysis.py``; a module-level ``import litellm`` here would
+    # bind to the empty stub and break monkeypatching. Resolving inside the
+    # call lets per-test monkeypatches of ``litellm.completion`` win
+    # regardless of collection order.
+    import litellm
 
     try:
         response = litellm.completion(

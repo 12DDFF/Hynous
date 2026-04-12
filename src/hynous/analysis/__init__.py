@@ -12,6 +12,7 @@ from .llm_pipeline import run_analysis
 from .mistake_tags import MISTAKE_TAGS, validate_mistake_tag
 from .prompts import ANALYSIS_SYSTEM_PROMPT, build_user_prompt
 from .rules_engine import Finding, run_rules
+from .validation import validate_analysis_output
 
 __all__ = [
     "ANALYSIS_SYSTEM_PROMPT",
@@ -22,5 +23,6 @@ __all__ = [
     "build_user_prompt",
     "run_analysis",
     "run_rules",
+    "validate_analysis_output",
     "validate_mistake_tag",
 ]
