@@ -665,6 +665,85 @@ class JournalStore:
             conn.close()
 
     # ========================================================================
+    # Semantic search (phase 2 — Milestone 3)
+    # ========================================================================
+
+    def search_semantic(
+        self,
+        *,
+        query_embedding: bytes,
+        scope: str = "entry",
+        limit: int = 20,
+        symbol: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Cosine-similarity search over entry snapshots or analysis narratives.
+
+        Brute-force scan computing cosine per row in Python — acceptable for
+        ≤ 10k trades. If scale grows beyond that, swap to the sqlite-vec
+        extension or an external vector index.
+
+        Args:
+            query_embedding: float32 bytes (produced by
+                :class:`hynous.journal.embeddings.EmbeddingClient.embed`).
+            scope: ``"entry"`` to search over entry-snapshot embeddings,
+                ``"analysis"`` to search over analysis-narrative embeddings.
+            limit: maximum rows returned.
+            symbol: optional filter on trade symbol.
+
+        Returns:
+            Descending by cosine score, each row
+            ``{"trade_id", "symbol", "side", "score"}``.
+        """
+        from .embeddings import cosine_similarity
+
+        params: list[Any] = []
+        sym_filter = ""
+        if symbol:
+            sym_filter = " AND t.symbol = ?"
+            params.append(symbol)
+
+        conn = self._connect()
+        try:
+            if scope == "entry":
+                rows = conn.execute(
+                    f"""
+                    SELECT t.trade_id, t.symbol, t.side, tes.embedding AS emb
+                    FROM trades t
+                    JOIN trade_entry_snapshots tes ON t.trade_id = tes.trade_id
+                    WHERE tes.embedding IS NOT NULL{sym_filter}
+                    """,
+                    params,
+                ).fetchall()
+            elif scope == "analysis":
+                rows = conn.execute(
+                    f"""
+                    SELECT t.trade_id, t.symbol, t.side, ta.embedding AS emb
+                    FROM trades t
+                    JOIN trade_analyses ta ON t.trade_id = ta.trade_id
+                    WHERE ta.embedding IS NOT NULL{sym_filter}
+                    """,
+                    params,
+                ).fetchall()
+            else:
+                raise ValueError(
+                    f"unsupported scope: {scope!r} (expected 'entry' or 'analysis')",
+                )
+
+            results: list[dict[str, Any]] = []
+            for r in rows:
+                score = cosine_similarity(query_embedding, r["emb"])
+                results.append({
+                    "trade_id": r["trade_id"],
+                    "symbol": r["symbol"],
+                    "side": r["side"],
+                    "score": score,
+                })
+            results.sort(key=lambda x: x["score"], reverse=True)
+            return results[:limit]
+        finally:
+            conn.close()
+
+    # ========================================================================
     # Statistics
     # ========================================================================
 

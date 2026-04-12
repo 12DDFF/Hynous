@@ -10,8 +10,10 @@ live in ``tests/conftest.py`` and autoload.
 from __future__ import annotations
 
 import json
+import struct
 from dataclasses import asdict
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -553,3 +555,161 @@ def test_update_exit_snapshot_overwrites_existing_row(
         for p in tmp_journal_db.list_exit_snapshots_needing_counterfactuals()
     ]
     assert tid not in pending_ids
+
+
+# ---------------------------------------------------------------------------
+# M3 — EmbeddingClient + cosine + semantic search
+# ---------------------------------------------------------------------------
+
+
+def _pack_vec(floats: list[float]) -> bytes:
+    """Test helper: pack a list of floats into the float32 byte layout used
+    by EmbeddingClient / search_semantic."""
+    return struct.pack(f"{len(floats)}f", *floats)
+
+
+def test_embedding_client_strips_openai_prefix_from_model_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Config stores ``openai/text-embedding-3-small``; OpenAI API rejects
+    provider-prefixed names. The client must strip the prefix at init so
+    both forms work (architect delta 3)."""
+    from hynous.journal.embeddings import EmbeddingClient
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    client_prefixed = EmbeddingClient(model="openai/text-embedding-3-small")
+    client_bare = EmbeddingClient(model="text-embedding-3-small")
+    assert client_prefixed._model == "text-embedding-3-small"
+    assert client_bare._model == "text-embedding-3-small"
+
+
+def test_embedding_client_embed_single(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embed() returns float32 bytes truncated to comparison_dim (512)."""
+    from hynous.journal.embeddings import EmbeddingClient
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    # OpenAI returns a 1536-d vector; we truncate to 512.
+    fake_vec = [0.001 * i for i in range(1536)]
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"data": [{"embedding": fake_vec}]}
+    mock_resp.raise_for_status.return_value = None
+
+    client = EmbeddingClient()
+    with patch.object(client._session, "post", return_value=mock_resp) as mock_post:
+        result = client.embed("hello world")
+
+    assert isinstance(result, bytes)
+    assert len(result) == 512 * 4  # 512 float32 values
+
+    unpacked = struct.unpack("512f", result)
+    # First 512 values of fake_vec, allowing float32 quantization drift.
+    for i in range(512):
+        assert abs(unpacked[i] - fake_vec[i]) < 1e-5
+
+    # Verify we called OpenAI with the bare model name.
+    call_json = mock_post.call_args.kwargs["json"]
+    assert call_json["model"] == "text-embedding-3-small"
+    assert call_json["input"] == ["hello world"]
+
+
+def test_embedding_client_embed_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embed_batch preserves input order and returns one bytes blob per text."""
+    from hynous.journal.embeddings import EmbeddingClient
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    vecs = [
+        [1.0] * 1536,
+        [0.5] * 1536,
+        [-0.5] * 1536,
+    ]
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"data": [{"embedding": v} for v in vecs]}
+    mock_resp.raise_for_status.return_value = None
+
+    client = EmbeddingClient()
+    with patch.object(client._session, "post", return_value=mock_resp):
+        results = client.embed_batch(["a", "b", "c"])
+
+    assert len(results) == 3
+    for blob, expected in zip(results, vecs):
+        assert len(blob) == 512 * 4
+        unpacked = struct.unpack("512f", blob)
+        # Every element should match the scalar the input was filled with.
+        for got, want in zip(unpacked, expected[:512]):
+            assert abs(got - want) < 1e-5
+
+
+def test_cosine_similarity_identical_vectors() -> None:
+    """Identical nonzero vectors have cosine similarity 1.0."""
+    from hynous.journal.embeddings import cosine_similarity
+
+    v = _pack_vec([1.0, 2.0, 3.0, 4.0])
+    assert abs(cosine_similarity(v, v) - 1.0) < 1e-6
+
+
+def test_cosine_similarity_orthogonal_vectors() -> None:
+    """Orthogonal vectors have cosine similarity 0.0."""
+    from hynous.journal.embeddings import cosine_similarity
+
+    a = _pack_vec([1.0, 0.0, 0.0, 0.0])
+    b = _pack_vec([0.0, 1.0, 0.0, 0.0])
+    assert abs(cosine_similarity(a, b)) < 1e-6
+
+    # Defensive branch: empty blob / mismatched lengths → 0.0
+    assert cosine_similarity(b"", a) == 0.0
+    assert cosine_similarity(a, _pack_vec([1.0, 0.0])) == 0.0
+
+
+def test_search_semantic_orders_by_score(
+    tmp_journal_db: Any, sample_entry_snapshot: TradeEntrySnapshot,
+) -> None:
+    """Seed three entries with known embeddings; search by a vector pointing
+    along one axis and verify ordering by cosine similarity."""
+    from dataclasses import replace as dc_replace
+
+    # Three trades, embeddings point along three orthogonal axes.
+    emb_a = _pack_vec([1.0, 0.0, 0.0])
+    emb_b = _pack_vec([0.5, 0.5, 0.0])  # 45° to A
+    emb_c = _pack_vec([0.0, 1.0, 0.0])  # 90° to A
+
+    basics_a = dc_replace(sample_entry_snapshot.trade_basics, trade_id="axis_a_trade")
+    basics_b = dc_replace(sample_entry_snapshot.trade_basics, trade_id="axis_b_trade")
+    basics_c = dc_replace(sample_entry_snapshot.trade_basics, trade_id="axis_c_trade")
+    snap_a = dc_replace(sample_entry_snapshot, trade_basics=basics_a)
+    snap_b = dc_replace(sample_entry_snapshot, trade_basics=basics_b)
+    snap_c = dc_replace(sample_entry_snapshot, trade_basics=basics_c)
+
+    tmp_journal_db.insert_entry_snapshot(snap_a, embedding=emb_a)
+    tmp_journal_db.insert_entry_snapshot(snap_b, embedding=emb_b)
+    tmp_journal_db.insert_entry_snapshot(snap_c, embedding=emb_c)
+
+    # Query along A-axis → A should rank first, B second, C last.
+    query = _pack_vec([1.0, 0.0, 0.0])
+    results = tmp_journal_db.search_semantic(query_embedding=query, scope="entry")
+    ranked_ids = [r["trade_id"] for r in results]
+    assert ranked_ids == ["axis_a_trade", "axis_b_trade", "axis_c_trade"]
+    # Scores descending
+    assert results[0]["score"] > results[1]["score"] > results[2]["score"]
+    # Top score is ~1.0 (identical)
+    assert abs(results[0]["score"] - 1.0) < 1e-6
+    # Last score is ~0.0 (orthogonal)
+    assert abs(results[2]["score"]) < 1e-6
+
+
+def test_build_entry_embedding_text_produces_expected_format(
+    sample_entry_snapshot: TradeEntrySnapshot,
+) -> None:
+    """build_entry_embedding_text returns a single-line pipe-joined summary
+    capturing symbol/side/leverage/trigger/ML signals/market state."""
+    from hynous.journal.embeddings import build_entry_embedding_text
+
+    snap_dict = asdict(sample_entry_snapshot)
+    text = build_entry_embedding_text(snap_dict)
+    assert "BTC long 20x" in text
+    assert "trigger: scanner composite_score" in text
+    assert "composite entry score: 0.71 strong" in text
+    assert "vol regime: normal" in text
+    assert "direction signal: long" in text
+    assert "|" in text  # pipe-separated
