@@ -167,7 +167,8 @@ unrestricted). Post-phase-4 baseline: `482 passed / 0 failed`.
 - **Phase 2** complete (2026-04-12) — `JournalStore`, 9-table schema, embeddings (matryoshka 512-dim), FastAPI routes at `/api/v2/journal/*`, staging→journal migration, daemon swap
 - **Phase 3** complete (2026-04-12) — post-trade analysis agent at `src/hynous/analysis/` (rules engine + LLM synthesis + validation + wake integration + batch rejection cron)
 - **Phase 4** complete (2026-04-12) — Nous server + Python client deleted, 9 decision-injection modules removed, 8 v1 memory tools removed, unused coinglass methods + perplexity/cryptocompare out, prompt trimmed ~40%, `scripts/run_daemon.py` standalone, `pytest tests/` = 482p/0f. Deferred to phase 7: `trade_analytics.py`, `memory_tracker.py`, dashboard memory/graph/brain pages, Makefile/pyproject/deploy rework, cryptocompare + perplexity + news alert detector.
-- **Phase 5** next — mechanical entry loop (LLM removed from trading path)
+- **Phase 5** complete (2026-04-12) — mechanical entry loop: `src/hynous/mechanical_entry/` (interface, `MLSignalDrivenTrigger`, `compute_entry_params`, `executor`) + daemon rewire (`_evaluate_entry_signals` + `_periodic_ml_signal_check` at 60 s). v1 `intelligence/agent.py` deleted, all daemon LLM-wake methods removed (`grep agent.chat src/hynous/intelligence/daemon.py` → 0). User chat agent moved to `src/hynous/user_chat/` with `/api/v2/chat/*` router. Rejected entry signals write `status='rejected'` rows with `rejection_reason` for phase 6 batch analysis. Final baselines: 551p/0f, ruff 62, mypy 252. Deferred to phase 7: `intelligence/tools/market_watch.py` (writes to removed `daemon._pending_watches` — unreachable), `discord/bot.py` (stale `self.agent.chat` call — unreachable; bot not started from any v2 path).
+- **Phase 6** next — consolidation + pattern rollup (see `v2-planning/09-phase-6-consolidation-and-patterns.md`)
 
 ---
 
@@ -199,4 +200,4 @@ unrestricted). Post-phase-4 baseline: `482 passed / 0 failed`.
 
 ---
 
-Last updated: 2026-04-12 (phase 4 M9 — phase 4 complete; ready for phase 5 handoff)
+Last updated: 2026-04-12 (phase 5 M8 — phase 5 complete; ready for phase 6 handoff)
