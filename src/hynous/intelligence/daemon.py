@@ -30,10 +30,14 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from ..core.config import Config
 from ..core.daemon_log import log_event, DaemonEvent, flush as flush_daemon_log
 from ..core.trading_settings import get_trading_settings
+
+if TYPE_CHECKING:
+    from hynous.mechanical_entry.interface import EntryTriggerSource
 
 logger = logging.getLogger(__name__)
 
@@ -392,6 +396,9 @@ class Daemon:
         self._latest_predictions: dict[str, dict] = {}  # NEW — unconditional
         self._latest_predictions_lock = threading.Lock()
         self._staged_entries: dict = {}  # directive_id → StagedEntry
+        # v2 phase 5: mechanical entry trigger (set by _init_mechanical_entry).
+        self._entry_trigger: "EntryTriggerSource | None" = None
+        self._last_entry_check: float = 0   # v2 phase 5: periodic ML signal evaluation
         if config.satellite.enabled:
             try:
                 from satellite.config import SatelliteConfig as SatCfg
@@ -1025,6 +1032,14 @@ class Daemon:
             logger.exception("Failed to initialize v2 journal store")
             self._journal_store = None
 
+        # v2 phase 5: initialize mechanical entry trigger.
+        # Wrapped so init failure never prevents the daemon loop from running.
+        try:
+            self._init_mechanical_entry()
+        except Exception:
+            logger.exception("Failed to initialize v2 mechanical entry trigger")
+            self._entry_trigger = None
+
         # v2: start batch rejection analysis cron (phase 3 M5).
         # Wrapped in its own try/except so cron start failure never prevents
         # the daemon from entering its main loop.
@@ -1125,9 +1140,25 @@ class Daemon:
                         }
                         anomalies = self._scanner.detect()
                         if anomalies:
-                            self._wake_for_scanner(anomalies)
+                            if self._entry_trigger is not None:
+                                self._evaluate_entry_signals(anomalies)
+                            else:
+                                # v1 fallback only if mechanical disabled —
+                                # will be deleted in M5.
+                                self._wake_for_scanner(anomalies)
                     except Exception as e:
                         logger.debug("Scanner detect failed: %s", e)
+
+                # 3c. v2 phase 5: periodic ML-signal entry check (every 60s,
+                # independent of scanner).
+                if self._entry_trigger and now - self._last_entry_check >= 60:
+                    self._last_entry_check = now
+                    try:
+                        self._periodic_ml_signal_check()
+                    except Exception:
+                        logger.debug(
+                            "Periodic ML signal check failed", exc_info=True,
+                        )
 
                 # 4. Curiosity cron removed in phase 4.
 
@@ -3580,96 +3611,39 @@ class Daemon:
             name="hynous-wake-profit",
         ).start()
 
+    _PROFIT_TIERS = frozenset({
+        "micro_overstay", "urgent_profit", "take_profit",
+        "profit_nudge", "profit_fading", "risk_no_sl",
+    })
+
     def _wake_for_profit(
         self, coin: str, side: str, entry_px: float,
         mark_px: float, roe_pct: float, tier: str,
         trade_type: str = "macro",
     ):
-        """Wake the agent with a profit/risk alert. Adapts tone to trade type."""
-        type_info = self.get_position_type(coin)
+        """Record a profit/risk event (v2 phase 5 M4: pure notification sink).
+
+        The v1 implementation woke the LLM agent with a tiered alert; v2
+        replaces that with a plain ``log_event`` call so the event still
+        surfaces in the daemon log feed but no LLM tokens are consumed.
+        Mechanical exits (dynamic SL + trailing stop) manage the position.
+        """
+        # Unknown tiers are silently dropped (matches v1 behavior).
+        if tier not in self._PROFIT_TIERS:
+            return
+
         leverage = self._prev_positions.get(coin, {}).get("leverage", 20)
         is_scalp = trade_type == "micro"
         type_label = f"scalp {leverage}x" if is_scalp else f"swing {leverage}x"
 
-        # Hold duration (if known)
-        hold_str = ""
-        hold_mins = 0
-        if type_info["entry_time"] > 0:
-            hold_mins = max(0, int((time.time() - type_info["entry_time"]) / 60))
-            if hold_mins < 60:
-                hold_str = f" | Held: {hold_mins}m"
-            else:
-                hold_str = f" | Held: {hold_mins // 60}h{hold_mins % 60}m"
-
-        pnl_line = (
-            f"{coin} {side.upper()} ({type_label})"
-            f" | Entry: ${entry_px:,.0f} → Mark: ${mark_px:,.0f}"
-            f" | ROE: {roe_pct:+.1f}%{hold_str}"
+        log_event(DaemonEvent(
+            "profit", f"{tier}: {coin} {side}",
+            f"ROE {roe_pct:+.1f}% ({type_label}) | Entry ${entry_px:,.0f} → ${mark_px:,.0f}",
+        ))
+        logger.info(
+            "Profit alert: %s %s %s (ROE %+.1f%%, %s)",
+            tier, coin, side, roe_pct, trade_type,
         )
-
-        if tier == "micro_overstay":
-            overstay_mins = hold_mins or 60
-            header = f"[DAEMON WAKE — Micro Overstay: {coin} {side.upper()} {overstay_mins}m]"
-            footer = (
-                f"This scalp has been open {overstay_mins} minutes — micro trades should be 15-60 min. "
-                f"You're at {roe_pct:+.1f}% ROE. Close it, or if your thesis evolved, acknowledge it's now a swing."
-            )
-            priority = False
-        elif tier == "urgent_profit":
-            header = f"[DAEMON WAKE — Profit Check: {coin} {side.upper()} +{roe_pct:.0f}%]"
-            if is_scalp:
-                footer = f"Scalp up {roe_pct:+.0f}%. Mechanical exits are tracking this position."
-            else:
-                footer = f"Swing up {roe_pct:+.0f}%. Trailing stop will manage the exit if price reverses."
-            priority = True
-        elif tier == "take_profit":
-            header = f"[DAEMON WAKE — Profit Check: {coin} {side.upper()} +{roe_pct:.0f}%]"
-            if is_scalp:
-                footer = f"Scalp up {roe_pct:+.0f}%. Trailing stop active — mechanical exit manages this."
-            else:
-                footer = f"Swing up {roe_pct:+.0f}%. Trailing stop tracking — let the mechanical system work."
-            priority = True
-        elif tier == "profit_nudge":
-            header = f"[DAEMON WAKE — {coin} {side.upper()} +{roe_pct:.0f}%]"
-            if is_scalp:
-                footer = f"Scalp up {roe_pct:+.0f}%. Position running — mechanical exits active."
-            else:
-                footer = f"Swing building at +{roe_pct:.0f}%. Trailing stop will engage when appropriate."
-            priority = False
-        elif tier == "profit_fading":
-            peak = self._peak_roe.get(coin, 0)
-            header = f"[DAEMON WAKE — Profit Update: {coin} {side.upper()} peaked +{peak:.0f}% -> now {roe_pct:+.0f}%]"
-            if is_scalp:
-                footer = (
-                    f"Scalp peaked at +{peak:.0f}% ROE, now at {roe_pct:+.0f}%. "
-                    f"Trailing stop / dynamic SL will handle the exit."
-                )
-            else:
-                footer = (
-                    f"Swing peaked at +{peak:.0f}% ROE, now at {roe_pct:+.0f}%. "
-                    f"Mechanical exits are managing this position."
-                )
-            priority = True
-        elif tier == "risk_no_sl":
-            header = f"[DAEMON WAKE — RISK: {coin} {side.upper()} {roe_pct:+.0f}%]"
-            if is_scalp:
-                footer = f"Scalp at {roe_pct:+.0f}% with no SL detected. Check if dynamic SL placement failed — set a stop via modify_position."
-            else:
-                footer = f"Swing at {roe_pct:+.0f}% with no stop loss detected. Set a stop via modify_position to protect capital."
-            priority = True
-        else:
-            return
-
-        message = f"{header}\n\n{pnl_line}\n\n{footer}"
-        response = self._wake_agent(message, priority=priority, max_tokens=1024, source="daemon:profit")
-        if response:
-            log_event(DaemonEvent(
-                "profit", f"{tier}: {coin} {side}",
-                f"ROE {roe_pct:+.1f}% ({type_label}) | Entry ${entry_px:,.0f} → ${mark_px:,.0f}",
-            ))
-            _queue_and_persist("Profit", f"{tier.replace('_', ' ').title()}: {coin}", response)
-            _notify_discord("Profit", f"{tier.replace('_', ' ').title()}: {coin}", response)
-            logger.info("Profit alert: %s %s %s (ROE %+.1f%%, %s)", tier, coin, side, roe_pct, trade_type)
 
     # ================================================================
     # News Polling
@@ -3986,6 +3960,143 @@ class Daemon:
             return pre.rstrip() + "\n" + validation_block + "\n" + split_marker + post
         return signal_block + "\n" + validation_block
 
+    def _init_mechanical_entry(self) -> None:
+        """Initialize the configured EntryTriggerSource (v2 phase 5)."""
+        cfg = self.config.v2.mechanical_entry
+        if cfg.trigger_source == "ml_signal_driven":
+            from hynous.mechanical_entry.ml_signal_driven import MLSignalDrivenTrigger
+            self._entry_trigger = MLSignalDrivenTrigger(
+                composite_threshold=cfg.composite_entry_threshold,
+                direction_confidence_threshold=cfg.direction_confidence_threshold,
+                entry_quality_threshold=cfg.require_entry_quality_pctl,
+                max_vol_regime=cfg.max_vol_regime,
+            )
+            logger.info(
+                "v2 mechanical entry trigger initialized: %s "
+                "(thresh=%.2f dir=%.2f eq=%d vol<=%s)",
+                self._entry_trigger.name(),
+                cfg.composite_entry_threshold,
+                cfg.direction_confidence_threshold,
+                cfg.require_entry_quality_pctl,
+                cfg.max_vol_regime,
+            )
+        elif cfg.trigger_source in ("", "none", "disabled"):
+            logger.info("v2 mechanical entry: disabled by config")
+            self._entry_trigger = None
+        else:
+            logger.error(
+                "v2 unknown trigger_source: %r — mechanical entry disabled",
+                cfg.trigger_source,
+            )
+            self._entry_trigger = None
+
+    def _evaluate_entry_signals(self, anomalies: list) -> None:
+        """Evaluate the configured mechanical trigger for each anomaly (v2 phase 5).
+
+        Replaces the ``_wake_for_scanner`` LLM path. For every anomaly, builds an
+        ``EntryEvaluationContext``, asks the trigger to evaluate, and if a signal
+        comes back, fires ``execute_trade_mechanical``. Rejections are recorded
+        by the trigger itself (M2). Fully synchronous — no background threads.
+        """
+        from datetime import datetime, timezone
+
+        from hynous.mechanical_entry.executor import execute_trade_mechanical
+        from hynous.mechanical_entry.interface import EntryEvaluationContext
+
+        if not self._entry_trigger:
+            return
+
+        cfg_coin = self.config.v2.mechanical_entry.coin.upper()
+
+        for anomaly in anomalies:
+            # Anomaly may be an AnomalyEvent dataclass (scanner.detect) or a
+            # dict — support both shapes.
+            if hasattr(anomaly, "symbol"):
+                symbol = (anomaly.symbol or "").upper()
+                scanner_detail: dict[str, Any] = dict(anomaly.__dict__)
+            else:
+                symbol = (anomaly.get("symbol", "") or "").upper()
+                scanner_detail = dict(anomaly)
+
+            if symbol != cfg_coin:
+                continue  # phase 5: single-coin evaluation
+
+            ctx = EntryEvaluationContext(
+                daemon=self,
+                symbol=symbol,
+                scanner_anomaly=scanner_detail,
+                now_ts=datetime.now(timezone.utc).isoformat(),
+            )
+            try:
+                signal = self._entry_trigger.evaluate(ctx)
+            except Exception:
+                logger.exception("Entry trigger evaluation failed for %s", symbol)
+                continue
+            if signal is None:
+                continue
+
+            try:
+                trade_id = execute_trade_mechanical(signal=signal, daemon=self)
+                if trade_id:
+                    logger.info(
+                        "Mechanical entry fired via scanner path: %s", trade_id,
+                    )
+                    log_event(DaemonEvent(
+                        "entry",
+                        f"Mechanical entry: {signal.symbol} {signal.side}",
+                        f"trigger={signal.trigger_source} "
+                        f"conviction={signal.conviction:.2f} trade_id={trade_id}",
+                    ))
+            except Exception:
+                logger.exception(
+                    "Mechanical entry execution failed for %s", symbol,
+                )
+
+    def _periodic_ml_signal_check(self) -> None:
+        """Fire entry evaluation for the configured coin even without a
+        scanner anomaly (v2 phase 5)."""
+        from datetime import datetime, timezone
+
+        from hynous.mechanical_entry.executor import execute_trade_mechanical
+        from hynous.mechanical_entry.interface import EntryEvaluationContext
+
+        if not self._entry_trigger:
+            return
+
+        symbol = self.config.v2.mechanical_entry.coin.upper()
+        if symbol in self._prev_positions:
+            return  # one-at-a-time
+
+        ctx = EntryEvaluationContext(
+            daemon=self,
+            symbol=symbol,
+            scanner_anomaly=None,
+            now_ts=datetime.now(timezone.utc).isoformat(),
+        )
+        try:
+            signal = self._entry_trigger.evaluate(ctx)
+        except Exception:
+            logger.exception("Periodic ML signal check evaluation failed")
+            return
+        if signal is None:
+            return
+        try:
+            trade_id = execute_trade_mechanical(signal=signal, daemon=self)
+            if trade_id:
+                logger.info(
+                    "Mechanical entry fired via periodic check: %s", trade_id,
+                )
+                log_event(DaemonEvent(
+                    "entry",
+                    f"Mechanical entry (periodic): {symbol} {signal.side}",
+                    f"trigger={signal.trigger_source} "
+                    f"conviction={signal.conviction:.2f} trade_id={trade_id}",
+                ))
+        except Exception:
+            logger.exception(
+                "Periodic mechanical entry execution failed for %s", symbol,
+            )
+
     def _wake_for_scanner(self, anomalies: list):
         """Wake the agent when the market scanner detects anomalies.
 
@@ -4050,7 +4161,13 @@ class Daemon:
         realized_pnl: float,
         classification: str,
     ):
-        """Wake the agent when a position closes. Adapts tone to trade type + classification."""
+        """Record a position close (v2 phase 5 M4: pure notification sink).
+
+        The v1 implementation woke the LLM agent with a classification-specific
+        playbook prompt; v2 replaces that with ``log_event`` + a plain
+        Discord notification and keeps the satellite entry-snapshot outcome
+        backfill (phase 8 quant work still reads it).
+        """
         # Look up trade type BEFORE cleanup (still in registry at this point)
         type_info = self._position_types.get(coin, {"type": "macro", "entry_time": 0})
         trade_type = type_info["type"]
@@ -4062,21 +4179,7 @@ class Daemon:
         if side == "short":
             pnl_pct = -pnl_pct
 
-        # Hold duration
-        hold_str = ""
-        if type_info["entry_time"] > 0:
-            hold_mins = max(0, int((time.time() - type_info["entry_time"]) / 60))
-            if hold_mins < 60:
-                hold_str = f" | Held: {hold_mins}m"
-            else:
-                hold_str = f" | Held: {hold_mins // 60}h{hold_mins % 60}m"
-
-        pnl_line = (
-            f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
-            f"PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%){hold_str}"
-        )
-
-        # Backfill entry snapshot outcome for feedback loop (Phase 3)
+        # Backfill entry snapshot outcome for feedback loop (Phase 3 satellite)
         try:
             if self._satellite_store:
                 self._satellite_store.conn.execute(
@@ -4098,87 +4201,27 @@ class Daemon:
         except Exception:
             logger.debug("Failed to backfill entry snapshot outcome", exc_info=True)
 
-        if classification == "stop_loss":
-            header = f"[DAEMON WAKE — Stop Loss: {coin} {side.upper()} ({type_label})]"
-            if is_scalp:
-                footer = "Scalp stopped out. Quick review: was the entry timing right? Was the SL appropriate for the timeframe? One lesson, then move on."
-            else:
-                footer = "Stopped out of swing position. Recall your thesis — what invalidated it? Store a real lesson (what would you do differently?), archive the thesis, clean up watchpoints, and scan for what's next."
-        elif classification == "take_profit":
-            header = f"[DAEMON WAKE — Take Profit: {coin} {side.upper()} ({type_label})]"
-            if is_scalp:
-                footer = (
-                    "Scalp TP hit — clean trade. REQUIRED: store a playbook (memory_type='playbook') with: "
-                    "setup conditions, entry timing, risk params that worked, what's repeatable. "
-                    f"Title: 'Playbook: {coin} <pattern_name>'"
-                )
-            else:
-                footer = (
-                    "Swing TP hit. REQUIRED: store a playbook (memory_type='playbook') with: "
-                    "thesis and what confirmed it, entry signal, hold logic through drawdowns, "
-                    "risk params that worked, what's repeatable. "
-                    f"Title: 'Playbook: {coin} <pattern_name>'. "
-                    "Then archive thesis, clean watchpoints, look for follow-up."
-                )
-        else:
-            header = f"[DAEMON WAKE — Position Closed: {coin} {side.upper()} ({type_label})]"
-            if realized_pnl >= 0:
-                # Profitable close — extract the playbook
-                if is_scalp:
-                    footer = (
-                        "Scalp closed in profit. Store a playbook (memory_type='playbook'): "
-                        f"setup, timing, what worked. Title: 'Playbook: {coin} <pattern>'."
-                    )
-                else:
-                    footer = (
-                        "Swing closed in profit. Store a playbook (memory_type='playbook'): "
-                        "thesis, entry signal, risk params, what worked. "
-                        f"Title: 'Playbook: {coin} <pattern>'. Archive thesis, clean watchpoints."
-                    )
-            else:
-                if is_scalp:
-                    footer = "Scalp closed at a loss. Was the exit timing right? Store the lesson — specific to THIS setup, not a global rule."
-                else:
-                    footer = "Swing closed at a loss. Store why — what specifically went wrong with THIS setup? Clean up watchpoints, scan the market."
-
-        lines = [header, "", pnl_line, "", footer]
-
-        # Append circuit breaker warning if trading is paused
-        if self._trading_paused:
-            lines.extend([
-                "",
-                "[CIRCUIT BREAKER ACTIVE]",
-                f"Daily loss has reached ${abs(self._daily_realized_pnl):,.2f}. "
-                "Trading is paused until tomorrow UTC.",
-                "Focus on analysis and learning, not new entries.",
-            ])
-
-        message = "\n".join(lines)
-        fill_tokens = 1536 if classification in ("stop_loss", "take_profit") else 512
-        response = self._wake_agent(message, priority=True, max_tokens=fill_tokens, source="daemon:fill")
-        if response:
-            self._fill_fires += 1
-            fill_title = f"{classification.replace('_', ' ').title()}: {coin} {side} ({type_label})"
-            log_event(DaemonEvent(
-                "fill", fill_title,
-                f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
-                f"PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
-            ))
-            _queue_and_persist("Fill", fill_title, response, event_type="fill")
-            # Clean Discord exit notification (no agent response blob)
-            close_label = {
-                "stop_loss": "SL", "take_profit": "TP", "liquidation": "Liquidation",
-            }.get(classification, "Closed")
-            leverage_dc = self._prev_positions.get(coin, {}).get("leverage", type_info.get("leverage", 0))
-            roe_dc = round(pnl_pct * leverage_dc, 1) if leverage_dc else 0.0
-            win_loss = "WIN" if realized_pnl >= 0 else "LOSS"
-            _notify_discord_simple(
-                f"{win_loss} · Exited {coin} {side} [{close_label}] — "
-                f"{pnl_sign}${abs(realized_pnl):.2f} ({pnl_pct:+.1f}%)"
-                + (f" · ROE {roe_dc:+.1f}%" if roe_dc else "")
-            )
-            logger.info("Fill wake complete: %s %s %s %s (PnL: %s%.2f)",
-                         classification, trade_type, coin, side, pnl_sign, abs(realized_pnl))
+        self._fill_fires += 1
+        fill_title = f"{classification.replace('_', ' ').title()}: {coin} {side} ({type_label})"
+        log_event(DaemonEvent(
+            "fill", fill_title,
+            f"Entry: ${entry_px:,.0f} → Exit: ${exit_px:,.0f} | "
+            f"PnL: {pnl_sign}${abs(realized_pnl):,.2f} ({pnl_pct:+.1f}%)",
+        ))
+        # Clean Discord exit notification (no agent response blob)
+        close_label = {
+            "stop_loss": "SL", "take_profit": "TP", "liquidation": "Liquidation",
+        }.get(classification, "Closed")
+        leverage_dc = self._prev_positions.get(coin, {}).get("leverage", type_info.get("leverage", 0))
+        roe_dc = round(pnl_pct * leverage_dc, 1) if leverage_dc else 0.0
+        win_loss = "WIN" if realized_pnl >= 0 else "LOSS"
+        _notify_discord_simple(
+            f"{win_loss} · Exited {coin} {side} [{close_label}] — "
+            f"{pnl_sign}${abs(realized_pnl):.2f} ({pnl_pct:+.1f}%)"
+            + (f" · ROE {roe_dc:+.1f}%" if roe_dc else "")
+        )
+        logger.info("Fill event: %s %s %s %s (PnL: %s%.2f)",
+                     classification, trade_type, coin, side, pnl_sign, abs(realized_pnl))
 
     def _persist_position_types(self):
         """Save position types to disk (survives restarts)."""
