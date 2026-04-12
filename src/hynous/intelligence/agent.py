@@ -21,7 +21,22 @@ import litellm
 
 from .prompts import build_system_prompt
 from .tools.registry import ToolRegistry, get_registry
-from .tools.memory import enable_queue_mode, disable_queue_mode, flush_memory_queue
+
+
+# Phase 4 M4: v1 memory tools deleted. Queue-mode is a no-op until phase 5
+# refactors agent.py. Keeping these symbols avoids a noisy diff on call sites.
+def enable_queue_mode() -> None:
+    pass
+
+
+def disable_queue_mode() -> None:
+    pass
+
+
+def flush_memory_queue() -> int:
+    return 0
+
+
 from ..core.config import Config, load_config
 from ..core.clock import stamp
 from ..core import persistence
@@ -41,19 +56,10 @@ _TOOL_TIMEOUT = 30
 # the full text in subsequent API calls is pure waste.
 # Fresh (unseen) tool results are always kept at full fidelity.
 _STALE_TRUNCATION = {
-    # Confirmation tools — one-line ack messages
-    "store_memory": 150,
-    "update_memory": 150,
-    "delete_memory": 150,
-    "explore_memory": 150,
-    "manage_clusters": 150,
     # Action tools — multi-line summaries of what was done
     "execute_trade": 300,
     "close_position": 300,
     "modify_position": 300,
-    "manage_watchpoints": 300,
-    "manage_conflicts": 300,
-    "batch_prune": 300,
     # Data tools — market numbers the agent already analyzed
     "get_book_history": 400,
     "monitor_signal": 150,
@@ -65,13 +71,10 @@ _STALE_TRUNCATION = {
     "get_options_flow": 400,
     "get_institutional_flow": 400,
     "get_global_sentiment": 400,
-    "get_trade_stats": 400,
     "get_my_costs": 400,
     "get_account": 400,
-    "analyze_memory": 400,
     "data_layer": 400,
     # Search tools — agent may reference specific results
-    "recall_memory": 600,
     "search_web": 600,
 }
 _DEFAULT_STALE_LIMIT = 800  # Fallback for unclassified/new tools

@@ -199,7 +199,45 @@ Also delete these tools if they have no remaining importers:
 
 Run: `grep -r "from .memory" src/hynous/intelligence/tools/` and similar for each deleted tool. Must return nothing.
 
-Commit: `[phase-4] delete memory agent tools`
+**Canonical pytest invocation (M4 and audit):**
+
+"CE-ignored" = count of files passed to pytest via `--ignore=` flags. Single concept, single list, single number. Files whose per-test failures all trace to deleted-module imports move from the fails bucket to the CE-ignored bucket by adding them to this list.
+
+The canonical M4 ignore list is 11 files:
+
+1. `tests/e2e/test_live_orchestrator.py`
+2. `tests/integration/test_orchestrator_integration.py`
+3. `tests/unit/test_consolidation.py`
+4. `tests/unit/test_gate_filter.py`
+5. `tests/unit/test_intent_boost.py`
+6. `tests/unit/test_retrieval_orchestrator.py`
+7. `tests/unit/test_pruning.py`
+8. `tests/integration/test_pruning_integration.py`
+9. `tests/integration/test_gate_filter_integration.py`
+10. `tests/unit/test_token_optimization.py`
+11. `tests/unit/test_trade_retrieval.py`
+
+Run:
+
+```bash
+PYTHONPATH=src pytest -q \
+  --ignore=tests/e2e/test_live_orchestrator.py \
+  --ignore=tests/integration/test_orchestrator_integration.py \
+  --ignore=tests/unit/test_consolidation.py \
+  --ignore=tests/unit/test_gate_filter.py \
+  --ignore=tests/unit/test_intent_boost.py \
+  --ignore=tests/unit/test_retrieval_orchestrator.py \
+  --ignore=tests/unit/test_pruning.py \
+  --ignore=tests/integration/test_pruning_integration.py \
+  --ignore=tests/integration/test_gate_filter_integration.py \
+  --ignore=tests/unit/test_token_optimization.py \
+  --ignore=tests/unit/test_trade_retrieval.py \
+  tests/
+```
+
+Floors: `pytest CE-ignored == 11`, registry tool count `== 17`, mypy `≤ 279`, ruff `≤ 83`. The fails floor is ratified from the actual count reported by running the command above at M4 audit.
+
+Commit: `[phase-4] delete v1 memory agent tools (Milestone 4)`
 
 ### Step 5 — Delete Python Nous client
 

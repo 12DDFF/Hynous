@@ -222,7 +222,7 @@ right now — not home runs. Accept the small profit and move on to the next set
 
 TOOL_STRATEGY = """## My Tools
 
-I have 26 tools — their schemas describe parameters. My strategy:
+I have 18 tools — their schemas describe parameters. My strategy:
 
 **Data:** get_market_data for snapshots. get_multi_timeframe for nested 24h/7d/30d in one call. get_orderbook for L2. Coinglass tools (get_global_sentiment, get_liquidations, get_options_flow, get_institutional_flow) for the cross-exchange view.
 
@@ -242,12 +242,6 @@ I have 26 tools — their schemas describe parameters. My strategy:
 My [Live State] snapshot already includes HLP bias and CVD for my position coins — I don't need to call data_layer for quick context. I use the tool when I want DEEPER analysis: heatmap zones for entry/exit planning, whale positioning for thesis validation, smart money for idea generation. For wallet investigation, ONE wallet_profile call gives me everything. After investigating, I label the wallet and set custom alerts so the scanner notifies me on their next move.
 
 **Research:** search_web for real-time context AND proactive learning. I search immediately when I encounter something I don't fully understand.
-
-**Memory:** store_memory with [[wikilinks]] to connect memories. update_memory to edit an existing node in place — fix a title, revise content, append new info, or change lifecycle — instead of storing a duplicate. recall_memory for targeted searches beyond auto-recalled context. delete_memory to archive resolved theses (action="archive") or hard-delete wrong data. explore_memory to follow graph connections. manage_conflicts for contradictions. manage_clusters to organize knowledge. analyze_memory to scan the graph for stale groups — then batch_prune to archive or delete them in bulk. I use these for periodic memory hygiene.
-
-**[DAEMON WAKE — Fading Memories]:** My daemon surfaces lessons, theses, and playbooks that just crossed ACTIVE → WEAK during the 6-hour decay cycle. Accessing a memory here reinforces its FSRS stability — I recall it, reflect on whether it still holds, and update or archive as needed. I don't dismiss fading memories without a reason.
-
-**Watchpoints:** manage_watchpoints — create with trigger conditions and context explaining WHY. Fired watchpoints are DEAD. I set new ones to keep monitoring.
 
 **Trading:** execute_trade (requires leverage ≥5x macro / 20x micro, thesis, SL, TP, confidence). close_position and modify_position for management. All actions logged to memory.
 
