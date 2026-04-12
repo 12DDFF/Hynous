@@ -20,10 +20,10 @@
 
 ```python
 parts = [
-    "# I am Hynous\n\n{IDENTITY}",         # Soul: personality, values, style
+    "# I am Hynous\n\n{IDENTITY}",          # Soul: personality, values, style
     "## Today\n\n{date + model label}",      # Clock + model awareness
     _build_ground_rules(),                    # Dynamic rules (see below)
-    TOOL_STRATEGY,                            # Tool usage guidance + memory docs
+    ML_CONDITIONS,                            # ML condition model guidance
 ]
 ```
 
@@ -36,25 +36,15 @@ An optional `## Mode` section (paper/testnet/live) is inserted at index 1 when `
 - **Conviction sizing table** -- margin percentages per tier (High/Medium/Pass thresholds)
 - **Risk rules** -- R:R floor, portfolio risk cap, leverage-by-SL formulas
 - **Trade type specs** -- micro vs macro SL/TP ranges, leverage, fee break-even calculations
-- **Peak profit protection** -- breakeven stop rules, giveback thresholds
+- **Mechanical exits** -- dynamic protective SL, fee-breakeven, trailing stop (all mechanical; agent cannot override during autonomous operation)
 - **Small wins mode** -- conditional block, only injected when `ts.small_wins_mode` is active
-- **Profit-taking rules** -- leverage-scaled thresholds
+- **Profit-taking rules** -- mechanical-only reminder
 
 This means the system prompt reflects runtime settings changes without restarting the agent.
 
-### TOOL_STRATEGY
+### ML Conditions
 
-A dedicated `TOOL_STRATEGY` constant (~1,200 tokens) that tells the agent HOW to use its tools. This is critical: registering a tool in `registry.py` makes it callable, but the agent will not know when or why to use it without guidance here.
-
-Sections covered:
-- **Data tools** -- when to use each market data tool
-- **Data layer** -- deep Hyperliquid intelligence (heatmap, orderflow, whales, HLP, smart money, wallet tools)
-- **Research** -- web search for real-time context
-- **Memory** -- store/recall/update/delete/explore/conflicts/clusters/pruning patterns
-- **Fading memories** -- how to handle daemon fading alerts
-- **Watchpoints** -- lifecycle and context patterns
-- **Trading** -- execution requirements (leverage, thesis, SL, TP, confidence)
-- **How My Memory Works** -- 4-section model, decay, consolidation, playbooks
+A dedicated `ML_CONDITIONS` constant describes the 14 ML condition models, the composite entry score, and how the `execute_trade` tool enforces ML-derived guardrails (leverage caps, entry-quality gates, MAE-vs-SL checks).
 
 ### Context Snapshot Injection
 
@@ -71,8 +61,8 @@ The `context_snapshot.py` module builds a `[Live State]` block injected per-mess
 - **Identity** -- Edit sparingly, this is Hynous's core
 - **Trading** -- Add principles, never hard rules
 - **Keep it natural** -- Write like a human would think
-- **TOOL_STRATEGY** -- Update whenever a new tool is added; the agent cannot discover unmentioned tools
+- **Tool additions** -- Any new tool needs a mention somewhere the agent will read it (inside ground rules or a new section); registration alone is not enough
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-04-12 (phase 4 M9 — prompt surface slimmed to identity + ground rules + ML conditions after M7 simplification)

@@ -14,11 +14,11 @@ core/
 ├── logging.py         # Logging setup
 ├── clock.py           # Timestamp injection for agent messages
 ├── costs.py           # LLM cost tracking (per-model, per-session)
-├── trade_analytics.py # Trade performance analytics (TradeRecord, TradeStats, thesis enrichment, time filtering)
+├── trade_analytics.py # Trade performance analytics (TradeRecord, TradeStats, thesis enrichment, time filtering). Phase 4 orphan; scheduled for removal in phase 7.
 ├── trading_settings.py # Runtime-adjustable trading parameters (TradingSettings dataclass, JSON persistence, thread-safe singleton)
 ├── persistence.py     # Paper trading state + conversation history persistence
 ├── daemon_log.py      # Daemon event logging for UI display
-├── memory_tracker.py  # Memory mutation tracking per agent cycle
+├── memory_tracker.py  # Phase 4 orphan; scheduled for removal in phase 7.
 ├── equity_tracker.py  # Append-only equity curve persistence (5-min snapshots, 30-day prune)
 ├── request_tracer.py  # Debug trace collector (spans per agent.chat() call)
 └── trace_log.py       # Trace persistence + content-addressed payload storage
@@ -37,10 +37,10 @@ config = load_config()  # Loads config/default.yaml + .env
 print(config.execution.mode)  # "paper"
 print(config.agent.model)     # "openrouter/anthropic/claude-sonnet-4-5-20250929"
 print(config.agent.max_tokens) # 2048 (default, overridable per wake type)
-print(config.orchestrator.enabled)  # True (retrieval orchestrator)
+print(config.v2.journal.db_path)  # "storage/v2/journal.db"
 ```
 
-Key config dataclasses: `AgentConfig`, `MemoryConfig`, `OrchestratorConfig`, `DaemonConfig`, `NousConfig`, `ExecutionConfig`, `DiscordConfig`.
+Key config dataclasses: `AgentConfig`, `DaemonConfig`, `ExecutionConfig`, `DiscordConfig`, `SatelliteConfig`, `DataLayerConfig`, `HyperliquidConfig`, `ScannerConfig`, `SectionsConfig`, `V2Config` (with `V2JournalConfig` / `V2AnalysisAgentConfig` / `V2MechanicalEntryConfig` / `V2ConsolidationConfig` / `V2UserChatConfig` sub-configs).
 
 ---
 
@@ -107,7 +107,7 @@ Debug trace infrastructure for the dashboard's trace inspector. Records every `a
 
 ### `request_tracer.py` -- In-process trace collector
 
-Thread-safe singleton (same pattern as `memory_tracker.py`). Records spans during each chat call, flushes completed traces to `trace_log.py`.
+Thread-safe singleton. Records spans during each chat call, flushes completed traces to `trace_log.py`.
 
 ```python
 from hynous.core.request_tracer import get_tracer, set_active_trace, get_active_trace

@@ -947,8 +947,6 @@ def handle_execute_trade(
         warnings=_warnings if _warnings else None,
     )
 
-    # v1 coach pre-mortem removed — analysis is post-trade only in v2
-
     # --- Set leverage if specified ---
     if leverage is not None:
         _lev_start = time.monotonic()
@@ -1010,8 +1008,6 @@ def handle_execute_trade(
             if leverage is not None:
                 lines.append(f"Leverage: {leverage}x")
 
-            # v1 Nous memory store removed — phase 1 journal capture handles all trade persistence
-
             lines.extend(_warnings)
             return "\n".join(lines)
 
@@ -1056,7 +1052,7 @@ def handle_execute_trade(
         slippage_pct=round(_slippage_pct, 4), status="filled",
     )
 
-    # v2: capture rich entry snapshot (phase 1) — parallel to existing Nous store
+    # Capture rich entry snapshot into the journal (phase 1 capture).
     try:
         from ...intelligence.daemon import get_active_daemon as _get_daemon_v2
         _daemon_v2 = _get_daemon_v2()
@@ -1144,9 +1140,6 @@ def handle_execute_trade(
             _record_trade_span("execute_trade", "daemon_record", True, f"Entry #{daemon.entries_today} recorded, type={trade_type}", trade_type=trade_type)
     except Exception:
         pass
-
-    # v1 Nous memory store removed — phase 1 journal capture handles all trade persistence
-    # (old satellite.db entry_snapshots insert also removed — v2 journal owns entry capture)
 
     lines.extend(_warnings)
     return "\n".join(lines)
@@ -1467,9 +1460,6 @@ def handle_close_position(
         except Exception as e:
             logger.error("Failed to cancel orders for %s: %s", symbol, e)
             _record_trade_span("close_position", "order_cancellation", False, f"Cancel failed: {e}", duration_ms=int((time.monotonic() - _cancel_start) * 1000), symbol=symbol, error=str(e))
-
-    # v1 Nous memory store removed — phase 1 journal capture handles all trade persistence
-    # (trade_history invalidate_cache, _strengthen_trade_edge, _update_playbook_metrics also removed)
 
     pnl_sign = "+" if realized_pnl_net >= 0 else ""
     action_label_upper = "PARTIAL CLOSE" if partial_pct < 100 else "CLOSED"
@@ -1808,8 +1798,6 @@ def handle_modify_position(
     except Exception:
         pass
     _record_trade_span("modify_position", "cache_invalidation", True, "Briefing cache cleared")
-
-    # v1 Nous memory store removed — phase 1 journal capture handles all trade persistence
 
     # --- Build result ---
     lines = [

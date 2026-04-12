@@ -154,9 +154,20 @@ PYTHONPATH=. pytest satellite/tests/
 cd data-layer && pytest tests/
 ```
 
-During phase 4 a canonical CE-ignore list is used to keep the baseline clean.
-See the active phase-4 directive or `v2-planning/07-phase-4-tier1-deletions.md`
-for the current list; it shrinks as orphan tests are deleted.
+Phase 4 is complete; the canonical CE-ignore list has been fully retired
+(M6b deleted the orphan test files and `pytest tests/` now runs
+unrestricted). Post-phase-4 baseline: `482 passed / 0 failed`.
+
+---
+
+## Phase Status
+
+- **Phase 0** complete (2026-04-09) — branch + V2Config scaffold + baselines pinned
+- **Phase 1** complete (2026-04-10) — rich entry/exit snapshots, 8 lifecycle events, StagingStore, counterfactuals, `scripts/run_daemon.py`
+- **Phase 2** complete (2026-04-12) — `JournalStore`, 9-table schema, embeddings (matryoshka 512-dim), FastAPI routes at `/api/v2/journal/*`, staging→journal migration, daemon swap
+- **Phase 3** complete (2026-04-12) — post-trade analysis agent at `src/hynous/analysis/` (rules engine + LLM synthesis + validation + wake integration + batch rejection cron)
+- **Phase 4** complete (2026-04-12) — Nous server + Python client deleted, 9 decision-injection modules removed, 8 v1 memory tools removed, unused coinglass methods + perplexity/cryptocompare out, prompt trimmed ~40%, `scripts/run_daemon.py` standalone, `pytest tests/` = 482p/0f. Deferred to phase 7: `trade_analytics.py`, `memory_tracker.py`, dashboard memory/graph/brain pages, Makefile/pyproject/deploy rework, cryptocompare + perplexity + news alert detector.
+- **Phase 5** next — mechanical entry loop (LLM removed from trading path)
 
 ---
 
@@ -176,7 +187,7 @@ for the current list; it shrinks as orphan tests are deleted.
 - `v2-planning/00-master-plan.md` — authoritative v2 plan (read first)
 - `v2-planning/05-phase-2-journal-module.md` — journal schema, store, migration, embeddings
 - `v2-planning/06-phase-3-analysis-agent.md` — post-trade analysis pipeline (rules + LLM + validation)
-- `v2-planning/07-phase-4-tier1-deletions.md` — current phase (deletions of v1 infrastructure)
+- `v2-planning/07-phase-4-tier1-deletions.md` — phase 4 plan (complete 2026-04-12); see `v2-planning/phase-4-acceptance.md` for the annotated acceptance checklist
 - `ARCHITECTURE.md` — system overview, component responsibilities, data flows
 - `docs/README.md` — documentation hub (points at v2-planning for live design docs)
 - `docs/integration.md` — cross-system data flows
@@ -188,4 +199,4 @@ for the current list; it shrinks as orphan tests are deleted.
 
 ---
 
-Last updated: 2026-04-12 (phase 4 M6a — Nous server + systemd unit deleted, 5→4 component architecture)
+Last updated: 2026-04-12 (phase 4 M9 — phase 4 complete; ready for phase 5 handoff)

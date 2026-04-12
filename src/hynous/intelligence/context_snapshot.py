@@ -1,16 +1,16 @@
 """
 Context Snapshot — Live state injected into every agent message.
 
-Builds a compact (~150 token) text block with portfolio, positions, market,
-and memory state. Eliminates the need for the agent to burn tool calls just
-to see its own state.
+Builds a compact text block with portfolio, positions, market, and regime
+state. Eliminates the need for the agent to burn tool calls just to see
+its own state.
 
 Data sources (all zero/low cost):
   - provider.get_user_state() → 1 HTTP call (~50ms)
   - provider.get_trigger_orders() → per position SL/TP
   - daemon.snapshot → cached prices, funding, F&G (zero cost)
   - daemon daily PnL + circuit breaker (zero cost)
-  - daemon cached counts OR nous.list_nodes() fallback
+  - data-layer signals (HLP + CVD) for tracked + open-position coins
 
 Pure function — no class, no state (except TTL cache). Safe — never raises.
 """
@@ -26,8 +26,8 @@ _snapshot_cache_time: float = 0
 _SNAPSHOT_TTL = 30  # seconds
 
 
-def build_snapshot(provider, daemon, nous_client, config) -> str:
-    """Build compact live state text (~150 tokens). Safe — never raises.
+def build_snapshot(provider, daemon, config) -> str:
+    """Build compact live state text. Safe — never raises.
 
     Results are cached for 30 seconds. Portfolio data changes slowly —
     positions don't open/close multiple times per second.
@@ -35,7 +35,6 @@ def build_snapshot(provider, daemon, nous_client, config) -> str:
     Args:
         provider: HyperliquidProvider or PaperProvider (can be None).
         daemon: Daemon instance (can be None if not running).
-        nous_client: NousClient instance (can be None).
         config: Config instance.
 
     Returns:
@@ -63,11 +62,6 @@ def build_snapshot(provider, daemon, nous_client, config) -> str:
     regime_line = _build_regime(daemon)
     if regime_line:
         sections.append(regime_line)
-
-    # --- Memory counts (prefer daemon cache, fallback to Nous) ---
-    memory_line = _build_memory_counts(nous_client, daemon)
-    if memory_line:
-        sections.append(memory_line)
 
     # --- Trade activity (zero cost, daemon in-memory counters) ---
     activity_line = _build_activity(daemon)
@@ -255,57 +249,6 @@ def _build_market(daemon, config) -> str:
         parts.append(f"F&G: {fg} ({label})")
 
     return f"Market: {' | '.join(parts)}" if parts else ""
-
-
-def _build_memory_counts(nous_client, daemon=None) -> str:
-    """Counts of active watchpoints, theses, and pending curiosity items.
-
-    If daemon is running, uses its cached counts (zero HTTP calls).
-    Falls back to querying Nous directly.
-    """
-    # Fast path: daemon has cached counts
-    if daemon is not None:
-        counts = {}
-        wp_count = getattr(daemon, '_active_watchpoint_count', None)
-        if wp_count is not None:
-            counts["watchpoints"] = wp_count
-        thesis_count = getattr(daemon, '_active_thesis_count', None)
-        if thesis_count is not None:
-            counts["theses"] = thesis_count
-        curiosity_count = getattr(daemon, '_pending_curiosity_count', None)
-        if curiosity_count is not None:
-            counts["curiosity pending"] = curiosity_count
-
-        # If daemon has all 3 counts, skip Nous entirely
-        if len(counts) == 3:
-            parts = [f"{v} {k}" for k, v in counts.items()]
-            return f"Memory: {' | '.join(parts)}"
-
-    # Slow path: query Nous directly
-    if nous_client is None:
-        return ""
-
-    counts = {}
-    for subtype, label in [
-        ("custom:watchpoint", "watchpoints"),
-        ("custom:thesis", "theses"),
-        ("custom:curiosity", "curiosity pending"),
-    ]:
-        try:
-            items = nous_client.list_nodes(
-                subtype=subtype,
-                lifecycle="ACTIVE",
-                limit=50,
-            )
-            counts[label] = len(items)
-        except Exception:
-            pass
-
-    if not counts:
-        return ""
-
-    parts = [f"{v} {k}" for k, v in counts.items()]
-    return f"Memory: {' | '.join(parts)}"
 
 
 def _build_regime(daemon) -> str:

@@ -199,9 +199,7 @@ class Agent:
 
             provider = get_provider()
             daemon = get_active_daemon()
-            # Phase 4 M5: nous python client deleted; build_snapshot tolerates None.
-            nous = None
-            snapshot = build_snapshot(provider, daemon, nous, self.config)
+            snapshot = build_snapshot(provider, daemon, self.config)
             if snapshot:
                 self._last_snapshot = snapshot
                 self._snapshot_symbols = extract_symbols(snapshot)

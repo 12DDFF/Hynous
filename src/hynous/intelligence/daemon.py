@@ -285,7 +285,6 @@ class Daemon:
 
         # Cached provider references (avoid re-importing in every method)
         self._hl_provider = None
-        self._nous_client = None
 
         # Pre-fetched deep market data for briefing injection
         from .briefing import DataCache
@@ -297,9 +296,6 @@ class Daemon:
         self._last_labeler_run: float = 0
         self._last_validation_run: float = 0
         self._latest_validation_results: list[dict] = []
-
-        # Nous health state
-        self._nous_healthy: bool = True
 
         # Data-change gate: watchpoints only checked when data is fresh
         self._data_changed: bool = False
@@ -567,14 +563,6 @@ class Daemon:
             from ..data.providers.hyperliquid import get_provider
             self._hl_provider = get_provider(config=self.config)
         return self._hl_provider
-
-    def _get_nous(self):
-        """Get cached Nous client.
-
-        Phase 4 M5: nous python client deleted. Returns None permanently;
-        callers guard on truthiness. Full removal deferred to later step.
-        """
-        return None
 
     # ================================================================
     # Lifecycle
@@ -990,9 +978,6 @@ class Daemon:
 
     def _loop_inner(self):
         """Actual daemon loop (wrapped by _loop for crash protection)."""
-        # Startup health check — verify Nous is reachable
-        self._check_health(startup=True)
-
         # Initial data fetch
         self._poll_prices()
         self._poll_derivatives()
@@ -1113,7 +1098,7 @@ class Daemon:
                 if now - self.snapshot.last_deriv_poll >= self.config.daemon.deriv_poll_interval:
                     self._poll_derivatives()
 
-                # 3. Watchpoint polling removed in phase 4 (Nous-backed).
+                # 3. Watchpoint polling removed in phase 4.
                 if self._data_changed:
                     self._data_changed = False
 
@@ -1164,12 +1149,7 @@ class Daemon:
 
                 # 6. FSRS decay cron removed in phase 4.
                 # 7. Contradiction queue cron removed in phase 4.
-
-                # 8. Nous health check (default every 1 hour)
-                if now - self._last_health_check >= self.config.daemon.health_check_interval:
-                    self._last_health_check = now
-                    self._check_health()
-
+                # 8. Health check cron removed in phase 4.
                 # 9. Embedding backfill cron removed in phase 4.
                 # 10. Consolidation cron removed in phase 4.
 
@@ -2721,7 +2701,7 @@ class Daemon:
                             ))
                             # Update daily PnL circuit breaker
                             self._update_daily_pnl(realized_pnl_sw)
-                            # Record in Nous journal (same path as SL/TP closes)
+                            # Record trigger close (same path as SL/TP closes)
                             self._record_trigger_close({
                                 "coin": sym, "side": side, "entry_px": entry_px,
                                 "exit_px": exit_px_sw, "realized_pnl": realized_pnl_sw,
@@ -2903,7 +2883,7 @@ class Daemon:
             logger.exception("Staged entry execution failed: %s", entry.directive_id)
 
     def _store_staged_trade_memory(self, entry, fill_px: float, size_usd: float) -> None:
-        # v1 Nous staged-trade memory write removed — phase 1 journal capture handles persistence (phase-4 M1)
+        # No-op in v2; phase 1 journal capture handles trade persistence.
         return None
 
     def _get_ws_candle_feed(self):
@@ -3238,7 +3218,7 @@ class Daemon:
         # Update daily PnL for circuit breaker
         self._update_daily_pnl(realized_pnl)
 
-        # Record to Nous (auto-triggered closes aren't written by agent)
+        # Record trigger close (auto-triggered closes aren't written by agent)
         if classification in ("stop_loss", "take_profit", "liquidation", "trailing_stop", "breakeven_stop", "dynamic_protective_sl"):
             self._record_trigger_close({
                 "coin": coin, "side": side, "entry_px": entry_px,
@@ -3270,7 +3250,7 @@ class Daemon:
         })
 
     def _record_trigger_close(self, event: dict):
-        # v1 Nous staged-trade memory write removed — phase 1 journal capture handles persistence (phase-4 M1)
+        # No-op in v2; phase 1 journal capture handles trade persistence.
         return None
 
     def _classify_fill(
@@ -4658,115 +4638,6 @@ class Daemon:
 
         except Exception as e:
             logger.debug("Feedback analysis failed: %s", e, exc_info=True)
-
-    def _auto_resolve_conflict(self, conflict: dict, nous) -> str | None:
-        """Apply Tier 1 auto-resolve rules. Returns resolution string or None.
-
-        Rules (conservative — better to send to agent than auto-resolve wrong):
-        1. Expired: expires_at has passed -> keep_both
-        2. Low confidence: detection_confidence < 0.40 -> keep_both
-        3. Explicit self-correction: markers + confidence > 0.50 -> new_is_current
-        4. Explicit update: markers + confidence > 0.50 -> new_is_current
-        5. Same subtype + same entity: latest view wins -> new_is_current
-        """
-        cid = conflict.get("id", "?")
-        confidence = conflict.get("detection_confidence", 0)
-        new_content = (conflict.get("new_content", "") or "").lower()
-        expires_at = conflict.get("expires_at", "")
-
-        # Rule 1: Expired
-        if expires_at:
-            try:
-                from datetime import datetime, timezone
-                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                if exp_dt < datetime.now(timezone.utc):
-                    logger.debug("Auto-resolve %s: expired", cid)
-                    return "keep_both"
-            except (ValueError, TypeError):
-                pass
-
-        # Rule 2: Low confidence (system wasn't sure it's a real contradiction)
-        if confidence < 0.40:
-            logger.debug("Auto-resolve %s: low confidence (%.2f)", cid, confidence)
-            return "keep_both"
-
-        # Rule 3: Explicit self-correction
-        correction_markers = ["i was wrong", "correction:", "i made an error", "i was mistaken"]
-        if confidence > 0.50 and any(m in new_content for m in correction_markers):
-            logger.debug("Auto-resolve %s: self-correction detected", cid)
-            return "new_is_current"
-
-        # Rule 4: Explicit update
-        update_markers = ["update:", "revised:", "updated:", "revised view"]
-        if confidence > 0.50 and any(m in new_content for m in update_markers):
-            logger.debug("Auto-resolve %s: explicit update detected", cid)
-            return "new_is_current"
-
-        # Rule 5: Same subtype + same entity (latest view wins)
-        old_node_id = conflict.get("old_node_id")
-        new_node_id = conflict.get("new_node_id")
-        entity = conflict.get("entity_name")
-        if old_node_id and new_node_id and entity:
-            try:
-                old_node = nous.get_node(old_node_id)
-                new_node = nous.get_node(new_node_id)
-                if old_node and new_node:
-                    if old_node.get("subtype") == new_node.get("subtype"):
-                        logger.debug("Auto-resolve %s: same subtype+entity (%s)", cid, entity)
-                        return "new_is_current"
-            except Exception:
-                pass
-
-        return None
-
-    def _check_health(self, startup: bool = False):
-        """Check Nous server health and log knowledge base stats.
-
-        On startup: logs a clear pass/fail message.
-        Periodic: logs node/edge counts and lifecycle distribution.
-        Sets self._nous_healthy for other methods to check.
-        """
-        try:
-            nous = self._get_nous()
-            if nous is None:
-                # Phase 4 M5: nous client deleted; skip health reporting.
-                self._nous_healthy = False
-                return
-            result = nous.health()
-
-            self._nous_healthy = True
-            self.health_checks += 1
-
-            status = result.get("status", "?")
-            node_count = result.get("node_count", 0)
-            edge_count = result.get("edge_count", 0)
-            lifecycle = result.get("lifecycle", {})
-
-            if startup:
-                logger.info("Nous health OK — %d nodes, %d edges (ACTIVE=%d, WEAK=%d, DORMANT=%d)",
-                            node_count, edge_count,
-                            lifecycle.get("ACTIVE", 0),
-                            lifecycle.get("WEAK", 0),
-                            lifecycle.get("DORMANT", 0))
-            else:
-                logger.info("Nous health: %s — %d nodes, %d edges (A=%d W=%d D=%d)",
-                            status, node_count, edge_count,
-                            lifecycle.get("ACTIVE", 0),
-                            lifecycle.get("WEAK", 0),
-                            lifecycle.get("DORMANT", 0))
-
-        except Exception as e:
-            was_healthy = self._nous_healthy
-            self._nous_healthy = False
-
-            if startup:
-                logger.warning("Nous health check FAILED on startup: %s — memory tools will fail", e)
-            elif was_healthy:
-                # Transitioned from healthy to unhealthy — warn loudly
-                logger.warning("Nous health check FAILED: %s — memory operations may fail", e)
-                log_event(DaemonEvent("health", "Nous unreachable", str(e)))
-            else:
-                logger.debug("Nous still unreachable: %s", e)
 
     # ================================================================
     # Agent Wake (Thread-Safe)

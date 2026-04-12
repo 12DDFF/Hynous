@@ -1,6 +1,6 @@
 # Tools
 
-> Functions Hynous can call during reasoning. 21 tool modules, 28 registered tools.
+> Functions Hynous can call during reasoning. 13 tool modules, 17 registered tools.
 
 ---
 
@@ -18,17 +18,9 @@
 | `institutional.py` | `get_institutional_flow` | Institutional fund flows |
 | `web_search.py` | `search_web` | Web search for news/context |
 | `costs.py` | `get_my_costs` | LLM cost tracking and breakdown |
-| `memory.py` | `store_memory`, `recall_memory`, `update_memory` | Full memory CRUD (create, search/browse/time-range, update). Search mode uses Intelligent Retrieval Orchestrator for compound query decomposition and quality gating. |
-| `delete_memory.py` | `delete_memory` | Memory deletion with edge cleanup |
 | `trading.py` | `execute_trade`, `close_position`, `modify_position`, `get_account` | Trade execution and position management |
-| `trade_stats.py` | `get_trade_stats` | Trade history with theses, win rate, PnL stats, time/limit filtering |
-| `watchpoints.py` | `manage_watchpoints` | Price/funding alert CRUD |
-| `explore_memory.py` | `explore_memory` | Graph traversal: explore connections, link/unlink edges |
-| `conflicts.py` | `manage_conflicts` | List and resolve contradictions in knowledge base |
-| `clusters.py` | `manage_clusters` | Cluster CRUD, membership, scoped search, health, auto-assignment |
 | `data_layer.py` | `data_layer` | Hyperliquid satellite: heatmap, orderflow, whales, HLP vault, smart money, wallet profiling/tracking/alerts |
 | `market_watch.py` | `get_book_history`, `monitor_signal` | L2 book trend from scanner buffer (zero API cost) + scheduled follow-up wake for developing setups |
-| `pruning.py` | `analyze_memory`, `batch_prune` | Two-phase memory maintenance: scan graph for stale groups, then archive/delete in bulk |
 
 ---
 
@@ -85,8 +77,8 @@ my_tool.register(registry)
 
 ## Blocking vs Background Tools
 
-- **Blocking** (`background=False`) -- agent waits for the real result. Use for tools where the agent needs feedback (recall, update, explore, conflicts, trading).
-- **Background** (`background=True`) -- agent gets an instant `"Done."` and the handler runs in a separate thread. Use for fire-and-forget operations. Note: `store_memory` was changed from background to blocking (NW-10) so the agent sees storage confirmation.
+- **Blocking** (`background=False`) -- agent waits for the real result. Use for tools where the agent needs feedback (trading, data fetches).
+- **Background** (`background=True`) -- agent gets an instant `"Done."` and the handler runs in a separate thread. Use for fire-and-forget operations.
 
 ---
 
@@ -96,20 +88,7 @@ my_tool.register(registry)
 2. **Focused scope** -- One tool does one thing
 3. **Useful output** -- Return what the agent needs to reason
 4. **Handle errors** -- Return error messages, don't crash
-5. **Use NousClient** -- All memory operations go through `src/hynous/nous/client.py`
 
 ---
 
-## Known Issues
-
-All known tool issues are resolved:
-
-- ~~`trading.py` -- `_store_to_nous()` missing `event_time`~~ -- FIXED: now passes temporal fields to `create_node()`
-- ~~`memory.py` -- `_TYPE_MAP` `"trade"` mismatch~~ -- FIXED: `handle_recall_memory()` normalizes `"trade"` -> `"trade_entry"`
-- ~~`trade_stats.py` -- no thesis/time/limit~~ -- FIXED: `TradeRecord` has `thesis` field, `_enrich_from_entry()` extracts thesis, time/limit filtering added
-
-See `docs/archive/trade-recall/retrieval-issues.md` for details.
-
----
-
-Last updated: 2026-03-01
+Last updated: 2026-04-12 (phase 4 M9 — tool surface trimmed to 17 after M4/M8 deletions)
