@@ -40,7 +40,7 @@ def _build_daemon() -> tuple[Any, Any]:
     """
     from hynous.core.config import load_config
     from hynous.intelligence.agent import Agent
-    from hynous.intelligence.daemon import HynousDaemon
+    from hynous.intelligence.daemon import Daemon
 
     cfg = load_config()
     logger.info("config loaded: mode=%s", cfg.execution.mode)
@@ -48,7 +48,7 @@ def _build_daemon() -> tuple[Any, Any]:
     agent = Agent(config=cfg)
     logger.info("agent constructed: model=%s", cfg.agent.model)
 
-    daemon = HynousDaemon(agent=agent, config=cfg)
+    daemon = Daemon(agent=agent, config=cfg)
     logger.info("daemon constructed")
 
     return agent, daemon
