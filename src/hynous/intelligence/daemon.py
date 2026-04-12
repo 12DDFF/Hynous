@@ -1089,6 +1089,24 @@ class Daemon:
             logger.exception("Failed to initialize v2 journal store")
             self._journal_store = None
 
+        # v2: start batch rejection analysis cron (phase 3 M5).
+        # Wrapped in its own try/except so cron start failure never prevents
+        # the daemon from entering its main loop.
+        if self._journal_store is not None:
+            try:
+                from hynous.analysis.batch_rejection import start_batch_rejection_cron
+                start_batch_rejection_cron(
+                    journal_store=self._journal_store,
+                    interval_s=self.config.v2.analysis_agent.batch_rejection_interval_s,
+                    model=self.config.v2.analysis_agent.model,
+                )
+                logger.info(
+                    "v2 batch rejection cron started (interval=%ds)",
+                    self.config.v2.analysis_agent.batch_rejection_interval_s,
+                )
+            except Exception:
+                logger.exception("Failed to start v2 batch rejection cron")
+
         # Start WebSocket market data feed via provider
         if self.config.daemon.ws_price_feed:
             provider = self._get_provider()
