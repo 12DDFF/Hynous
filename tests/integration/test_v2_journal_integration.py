@@ -546,6 +546,45 @@ def test_full_trade_capture_populates_order_flow_and_smart_money(
     assert es.smart_money_context.smart_money_opens_1h == 2
 
 
+def test_daemon_startup_migration_flag_is_idempotent(
+    tmp_path: Any,
+    sample_entry_snapshot: TradeEntrySnapshot,
+) -> None:
+    """Simulate M7's first-run migration pattern: seed staging.db, run the
+    migrate-then-set-flag sequence twice, assert the second run is a no-op
+    (flag present → skip migration)."""
+    from hynous.journal.migrate_staging import migrate_staging_to_journal
+    from hynous.journal.staging_store import StagingStore
+
+    staging_path = tmp_path / "staging.db"
+    journal_path = tmp_path / "journal.db"
+
+    staging = StagingStore(str(staging_path))
+    staging.insert_entry_snapshot(sample_entry_snapshot)
+
+    def _startup_sequence() -> str:
+        """Replica of daemon.py:1056-1085 logic."""
+        store = JournalStore(str(journal_path))
+        flag = store.get_metadata("staging_migration_done")
+        if flag != "1":
+            if staging_path.exists():
+                migrate_staging_to_journal(str(staging_path), str(journal_path))
+            store.set_metadata("staging_migration_done", "1")
+            return "migrated"
+        return "skipped"
+
+    # First startup: migrates
+    assert _startup_sequence() == "migrated"
+    journal = JournalStore(str(journal_path))
+    assert len(journal.list_trades()) == 1
+    assert journal.get_metadata("staging_migration_done") == "1"
+
+    # Second startup: flag present → skip
+    assert _startup_sequence() == "skipped"
+    # Trade count unchanged
+    assert len(journal.list_trades()) == 1
+
+
 def test_migrate_staging_skips_corrupt_row(tmp_path: Any) -> None:
     """A malformed JSON row in staging is logged + skipped, not fatal."""
     import sqlite3

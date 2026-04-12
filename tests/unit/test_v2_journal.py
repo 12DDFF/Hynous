@@ -832,6 +832,21 @@ def test_build_smart_money_context_counts_sm_opens_for_symbol_only() -> None:
     assert ctx.smart_money_opens_1h == 3
 
 
+def test_metadata_get_set_roundtrip(tmp_journal_db: Any) -> None:
+    """journal_metadata key/value roundtrips; missing key returns None."""
+    assert tmp_journal_db.get_metadata("unset_key") is None
+    tmp_journal_db.set_metadata("staging_migration_done", "1")
+    assert tmp_journal_db.get_metadata("staging_migration_done") == "1"
+    # Upsert on existing key
+    tmp_journal_db.set_metadata("staging_migration_done", "2")
+    assert tmp_journal_db.get_metadata("staging_migration_done") == "2"
+
+
+def test_metadata_bootstrapped_schema_version(tmp_journal_db: Any) -> None:
+    """The DDL's bootstrap INSERT seeds schema_version='1.0.0'."""
+    assert tmp_journal_db.get_metadata("schema_version") == "1.0.0"
+
+
 def test_build_smart_money_context_graceful_when_all_endpoints_down() -> None:
     """Every data-layer endpoint raises → SmartMoneyContext comes back with
     defaults, no exception escapes."""

@@ -77,6 +77,40 @@ class JournalStore:
         """No-op since connections are per-operation, kept for API symmetry."""
 
     # ========================================================================
+    # Metadata (used by startup to track one-shot operations like migration)
+    # ========================================================================
+
+    def get_metadata(self, key: str) -> str | None:
+        """Read a metadata value by key, or None if not set."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT value FROM journal_metadata WHERE key = ?", (key,),
+            ).fetchone()
+            return row["value"] if row else None
+        finally:
+            conn.close()
+
+    def set_metadata(self, key: str, value: str) -> None:
+        """Set a metadata value (upsert)."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO journal_metadata (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, value, now_iso),
+                )
+            finally:
+                conn.close()
+
+    # ========================================================================
     # Trade CRUD
     # ========================================================================
 

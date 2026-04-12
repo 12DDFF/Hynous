@@ -355,7 +355,7 @@ class Daemon:
 
         # v2: trade journal capture (phase 1)
         self._open_trade_ids: dict[str, str] = {}        # coin → trade_id (active snapshot)
-        self._journal_store = None                            # StagingStore (phase 1) / JournalStore (phase 2)
+        self._journal_store = None                            # JournalStore (phase 2 M7; migrated from StagingStore)
         self._peak_roe_ts: dict[str, str] = {}            # coin → ISO timestamp of peak ROE
         self._trough_roe_ts: dict[str, str] = {}          # coin → ISO timestamp of trough ROE
         self._peak_roe_price: dict[str, float] = {}       # coin → price at peak ROE
@@ -1053,16 +1053,40 @@ class Daemon:
         self._last_fill_check = time.time()
         self._load_daily_pnl()
 
-        # v2: initialize staging journal store for data capture (phase 1)
+        # v2: initialize the production JournalStore (phase 2 M7 — promoted
+        # from StagingStore). First-run auto-migration from staging.db → journal.db
+        # is guarded by a journal_metadata flag so subsequent starts skip it.
         try:
-            from hynous.journal.staging_store import StagingStore
-            _staging_path = self.config.v2.journal.db_path.replace(
-                "journal.db", "staging.db",
+            from hynous.journal.store import JournalStore
+            journal_path = self.config.v2.journal.db_path
+            store = JournalStore(
+                db_path=journal_path,
+                busy_timeout_ms=self.config.v2.journal.busy_timeout_ms,
             )
-            self._journal_store = StagingStore(db_path=_staging_path)
-            logger.info("v2 staging journal initialized: %s", _staging_path)
+            self._journal_store = store
+
+            # One-shot migration from phase-1 staging.db if present and not yet migrated.
+            migrate_flag = store.get_metadata("staging_migration_done")
+            if migrate_flag != "1":
+                staging_path = journal_path.replace("journal.db", "staging.db")
+                from pathlib import Path as _Path
+                if _Path(staging_path).exists():
+                    from hynous.journal.migrate_staging import (
+                        migrate_staging_to_journal,
+                    )
+                    counts = migrate_staging_to_journal(staging_path, journal_path)
+                    logger.info(
+                        "v2 staging→journal migration: entries=%d exits=%d events=%d "
+                        "(skipped e=%d x=%d ev=%d)",
+                        counts["entries"], counts["exits"], counts["events"],
+                        counts["skipped_entries"], counts["skipped_exits"],
+                        counts["skipped_events"],
+                    )
+                store.set_metadata("staging_migration_done", "1")
+
+            logger.info("v2 journal store initialized: %s", journal_path)
         except Exception:
-            logger.exception("Failed to initialize v2 staging journal store")
+            logger.exception("Failed to initialize v2 journal store")
             self._journal_store = None
 
         # Start WebSocket market data feed via provider
