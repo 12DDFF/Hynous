@@ -1,19 +1,11 @@
 """
-Intelligence Layer - The Brain of Hynous
+Intelligence Layer
 
-This module contains:
-- agent.py: Core LLM agent with tool calling
+v2 contains:
 - prompts/: System prompts (identity, trading knowledge)
-- tools/: Tool definitions and handlers
-- events/: Event detection and handling
-- daemon.py: Background autonomous loop
+- tools/: Tool definitions and handlers (audit pending — phase 5 M8 / phase 6)
+- daemon.py: Background polling + mechanical entry/exit loop (no LLM)
 
-Usage:
-    from hynous.intelligence import Agent
-    agent = Agent(config)
-    response = await agent.chat("What's BTC doing?")
+The v1 ``Agent`` class (``agent.py``) was deleted in phase 5 M7. The only
+LLM surface in v2 is the user-chat agent at :mod:`hynous.user_chat`.
 """
-
-from .agent import Agent
-
-__all__ = ["Agent"]

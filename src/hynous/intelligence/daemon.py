@@ -15,7 +15,7 @@ Design: storm-014 (Memory-Triggered Watchdog & Curiosity-Driven Learning)
 
 Usage:
     from hynous.intelligence.daemon import Daemon
-    daemon = Daemon(agent, config)
+    daemon = Daemon(config)
     daemon.start()   # Background thread
     daemon.stop()    # Graceful shutdown
 """
@@ -25,7 +25,6 @@ import json
 import logging
 import math
 import queue as _queue_module
-import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -173,53 +172,6 @@ def _queue_and_persist(wake_type: str, title: str, response: str, event_type: st
         pass
 
 
-# Regex for detecting narrated trade entries in text (without actual tool calls).
-# Matches trade-specific phrases, NOT generic "entering" (which could be
-# "shorts entering the market" etc.). Patterns:
-#   "Entering SOL long"  "Entering BTC micro short"  "going long"
-#   "taking a short"  "Conviction: 0.68 — entering."
-_TRADE_NARRATION_RE = re.compile(
-    r'(?:'
-    r'(?:entering|opening)\s+\w+\s+(?:long|short|micro|macro)'
-    r'|going\s+(?:long|short)'
-    r'|taking\s+a\s+(?:long|short)'
-    r'|\u2014\s*entering\.'
-    r')',
-    re.IGNORECASE,
-)
-
-
-def _check_narrated_trade(response: str, agent) -> str | None:
-    """Detect and fix narrated trades — agent said entry words without calling execute_trade.
-
-    If detected, sends a follow-up message telling the agent to actually execute the trade.
-    Returns the follow-up response if a correction was made, None otherwise.
-    """
-    if not response or not _TRADE_NARRATION_RE.search(response):
-        return None
-    if agent.last_chat_had_trade_tool():
-        return None  # Tool was called — text is just confirmation, all good
-
-    logger.warning(
-        "NARRATED TRADE DETECTED — sending correction. Response: %s",
-        response[:300],
-    )
-
-    # Send follow-up forcing tool execution
-    correction = (
-        "[SYSTEM] You just said you entered a trade in TEXT, but you never called "
-        "execute_trade. Text is NOT execution — no position was opened. "
-        "If you still want this trade, call execute_trade NOW with the exact parameters "
-        "you described. If you changed your mind, say so clearly."
-    )
-    try:
-        followup = agent.chat(correction, skip_snapshot=True, max_tokens=768, source="daemon:narration_fix")
-        return followup
-    except Exception as e:
-        logger.error("Narration fix failed: %s", e)
-        return None
-
-
 def get_active_daemon() -> "Daemon | None":
     """Get the currently running daemon instance (if any).
 
@@ -262,18 +214,16 @@ class MarketSnapshot:
 
 
 class Daemon:
-    """Background autonomous loop for Hynous.
+    """Background polling loop for Hynous (v2).
 
     Responsibilities:
     1. Poll market data at intervals (Hyperliquid prices, Coinglass derivatives)
     2. Evaluate watchpoint triggers against cached data
-    3. Count curiosity items and trigger learning sessions
-    4. Periodically wake the agent for market reviews
-    5. Coordinate with user chat via agent._chat_lock
+    3. Drive mechanical entry/exit (no LLM involvement)
+    4. Run satellite ML inference and labeling
     """
 
-    def __init__(self, agent, config: Config):
-        self.agent = agent
+    def __init__(self, config: Config):
         self.config = config
         self.snapshot = MarketSnapshot()
 
@@ -358,16 +308,9 @@ class Daemon:
         # Newest first, capped at 10. Populated by _handle_position_close + _record_trigger_close.
         self._recent_trade_closes: collections.deque = collections.deque(maxlen=10)
 
-        # Pending follow-up watches: sym → {fire_at, thesis, side, scheduled_at}
-        # Ephemeral — lost on restart. Use manage_watchpoints for persistent alerts.
-        self._pending_watches: dict[str, dict] = {}
-
-        # Wake rate limiting
+        # Wake rate limiting (kept for dashboard stats surface, unused in v2)
         self._wake_timestamps: list[float] = []
         self._last_wake_time: float = 0
-
-        # Scanner stats
-        self._scanner_pass_streak: int = 0
 
         # Heartbeat — updated every loop iteration, checked by dashboard watchdog
         self._heartbeat: float = time.time()
@@ -558,7 +501,6 @@ class Daemon:
         self.labeler_runs: int = 0
         self.snapshots_labeled_total: int = 0
         self.polls: int = 0
-        self._review_count: int = 0
 
     # ================================================================
     # Cached Provider Access
@@ -793,62 +735,6 @@ class Daemon:
             )
         return WakeContext(coin=coin, is_positioned=False)
 
-    def _wake_for_conditions(self):
-        """Evaluate ML conditions against thresholds and wake agent if triggered."""
-        if not self._condition_evaluator or not self._satellite_config:
-            return
-        ts = get_trading_settings()
-        if not ts.ml_condition_wakes:
-            return
-
-        contexts = {}
-        conditions = {}
-        for coin in self._satellite_config.coins:
-            with self._latest_predictions_lock:
-                pred = dict(self._latest_predictions.get(coin, {}))
-            cond = pred.get("conditions")
-            if cond:
-                contexts[coin] = self._build_wake_context(coin)
-                conditions[coin] = cond
-        if not conditions:
-            return
-
-        alerts = self._condition_evaluator.evaluate(conditions, contexts, ts)
-        if not alerts:
-            return
-
-        # Build message
-        has_priority = any(a.priority for a in alerts)
-        lines = ["[DAEMON WAKE — ML Condition Alert]", ""]
-        for alert in alerts:
-            ctx = contexts[alert.coin]
-            msg = alert.message_positioned if ctx.is_positioned else alert.message_flat
-            if not msg:
-                continue  # suppressed alert slipped through (shouldn't happen)
-            age_tag = f" (predicted {alert.prediction_age_s:.0f}s ago)"
-            if alert.prediction_age_s > 240:
-                age_tag += " — consider waiting for next tick"
-            lines.append(f"{alert.coin}: {msg}{age_tag}")
-
-        if len(lines) <= 2:  # only header + blank line, no actual alerts
-            return
-
-        lines.append("")
-        lines.append("Briefing has full market data. Validate before acting.")
-
-        message = "\n".join(lines)
-        response = self._wake_agent(
-            message, priority=has_priority,
-            max_tokens=1200,
-            source="daemon:ml_conditions",
-        )
-        if response:
-            title = alerts[0].headline
-            log_event(DaemonEvent("ml_conditions", title,
-                      f"{len(alerts)} condition alerts"))
-            _queue_and_persist("ML Conditions", title, response,
-                              event_type="ml_conditions")
-
     @property
     def last_trade_ago(self) -> str:
         """Human-readable time since last trade (entry or close)."""
@@ -948,8 +834,8 @@ class Daemon:
 
     @property
     def reviews_until_learning(self) -> int:
-        """Reviews until next learning session (every 3rd review)."""
-        return 3 - (self._review_count % 3)
+        """Deprecated — v2 has no periodic LLM reviews. Dashboard stub; remove in phase 7."""
+        return 0
 
     @property
     def current_funding_rates(self) -> dict[str, float]:
@@ -958,8 +844,8 @@ class Daemon:
 
     @property
     def review_count(self) -> int:
-        """Total periodic reviews completed."""
-        return self._review_count
+        """Deprecated — v2 has no periodic LLM reviews. Dashboard stub; remove in phase 7."""
+        return 0
 
     @property
     def last_wake_time(self) -> float:
@@ -1156,23 +1042,7 @@ class Daemon:
                         )
 
                 # 4. Curiosity cron removed in phase 4.
-
-                # 5. Periodic review (1h weekdays, 2h weekends)
-                review_interval = self.config.daemon.periodic_interval
-                if datetime.now(timezone.utc).weekday() >= 5:  # Sat=5, Sun=6
-                    review_interval *= 2
-                if now - self._last_review >= review_interval:
-                    self._last_review = now
-                    if self._review_thread is None or not self._review_thread.is_alive():
-                        self._review_thread = threading.Thread(
-                            target=self._wake_for_review,
-                            daemon=True,
-                            name="hynous-wake-review",
-                        )
-                        self._review_thread.start()
-                    else:
-                        logger.debug("Review wake still running — skipping interval")
-
+                # 5. Periodic review cron removed in phase 5 (v1 LLM wake retired).
                 # 6. FSRS decay cron removed in phase 4.
                 # 7. Contradiction queue cron removed in phase 4.
                 # 8. Health check cron removed in phase 4.
@@ -1515,17 +1385,7 @@ class Daemon:
                 except Exception:
                     logger.debug("Satellite inference failed", exc_info=True)
 
-                # Evaluate ML conditions for active wakes
-                # Runs in a background thread — includes LLM call,
-                # cannot block _fast_trigger_check().
-                try:
-                    threading.Thread(
-                        target=self._wake_for_conditions,
-                        daemon=True,
-                        name="hynous-wake-conditions",
-                    ).start()
-                except Exception:
-                    logger.debug("Condition wake evaluation failed", exc_info=True)
+                # ML-condition wake evaluation removed in phase 5 (v1 LLM wake retired).
             except Exception:
                 logger.debug("Satellite tick failed", exc_info=True)
 
@@ -1594,7 +1454,8 @@ class Daemon:
         """Run ML inference on all configured coins after satellite.tick().
 
         Stores predictions to satellite.db and caches them for briefing injection.
-        Optionally wakes agent on strong signals (if not in shadow mode).
+        Mechanical entry (phase 5) consumes the cached predictions via
+        ``_evaluate_entry_signals``; no LLM wake path.
         """
         if not self._satellite_store:
             return
@@ -1605,7 +1466,6 @@ class Daemon:
         import time as _time
 
         shadow = True
-        signals = []
 
         # --- Direction inference (only if model exists) ---
         if has_inference:
@@ -1685,10 +1545,6 @@ class Daemon:
                                 "timestamp": _time.time(),
                                 "shadow": shadow,
                             }
-
-                        # Collect actionable signals for potential wake
-                        if result.signal in ("long", "short"):
-                            signals.append(result)
 
                         logger.debug(
                             "ML inference %s: %s (long=%.1f%%, short=%.1f%%, %.1fms)%s",
@@ -1793,33 +1649,8 @@ class Daemon:
             except Exception:
                 logger.debug("Condition prediction failed", exc_info=True)
 
-        # Wake agent on strong signals (only if NOT in shadow mode)
-        if signals and not shadow:
-            # Only wake if no position already open in the signaled direction
-            wake_signals = []
-            for sig in signals:
-                coin = sig.coin
-                existing = self._prev_positions.get(coin)
-                if existing:
-                    # Already holding this coin — skip wake
-                    # (agent will see signal in next regular briefing)
-                    continue
-                wake_signals.append(sig)
-
-            if wake_signals:
-                summary_parts = [s.summary for s in wake_signals[:3]]
-                msg = (
-                    "[ML Signal]\n"
-                    + "\n".join(summary_parts)
-                    + "\n\nModel detected actionable signal. Evaluate and decide."
-                )
-                threading.Thread(
-                    target=self._wake_agent,
-                    args=(msg,),
-                    kwargs={"source": "daemon:ml_signal", "max_tokens": 1536},
-                    daemon=True,
-                    name="hynous-wake-ml-signal",
-                ).start()
+        # ML-signal LLM wake removed in phase 5. Signals still logged above;
+        # mechanical entry evaluation consumes them via _evaluate_entry_signals.
 
     def _fetch_satellite_candles(self, coin: str) -> tuple[list[dict], list[dict]]:
         """Fetch 5m and 1m candles for satellite features.
@@ -2757,8 +2588,6 @@ class Daemon:
             except Exception as _se_err:
                 logger.debug("Staged entry evaluation failed: %s", _se_err)
 
-        self._check_pending_watches()
-
     def _evaluate_staged_entries(self, prices: dict[str, float]) -> None:
         """Evaluate staged entry directives against live WS prices.
 
@@ -3005,76 +2834,6 @@ class Daemon:
                             "MAE corrected by candle: %s %s | %.1f%% → %.1f%% (%.1f%%)",
                             sym, side, old_trough, worst_roe, worst_roe - old_trough,
                         )
-
-    def _check_pending_watches(self) -> None:
-        """Fire any monitor_signal follow-ups whose delay has elapsed.
-
-        Each follow-up is launched in a background thread so the 10s fast-path
-        loop (SL/TP guard) is never blocked by an LLM call.
-        """
-        if not self._pending_watches:
-            return
-        now = time.time()
-        for sym in list(self._pending_watches):
-            w = self._pending_watches[sym]
-            if now >= w["fire_at"]:
-                del self._pending_watches[sym]
-                threading.Thread(
-                    target=self._fire_watch_followup,
-                    args=(sym, w),
-                    daemon=True,
-                    name=f"hynous-watch-{sym.lower()}",
-                ).start()
-
-    def _fire_watch_followup(self, sym: str, watch: dict) -> None:
-        """Wake agent with fresh data for a scheduled monitor_signal follow-up."""
-        elapsed = int(time.time() - watch["scheduled_at"])
-        thesis = watch["thesis"]
-        side_hint = f" (watching for {watch['side']} entry)" if watch.get("side") else ""
-
-        price = self.snapshot.prices.get(sym, 0)
-        price_str = f"${price:,.2f}" if price else "unknown"
-
-        book_str = ""
-        if self._scanner and len(self._scanner._books) > 0:
-            snap = self._scanner._books.latest()
-            if snap and sym in snap.books:
-                b = snap.books[sym]
-                bias = "bid-heavy" if b["imbalance"] > 0.55 else "ask-heavy" if b["imbalance"] < 0.45 else "balanced"
-                book_str = (
-                    f"Book now: bids ${b['bid_depth_usd']:,.0f} · "
-                    f"asks ${b['ask_depth_usd']:,.0f} · imb {b['imbalance']:.2f} ({bias})\n"
-                )
-
-        msg = (
-            f"[MONITOR FOLLOW-UP — {sym}{side_hint} — {elapsed}s elapsed]\n"
-            f"Original thesis: {thesis}\n\n"
-            f"Current price: {price_str}\n"
-            f"{book_str}\n"
-            f"VALIDATION — call in parallel: "
-            f"[get_book_history {sym} n=5] + [get_market_data {sym} 1m]\n\n"
-            f"Has your thesis developed as expected?\n"
-            f"• If YES → call execute_trade (state conviction)\n"
-            f"• If NO → state specifically what invalidated it and skip\n"
-            f"• If STILL UNCERTAIN → call monitor_signal again (max 1 more watch)"
-        )
-
-        response = self._wake_agent(
-            msg,
-            source="daemon:monitor_followup",
-            max_tokens=1024,
-            skip_memory=True,
-        )
-        # Snapshot immediately — another chat() call would reset _last_tool_calls
-        last_tool_calls = list(self.agent._last_tool_calls)
-        if response:
-            logger.info("Monitor follow-up completed for %s", sym)
-            monitor_meta = {
-                "tool_trace_text": _format_tool_trace_text(last_tool_calls),
-                "decision": _extract_decision(last_tool_calls),
-                "signal_header": f"monitor · {sym}",
-            }
-            _queue_and_persist("Monitor", f"Follow-up: {sym}", response, event_type="scanner", meta=monitor_meta)
 
     def _check_positions(self) -> list[dict] | None:
         """Compare current positions to cached snapshot. Detect closes.
@@ -3699,211 +3458,6 @@ class Daemon:
                             abs(self._daily_realized_pnl), max_loss)
         self._persist_daily_pnl()
 
-    # ================================================================
-    # Wake Messages
-    # ================================================================
-
-    def _build_historical_context(self, anomalies: list) -> str:
-        """Build a [Track Record] block for scanner wakes.
-
-        Pass streak detection for scanner wakes.
-        """
-        lines = []
-
-        if self._scanner_pass_streak >= 3:
-            lines.append(f"Pass streak: {self._scanner_pass_streak} consecutive — consider loosening filters")
-
-        if not lines:
-            return ""
-        return "[Track Record]\n" + "\n".join(lines)
-
-    # Validation specs per signal type — injected into scanner wake prompts.
-    # Each spec teaches the agent WHAT to fetch and HOW to assess it for this
-    # specific signal. Only covers the primary (first) anomaly in a multi-anomaly
-    # wake — subsequent anomalies are visible in the signal block itself.
-    # Tool names must match the registered names in registry.py exactly.
-    _VALIDATION_SPECS: dict = {
-        "book_flip": {
-            "parallel": ["get_book_history {sym} n=5", "get_market_data {sym} 1m"],
-            "checks": [
-                "Persistence: imbalance consistent in ≥3 of 5 snapshots (not a single spike)?",
-                "Price: 1m candle moving in direction of the imbalance?",
-            ],
-            "rule": "Both must confirm. Book recovered OR price contradicts → skip or monitor_signal.",
-        },
-        "momentum_burst": {
-            "parallel": ["get_market_data {sym} 5m", "get_orderbook {sym}"],
-            "checks": [
-                "Sustained: next 5m candle continuing momentum or already stalling?",
-                "Book: orderbook supporting direction (not adverse flip)?",
-            ],
-            "rule": "Both must confirm. Momentum + adverse book = fade trade, not entry.",
-        },
-        "funding_extreme": {
-            "parallel": ["get_funding_history {sym}", "get_market_data {sym} 4h"],
-            "checks": [
-                "Trend: funding elevated/negative across multiple periods (not a single spike)?",
-                "Price: 4h candle aligned with funding signal (not already reversing)?",
-            ],
-            "rule": "Funding spike alone = weak. Funding trend + price alignment = consider.",
-        },
-        "funding_flip": {
-            "parallel": ["get_funding_history {sym}", "get_market_data {sym} 1h"],
-            "checks": [
-                "Flip sustained or reverting in latest data?",
-                "Price responding to the funding shift?",
-            ],
-            "rule": "Flip + price move = real signal. Flip alone = monitor.",
-        },
-        "oi_surge": {
-            "parallel": ["get_market_data {sym} 1h", "get_orderbook {sym}"],
-            "checks": [
-                "OI direction vs price: OI up + price down = distribution (bearish). OI up + price up = accumulation.",
-                "Book supporting intended entry direction?",
-            ],
-            "rule": "OI/price divergence = skip. Aligned = consider with regime filter.",
-        },
-        "oi_price_divergence": {
-            "parallel": ["get_market_data {sym} 4h", "get_funding_history {sym}"],
-            "checks": [
-                "Divergence confirmed across 2+ timeframes?",
-                "Funding direction consistent with expected squeeze direction?",
-            ],
-            "rule": "Divergence + funding alignment = high-conviction. Divergence alone = wait.",
-        },
-        "price_spike": {
-            "parallel": ["get_market_data {sym} 5m", "get_orderbook {sym}"],
-            "checks": [
-                "Candle structure: clean breakout (strong close) or wick rejection (reversal risk)?",
-                "Book: bids stacking under spike (continuation) or walls capping it (exhaustion)?",
-            ],
-            "rule": "Long wick + capping walls = fade/skip. Clean candle + stacked bids = momentum entry.",
-        },
-        "liq_cascade": {
-            "parallel": ["get_liquidations {sym}", "get_market_data {sym} 1m"],
-            "checks": [
-                "More liq clusters ahead in the cascade direction (fuel for continuation)?",
-                "Price still moving or stalling (cascade losing steam)?",
-            ],
-            "rule": "More cascades ahead + moving price = momentum play. Liq exhausted = snap-back risk, skip.",
-        },
-        "liq_cluster": {
-            "parallel": ["get_liquidations {sym}", "get_orderbook {sym}"],
-            "checks": [
-                "How close is the liq cluster to current price (% distance)?",
-                "Book showing momentum toward the cluster (magnetic pull forming)?",
-            ],
-            "rule": "Cluster within 2% + directional momentum = consider. Further = wait for confirmation.",
-        },
-        "market_liq_wave": {
-            "parallel": ["get_liquidations BTC", "get_market_data BTC 1h"],
-            "checks": [
-                "Are BTC liq cascades driving or following altcoin moves?",
-                "Is the liq wave peaked or still accelerating (price still in trend direction)?",
-            ],
-            "rule": "Early wave + accelerating = ride BTC direction. Late wave = reversal risk.",
-        },
-        "hlp_flip": {
-            "parallel": ["get_funding_history {sym}", "get_market_data {sym} 1h"],
-            "checks": [
-                "Funding aligned with HLP's new direction (both pointing same way = strong signal)?",
-                "Price already moving with HLP or lagging (entry timing)?",
-            ],
-            "rule": "HLP flip + aligned funding + confirming price = high-conviction. HLP alone = soft signal.",
-        },
-        "whale_surge": {
-            "parallel": ["get_market_data {sym} 1h", "get_orderbook {sym}"],
-            "checks": [
-                "Is the whale move reflected in price (whale buying/selling showing up)?",
-                "Book supporting the whale's direction (not getting absorbed)?",
-            ],
-            "rule": "Whale accumulation + price holding + book support = consider their direction. Whale exit = stay out.",
-        },
-        "peak_reversion": {
-            "parallel": ["get_book_history {sym} n=5", "get_account"],
-            "checks": [
-                "Adverse book pressure: persistent across ≥3 snapshots or brief spike?",
-                "Current SL: how much more can I lose before it's hit? Is it adequate?",
-            ],
-            "rule": "Persistent adverse + heavy giveback → tighten SL to current mark or close. Temporary spike → hold.",
-        },
-        "position_adverse_book": {
-            "parallel": ["get_book_history {sym} n=5", "get_account"],
-            "checks": [
-                "Persistent adverse pressure across ≥3 snapshots (not a brief spike)?",
-                "Is current SL close enough to limit damage if book pressure continues?",
-            ],
-            "rule": "Persistent adverse → tighten SL or close. Single-snapshot spike → hold and watch.",
-        },
-        "news_alert": {
-            "parallel": ["get_market_data {sym} 1m", "get_orderbook {sym}"],
-            "checks": [
-                "Price reacting (>0.3% move in 1m)?",
-                "Spread normal or widening (widening = already priced in, dangerous to chase)?",
-            ],
-            "rule": "No price reaction = already priced in, skip. Reaction + normal spread = consider.",
-        },
-        "regime_shift": {
-            "parallel": ["get_funding_history {sym}", "get_market_data {sym} 4h"],
-            "checks": [
-                "Funding and 4h structure consistent with the new regime label?",
-                "Any open positions: does my entry thesis still hold under the new regime?",
-            ],
-            "rule": "Regime shift doesn't mandate a close — it mandates reassessment. Close only if thesis is broken.",
-        },
-        "sm_entry": {
-            "parallel": ["get_market_data {sym} 1h", "get_orderbook {sym}"],
-            "checks": [
-                "Price responding to the smart money entry (move already started or still early)?",
-                "Book supporting their direction (not getting absorbed by opposing flow)?",
-            ],
-            "rule": "Smart money entry alone = soft signal. Entry + price + book = consider following.",
-        },
-        "sm_exit": {
-            "parallel": ["get_market_data {sym} 1h", "get_orderbook {sym}"],
-            "checks": [
-                "Price breaking down after smart money exit (confirming their read)?",
-                "Do I have an open position in the same direction they exited?",
-            ],
-            "rule": "Smart money exit + price weakness = tighten SL or close matching position.",
-        },
-    }
-    _DEFAULT_VALIDATION_SPEC: dict = {
-        "parallel": ["get_market_data {sym} 1m", "get_orderbook {sym}"],
-        "checks": ["Price confirming signal direction?", "Book supporting direction?"],
-        "rule": "Both must align before entering.",
-    }
-
-    def _build_validation_prompt(self, anomalies: list, regime_label: str) -> str:
-        """Build a scanner wake message with signal-specific validation instructions."""
-        from .scanner import format_scanner_wake
-
-        signal_block = format_scanner_wake(anomalies, self._position_types, regime_label)
-
-        top = anomalies[0]
-        sym = top.symbol
-        spec = self._VALIDATION_SPECS.get(top.type, self._DEFAULT_VALIDATION_SPEC)
-
-        parallel_str = " + ".join(
-            f"[{t.replace('{sym}', sym)}]" for t in spec["parallel"]
-        )
-        checks_str = "\n".join(f"  • {c}" for c in spec["checks"])
-
-        validation_block = (
-            f"\nVALIDATION — call in parallel BEFORE deciding:\n"
-            f"  {parallel_str}\n\n"
-            f"Then assess:\n{checks_str}\n\n"
-            f"Decision rule: {spec['rule']}\n"
-            f"If signal unclear after validation → monitor_signal({sym}, delay_s=60, "
-            f"thesis='<your specific thesis>') — you'll get fresh data in 60s.\n"
-        )
-
-        # Insert validation block just before the "IMPORTANT: If you decide to trade" footer
-        split_marker = "IMPORTANT: If you decide to trade"
-        if split_marker in signal_block:
-            pre, post = signal_block.split(split_marker, 1)
-            return pre.rstrip() + "\n" + validation_block + "\n" + split_marker + post
-        return signal_block + "\n" + validation_block
 
     def _init_mechanical_entry(self) -> None:
         """Initialize the configured EntryTriggerSource (v2 phase 5)."""
@@ -4339,61 +3893,6 @@ class Daemon:
         except Exception as e:
             logger.debug("Failed to load daily PnL: %s", e)
 
-    def _wake_for_review(self):
-        """Periodic market review — alternates between normal and learning reviews.
-
-        Every 3rd review is a learning review that prompts the agent to
-        explore a concept, pattern, or contradiction using search_web.
-        Normal reviews stay brief (under 100 words).
-        """
-        self._review_count += 1
-        is_learning = self._review_count % 3 == 0
-
-        if is_learning:
-            lines = [
-                "[DAEMON WAKE — Periodic Review + Learning]",
-                "",
-                "Briefing has market data. Address [Warnings] and [Questions] first.",
-                "Then pick one thing to learn — a concept, pattern, or contradiction — research it, store the lesson.",
-                "Share what genuinely interests you right now. Be curious, not mechanical.",
-            ]
-            review_type = "Periodic review + learning"
-        else:
-            lines = [
-                "[DAEMON WAKE — Periodic Market Review]",
-                "",
-                "Briefing has market data. Address [Warnings] and [Questions] first.",
-                "Check all symbols, check your watchpoints (set new ones if you have none).",
-                "Share your honest take — what's the most interesting thing happening right now? Don't just repeat the last review.",
-            ]
-            review_type = "Periodic market review"
-
-        # Activity awareness — nudge when too quiet or too active
-        if self._last_entry_time > 0:
-            idle_hours = (time.time() - self._last_entry_time) / 3600
-            if idle_hours > 48:
-                lines.append(
-                    f"\n⚠ No new entries in {idle_hours / 24:.0f} days. "
-                    "Are you being selective or stuck? A 0.6 conviction trade at half size is valid."
-                )
-        if self._entries_today >= 3:
-            lines.append(f"\n⚠ {self._entries_today} entries today. Check for overtrading.")
-
-        message = "\n".join(lines)
-        if is_learning:
-            response = self._wake_agent(message, max_tokens=1536, source="daemon:review")
-        else:
-            response = self._wake_agent(message, max_tokens=512, source="daemon:review")
-        if response:
-            symbols = self.config.execution.symbols
-            log_event(DaemonEvent(
-                "review", review_type,
-                f"Symbols: {', '.join(symbols)} | F&G: {self.snapshot.fear_greed}",
-            ))
-            _queue_and_persist("Review", review_type, response)
-            _notify_discord("Review", review_type, response)
-            logger.info("%s complete (%d chars)", review_type, len(response))
-
     def _run_labeler(self):
         """Label unlabeled satellite snapshots with ground-truth outcome data.
 
@@ -4573,345 +4072,3 @@ class Daemon:
         except Exception as e:
             logger.debug("Feedback analysis failed: %s", e, exc_info=True)
 
-    # ================================================================
-    # Agent Wake (Thread-Safe)
-    # ================================================================
-
-    def _wake_agent(
-        self, message: str, priority: bool = False,
-        max_tokens: int | None = None,
-        source: str = "daemon:unknown",
-        skip_memory: bool = False,
-    ) -> str | None:
-        """Send a daemon message to the agent with pre-built briefing.
-
-        Flow:
-        1. Build code-based warnings (free, deterministic)
-        2. Build briefing from pre-fetched data (free)
-        3. Build code questions from data (free)
-        4. Assemble all into wake message
-        5. Agent responds (1 Sonnet call, skip_snapshot when briefing present)
-
-        Total: 1 Sonnet.
-
-        Args:
-            message: The wake message to send.
-            priority: If True, bypass cooldown (used for fill wakes).
-                      Still respects hourly rate limit.
-
-        Returns the agent's response text, or None if skipped/busy.
-        """
-        if not hasattr(self.agent, '_chat_lock'):
-            logger.error("Agent missing _chat_lock — cannot wake")
-            return None
-
-        now = time.time()
-
-        # Rate limit: cooldown between wakes (skip unless priority)
-        cooldown = self.config.daemon.wake_cooldown_seconds
-        if not priority and cooldown > 0 and (now - self._last_wake_time) < cooldown:
-            log_event(DaemonEvent(
-                "skip", "Cooldown active",
-                f"{cooldown - (now - self._last_wake_time):.0f}s remaining",
-            ))
-            logger.info("Wake skipped — cooldown (%ds remaining)",
-                         cooldown - (now - self._last_wake_time))
-            return None
-
-        # Prune wake timestamp log (keep last hour for stats only)
-        cutoff = now - 3600
-        self._wake_timestamps = [t for t in self._wake_timestamps if t > cutoff]
-
-        acquired = self.agent._chat_lock.acquire(blocking=False)
-        if not acquired:
-            log_event(DaemonEvent("skip", "Agent busy", "User chatting — wake skipped"))
-            logger.info("Agent busy (user chatting), skipping daemon wake")
-            return None
-
-        # Snapshot before the agent runs so finally can detect agent-initiated closes.
-        # _check_positions() won't see them because _prev_positions is refreshed in finally.
-        positions_before = dict(self._prev_positions)
-
-        try:
-            # === 0. Ensure fresh prices before any wake ===
-            # Briefing uses snapshot.prices — stale prices = stale reasoning.
-            # Force a price refresh if last poll was >15s ago (cheap HTTP call).
-            price_age = time.time() - self.snapshot.last_price_poll
-            if price_age > 15:
-                try:
-                    provider = self._get_provider()
-                    fresh_prices = provider.get_all_prices()
-                    for sym in self.config.execution.symbols:
-                        if sym in fresh_prices:
-                            self.snapshot.prices[sym] = fresh_prices[sym]
-                    self.snapshot.last_price_poll = time.time()
-                    logger.debug("Wake price refresh: %d symbols updated (was %.0fs stale)",
-                                 len(fresh_prices), price_age)
-                except Exception as e:
-                    logger.debug("Wake price refresh failed (using cached): %s", e)
-
-            # === 1. Build warnings (phase 4: wake_warnings deleted) ===
-            warnings_text = ""
-            memory_state: dict = {}
-
-            # === 2. Build briefing (free, pre-fetched data + fresh prices) ===
-            briefing_text = ""
-            code_questions = []
-            if self._data_cache.symbols:
-                try:
-                    from .briefing import build_briefing, build_code_questions
-                    with self._latest_predictions_lock:
-                        _ml_snap = {k: dict(v) for k, v in self._latest_predictions.items()}
-                    briefing_text = build_briefing(
-                        self._data_cache, self.snapshot,
-                        self._get_provider(), self, self.config,
-                        ml_predictions=_ml_snap,
-                    )
-                    # Get positions for code questions
-                    try:
-                        state = self._get_provider().get_user_state()
-                        positions = state.get("positions", [])
-                    except Exception:
-                        positions = []
-                    code_questions = build_code_questions(
-                        self._data_cache, self.snapshot, positions, self.config,
-                        daemon=self,
-                        ml_predictions=_ml_snap,
-                    )
-                except Exception as e:
-                    logger.debug("Briefing build failed: %s", e)
-
-            # === Source-aware context tiers ===
-            _FULL_CONTEXT = {"daemon:scanner", "daemon:ml_conditions", "daemon:review", "daemon:manual"}
-            _POSITION_CONTEXT = {"daemon:profit", "daemon:watchpoint", "daemon:fill"}
-            needs_full = source in _FULL_CONTEXT
-            needs_positions = needs_full or source in _POSITION_CONTEXT
-
-            # Strip briefing + code questions for non-full-context wakes
-            if not needs_full:
-                briefing_text = ""
-                code_questions = []
-
-            # Strip warnings for lightweight wakes (memory, conflict, learning)
-            if not needs_full and not needs_positions:
-                warnings_text = ""
-
-            # === 3b. Position awareness block ===
-            position_block = ""
-            if self._prev_positions:
-                pos_lines = []
-                now_ts = time.time()
-                for coin, pdata in self._prev_positions.items():
-                    p_side = pdata.get("side", "long")
-                    p_entry = pdata.get("entry_px", 0)
-                    p_lev = pdata.get("leverage", 20)
-                    p_px = self.snapshot.prices.get(coin, 0)
-                    if p_entry > 0 and p_px > 0:
-                        if p_side == "long":
-                            p_pct = (p_px - p_entry) / p_entry * 100
-                        else:
-                            p_pct = (p_entry - p_px) / p_entry * 100
-                        p_roe = p_pct * p_lev
-                    else:
-                        p_roe = 0
-                    p_peak = self._peak_roe.get(coin, 0)
-                    p_type = self.get_position_type(coin)
-                    p_hold = ""
-                    if p_type["entry_time"] > 0:
-                        p_mins = max(0, int((now_ts - p_type["entry_time"]) / 60))
-                        p_hold = f" | Hold: {p_mins}m"
-                    p_fade = ""
-                    if p_peak > 5 and p_roe < p_peak * 0.5:
-                        p_fade = " | PROFIT FADING"
-                    px_f = f"${p_px:,.0f}" if p_px >= 100 else f"${p_px:,.2f}"
-                    en_f = f"${p_entry:,.0f}" if p_entry >= 100 else f"${p_entry:,.2f}"
-                    pos_lines.append(
-                        f"  {coin} {p_side.upper()} {p_lev}x ({p_type['type']})"
-                        f" | {en_f} -> {px_f}"
-                        f" | ROE: {p_roe:+.1f}% (peak {p_peak:+.1f}%){p_hold}{p_fade}"
-                    )
-                if pos_lines and needs_positions:
-                    position_block = (
-                        "[YOUR OPEN POSITIONS]\n"
-                        + "\n".join(pos_lines)
-                        + "\nMechanical exits active on all positions. You can tighten stops via modify_position."
-                    )
-
-            # === 4. Assemble wake message ===
-            parts = []
-            if briefing_text:
-                parts.append(f"[Briefing]\n{briefing_text}\n[End Briefing]")
-            if code_questions:
-                parts.append("[Consider — do NOT list these in your response, just let them inform your thinking]\n" + "\n".join(f"- {q}" for q in code_questions))
-            if warnings_text:
-                parts.append(warnings_text)
-            if position_block:
-                parts.append(position_block)
-
-            # Active staged entries
-            if self._staged_entries:
-                staged_lines = []
-                for e in self._staged_entries.values():
-                    if e.status != "active":
-                        continue
-                    ttl_min = (e.expires_at - time.time()) / 60
-                    price_str = (
-                        f"@ ${e.entry_price:,.2f}"
-                        if e.entry_price
-                        else f"zone ${e.entry_zone_low:,.2f}-${e.entry_zone_high:,.2f}"
-                    )
-                    staged_lines.append(
-                        f"  STAGED: {e.coin} {e.side.upper()} {price_str} "
-                        f"| SL ${e.stop_loss:,.2f} TP ${e.take_profit:,.2f} "
-                        f"| {e.leverage}x | {e.confidence:.0%} "
-                        f"| expires {ttl_min:.0f}min | min_score={e.min_entry_score:.0f}"
-                    )
-                if staged_lines:
-                    parts.append("[Staged Entries]\n" + "\n".join(staged_lines))
-
-            parts.append(message)  # Original wake message
-
-            full_message = "\n\n".join(parts)
-
-            # === 5. Agent responds (skip_snapshot since briefing has it all) ===
-            response = self.agent.chat(
-                full_message, skip_snapshot=bool(briefing_text),
-                max_tokens=max_tokens,
-                source=source,
-                skip_memory=skip_memory,
-            )
-            if response is None:
-                return None
-
-            # === 5b. Narrated-trade check (while lock is held) ===
-            # If agent narrated a trade without calling the tool, force a follow-up
-            followup = _check_narrated_trade(response, self.agent)
-            if followup:
-                response = response + "\n\n" + followup
-
-            self.wake_count += 1
-            self._wake_timestamps.append(now)
-            self._last_wake_time = now
-            return response
-        except Exception as e:
-            log_event(DaemonEvent("error", "Wake failed", str(e)))
-            logger.error("Daemon wake failed: %s", e)
-            return None
-        finally:
-            self.agent._chat_lock.release()
-            # Refresh position snapshot so agent-initiated closes don't
-            # re-trigger fill detection on the next _check_positions() cycle.
-            try:
-                provider = self._get_provider()
-                if provider.can_trade:
-                    state = provider.get_user_state()
-                    self._prev_positions = {
-                        p["coin"]: {"side": p["side"], "size": p["size"], "entry_px": p["entry_px"], "leverage": p.get("leverage", 20)}
-                        for p in state.get("positions", [])
-                    }
-                    # Detect agent-initiated closes and update the circuit breaker.
-                    # Any coin present before the wake but absent after was closed
-                    # by the agent — _check_positions() won't catch it because
-                    # _prev_positions was just refreshed above.
-                    for coin in positions_before:
-                        if coin not in self._prev_positions:
-                            try:
-                                fills = provider.get_user_fills(
-                                    start_ms=int((time.time() - 300) * 1000)
-                                )
-                                close_fill = next(
-                                    (f for f in reversed(fills)
-                                     if f.get("coin") == coin and "Close" in f.get("direction", "")),
-                                    None,
-                                )
-                                if close_fill:
-                                    self._update_daily_pnl(close_fill.get("closed_pnl", 0.0))
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-
-    # ================================================================
-    # Manual Wake (triggered from dashboard UI)
-    # ================================================================
-
-    def trigger_manual_wake(self):
-        """Trigger an immediate review wake from the UI.
-
-        Runs in a background thread — returns immediately. The response
-        appears in the dashboard chat feed via the daemon chat queue.
-        """
-        if not self._running:
-            logger.warning("Manual wake ignored — daemon not running")
-            return
-
-        threading.Thread(
-            target=self._manual_wake, daemon=True, name="manual-wake",
-        ).start()
-
-    def _manual_wake(self):
-        """Execute a manual review wake (runs in background thread)."""
-        lines = [
-            "[DAEMON WAKE — Manual Review (triggered from dashboard)]",
-            "",
-            "David wants a quick update. Briefing has market data. 1-3 sentences.",
-        ]
-
-        message = "\n".join(lines)
-        response = self._wake_agent(message, priority=True, max_tokens=1024, source="daemon:manual")
-        if response:
-            log_event(DaemonEvent(
-                "review", "Manual review (dashboard)",
-                f"Triggered by user | F&G: {self.snapshot.fear_greed}",
-            ))
-            _queue_and_persist("Manual Review", "Manual review (dashboard)", response)
-            _notify_discord("Review", "Manual review (dashboard)", response)
-            logger.info("Manual review complete (%d chars)", len(response))
-
-# ====================================================================
-# Standalone entry point
-# ====================================================================
-
-def run_standalone():
-    """Run the daemon as a standalone process (no dashboard).
-
-    Usage: python3 -m hynous.intelligence.daemon
-    """
-    import signal
-
-    from ..core.config import load_config
-    from .agent import Agent
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    )
-
-    config = load_config()
-
-    # Initialize agent
-    agent = Agent(config=config)
-
-    # Start daemon
-    daemon = Daemon(agent, config)
-    daemon.start()
-
-    logger.info("Daemon running. Press Ctrl+C to stop.")
-
-    # Wait for shutdown signal
-    stop_event = threading.Event()
-
-    def _sig_handler(sig, frame):
-        logger.info("Shutdown signal received")
-        stop_event.set()
-
-    signal.signal(signal.SIGINT, _sig_handler)
-    signal.signal(signal.SIGTERM, _sig_handler)
-
-    stop_event.wait()
-    daemon.stop()
-    logger.info("Daemon exited cleanly")
-
-
-if __name__ == "__main__":
-    run_standalone()

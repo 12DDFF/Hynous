@@ -162,19 +162,6 @@ class TestDaemonIntegration:
             "_run_ws_price_feed was removed — replaced by MarketDataFeed in ws_feeds.py"
         )
 
-    def test_wake_agent_uses_provider_get_all_prices(self):
-        """_wake_agent price refresh must call provider.get_all_prices() (WS-first)."""
-        source = _daemon_source()
-        start = source.find("def _wake_agent(")
-        end = source.find("\n    def ", start + 1)
-        method_src = source[start:end]
-        assert "get_all_prices()" in method_src, (
-            "_wake_agent must call get_all_prices() for WS-first price refresh"
-        )
-        assert "_get_prices_with_ws_fallback" not in method_src, (
-            "_get_prices_with_ws_fallback was removed — daemon now delegates WS to provider"
-        )
-
     def test_daemon_has_update_ws_coins(self):
         """daemon.py must define _update_ws_coins() to update feed subscriptions."""
         source = _daemon_source()

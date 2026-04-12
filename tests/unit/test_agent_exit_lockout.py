@@ -410,12 +410,6 @@ class TestMessageLanguage:
         assert "CLOSE or tighten SL" not in src
         assert "close and lock in what's left" not in src
 
-    def test_position_block_footer_updated(self):
-        """Position block in daemon should say 'Mechanical exits active'."""
-        src = _daemon_source()
-        assert "Mechanical exits active on all positions" in src
-        assert "consider whether to close" not in src
-
     def test_system_prompt_full_exit_lockout(self):
         """System prompt should contain FULL EXIT LOCKOUT."""
         src = _builder_source()

@@ -580,11 +580,35 @@ _daemon = None
 _agent_lock = threading.Lock()
 
 
-def _get_agent():
-    """Lazily initialize the Hynous agent and daemon.
+class _DaemonHolder:
+    """Phase 5 M7 shim — replaces the deleted v1 ``Agent`` singleton.
 
-    Thread-safe: uses double-checked locking so only one Agent is created
-    even when called concurrently from stream_response and init_and_start_daemon.
+    The dashboard, Discord bot, and a handful of v1 UI flows still read
+    ``agent.daemon`` and ``agent.config``. Those paths are scheduled for
+    removal in phase 7. Until then, this holder keeps ``_get_agent()``
+    returning an object that exposes ``.daemon`` and ``.config`` so startup
+    doesn't explode; everything else (``chat``, ``chat_stream``, history,
+    etc.) will raise ``AttributeError`` if clicked — by design, because
+    those UI paths are dead in v2.
+    """
+
+    __slots__ = ("daemon", "config")
+
+    def __init__(self, daemon: Any, config: Any) -> None:
+        self.daemon = daemon
+        self.config = config
+
+
+def _get_agent():
+    """Lazily initialize the daemon holder for dashboard callers.
+
+    v2 no longer constructs a v1 ``Agent``. The user-chat agent lives at
+    :mod:`hynous.user_chat`; this function now only builds the daemon and
+    wraps it in a ``_DaemonHolder`` so legacy ``agent.daemon`` reads in
+    ``dashboard.py`` and similar callers keep working.
+
+    Thread-safe: uses double-checked locking so only one holder is created
+    even when called concurrently from multiple state handlers.
     """
     global _agent, _agent_error, _daemon
 
@@ -597,60 +621,44 @@ def _get_agent():
             return _agent
 
         try:
-            from hynous.nous.server import ensure_running
-            if not ensure_running():
-                logger.warning("Nous server not available — memory tools will fail")
+            from hynous.core.config import load_config
+            cfg = load_config()
 
-            from hynous.intelligence import Agent
-            _agent = Agent()
+            if cfg.daemon.enabled and _daemon is None:
+                from hynous.intelligence.daemon import Daemon
+                _daemon = Daemon(config=cfg)
+                _daemon.start()
+                logger.info("Daemon auto-started")
+
+            _agent = _DaemonHolder(daemon=_daemon, config=cfg)
             _agent_error = None
-            logger.info("Hynous agent initialized successfully")
+            logger.info("Daemon holder initialized (v2 — no LLM agent)")
 
-            # Apply saved model preferences (survives restarts)
-            prefs = _load_model_prefs()
-            if prefs:
-                main, sub = prefs
-                if main:
-                    _agent.config.agent.model = main
-                if sub:
-                    _agent.config.memory.compression_model = sub
-                logger.info("Applied saved model prefs: %s / %s", main, sub)
-
-            # Apply saved trading settings (propagates to config + prompt)
+            # Apply saved trading settings (propagates to config where still wired)
             try:
                 from hynous.core.trading_settings import get_trading_settings
                 _apply_trading_settings(get_trading_settings())
             except Exception:
                 pass
 
-            if _agent.config.daemon.enabled and _daemon is None:
-                from hynous.intelligence.daemon import Daemon
-                _daemon = Daemon(_agent, _agent.config)
-                _daemon.start()
-                logger.info("Daemon auto-started")
-
-            if _agent.config.discord.enabled:
-                try:
-                    from hynous.discord.bot import start_bot
-                    start_bot(_agent, _agent.config)
-                except Exception as e:
-                    logger.warning("Discord bot failed to start: %s", e)
-
             return _agent
         except Exception as e:
             _agent_error = str(e)
-            logger.error(f"Failed to initialize agent: {e}")
+            logger.error(f"Failed to initialize daemon holder: {e}")
             return None
 
 
 def _apply_trading_settings(ts) -> None:
-    """Propagate TradingSettings to agent, daemon config, and prompt."""
+    """Propagate TradingSettings to the daemon config.
+
+    Phase 5 M7: the v1 ``Agent.rebuild_system_prompt()`` call that used to
+    live here is gone with the v1 agent. Only config propagation (which
+    still drives daemon behaviour) runs now. The v2 user-chat agent owns
+    its own prompt; phase 7 dashboard rework will wire settings to it.
+    """
     if _agent is None:
         return
     try:
-        # Rebuild system prompt (picks up new values via _build_ground_rules)
-        _agent.rebuild_system_prompt()
-        # Propagate to config objects used by daemon
         _agent.config.daemon.max_daily_loss_usd = ts.max_daily_loss_usd
         _agent.config.daemon.max_open_positions = ts.max_open_positions
         _agent.config.scanner.wake_threshold = ts.scanner_wake_threshold
@@ -2086,8 +2094,14 @@ class AppState(rx.State):
             return  # Already waking
 
         self.is_waking = True
-        _daemon.trigger_manual_wake()
-        self._add_activity("system", "Manual wake triggered", "info")
+        # Phase 5 M7: trigger_manual_wake() was removed with the v1 agent.
+        # Phase 7 dashboard rework will retire this button; until then, log
+        # and surface to the user instead of crashing.
+        logger.info("manual wake ignored in v2 — no LLM trading agent")
+        self._add_activity(
+            "system", "Manual wake is disabled in v2", "warning",
+        )
+        self.is_waking = False
 
     def toggle_daemon(self, checked: bool = True):
         """Toggle daemon on/off.
@@ -2114,7 +2128,7 @@ class AppState(rx.State):
 
         if _daemon is None:
             from hynous.intelligence.daemon import Daemon
-            _daemon = Daemon(agent, agent.config)
+            _daemon = Daemon(config=agent.config)
         if not _daemon.is_running:
             _daemon.start()
         # Immediate UI feedback (don't wait for next poll tick)
@@ -2132,7 +2146,7 @@ class AppState(rx.State):
                 return
             if _daemon is None:
                 from hynous.intelligence.daemon import Daemon
-                _daemon = Daemon(agent, agent.config)
+                _daemon = Daemon(config=agent.config)
             if not _daemon.is_running:
                 _daemon.start()
 

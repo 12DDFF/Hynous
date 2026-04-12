@@ -3,9 +3,9 @@
 One request/response cycle per HTTP call. No streaming, no conversation
 history, no memory writes. Exposes two journal-backed tools
 (``search_trades``, ``get_trade_by_id``) bound to a caller-supplied
-:class:`~hynous.journal.store.JournalStore`. Contrast v1
-:mod:`hynous.intelligence.agent` — no queue mode, no Nous, no
-persistence, no tracing, no curiosity/review/coach wiring.
+:class:`~hynous.journal.store.JournalStore`. Contrast with the retired v1
+intelligence agent — no queue mode, no Nous, no persistence, no tracing,
+no curiosity/review/coach wiring.
 
 Hard cap: 300 LOC in this file. Grow via directive only.
 """

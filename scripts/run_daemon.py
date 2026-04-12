@@ -32,26 +32,22 @@ def _setup_logging(level: int = logging.INFO) -> None:
     )
 
 
-def _build_daemon() -> tuple[Any, Any]:
-    """Construct Agent + Daemon the same way the Reflex dashboard does.
+def _build_daemon() -> Any:
+    """Construct the Daemon the same way the Reflex dashboard does.
 
-    Returns (agent, daemon). Imports happen inside the function so
+    Returns the daemon instance. Imports happen inside the function so
     ``python -m scripts.run_daemon --help`` works without a full env.
     """
     from hynous.core.config import load_config
-    from hynous.intelligence.agent import Agent
     from hynous.intelligence.daemon import Daemon
 
     cfg = load_config()
     logger.info("config loaded: mode=%s", cfg.execution.mode)
 
-    agent = Agent(config=cfg)
-    logger.info("agent constructed: model=%s", cfg.agent.model)
-
-    daemon = Daemon(agent=agent, config=cfg)
+    daemon = Daemon(config=cfg)
     logger.info("daemon constructed")
 
-    return agent, daemon
+    return daemon
 
 
 def main() -> int:
@@ -72,7 +68,7 @@ def main() -> int:
     _setup_logging(getattr(logging, args.log_level))
 
     try:
-        agent, daemon = _build_daemon()
+        daemon = _build_daemon()
     except Exception:
         logger.exception("daemon construction failed")
         return 1

@@ -373,29 +373,21 @@ app._api.add_route("/api/data/{path:path}", _data_proxy, methods=["GET", "POST",
 
 
 async def _agent_message(request):
-    """POST /api/agent-message — queue a message for the agent (wake via daemon)."""
-    import asyncio
+    """POST /api/agent-message — retired in v2 (phase 5 M7).
+
+    The v1 LLM-driven wake path (``daemon._wake_agent``) was removed with
+    the v1 agent. Clients should use ``POST /api/v2/chat/message`` via the
+    user-chat agent instead. The route stays mounted to return a clean
+    ``410 Gone`` rather than the 500 a missing route would produce.
+    """
     from starlette.responses import JSONResponse
-    try:
-        body = await request.json()
-        message = body.get("message", "").strip()
-        if not message:
-            return JSONResponse({"error": "Empty message"}, status_code=400)
-
-        # Fire-and-forget: wake agent in background thread
-        def _do_wake():
-            try:
-                from .state import _get_agent
-                agent = _get_agent()
-                if agent and hasattr(agent, "daemon") and agent.daemon:
-                    agent.daemon._wake_agent(message)
-            except Exception:
-                pass
-
-        asyncio.get_event_loop().run_in_executor(None, _do_wake)
-        return JSONResponse({"status": "queued"})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return JSONResponse(
+        {
+            "status": "disabled",
+            "reason": "v1 chat route retired; use /api/v2/chat/message",
+        },
+        status_code=410,
+    )
 
 
 app._api.add_route("/api/agent-message", _agent_message, methods=["POST"])
