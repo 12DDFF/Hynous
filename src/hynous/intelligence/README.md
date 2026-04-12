@@ -67,9 +67,9 @@ The daemon runs 24/7 and has timed tasks:
 |------|----------|--------|
 | Price polling | 60s | `_poll_prices()` |
 | Fast trigger check (SL/TP guard) | 10s | `_fast_trigger_check()` |
-| Profit/risk alerts | every price poll | `_wake_for_profit()` |
+| Profit/risk notification sink | every price poll | `_wake_for_profit()` |
 | Derivatives/sentiment | 5m | `_poll_derivatives()` |
-| Market scanner | every deriv poll | `_wake_for_scanner()` |
+| Market scanner (mechanical entry eval) | every deriv poll | `_evaluate_entry_signals()` |
 | Periodic market review | 1h (2h weekends) | `_wake_for_review()` |
 | Satellite labeling | 1h | `_run_labeler()` |
 | Condition model validation | 24h | `_run_condition_validation()` |

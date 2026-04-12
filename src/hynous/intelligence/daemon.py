@@ -1139,13 +1139,8 @@ class Daemon:
                             for coin, pos in self._prev_positions.items()
                         }
                         anomalies = self._scanner.detect()
-                        if anomalies:
-                            if self._entry_trigger is not None:
-                                self._evaluate_entry_signals(anomalies)
-                            else:
-                                # v1 fallback only if mechanical disabled —
-                                # will be deleted in M5.
-                                self._wake_for_scanner(anomalies)
+                        if anomalies and self._entry_trigger is not None:
+                            self._evaluate_entry_signals(anomalies)
                     except Exception as e:
                         logger.debug("Scanner detect failed: %s", e)
 
@@ -3708,56 +3703,6 @@ class Daemon:
     # Wake Messages
     # ================================================================
 
-    def _wake_for_watchpoint(self, wp_data: dict):
-        """Assemble context and wake the agent for a triggered watchpoint."""
-        node = wp_data["node"]
-        data = wp_data["data"]
-        trigger = wp_data["trigger"]
-
-        title = node.get("content_title", "Untitled watchpoint")
-        content = data.get("text", "")
-        signals = data.get("signals_at_creation", {})
-        symbol = trigger.get("symbol", "?")
-        condition = trigger.get("condition", "?")
-        value = trigger.get("value", 0)
-
-        # Current data
-        current_price = self.snapshot.prices.get(symbol, 0)
-        current_funding = self.snapshot.funding.get(symbol, 0)
-
-        lines = [
-            f"[DAEMON WAKE — Watchpoint Triggered: {title}]",
-            "",
-            f"Your alert fired: {symbol} {condition.replace('_', ' ')} {value}.",
-            f"Current: ${current_price:,.0f} | Funding: {current_funding:.4%} | F&G: {self.snapshot.fear_greed}",
-            "",
-            "What you were thinking when you set this:",
-            content,
-        ]
-
-        if signals:
-            lines.append("")
-            lines.append("Market conditions when you set this alert:")
-            for k, v in signals.items():
-                lines.append(f"  {k}: {v}")
-
-        lines.extend([
-            "",
-            "This alert is now DEAD. Decide: act on it, or set a new one. Keep your response to 1-3 sentences.",
-        ])
-
-        message = "\n".join(lines)
-        response = self._wake_agent(message, max_tokens=1024, source="daemon:watchpoint")
-        if response:
-            self.watchpoint_fires += 1
-            log_event(DaemonEvent(
-                "watchpoint", title,
-                f"{symbol} {condition.replace('_', ' ')} {value} | F&G: {self.snapshot.fear_greed}",
-            ))
-            _queue_and_persist("Watchpoint", title, response)
-            _notify_discord("Watchpoint", title, response)
-            logger.info("Watchpoint wake complete: %s (%d chars)", title, len(response))
-
     def _build_historical_context(self, anomalies: list) -> str:
         """Build a [Track Record] block for scanner wakes.
 
@@ -4096,61 +4041,6 @@ class Daemon:
             logger.exception(
                 "Periodic mechanical entry execution failed for %s", symbol,
             )
-
-    def _wake_for_scanner(self, anomalies: list):
-        """Wake the agent when the market scanner detects anomalies.
-
-        Filters by wake threshold, formats message, respects rate limits.
-        Non-priority wake (shares cooldown with other wakes).
-        """
-        cfg = self.config.scanner
-        # Filter to anomalies above wake threshold
-        wake_worthy = [a for a in anomalies if a.severity >= cfg.wake_threshold]
-        if not wake_worthy:
-            return
-
-        # Cap to max anomalies per wake
-        top = wake_worthy[:cfg.max_anomalies_per_wake]
-
-        # Format the wake message with signal-specific validation instructions
-        regime_label = self._regime.label if self._regime else "RANGING"
-        message = self._build_validation_prompt(top, regime_label)
-
-        # Inject historical context above the scanner message
-        track_record = self._build_historical_context(top)
-        if track_record:
-            message = track_record + "\n\n" + message
-
-        response = self._wake_agent(
-            message, max_tokens=1200,
-            source="daemon:scanner",
-        )
-        # Snapshot immediately — another chat() call would reset _last_tool_calls
-        last_tool_calls = list(self.agent._last_tool_calls)
-        if response:
-            self.scanner_wakes += 1
-            self._scanner.wakes_triggered += 1
-            top_event = top[0]
-            title = top_event.headline
-
-            # Track pass streak
-            if self.agent.last_chat_had_trade_tool():
-                self._scanner_pass_streak = 0
-            else:
-                self._scanner_pass_streak += 1
-
-            log_event(DaemonEvent(
-                "scanner", title,
-                f"{len(top)} anomalies (top: {top_event.type} {top_event.symbol} sev={top_event.severity:.2f})",
-            ))
-            scanner_meta = {
-                "tool_trace_text": _format_tool_trace_text(last_tool_calls),
-                "decision": _extract_decision(last_tool_calls),
-                "signal_header": f"{top_event.type} · {top_event.symbol} · {top_event.severity:.2f}",
-            }
-            _queue_and_persist("Scanner", title, response, event_type="scanner", meta=scanner_meta)
-            logger.info("Scanner wake: %d anomalies, agent responded (%d chars)",
-                        len(top), len(response))
 
     def _wake_for_fill(
         self,

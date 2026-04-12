@@ -18,7 +18,7 @@
 | `institutional.py` | `get_institutional_flow` | Institutional fund flows |
 | `web_search.py` | `search_web` | Web search for news/context |
 | `costs.py` | `get_my_costs` | LLM cost tracking and breakdown |
-| `trading.py` | `execute_trade`, `close_position`, `modify_position`, `get_account` | Trade execution and position management |
+| `trading.py` | `close_position`, `modify_position`, `get_account` | Account view + exit/modify (entry execution moved to `mechanical_entry/executor.py`) |
 | `data_layer.py` | `data_layer` | Hyperliquid satellite: heatmap, orderflow, whales, HLP vault, smart money, wallet profiling/tracking/alerts |
 | `market_watch.py` | `get_book_history`, `monitor_signal` | L2 book trend from scanner buffer (zero API cost) + scheduled follow-up wake for developing setups |
 
