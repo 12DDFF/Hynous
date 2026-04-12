@@ -255,11 +255,15 @@ class V2ConsolidationConfig:
 @dataclass
 class V2UserChatConfig:
     enabled: bool = True
-    model: str = "anthropic/claude-sonnet-4.5"
-    max_tokens: int = 2048
-    tool_surface: list[str] = field(default_factory=lambda: [
-        "search_trades", "get_trade_by_id", "get_market_data",
-    ])
+    model: str = "anthropic/claude-opus-4"
+    max_tokens: int = 4096
+    temperature: float = 0.2
+    tool_timeout_s: int = 30
+
+
+# Back-compat alias — the M6 directive names this ``UserChatConfig``;
+# the project convention keeps the ``V2`` prefix to group v2 sub-configs.
+UserChatConfig = V2UserChatConfig
 
 
 @dataclass
@@ -501,11 +505,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
             ),
             user_chat=V2UserChatConfig(
                 enabled=v2_raw.get("user_chat", {}).get("enabled", True),
-                model=v2_raw.get("user_chat", {}).get("model", "anthropic/claude-sonnet-4.5"),
-                max_tokens=v2_raw.get("user_chat", {}).get("max_tokens", 2048),
-                tool_surface=v2_raw.get("user_chat", {}).get("tool_surface", [
-                    "search_trades", "get_trade_by_id", "get_market_data",
-                ]),
+                model=v2_raw.get("user_chat", {}).get("model", "anthropic/claude-opus-4"),
+                max_tokens=v2_raw.get("user_chat", {}).get("max_tokens", 4096),
+                temperature=v2_raw.get("user_chat", {}).get("temperature", 0.2),
+                tool_timeout_s=v2_raw.get("user_chat", {}).get("tool_timeout_s", 30),
             ),
         ),
         project_root=root,

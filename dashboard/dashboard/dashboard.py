@@ -297,6 +297,29 @@ except Exception as _journal_mount_err:
     )
 
 
+# v2 user chat module (phase 5 M6) — mount /api/v2/chat/* and inject a
+# chat agent bound to the dashboard-owned journal store. Wrapped in its
+# own try/except so chat init failure doesn't brick the journal routes.
+try:
+    from hynous.user_chat.agent import UserChatAgent as _UserChatAgent
+    from hynous.user_chat.api import (
+        router as _user_chat_router,
+        set_agent as _set_user_chat_agent,
+    )
+
+    _user_chat_agent = _UserChatAgent(
+        config=_cfg.v2.user_chat,
+        journal_store=_journal_store,
+    )
+    _set_user_chat_agent(_user_chat_agent)
+    app._api.include_router(_user_chat_router)
+except Exception as _user_chat_mount_err:
+    import logging as _user_chat_mount_logging
+    _user_chat_mount_logging.getLogger(__name__).exception(
+        "v2 user chat mount failed: %s", _user_chat_mount_err,
+    )
+
+
 # Proxy Nous API through the Reflex backend so the browser doesn't need
 # direct access to port 3100 (blocked by UFW).
 async def _nous_proxy(request):

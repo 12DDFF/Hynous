@@ -71,7 +71,7 @@ def build_entry_snapshot(
     """Build a full entry snapshot from daemon state and fill details.
 
     Called AFTER the order has filled and BEFORE returning from
-    handle_execute_trade. Reads live state from the daemon.
+    execute_trade_mechanical. Reads live state from the daemon.
     """
     now_ts = datetime.now(timezone.utc).isoformat()
     trade_id = _generate_trade_id()

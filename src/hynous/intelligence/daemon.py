@@ -3938,10 +3938,11 @@ class Daemon:
     def _evaluate_entry_signals(self, anomalies: list) -> None:
         """Evaluate the configured mechanical trigger for each anomaly (v2 phase 5).
 
-        Replaces the ``_wake_for_scanner`` LLM path. For every anomaly, builds an
-        ``EntryEvaluationContext``, asks the trigger to evaluate, and if a signal
-        comes back, fires ``execute_trade_mechanical``. Rejections are recorded
-        by the trigger itself (M2). Fully synchronous — no background threads.
+        Mechanical entry evaluation. No LLM involvement. For every anomaly,
+        builds an ``EntryEvaluationContext``, asks the trigger to evaluate,
+        and if a signal comes back, fires ``execute_trade_mechanical``.
+        Rejections are recorded by the trigger itself (M2). Fully
+        synchronous — no background threads.
         """
         from datetime import datetime, timezone
 

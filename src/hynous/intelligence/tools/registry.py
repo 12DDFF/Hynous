@@ -131,4 +131,10 @@ def get_registry() -> ToolRegistry:
     from . import market_watch
     market_watch.register(registry)
 
+    from . import search_trades
+    search_trades.register(registry)
+
+    from . import get_trade_by_id
+    get_trade_by_id.register(registry)
+
     return registry
