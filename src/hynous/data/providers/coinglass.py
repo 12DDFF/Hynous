@@ -267,14 +267,6 @@ class CoinglassProvider:
         """
         return self._get(f"/api/etf/{asset}/flow-history")
 
-    def get_etf_list(self, asset: str = "bitcoin") -> list[dict]:
-        """Get list of ETFs.
-
-        Returns list of dicts with keys:
-            ticker, fund_name, region, market_status, primary_exchange, etc.
-        """
-        return self._get(f"/api/etf/{asset}/list")
-
     # =========================================================================
     # Exchange Balance (on-chain)
     # =========================================================================
@@ -291,18 +283,6 @@ class CoinglassProvider:
             params={"symbol": symbol},
         )
 
-    def get_exchange_balance_chart(
-        self, symbol: str = "BTC", exchange: str = "Binance",
-    ) -> dict:
-        """Get historical exchange balance time series.
-
-        Returns dict with keys: time_list, price_list, data_map
-        """
-        return self._get(
-            "/api/exchange/balance/chart",
-            params={"symbol": symbol, "exchange": exchange},
-        )
-
     # =========================================================================
     # Sentiment / Index indicators
     # =========================================================================
@@ -313,15 +293,6 @@ class CoinglassProvider:
         Returns dict with keys: data_list (values), price_list, time_list
         """
         return self._get("/api/index/fear-greed-history")
-
-    def get_puell_multiple(self, limit: int = 30) -> list[dict]:
-        """Get Puell Multiple history (mining indicator).
-
-        Returns list of dicts with keys: timestamp, price, puell_multiple
-        """
-        data = self._get("/api/index/puell-multiple")
-        # Return only the last N entries
-        return data[-limit:] if data else []
 
 
 class CoinglassAPIError(Exception):

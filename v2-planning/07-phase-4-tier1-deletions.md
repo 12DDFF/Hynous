@@ -433,19 +433,56 @@ Commit: `[phase-4] strip decision-injection content from system prompt`
 
 ### Step 9 — Delete unused providers
 
-```bash
-rm src/hynous/data/providers/cryptocompare.py
-rm src/hynous/data/providers/perplexity.py  # if no remaining tool uses it
-```
+> **Plan revision (architect, 2026-04-12):** The original scope of this step
+> was split after the M8 pre-flight audit surfaced live cryptocompare/
+> news_alert wiring in `dashboard/`, `deploy/README.md`, `scanner.py`
+> (`_detect_news_alert` + `_news` buffer + `_alerted_news_ids`),
+> `daemon.py` (`_WAKE_REASONS["news_alert"]`), and
+> `trading_settings.py` (`scanner_news_enabled`). Ripping those out
+> mid-phase-4 would leave the dashboard News card pointing at deleted
+> state before phase 7 (the dashboard rework) has a chance to consume
+> them cleanly. Phase 7 already claims `news_expanded`
+> (`v2-planning/10-phase-7-dashboard-rework.md:123`); it is the correct
+> owner of the cryptocompare/news-alert chain removal.
+>
+> **M8 scope (this milestone — narrowed):**
+> - Delete 3 unused coinglass methods: `get_etf_list`,
+>   `get_exchange_balance_chart`, `get_puell_multiple`.
+> - Remove the three corresponding rows from `src/hynous/data/README.md`
+>   (L111, L113, L115).
+>
+> **Deferred to phase 7 (dashboard rework):**
+> - `src/hynous/data/providers/cryptocompare.py` deletion.
+> - `CryptoCompareConfig` dataclass removal from `core/config.py`
+>   (+ YAML entry in `config/default.yaml`).
+> - `_WAKE_REASONS["news_alert"]` entry in `daemon.py`.
+> - `_detect_news_alert()` + `self._news` buffer + `self._alerted_news_ids`
+>   + `news_wake_max_age_minutes` + news polling in `scanner.py`.
+> - `scanner_news_enabled` field in `core/trading_settings.py`.
+> - Dashboard state vars / `_news_card()` / settings toggle
+>   (`dashboard/state.py`, `pages/settings.py`, `pages/home.py`).
+> - `CRYPTOCOMPARE_API_KEY` row in `deploy/README.md`.
+>
+> **Also deferred (still phase 4 Tier 1, just not M8):**
+> - `src/hynous/data/providers/perplexity.py` deletion +
+>   `PerplexityConfig` removal. To be handled separately once the
+>   cryptocompare chain unblocks; perplexity has no dashboard entanglement
+>   but was bundled with cryptocompare in the original step 9. Route
+>   through a later milestone or roll into phase 7 cleanup.
+> - The other 3 coinglass methods originally listed (`get_coinbase_premium`,
+>   `get_etf_flows`, `get_oi_history_chart`) are NOT unused —
+>   `src/hynous/intelligence/tools/sentiment.py` and `institutional.py`
+>   still call them. They stay until those tools are either rebuilt or
+>   deleted in a later phase.
 
-Remove `PerplexityConfig`, `CryptoCompareConfig` dataclasses from `core/config.py` (or equivalent) if present.
+Delete the 3 unused coinglass methods:
 
-Remove `COINGLASS` method calls that are unused:
-- Edit `src/hynous/data/providers/coinglass.py` to delete: `get_coinbase_premium`, `get_etf_flows`, `get_etf_list`, `get_oi_history_chart`, `get_exchange_balance_chart`, `get_puell_multiple`
+- Edit `src/hynous/data/providers/coinglass.py` to delete: `get_etf_list`
+  (L270), `get_exchange_balance_chart` (L294), `get_puell_multiple` (L317).
+- Edit `src/hynous/data/README.md` to delete the 3 corresponding rows
+  (L111, L113, L115).
 
-Remove news polling from daemon.py (the CryptoCompare-backed scanner news check).
-
-Commit: `[phase-4] delete unused providers and coinglass methods`
+Commit: `[phase-4] delete unused coinglass methods (Milestone 8)`
 
 ### Step 10 — Final cleanup
 
@@ -490,9 +527,9 @@ Commit: `[phase-4] final cleanup of deletion leftovers`
 | `src/hynous/intelligence/tools/pruning.py` | Memory tool | ~670 |
 | `src/hynous/intelligence/tools/watchpoints.py` | Memory tool | ~350 |
 | `src/hynous/intelligence/tools/trade_stats.py` | Memory-backed stats | ~220 |
-| `src/hynous/data/providers/cryptocompare.py` | Unused | ~95 |
-| `src/hynous/data/providers/perplexity.py` | Unused | ~116 |
-| Various Coinglass methods | Unused | ~80 |
+| `src/hynous/data/providers/cryptocompare.py` | Unused | ~95 (DEFERRED to phase 7 — dashboard News card entanglement) |
+| `src/hynous/data/providers/perplexity.py` | Unused | ~116 (DEFERRED — bundled with cryptocompare) |
+| 3 Coinglass methods (`get_etf_list`, `get_exchange_balance_chart`, `get_puell_multiple`) | Unused (M8) | ~60 |
 | `deploy/nous.service` | systemd unit for deleted service | ~20 |
 | Tests for deleted modules | Testing deleted code | ~3000 |
 | Trimming `trading.py` (coach/history/memory calls + helpers) | Simplification | ~400 |

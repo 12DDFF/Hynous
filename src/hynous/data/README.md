@@ -108,11 +108,8 @@ Cross-exchange derivatives data from the Coinglass API v4.
 | `get_options_info(symbol, exchange)` | Options OI, volume, market share by exchange |
 | `get_coinbase_premium(interval, limit)` | Coinbase premium/discount index over time |
 | `get_etf_flows(asset)` | Daily BTC/ETH ETF net flows |
-| `get_etf_list(asset)` | ETF listings |
 | `get_exchange_balance(symbol)` | Per-exchange on-chain holdings with 1d/7d/30d changes |
-| `get_exchange_balance_chart(symbol, exchange)` | Historical exchange balance time series |
 | `get_fear_greed()` | Fear & Greed index history |
-| `get_puell_multiple(limit)` | Puell Multiple history (mining indicator) |
 
 **Configuration:** `COINGLASS_API_KEY` environment variable (required).
 
