@@ -381,18 +381,11 @@ class Daemon:
 
         # Market scanner (anomaly detection across all pairs)
         self._scanner = None
-        self._playbook_matcher = None
-        self._last_matched_playbooks: list = []  # For auto-linking after trade
         if config.scanner.enabled:
             from .scanner import MarketScanner
             self._scanner = MarketScanner(config.scanner)
             self._scanner.execution_symbols = set(config.execution.symbols)
             self._scanner._data_layer_enabled = config.data_layer.enabled
-            # Playbook matcher (Issue 5: proactive procedural memory)
-            from .playbook_matcher import PlaybookMatcher
-            self._playbook_matcher = PlaybookMatcher(
-                cache_ttl=config.daemon.playbook_cache_ttl,
-            )
 
         # Satellite: ML feature engine (SPEC-03)
         self._satellite_store = None
@@ -4031,22 +4024,6 @@ class Daemon:
         regime_label = self._regime.label if self._regime else "RANGING"
         message = self._build_validation_prompt(top, regime_label)
 
-        # Issue 5: Playbook matching — inject matching playbook context
-        matched_playbooks: list = []
-        if self._playbook_matcher:
-            try:
-                from .playbook_matcher import PlaybookMatcher
-                matched_playbooks = self._playbook_matcher.find_matching(top)
-                if matched_playbooks:
-                    playbook_section = PlaybookMatcher.format_matches(matched_playbooks)
-                    message += "\n\n" + playbook_section
-                    logger.debug(
-                        "Playbook matcher: %d matches for %d anomalies",
-                        len(matched_playbooks), len(top),
-                    )
-            except Exception as e:
-                logger.debug("Playbook matching failed: %s", e)
-
         # Inject historical context above the scanner message
         track_record = self._build_historical_context(top)
         if track_record:
@@ -4741,87 +4718,6 @@ class Daemon:
 
         return None
 
-    def _wake_for_conflicts(self, conflicts: list[dict], nous):
-        """Wake agent with remaining conflicts, instructing batch resolution."""
-        lines = [
-            "[DAEMON WAKE — Contradiction Review]",
-            f"You have {len(conflicts)} contradiction(s) that need your judgment.",
-            "",
-        ]
-
-        for conflict in conflicts[:5]:
-            cid = conflict.get("id", "?")
-            old_id = conflict.get("old_node_id", "?")
-            new_id = conflict.get("new_node_id")
-            new_content = conflict.get("new_content", "")
-            ctype = conflict.get("conflict_type", "?")
-            confidence = conflict.get("detection_confidence", 0)
-
-            old_title = old_id
-            old_body = ""
-            try:
-                old_node = nous.get_node(old_id)
-                if old_node:
-                    old_title = old_node.get("content_title", old_id)
-                    old_body = old_node.get("content_body", "") or ""
-            except Exception:
-                pass
-
-            new_title = ""
-            new_body = ""
-            if new_id:
-                try:
-                    new_node = nous.get_node(new_id)
-                    if new_node:
-                        new_title = new_node.get("content_title", "")
-                        new_body = new_node.get("content_body", "") or ""
-                except Exception:
-                    pass
-
-            lines.append(f"Conflict {cid} ({ctype}, {confidence:.0%} confidence):")
-
-            old_preview = old_body[:500] if old_body else "(no content)"
-            if len(old_body) > 500:
-                old_preview += "..."
-            lines.append(f'  OLD: "{old_title}" ({old_id})')
-            lines.append(f"  {old_preview}")
-
-            if new_id and new_title:
-                new_preview = new_body[:500] if new_body else "(no content)"
-                if len(new_body) > 500:
-                    new_preview += "..."
-                lines.append(f'  NEW: "{new_title}" ({new_id})')
-                lines.append(f"  {new_preview}")
-            else:
-                new_preview = new_content[:500]
-                if len(new_content) > 500:
-                    new_preview += "..."
-                lines.append(f"  NEW CONTENT: {new_preview}")
-            lines.append("")
-
-        if len(conflicts) > 5:
-            lines.append(f"... and {len(conflicts) - 5} more. Use manage_conflicts(action=\"list\") to see all.")
-            lines.append("")
-
-        lines.extend([
-            "EFFICIENT RESOLUTION:",
-            "- Group conflicts with the same decision and use batch_resolve:",
-            '  {"action": "batch_resolve", "conflict_ids": ["c_...", "c_..."], "resolution": "new_is_current"}',
-            "- Only resolve individually when conflicts need different decisions.",
-            "",
-            "Resolutions: old_is_current, new_is_current, keep_both, merge",
-        ])
-
-        message = "\n".join(lines)
-        response = self._wake_agent(message, max_tokens=1024, source="daemon:conflict")
-        if response:
-            log_event(DaemonEvent(
-                "conflict", "Contradiction review",
-                f"{len(conflicts)} conflicts for agent review",
-            ))
-            logger.info("Contradiction review wake: %d conflicts, agent responded (%d chars)",
-                        len(conflicts), len(response))
-
     def _check_health(self, startup: bool = False):
         """Check Nous server health and log knowledge base stats.
 
@@ -4944,16 +4840,9 @@ class Daemon:
                 except Exception as e:
                     logger.debug("Wake price refresh failed (using cached): %s", e)
 
-            # === 1. Build warnings (free, existing) ===
+            # === 1. Build warnings (phase 4: wake_warnings deleted) ===
             warnings_text = ""
-            memory_state = {}
-            try:
-                from .wake_warnings import build_warnings
-                warnings_text, memory_state = build_warnings(
-                    self._get_provider(), self, self._get_nous(), self.config,
-                )
-            except Exception as e:
-                logger.debug("Wake warnings failed: %s", e)
+            memory_state: dict = {}
 
             # === 2. Build briefing (free, pre-fetched data + fresh prices) ===
             briefing_text = ""

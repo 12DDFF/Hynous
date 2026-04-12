@@ -20,7 +20,6 @@ from typing import Generator
 import litellm
 
 from .prompts import build_system_prompt
-from .memory_manager import MemoryManager
 from .tools.registry import ToolRegistry, get_registry
 from .tools.memory import enable_queue_mode, disable_queue_mode, flush_memory_queue
 from ..core.config import Config, load_config
@@ -111,10 +110,6 @@ class Agent:
             }
         )
 
-        # Tiered memory manager — retrieval + compression
-        self.memory_manager = MemoryManager(
-            config=self.config,
-        )
         self._active_context: str | None = None
 
         # Lock to prevent daemon and user chat from interleaving.
@@ -619,18 +614,8 @@ class Agent:
 
             self._history.append({"role": "user", "content": stamp(wrapped)})
 
-            # Retrieve relevant past context from Nous
-            # skip_memory: scanner wakes skip retrieval (briefing has the data, saves ~1-2s)
-            if skip_memory:
-                self._active_context = None
-            else:
-                # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
-                if "[DAEMON WAKE" in message:
-                    symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
-                    search_query = " ".join(symbols) + " thesis playbook trade pattern" if symbols else message
-                else:
-                    search_query = message
-                self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
+            # Memory retrieval removed (phase 4 deletion).
+            self._active_context = None
             self._last_active_context = self._active_context  # Preserve for coach
 
             # Enable memory queue — store_memory calls become instant during thinking.
@@ -729,11 +714,9 @@ class Agent:
                         self._check_text_tool_leakage(text)
                         self._history.append({"role": "assistant", "content": text})
 
-                        # Window management: compress evicted exchanges into Nous
+                        # Window management: compression removed (phase 4 deletion).
                         self._active_context = None
-                        trimmed, did_compress = self.memory_manager.maybe_compress(
-                            self._history, _trace_id=_trace_id,
-                        )
+                        trimmed, did_compress = self._history, False
                         if did_compress:
                             self._history = trimmed
                         else:
@@ -889,18 +872,8 @@ class Agent:
 
             self._history.append({"role": "user", "content": stamp(wrapped)})
 
-            # Retrieve relevant past context from Nous
-            # skip_memory: scanner wakes skip retrieval (briefing has the data, saves ~1-2s)
-            if skip_memory:
-                self._active_context = None
-            else:
-                # For daemon wakes, search by position symbols + "thesis" (not boilerplate text)
-                if "[DAEMON WAKE" in message:
-                    symbols = self._snapshot_symbols or getattr(self.config, 'execution', None) and self.config.execution.symbols[:3] or []
-                    search_query = " ".join(symbols) + " thesis playbook trade pattern" if symbols else message
-                else:
-                    search_query = message
-                self._active_context = self.memory_manager.retrieve_context(search_query, _trace_id=_trace_id)
+            # Memory retrieval removed (phase 4 deletion).
+            self._active_context = None
             self._last_active_context = self._active_context  # Preserve for coach
 
             # Enable memory queue — store_memory calls become instant during thinking.
@@ -1084,11 +1057,9 @@ class Agent:
                         self._check_text_tool_leakage(full_text)
                         self._history.append({"role": "assistant", "content": full_text})
 
-                        # Window management: compress evicted exchanges into Nous
+                        # Window management: compression removed (phase 4 deletion).
                         self._active_context = None
-                        trimmed, did_compress = self.memory_manager.maybe_compress(
-                            self._history, _trace_id=_trace_id,
-                        )
+                        trimmed, did_compress = self._history, False
                         if did_compress:
                             self._history = trimmed
                         else:

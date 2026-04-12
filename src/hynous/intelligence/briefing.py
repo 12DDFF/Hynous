@@ -378,16 +378,7 @@ def build_briefing(
     if memory_line:
         sections.append(memory_line)
 
-    # --- Trade history patterns (from Nous) ---
-    try:
-        from ..core.trading_settings import get_trading_settings
-        if get_trading_settings().trade_history_warnings:
-            from .trade_history import format_history_summary
-            history_section = format_history_summary()
-            if history_section:
-                sections.append(history_section)
-    except Exception:
-        pass
+    # Trade history patterns: module deleted in phase 4.
 
     return "\n\n".join(sections)
 

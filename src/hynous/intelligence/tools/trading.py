@@ -1,20 +1,15 @@
 """
 Trading Tools — get_account, execute_trade, close_position, modify_position
 
-Gives the agent full trading capabilities on Hyperliquid.
-On testnet, all trades execute immediately (autonomous).
-On live, write operations would require David's approval (future).
+Gives the agent trading capabilities on Hyperliquid. On testnet all trades
+execute immediately; on live, write operations go through the same path
+(approval gating planned for phase 5+).
 
 Design principles:
   - get_account: flexible views (summary/positions/orders/full)
-  - execute_trade: requires thesis (reasoning), stop loss, and take profit
+  - execute_trade: requires thesis, stop loss, take profit
   - close_position: requires reasoning — every exit is documented
   - modify_position: requires reasoning — every adjustment is documented
-  - ALL write operations are stored in Nous memory for learning
-
-Every trade action creates a memory node in Nous. Over time, this builds
-a graph of: thesis → entry → modifications → exit → outcome → lessons.
-FSRS keeps winning patterns alive and lets failed ones decay naturally.
 
 Standard tool module pattern:
   1. TOOL_DEF dicts
@@ -204,16 +199,6 @@ def _fmt_price(price: float) -> str:
 def _fmt_pct(pct: float) -> str:
     """Format a percentage with sign."""
     return f"{pct:+.2f}%"
-
-
-def _fmt_big(n: float) -> str:
-    """Format large USD numbers compactly."""
-    if abs(n) >= 1_000_000:
-        return f"${n / 1_000_000:.1f}M"
-    elif abs(n) >= 1_000:
-        return f"${n / 1_000:.1f}K"
-    else:
-        return f"${n:.0f}"
 
 
 # =============================================================================

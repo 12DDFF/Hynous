@@ -145,6 +145,16 @@ Commit: `[phase-4] remove decision-injection calls from daemon.py`
 
 ### Step 3 — Delete decision-injection modules
 
+**Before deleting the module files, strip 3 lazy imports inside `src/hynous/intelligence/tools/memory.py`:**
+
+- **Line ~414** (`_store_memory_impl`): `from ..gate_filter import check_content` — delete the import, delete the whole `if cfg.memory.gate_filter_enabled:` block (lines ~416–447). Gate is always-accept in v2 (phase 4 deletes the feature; `tools/memory.py` itself is deleted in Step 4, so this is throwaway cleanup to keep tests green during M3).
+- **Line ~890** (search branch): `from ..retrieval_orchestrator import orchestrate_retrieval` — delete the import, collapse the `if orch_config.orchestrator.enabled:` / `else:` by keeping the `else` (plain `client.search(...)`) branch and removing the orchestrator branch entirely.
+- **Line ~921** (post-search Hebbian): `from ..memory_manager import _strengthen_co_retrieved` — delete the import and the `_strengthen_co_retrieved(...)` call block (lines ~918–922).
+
+After these edits, `tools/memory.py` imports clean without the 3 deleted modules. It remains functional (falls back to direct `client.search` and drops the gate + Hebbian bonuses). Step 4 deletes `tools/memory.py` outright — so this touch is scoped purely to keep the deletion commit green.
+
+> **Why this matters:** `tools/memory.py` is a runtime path exercised by `tests/integration/test_gate_filter_integration.py`. If the 3 modules are deleted without also stripping these lazy imports, the integration test fails with `ModuleNotFoundError` at runtime (not collection), cascading failures outside the projected per-milestone allow-list.
+
 With no remaining importers, delete these files:
 
 ```bash

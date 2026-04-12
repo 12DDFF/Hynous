@@ -411,40 +411,8 @@ def _store_memory_impl(
 ) -> str:
     """Actually store a memory in Nous (HTTP calls + linking)."""
     from ...core.config import load_config
-    from ..gate_filter import check_content
 
-    # --- Gate filter (MF-15) ---
-    # Reject junk content before any HTTP calls to Nous.
-    # Runs on ALL memory types. For synchronous stores (lesson/curiosity),
-    # the agent sees the rejection feedback. For queued stores, the rejection
-    # is logged but silent to the agent (acceptable — rules are conservative).
     cfg = load_config()
-    if cfg.memory.gate_filter_enabled:
-        gate_result = check_content(content)
-        if not gate_result.passed:
-            logger.info(
-                "Gate filter rejected %s \"%s\": %s",
-                memory_type, title[:50], gate_result.reason,
-            )
-            # Record rejected memory op span
-            try:
-                from datetime import datetime, timezone
-                from ...core.request_tracer import get_active_trace
-                _tid = get_active_trace()
-                if _tid:
-                    get_tracer().record_span(_tid, {
-                        "type": SPAN_MEMORY_OP,
-                        "started_at": datetime.now(timezone.utc).isoformat(),
-                        "duration_ms": 0,
-                        "operation": "store",
-                        "memory_type": memory_type,
-                        "title": title[:100],
-                        "gate_filter": "rejected",
-                        "gate_reason": gate_result.reason,
-                    })
-            except Exception:
-                pass
-            return f"Not stored: {gate_result.detail}"
 
     from ...nous.client import get_client
     client = get_client()
@@ -883,43 +851,18 @@ def handle_recall_memory(
                 if time_end:
                     time_range["end"] = time_end
 
-            # Use orchestrator for intelligent multi-pass search
-            from ...core.config import load_config
-            orch_config = load_config()
-            if orch_config.orchestrator.enabled:
-                from ..retrieval_orchestrator import orchestrate_retrieval
-                results = orchestrate_retrieval(
-                    query=query,
-                    client=client,
-                    config=orch_config,
-                    type_filter=node_type,
-                    subtype_filter=subtype,
-                    lifecycle_filter=lifecycle,
-                    time_range=time_range,
-                    cluster_ids=[cluster] if cluster else None,
-                )
-                # Cap to requested limit (orchestrator may return up to max_results)
-                if len(results) > limit:
-                    results = results[:limit]
-            else:
-                results = client.search(
-                    query=query,
-                    type=node_type,
-                    subtype=subtype,
-                    lifecycle=lifecycle,
-                    limit=limit,
-                    time_range=time_range,
-                    cluster_ids=[cluster] if cluster else None,
-                )
+            results = client.search(
+                query=query,
+                type=node_type,
+                subtype=subtype,
+                lifecycle=lifecycle,
+                limit=limit,
+                time_range=time_range,
+                cluster_ids=[cluster] if cluster else None,
+            )
 
             if not results:
                 return f"No memories found for: \"{query}\""
-
-            # Hebbian: strengthen edges between co-retrieved memories (MF-1)
-            # Higher amount (0.05) than auto-retrieval (0.03) since agent explicitly asked
-            if len(results) > 1:
-                from ..memory_manager import _strengthen_co_retrieved
-                _strengthen_co_retrieved(client, results, amount=0.05)
 
             header = f"Found {len(results)} memories:\n"
             result_text = _format_memory_results(results, header)
