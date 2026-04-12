@@ -11,6 +11,153 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # ============================================================================
+# Journal database DDL — phase 2
+#
+# Eight functional tables (plus journal_metadata for schema versioning).
+# Schema drift between this constant and the CREATE TABLE statements in the
+# plan document is a phase-2-blocking bug — the plan is authoritative.
+# Indexes follow each table and are named to support common dashboard
+# filter patterns (symbol, status, entry_ts, exit_classification, event_type).
+# ============================================================================
+
+SCHEMA_DDL = """
+CREATE TABLE IF NOT EXISTS journal_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO journal_metadata (key, value, updated_at)
+VALUES ('schema_version', '1.0.0', datetime('now'));
+
+CREATE TABLE IF NOT EXISTS trades (
+    trade_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    trade_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    entry_ts TEXT,
+    entry_px REAL,
+    exit_ts TEXT,
+    exit_px REAL,
+    exit_classification TEXT,
+    realized_pnl_usd REAL,
+    roe_pct REAL,
+    hold_duration_s INTEGER,
+    peak_roe REAL,
+    trough_roe REAL,
+    leverage INTEGER,
+    size_usd REAL,
+    margin_usd REAL,
+    trigger_source TEXT,
+    trigger_type TEXT,
+    rejection_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
+CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
+CREATE INDEX IF NOT EXISTS idx_trades_entry_ts ON trades(entry_ts);
+CREATE INDEX IF NOT EXISTS idx_trades_exit_classification ON trades(exit_classification);
+CREATE INDEX IF NOT EXISTS idx_trades_rejection_reason ON trades(rejection_reason);
+
+CREATE TABLE IF NOT EXISTS trade_entry_snapshots (
+    trade_id TEXT PRIMARY KEY REFERENCES trades(trade_id) ON DELETE CASCADE,
+    snapshot_json TEXT NOT NULL,
+    embedding BLOB,
+    schema_version TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trade_exit_snapshots (
+    trade_id TEXT PRIMARY KEY REFERENCES trades(trade_id) ON DELETE CASCADE,
+    snapshot_json TEXT NOT NULL,
+    counterfactuals_json TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trade_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_id TEXT NOT NULL REFERENCES trades(trade_id) ON DELETE CASCADE,
+    ts TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_trade_id ON trade_events(trade_id);
+CREATE INDEX IF NOT EXISTS idx_events_event_type ON trade_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_events_trade_type ON trade_events(trade_id, event_type);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON trade_events(ts);
+
+CREATE TABLE IF NOT EXISTS trade_analyses (
+    trade_id TEXT PRIMARY KEY REFERENCES trades(trade_id) ON DELETE CASCADE,
+    narrative TEXT NOT NULL,
+    narrative_citations_json TEXT NOT NULL,
+    findings_json TEXT NOT NULL,
+    grades_json TEXT NOT NULL,
+    mistake_tags TEXT NOT NULL,
+    process_quality_score INTEGER NOT NULL,
+    one_line_summary TEXT NOT NULL,
+    unverified_claims_json TEXT,
+    model_used TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    analysis_ts TEXT NOT NULL,
+    embedding BLOB,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_analyses_process_quality
+    ON trade_analyses(process_quality_score);
+CREATE INDEX IF NOT EXISTS idx_analyses_analysis_ts
+    ON trade_analyses(analysis_ts);
+
+CREATE TABLE IF NOT EXISTS trade_tags (
+    trade_id TEXT NOT NULL REFERENCES trades(trade_id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (trade_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tags_tag ON trade_tags(tag);
+
+CREATE TABLE IF NOT EXISTS trade_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_trade_id TEXT NOT NULL REFERENCES trades(trade_id) ON DELETE CASCADE,
+    target_trade_id TEXT NOT NULL REFERENCES trades(trade_id) ON DELETE CASCADE,
+    edge_type TEXT NOT NULL,
+    strength REAL,
+    reason TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (source_trade_id, target_trade_id, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_edges_source ON trade_edges(source_trade_id);
+CREATE INDEX IF NOT EXISTS idx_edges_target ON trade_edges(target_trade_id);
+CREATE INDEX IF NOT EXISTS idx_edges_type ON trade_edges(edge_type);
+
+CREATE TABLE IF NOT EXISTS trade_patterns (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    pattern_type TEXT NOT NULL,
+    aggregate_json TEXT NOT NULL,
+    member_trade_ids_json TEXT NOT NULL,
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_patterns_type ON trade_patterns(pattern_type);
+CREATE INDEX IF NOT EXISTS idx_patterns_window
+    ON trade_patterns(window_start, window_end);
+"""
+
+# ============================================================================
 # Entry snapshot components
 # ============================================================================
 
