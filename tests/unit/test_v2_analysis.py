@@ -1024,3 +1024,225 @@ def test_validate_analysis_output_process_quality_score_defaulting() -> None:
     pqs_entries_b = [u for u in unverified_b if u["kind"] == "process_quality_score"]
     assert len(pqs_entries_b) == 1
     assert pqs_entries_b[0]["raw"] == "high"
+
+
+# ---------------------------------------------------------------------------
+# M4 — wake integration
+#
+# Covers the idempotency guards, happy-path persistence, LLM-failure swallow
+# semantics, and the async thread dispatch. Daemon-side wiring is intentionally
+# NOT covered here — that's a one-line async dispatch exercised end-to-end in
+# M5's smoke test per the M4 directive.
+# ---------------------------------------------------------------------------
+
+
+def _seed_closed_trade_without_analysis(
+    store: Any,
+    entry_snapshot: Any,
+    exit_snapshot: Any,
+) -> str:
+    """Helper: seed a fully-closed trade with no analysis row. Returns trade_id."""
+    store.insert_entry_snapshot(entry_snapshot)
+    store.insert_exit_snapshot(exit_snapshot)
+    return entry_snapshot.trade_basics.trade_id
+
+
+def test_trigger_analysis_skips_if_already_analyzed(
+    tmp_journal_db: Any,
+    sample_entry_snapshot: Any,
+    sample_exit_snapshot: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An existing ``trade_analyses`` row short-circuits before any LLM call.
+
+    Asserted via a spy on ``insert_analysis`` — if the guard works, the spy
+    never fires. Also proves we don't even hit ``run_analysis``.
+    """
+    from hynous.analysis import wake_integration
+
+    trade_id = _seed_closed_trade_without_analysis(
+        tmp_journal_db, sample_entry_snapshot, sample_exit_snapshot,
+    )
+    # Pre-seed an analysis row so the guard triggers.
+    tmp_journal_db.insert_analysis(
+        trade_id=trade_id,
+        narrative="pre-existing",
+        narrative_citations=[],
+        findings=[],
+        grades={},
+        mistake_tags=[],
+        process_quality_score=50,
+        one_line_summary="pre",
+        unverified_claims=None,
+        model_used="test",
+        prompt_version="v1",
+    )
+
+    def _boom_run_analysis(**_kw: Any) -> Any:
+        raise AssertionError("run_analysis must not be called when already analyzed")
+
+    monkeypatch.setattr(wake_integration, "run_analysis", _boom_run_analysis)
+
+    insert_calls: list[dict[str, Any]] = []
+    original_insert = tmp_journal_db.insert_analysis
+
+    def _spy_insert(**kwargs: Any) -> None:
+        insert_calls.append(kwargs)
+        original_insert(**kwargs)
+
+    monkeypatch.setattr(tmp_journal_db, "insert_analysis", _spy_insert)
+
+    wake_integration.trigger_analysis_for_trade(
+        trade_id=trade_id,
+        journal_store=tmp_journal_db,
+    )
+
+    assert insert_calls == []
+
+
+def test_trigger_analysis_skips_if_not_closed(
+    tmp_journal_db: Any,
+    sample_entry_snapshot: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Open trade (no exit snapshot) short-circuits before any LLM call."""
+    from hynous.analysis import wake_integration
+
+    tmp_journal_db.insert_entry_snapshot(sample_entry_snapshot)
+    trade_id = sample_entry_snapshot.trade_basics.trade_id
+
+    def _boom_run_analysis(**_kw: Any) -> Any:
+        raise AssertionError("run_analysis must not be called on open trade")
+
+    monkeypatch.setattr(wake_integration, "run_analysis", _boom_run_analysis)
+
+    wake_integration.trigger_analysis_for_trade(
+        trade_id=trade_id,
+        journal_store=tmp_journal_db,
+    )
+
+    # Status still 'open' and no analysis written.
+    assert tmp_journal_db.get_analysis(trade_id) is None
+
+
+def test_trigger_analysis_happy_path_persists_analysis(
+    tmp_journal_db: Any,
+    sample_entry_snapshot: Any,
+    sample_exit_snapshot: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full pipeline: LLM mocked, embedding stubbed, analysis persisted.
+
+    Assertions cover narrative text, grades, and the ``unverified_claims=None``
+    default (no unverified content in a valid LLM output).
+    """
+    import json as _json
+
+    from hynous.analysis import wake_integration
+
+    trade_id = _seed_closed_trade_without_analysis(
+        tmp_journal_db, sample_entry_snapshot, sample_exit_snapshot,
+    )
+
+    fake_resp = _fake_response(content=_json.dumps(_valid_llm_output()))
+    monkeypatch.setattr(
+        "litellm.completion",
+        lambda **_kw: fake_resp,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        wake_integration,
+        "build_analysis_embedding",
+        lambda _text: b"emb",
+    )
+
+    wake_integration.trigger_analysis_for_trade(
+        trade_id=trade_id,
+        journal_store=tmp_journal_db,
+        model="anthropic/claude-sonnet-4.5",
+        prompt_version="v1",
+    )
+
+    persisted = tmp_journal_db.get_analysis(trade_id)
+    assert persisted is not None
+    assert persisted["narrative"].startswith("Entry fired on a clean composite")
+    assert persisted["grades"]["entry_quality_grade"] == 75
+    # A valid _valid_llm_output() yields no unverified claims; insert_analysis
+    # stores None in that column.
+    assert persisted["unverified_claims"] == []
+    assert persisted["model_used"] == "anthropic/claude-sonnet-4.5"
+    assert persisted["prompt_version"] == "v1"
+
+
+def test_trigger_analysis_swallows_llm_exception(
+    tmp_journal_db: Any,
+    sample_entry_snapshot: Any,
+    sample_exit_snapshot: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An LLM failure is caught inside the pipeline: no row written, no raise."""
+    from hynous.analysis import wake_integration
+
+    trade_id = _seed_closed_trade_without_analysis(
+        tmp_journal_db, sample_entry_snapshot, sample_exit_snapshot,
+    )
+
+    def _boom(**_kw: Any) -> Any:
+        raise RuntimeError("LLM provider down")
+
+    monkeypatch.setattr("litellm.completion", _boom, raising=False)
+
+    # Must NOT raise.
+    wake_integration.trigger_analysis_for_trade(
+        trade_id=trade_id,
+        journal_store=tmp_journal_db,
+    )
+
+    assert tmp_journal_db.get_analysis(trade_id) is None
+
+
+def test_trigger_analysis_async_dispatches_thread(
+    tmp_journal_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``trigger_analysis_async`` spawns a ``daemon=True`` thread with the
+    expected name and forwards its kwargs to :func:`trigger_analysis_for_trade`.
+    """
+    import threading
+
+    from hynous.analysis import wake_integration
+
+    captured: list[dict[str, Any]] = []
+    thread_meta: dict[str, Any] = {}
+
+    def _recorder(**kwargs: Any) -> None:
+        captured.append(kwargs)
+        current = threading.current_thread()
+        thread_meta["name"] = current.name
+        thread_meta["daemon"] = current.daemon
+
+    monkeypatch.setattr(
+        wake_integration, "trigger_analysis_for_trade", _recorder,
+    )
+
+    trade_id = "trade_abc1234567890a"
+    wake_integration.trigger_analysis_async(
+        trade_id=trade_id,
+        journal_store=tmp_journal_db,
+        model="test-model",
+        prompt_version="v1",
+    )
+
+    # Join the daemon thread; target runs quickly.
+    for t in threading.enumerate():
+        if t.name == f"analysis-{trade_id[:8]}":
+            t.join(timeout=2.0)
+            break
+
+    assert len(captured) == 1
+    assert captured[0]["trade_id"] == trade_id
+    assert captured[0]["journal_store"] is tmp_journal_db
+    assert captured[0]["model"] == "test-model"
+    assert captured[0]["prompt_version"] == "v1"
+    assert thread_meta["name"] == f"analysis-{trade_id[:8]}"
+    assert thread_meta["daemon"] is True

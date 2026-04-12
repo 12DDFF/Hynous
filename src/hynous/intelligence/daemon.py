@@ -2281,6 +2281,26 @@ class Daemon:
                                     daemon=self,
                                 )
                                 self._journal_store.insert_exit_snapshot(_exit_snap)
+                                # v2: trigger post-trade analysis in background.
+                                # Wrapped in its own try/except so a dispatch failure
+                                # (bad import, misconfig) never breaks exit capture.
+                                try:
+                                    from hynous.analysis.wake_integration import (
+                                        trigger_analysis_async,
+                                    )
+                                    trigger_analysis_async(
+                                        trade_id=_trade_id,
+                                        journal_store=self._journal_store,
+                                        model=self.config.v2.analysis_agent.model,
+                                        prompt_version=(
+                                            self.config.v2.analysis_agent.prompt_version
+                                        ),
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "Failed to dispatch analysis for %s",
+                                        _trade_id,
+                                    )
                         except Exception:
                             logger.exception(
                                 "v2 exit capture failed for %s", event["coin"],
