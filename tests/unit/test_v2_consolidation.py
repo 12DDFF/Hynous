@@ -1,15 +1,17 @@
-"""Phase 6 Milestone 1 — consolidation edge-builder unit tests.
+"""Phase 6 Milestone 1 + 2 — consolidation edge-builder + rollup unit tests.
 
-Covers the four edge builders in :mod:`hynous.journal.consolidation` plus
-the dedup and aggregate counting contracts for :func:`build_edges`.
+Covers the four edge builders in :mod:`hynous.journal.consolidation`, the
+dedup and aggregate counting contracts for :func:`build_edges`, and the
+weekly pattern rollup (:func:`run_weekly_rollup`).
 
 All tests seed a tmp :class:`JournalStore` via the public
-``upsert_trade`` / ``insert_entry_snapshot`` API and invoke the builders
-directly. No mocks, no network, no LLM.
+``upsert_trade`` / ``insert_entry_snapshot`` / ``insert_analysis`` API and
+invoke the builders directly. No mocks, no network, no LLM.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -21,6 +23,7 @@ from hynous.journal.consolidation import (
     _build_temporal_edges,
     _insert_edge,
     build_edges,
+    run_weekly_rollup,
 )
 from hynous.journal.schema import TradeEntrySnapshot
 
@@ -480,3 +483,275 @@ def test_build_edges_returns_correct_count(
 
     assert count == len(rows)
     assert count == 4
+
+
+# ---------------------------------------------------------------------------
+# Weekly pattern rollup (Milestone 2)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_pattern(store: Any, pattern_id: str) -> dict[str, Any]:
+    """Return the trade_patterns row for ``pattern_id`` with JSON fields parsed."""
+    conn = store._connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM trade_patterns WHERE id = ?", (pattern_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, f"pattern {pattern_id} not found"
+    data = dict(row)
+    data["aggregate"] = json.loads(data["aggregate_json"])
+    data["member_trade_ids"] = json.loads(data["member_trade_ids_json"])
+    return data
+
+
+def test_run_weekly_rollup_empty_window(tmp_journal_db: Any) -> None:
+    """With no trades or analyses, rollup still upserts a pattern with empty aggregates."""
+    pattern_id = run_weekly_rollup(tmp_journal_db, window_days=30)
+
+    assert pattern_id is not None
+    assert pattern_id.startswith("system_health_")
+
+    row = _fetch_pattern(tmp_journal_db, pattern_id)
+    assert row["pattern_type"] == "system_health_report"
+    assert row["aggregate"]["total_analyses"] == 0
+    assert row["aggregate"]["mistake_tag_summary"] == []
+    assert row["aggregate"]["rejection_reasons"] == []
+    assert row["aggregate"]["grade_summary"] == {}
+    assert row["aggregate"]["regime_performance"] == []
+    assert row["member_trade_ids"] == []
+
+
+def test_run_weekly_rollup_with_mixed_data(
+    tmp_journal_db: Any, sample_entry_snapshot: TradeEntrySnapshot,
+) -> None:
+    """Mix of closed+analyzed+rejected trades in window; member_trade_ids includes all statuses."""
+    now = datetime.now(timezone.utc)
+
+    # Analyzed trade with entry snapshot (regime=normal) + analysis row
+    analyzed = _snapshot_with_regime(
+        sample_entry_snapshot,
+        trade_id="t_analyzed",
+        entry_ts=(now - timedelta(days=2)).isoformat(),
+        vol_1h_regime="normal",
+    )
+    tmp_journal_db.insert_entry_snapshot(analyzed)
+    tmp_journal_db.upsert_trade(
+        trade_id="t_analyzed", symbol="BTC", side="long", trade_type="macro",
+        status="closed", realized_pnl_usd=25.0, roe_pct=5.0,
+    )
+    tmp_journal_db.insert_analysis(
+        trade_id="t_analyzed",
+        narrative="n", narrative_citations=[], findings=[],
+        grades={"execution": 4}, mistake_tags=["late_entry"],
+        process_quality_score=70, one_line_summary="ok",
+        unverified_claims=None, model_used="test", prompt_version="v1",
+    )
+
+    # Closed trade with entry snapshot (regime=high) but no analysis
+    closed = _snapshot_with_regime(
+        sample_entry_snapshot,
+        trade_id="t_closed",
+        entry_ts=(now - timedelta(days=3)).isoformat(),
+        vol_1h_regime="high",
+    )
+    tmp_journal_db.insert_entry_snapshot(closed)
+    tmp_journal_db.upsert_trade(
+        trade_id="t_closed", symbol="BTC", side="long", trade_type="macro",
+        status="closed", realized_pnl_usd=-10.0, roe_pct=-2.0,
+    )
+
+    # Rejected trade — contributes to member_trade_ids + rejection_reasons
+    tmp_journal_db.upsert_trade(
+        trade_id="t_rejected", symbol="BTC", side="short", trade_type="macro",
+        status="rejected", entry_ts=(now - timedelta(days=1)).isoformat(),
+        rejection_reason="vol_too_high",
+    )
+
+    pattern_id = run_weekly_rollup(tmp_journal_db, window_days=30)
+    assert pattern_id is not None
+
+    row = _fetch_pattern(tmp_journal_db, pattern_id)
+    agg = row["aggregate"]
+    assert set(row["member_trade_ids"]) == {"t_analyzed", "t_closed", "t_rejected"}
+    assert agg["total_analyses"] == 1
+    assert len(agg["mistake_tag_summary"]) == 1
+    assert agg["mistake_tag_summary"][0]["tag"] == "late_entry"
+    assert agg["rejection_reasons"] == [{"reason": "vol_too_high", "count": 1}]
+    assert "execution" in agg["grade_summary"]
+    regime_buckets = {r["regime"]: r for r in agg["regime_performance"]}
+    assert set(regime_buckets.keys()) == {"normal", "high"}
+
+
+def test_run_weekly_rollup_aggregates_mistake_tags(tmp_journal_db: Any) -> None:
+    """CSV tag splitting: overlapping tags aggregate count/avg_pqs/avg_pnl, sorted by count desc."""
+    now = datetime.now(timezone.utc)
+
+    # Trade A: pnl=20, tags={late_entry, size_too_large}, pqs=80
+    tmp_journal_db.upsert_trade(
+        trade_id="t_a", symbol="BTC", side="long", trade_type="macro",
+        status="closed", entry_ts=(now - timedelta(days=1)).isoformat(),
+        realized_pnl_usd=20.0, roe_pct=4.0,
+    )
+    tmp_journal_db.insert_analysis(
+        trade_id="t_a",
+        narrative="", narrative_citations=[], findings=[],
+        grades={}, mistake_tags=["late_entry", "size_too_large"],
+        process_quality_score=80, one_line_summary="",
+        unverified_claims=None, model_used="m", prompt_version="v",
+    )
+
+    # Trade B: pnl=-10, tags={late_entry}, pqs=40 → late_entry count=2
+    tmp_journal_db.upsert_trade(
+        trade_id="t_b", symbol="BTC", side="long", trade_type="macro",
+        status="closed", entry_ts=(now - timedelta(days=2)).isoformat(),
+        realized_pnl_usd=-10.0, roe_pct=-2.0,
+    )
+    tmp_journal_db.insert_analysis(
+        trade_id="t_b",
+        narrative="", narrative_citations=[], findings=[],
+        grades={}, mistake_tags=["late_entry"],
+        process_quality_score=40, one_line_summary="",
+        unverified_claims=None, model_used="m", prompt_version="v",
+    )
+
+    pattern_id = run_weekly_rollup(tmp_journal_db, window_days=30)
+    assert pattern_id is not None
+    row = _fetch_pattern(tmp_journal_db, pattern_id)
+    tags = row["aggregate"]["mistake_tag_summary"]
+
+    # Sorted by count desc: late_entry (2) before size_too_large (1)
+    assert [t["tag"] for t in tags] == ["late_entry", "size_too_large"]
+    late = tags[0]
+    assert late["count"] == 2
+    assert late["avg_process_quality"] == 60.0  # (80 + 40) / 2
+    assert late["avg_pnl"] == 5.0  # (20 + -10) / 2
+    size = tags[1]
+    assert size["count"] == 1
+    assert size["avg_process_quality"] == 80.0
+    assert size["avg_pnl"] == 20.0
+
+
+def test_run_weekly_rollup_aggregates_grade_distribution(tmp_journal_db: Any) -> None:
+    """Grade JSON parsed per-key; min/max/avg/sample_size correct across analyses."""
+    now = datetime.now(timezone.utc)
+
+    tmp_journal_db.upsert_trade(
+        trade_id="g_a", symbol="BTC", side="long", trade_type="macro",
+        status="closed", entry_ts=(now - timedelta(days=1)).isoformat(),
+    )
+    tmp_journal_db.insert_analysis(
+        trade_id="g_a",
+        narrative="", narrative_citations=[], findings=[],
+        grades={"execution": 5, "thesis": 3},
+        mistake_tags=[], process_quality_score=70, one_line_summary="",
+        unverified_claims=None, model_used="m", prompt_version="v",
+    )
+
+    tmp_journal_db.upsert_trade(
+        trade_id="g_b", symbol="BTC", side="long", trade_type="macro",
+        status="closed", entry_ts=(now - timedelta(days=2)).isoformat(),
+    )
+    tmp_journal_db.insert_analysis(
+        trade_id="g_b",
+        narrative="", narrative_citations=[], findings=[],
+        grades={"execution": 3, "thesis": 5},
+        mistake_tags=[], process_quality_score=60, one_line_summary="",
+        unverified_claims=None, model_used="m", prompt_version="v",
+    )
+
+    pattern_id = run_weekly_rollup(tmp_journal_db, window_days=30)
+    assert pattern_id is not None
+    row = _fetch_pattern(tmp_journal_db, pattern_id)
+    gs = row["aggregate"]["grade_summary"]
+
+    assert set(gs.keys()) == {"execution", "thesis"}
+    assert gs["execution"] == {"avg": 4.0, "min": 3, "max": 5, "sample_size": 2}
+    assert gs["thesis"] == {"avg": 4.0, "min": 3, "max": 5, "sample_size": 2}
+
+
+def test_run_weekly_rollup_aggregates_regime_performance(
+    tmp_journal_db: Any, sample_entry_snapshot: TradeEntrySnapshot,
+) -> None:
+    """Per-regime bucket: trade_count, wins, win_rate, total_pnl, avg_roe."""
+    now = datetime.now(timezone.utc)
+
+    # Two normal-regime trades: one win (+30, roe=6), one loss (-10, roe=-2)
+    normal_a = _snapshot_with_regime(
+        sample_entry_snapshot,
+        trade_id="n_a",
+        entry_ts=(now - timedelta(days=1)).isoformat(),
+        vol_1h_regime="normal",
+    )
+    tmp_journal_db.insert_entry_snapshot(normal_a)
+    tmp_journal_db.upsert_trade(
+        trade_id="n_a", symbol="BTC", side="long", trade_type="macro",
+        status="closed", realized_pnl_usd=30.0, roe_pct=6.0,
+    )
+    normal_b = _snapshot_with_regime(
+        sample_entry_snapshot,
+        trade_id="n_b",
+        entry_ts=(now - timedelta(days=2)).isoformat(),
+        vol_1h_regime="normal",
+    )
+    tmp_journal_db.insert_entry_snapshot(normal_b)
+    tmp_journal_db.upsert_trade(
+        trade_id="n_b", symbol="BTC", side="long", trade_type="macro",
+        status="closed", realized_pnl_usd=-10.0, roe_pct=-2.0,
+    )
+
+    # One high-regime trade, win (+50, roe=10)
+    high_a = _snapshot_with_regime(
+        sample_entry_snapshot,
+        trade_id="h_a",
+        entry_ts=(now - timedelta(days=3)).isoformat(),
+        vol_1h_regime="high",
+    )
+    tmp_journal_db.insert_entry_snapshot(high_a)
+    tmp_journal_db.upsert_trade(
+        trade_id="h_a", symbol="BTC", side="long", trade_type="macro",
+        status="closed", realized_pnl_usd=50.0, roe_pct=10.0,
+    )
+
+    pattern_id = run_weekly_rollup(tmp_journal_db, window_days=30)
+    assert pattern_id is not None
+    row = _fetch_pattern(tmp_journal_db, pattern_id)
+    buckets = {r["regime"]: r for r in row["aggregate"]["regime_performance"]}
+
+    assert set(buckets.keys()) == {"normal", "high"}
+    assert buckets["normal"]["trade_count"] == 2
+    assert buckets["normal"]["wins"] == 1
+    assert buckets["normal"]["win_rate"] == 50.0
+    assert buckets["normal"]["total_pnl"] == 20.0
+    assert buckets["normal"]["avg_roe"] == 2.0  # (6 + -2) / 2
+    assert buckets["high"]["trade_count"] == 1
+    assert buckets["high"]["wins"] == 1
+    assert buckets["high"]["win_rate"] == 100.0
+    assert buckets["high"]["total_pnl"] == 50.0
+    assert buckets["high"]["avg_roe"] == 10.0
+
+
+def test_run_weekly_rollup_idempotent_upsert(tmp_journal_db: Any) -> None:
+    """Two consecutive calls both return non-None pattern ids; table has a row per id."""
+    first = run_weekly_rollup(tmp_journal_db, window_days=30)
+    second = run_weekly_rollup(tmp_journal_db, window_days=30)
+
+    assert first is not None
+    assert second is not None
+
+    conn = tmp_journal_db._connect()
+    try:
+        rows = conn.execute(
+            "SELECT id FROM trade_patterns WHERE pattern_type = 'system_health_report'",
+        ).fetchall()
+    finally:
+        conn.close()
+
+    ids = {r["id"] for r in rows}
+    # Whether the two calls collide on the same timestamp-second or not, the
+    # upsert path is exercised: both ids are present, and the table contains
+    # at least one row per distinct id.
+    assert first in ids
+    assert second in ids
+    assert len(ids) >= 1
