@@ -1239,98 +1239,6 @@ def profile_card() -> rx.Component:
     )
 
 
-def _wp_accordion_item(group) -> rx.Component:
-    """Single accordion item for a symbol group."""
-    return rx.accordion.item(
-        rx.accordion.header(
-            rx.accordion.trigger(
-                rx.hstack(
-                    ticker_badge(group.symbol, font_size="0.8rem", font_weight="600"),
-                    rx.badge(
-                        group.count,
-                        variant="soft",
-                        color_scheme="gray",
-                        size="1",
-                    ),
-                    rx.spacer(),
-                    rx.accordion.icon(),
-                    spacing="2",
-                    align="center",
-                    width="100%",
-                ),
-                padding_y="0.5rem",
-                cursor="pointer",
-                _hover={"opacity": "0.8"},
-            ),
-        ),
-        rx.accordion.content(
-            rx.html(group.detail_html),
-            padding_bottom="0.5rem",
-        ),
-        value=group.symbol,
-    )
-
-
-def _watchlist_card() -> rx.Component:
-    """Watchlist card — collapsible accordion per symbol."""
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.hstack(
-                    rx.icon("eye", size=14, color="#fbbf24"),
-                    rx.text(
-                        "Watchlist",
-                        font_size="0.75rem",
-                        font_weight="600",
-                        color="#737373",
-                        text_transform="uppercase",
-                        letter_spacing="0.05em",
-                    ),
-                    spacing="2",
-                    align="center",
-                ),
-                rx.spacer(),
-                rx.badge(
-                    AppState.watchpoint_count,
-                    variant="soft",
-                    color_scheme="yellow",
-                    size="1",
-                ),
-                width="100%",
-                align="center",
-            ),
-            rx.cond(
-                AppState.watchpoint_groups.length() > 0,
-                rx.accordion.root(
-                    rx.foreach(AppState.watchpoint_groups, _wp_accordion_item),
-                    type="multiple",
-                    collapsible=True,
-                    variant="ghost",
-                    width="100%",
-                    style={
-                        "& [data-orientation='vertical']": {"border": "none"},
-                    },
-                ),
-                rx.center(
-                    rx.text(
-                        "No active watchpoints",
-                        font_size="0.8rem",
-                        color="#404040",
-                    ),
-                    padding="1.5rem",
-                ),
-            ),
-            spacing="3",
-            width="100%",
-        ),
-        background="#111111",
-        border="1px solid #1a1a1a",
-        border_radius="12px",
-        padding="1rem",
-        height="100%",
-    )
-
-
 def _suggestion(text: str, icon_name: str) -> rx.Component:
     """Single suggestion card."""
     return rx.box(
@@ -1806,9 +1714,6 @@ def home_page() -> rx.Component:
 
                 # Open Positions
                 rx.box(positions_section(), width="100%"),
-
-                # Watchlist
-                rx.box(_watchlist_card(), width="100%"),
 
                 flex="1",
                 spacing="4",
