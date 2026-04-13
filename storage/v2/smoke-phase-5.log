@@ -1,0 +1,69 @@
+2026-04-12 16:35:28,950 INFO  __main__: config loaded: mode=paper
+2026-04-12 16:35:28,960 INFO  satellite.schema: Satellite schema initialized
+2026-04-12 16:35:28,961 INFO  hynous.intelligence.daemon: Satellite initialized: /Users/bauthoi/Documents/Hynous/storage/satellite.db
+2026-04-12 16:35:28,963 ERROR hynous.intelligence.daemon: Satellite inference init failed, continuing without ML
+Traceback (most recent call last):
+  File "/Users/bauthoi/Documents/Hynous/src/hynous/intelligence/daemon.py", line 392, in __init__
+    from satellite.training.artifact import ModelArtifact
+  File "/Users/bauthoi/Documents/Hynous/satellite/training/artifact.py", line 22, in <module>
+    from satellite.normalize import FeatureScaler
+  File "/Users/bauthoi/Documents/Hynous/satellite/normalize.py", line 18, in <module>
+    import numpy as np
+ModuleNotFoundError: No module named 'numpy'
+2026-04-12 16:35:28,965 INFO  __main__: daemon constructed
+2026-04-12 16:35:28,965 INFO  hynous.intelligence.daemon: Daemon started (price=60s, deriv=300s, review=3600s, curiosity=900s, decay=21600s, conflicts=1800s, health=3600s, backfill=43200s, scanner=ON)
+2026-04-12 16:35:28,965 INFO  __main__: daemon.start() called
+2026-04-12 16:35:28,965 INFO  __main__: daemon running (duration=infinite)
+2026-04-12 16:35:30,131 INFO  hynous.data.providers.hyperliquid: HyperliquidProvider initialized (url=https://api.hyperliquid.xyz)
+2026-04-12 16:35:30,134 INFO  hynous.data.providers.paper: Loaded paper state: $1000.00 balance, 0 positions, 0 fills
+2026-04-12 16:35:30,134 INFO  hynous.data.providers.paper: PaperProvider initialized (balance=$1000.00, positions=0)
+2026-04-12 16:35:31,751 INFO  hynous.data.providers.hynous_data: HynousDataClient initialized → http://127.0.0.1:8100
+2026-04-12 16:35:31,752 INFO  hynous.data.providers.coinglass: CoinglassProvider initialized
+2026-04-12 16:35:35,558 INFO  hynous.intelligence.daemon: Restored daily PnL from disk: $0.00 (0 entries, 0 micro)
+2026-04-12 16:35:35,576 INFO  hynous.intelligence.daemon: v2 journal store initialized: storage/v2/journal.db
+2026-04-12 16:35:35,579 INFO  hynous.intelligence.daemon: v2 mechanical entry trigger initialized: ml_signal_driven (thresh=50.00 dir=0.55 eq=60 vol<=high)
+2026-04-12 16:35:35,584 INFO  hynous.intelligence.daemon: v2 batch rejection cron started (interval=3600s)
+2026-04-12 16:35:35,584 WARNING hynous.data.providers.ws_feeds: WS market feed connecting to wss://api.hyperliquid.xyz/ws (coins: ['BTC', 'ETH', 'SOL'])...
+2026-04-12 16:35:35,584 WARNING hynous.data.providers.ws_feeds: MarketDataFeed started for coins: ['BTC', 'ETH', 'SOL']
+2026-04-12 16:35:35,585 WARNING hynous.intelligence.daemon: WS market data feed started via provider
+2026-04-12 16:35:35,593 INFO  satellite.weight_updater: Weight update skipped: 0/30 trades
+2026-04-12 16:35:35,860 INFO  websocket: Websocket connected
+2026-04-12 16:35:35,862 WARNING hynous.data.providers.ws_feeds: WS market feed connected — 13 subscriptions sent
+2026-04-12 16:36:29,200 INFO  __main__: heartbeat: 60s elapsed
+2026-04-12 16:37:29,437 INFO  __main__: heartbeat: 120s elapsed
+2026-04-12 16:38:29,674 INFO  __main__: heartbeat: 181s elapsed
+2026-04-12 16:39:29,912 INFO  __main__: heartbeat: 241s elapsed
+2026-04-12 16:39:34,813 INFO  hynous.intelligence.scanner: Scanner warmed up: 5 price polls, 0 deriv polls, 0 liquid pairs
+2026-04-12 16:40:30,147 INFO  __main__: heartbeat: 301s elapsed
+2026-04-12 16:41:15,580 WARNING hynous.intelligence.daemon: Labeler: labeled 19 snapshots
+2026-04-12 16:41:30,348 INFO  __main__: heartbeat: 361s elapsed
+2026-04-12 16:42:30,582 INFO  __main__: heartbeat: 422s elapsed
+2026-04-12 16:43:30,824 INFO  __main__: heartbeat: 482s elapsed
+2026-04-12 16:44:31,059 INFO  __main__: heartbeat: 542s elapsed
+2026-04-12 16:45:31,280 INFO  __main__: heartbeat: 602s elapsed
+2026-04-12 16:46:31,514 INFO  __main__: heartbeat: 663s elapsed
+2026-04-12 16:47:31,759 INFO  __main__: heartbeat: 723s elapsed
+2026-04-12 16:48:31,998 INFO  __main__: heartbeat: 783s elapsed
+2026-04-12 16:49:32,231 INFO  __main__: heartbeat: 843s elapsed
+2026-04-12 16:50:32,485 INFO  __main__: heartbeat: 904s elapsed
+2026-04-12 16:51:32,682 INFO  __main__: heartbeat: 964s elapsed
+2026-04-12 16:52:32,919 INFO  __main__: heartbeat: 1024s elapsed
+2026-04-12 16:53:33,147 INFO  __main__: heartbeat: 1084s elapsed
+2026-04-12 16:54:33,398 INFO  __main__: heartbeat: 1144s elapsed
+2026-04-12 16:55:33,648 INFO  __main__: heartbeat: 1205s elapsed
+2026-04-12 16:56:33,871 INFO  __main__: heartbeat: 1265s elapsed
+2026-04-12 16:57:34,110 INFO  __main__: heartbeat: 1325s elapsed
+2026-04-12 16:58:34,345 INFO  __main__: heartbeat: 1385s elapsed
+2026-04-12 16:59:34,573 INFO  __main__: heartbeat: 1446s elapsed
+2026-04-12 17:00:34,806 INFO  __main__: heartbeat: 1506s elapsed
+2026-04-12 17:01:35,035 INFO  __main__: heartbeat: 1566s elapsed
+2026-04-12 17:02:35,279 INFO  __main__: heartbeat: 1626s elapsed
+2026-04-12 17:03:35,502 INFO  __main__: heartbeat: 1687s elapsed
+2026-04-12 17:04:35,738 INFO  __main__: heartbeat: 1747s elapsed
+2026-04-12 17:05:35,982 INFO  __main__: heartbeat: 1807s elapsed
+2026-04-12 17:06:36,222 INFO  __main__: heartbeat: 1867s elapsed
+2026-04-12 17:07:36,456 INFO  __main__: heartbeat: 1927s elapsed
+2026-04-12 17:07:40,990 INFO  __main__: received signal 2, stopping
+2026-04-12 17:07:42,374 INFO  hynous.intelligence.daemon: Daemon stopped (wakes=0, watchpoints=0, learning=0)
+2026-04-12 17:07:42,375 INFO  __main__: daemon.stop() called
+2026-04-12 17:07:42,375 INFO  __main__: run_daemon complete: 1933s elapsed, no fatal errors

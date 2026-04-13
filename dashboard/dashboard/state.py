@@ -16,7 +16,7 @@ from collections import deque
 from pathlib import Path
 from pydantic import BaseModel
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
