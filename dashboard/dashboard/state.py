@@ -257,91 +257,154 @@ class Position(BaseModel):
     realized_pnl: float = 0.0  # Locked-in PnL from partial exits
 
 
-class ClosedTrade(BaseModel):
-    """Closed trade for journal display."""
+class TradeRow(rx.Base):
+    """v2 journal trade summary row — shape matches TradeSummary + analysis projections."""
+    trade_id: str
     symbol: str
     side: str
-    entry_px: float
-    exit_px: float
-    pnl_pct: float
-    pnl_usd: float
-    closed_at: str
-    close_type: str = "full"
-    duration_hours: float = 0.0
-    duration_str: str = ""  # Pre-formatted: "4.2h" or "1.3d"
-    date: str = ""  # Pre-formatted date string (YYYY-MM-DD)
-    trade_id: str = ""  # close node ID (for expand tracking)
-    thesis: str = ""  # from linked trade_entry
-    stop_loss: float = 0.0
-    take_profit: float = 0.0
-    confidence: float = 0.0  # 0-1
-    rr_ratio: float = 0.0
-    trade_type: str = ""  # "micro" or "macro"
-    mfe_pct: float = 0.0         # max favorable excursion ROE % (peak, gross)
-    mfe_usd: float = 0.0         # peak dollar value (mfe_pct / 100 * margin)
-    mae_pct: float = 0.0         # max adverse excursion ROE % (trough, negative = drawdown)
-    mae_usd: float = 0.0         # trough dollar value
-    lev_return_pct: float = 0.0  # net leveraged ROE % (same basis as mfe_pct)
-    leverage: int = 0            # position leverage; 0 = unknown (pre-signal)
-    fee_loss: bool = False  # directionally correct but fees ate profit
-    fee_heavy:    bool  = False   # fees took >50% of gross profit
-    fee_estimate: float = 0.0    # estimated round-trip fees in USD
-    pnl_gross:    float = 0.0    # raw PnL before fees
-    detail_html: str = ""  # pre-rendered HTML for expanded view
+    status: str
+    entry_ts: str = ""
+    exit_ts: str = ""
+    entry_px: float = 0.0
+    exit_px: float = 0.0
+    realized_pnl_usd: float = 0.0
+    roe_pct: float = 0.0
+    hold_duration_s: int = 0
+    exit_classification: str = ""
+    peak_roe: float = 0.0
+    leverage: int = 0
+    # Analysis projections (populated only by search_journal path or detail fetch)
+    process_quality_score: int = 0
+    mistake_tags_csv: str = ""
+    one_line_summary: str = ""
 
 
-def _build_trade_detail_html(d: dict) -> str:
-    """Build pre-rendered HTML for an expanded trade detail panel."""
-    parts = []
-    thesis = d.get("thesis", "")
-    if thesis:
-        esc = thesis.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        parts.append(
-            f'<div style="color:#a3a3a3;font-size:0.82rem;line-height:1.5;'
-            f'margin-bottom:8px;padding:8px 10px;background:#111;border-radius:4px;'
-            f'border-left:2px solid #525252">{esc}</div>'
+def _row_from_summary(d: dict) -> "TradeRow":
+    """Coerce None -> default before constructing TradeRow from an API dict.
+
+    The v2 journal API returns None for missing optional fields; this helper
+    maps each expected key to a default when absent or None so TradeRow
+    construction never crashes. Used by both load_journal_v2 and search_journal.
+    """
+    def g(key: str, default):
+        v = d.get(key)
+        return default if v is None else v
+
+    return TradeRow(
+        trade_id=g("trade_id", ""),
+        symbol=g("symbol", ""),
+        side=g("side", ""),
+        status=g("status", ""),
+        entry_ts=g("entry_ts", ""),
+        exit_ts=g("exit_ts", ""),
+        entry_px=float(g("entry_px", 0.0)),
+        exit_px=float(g("exit_px", 0.0)),
+        realized_pnl_usd=float(g("realized_pnl_usd", 0.0)),
+        roe_pct=float(g("roe_pct", 0.0)),
+        hold_duration_s=int(g("hold_duration_s", 0)),
+        exit_classification=g("exit_classification", ""),
+        peak_roe=float(g("peak_roe", 0.0)),
+        leverage=int(g("leverage", 0)),
+        process_quality_score=int(g("process_quality_score", 0)),
+        mistake_tags_csv=g("mistake_tags_csv", ""),
+        one_line_summary=g("one_line_summary", ""),
+    )
+
+
+def _fetch_v2_journal_trades(params: dict) -> list[dict]:
+    import requests
+    try:
+        resp = requests.get(
+            "http://localhost:8000/api/v2/journal/trades",
+            params=params,
+            timeout=5,
         )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        logger.exception("Failed to fetch v2 journal trades")
+        return []
 
-    metrics = []
-    tt = d.get("trade_type", "")
-    if tt:
-        color = "#a855f7" if tt == "micro" else "#3b82f6"
-        metrics.append(("Type", f'<span style="color:{color};font-weight:500">{tt.upper()}</span>'))
-    conf = d.get("confidence", 0)
-    if conf > 0:
-        metrics.append(("Conviction", f"{conf*100:.0f}%"))
-    sl = d.get("stop_loss", 0)
-    if sl > 0:
-        metrics.append(("Stop Loss", f"${sl:,.2f}" if sl >= 1 else f"${sl:.4f}"))
-    tp = d.get("take_profit", 0)
-    if tp > 0:
-        metrics.append(("Take Profit", f"${tp:,.2f}" if tp >= 1 else f"${tp:.4f}"))
-    rr = d.get("rr_ratio", 0)
-    if rr > 0:
-        metrics.append(("R:R", f"{rr:.1f}:1"))
-    mfe = d.get("mfe_pct", 0)
-    if mfe > 0:
-        metrics.append(("Peak Profit", f"+{mfe:.1f}% ROE"))
-    if d.get("fee_estimate", 0) > 0:
-        gross = d.get("pnl_gross", 0)
-        fee   = d.get("fee_estimate", 0)
-        metrics.append(("Gross PnL", f"${gross:+.2f}"))
-        metrics.append(("Est. Fees", f'-${fee:.2f}'))
 
-    if metrics:
-        cells = "".join(
-            f'<div style="padding:4px 0"><span style="color:#525252;font-size:0.7rem;'
-            f'text-transform:uppercase;letter-spacing:0.05em;display:block">{label}</span>'
-            f'<span style="color:#e5e5e5;font-size:0.82rem">{val}</span></div>'
-            for label, val in metrics
+def _fetch_v2_journal_trade(trade_id: str) -> dict:
+    import requests
+    try:
+        resp = requests.get(
+            f"http://localhost:8000/api/v2/journal/trades/{trade_id}",
+            timeout=5,
         )
-        parts.append(
-            f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 16px">{cells}</div>'
-        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        logger.exception("Failed to fetch v2 journal trade %s", trade_id)
+        return {}
 
-    if not parts:
-        return '<div style="color:#525252;font-size:0.82rem">No details available</div>'
-    return "".join(parts)
+
+def _fetch_v2_journal_related(trade_id: str) -> list[dict]:
+    import requests
+    try:
+        resp = requests.get(
+            f"http://localhost:8000/api/v2/journal/trades/{trade_id}/related",
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return []
+
+
+def _fetch_v2_journal_stats(params: dict) -> dict:
+    import requests
+    try:
+        resp = requests.get(
+            "http://localhost:8000/api/v2/journal/stats",
+            params=params,
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return {}
+
+
+def _fetch_v2_journal_patterns() -> list[dict]:
+    import requests
+    try:
+        resp = requests.get(
+            "http://localhost:8000/api/v2/journal/patterns",
+            params={"limit": 5},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return []
+
+
+def _fetch_v2_journal_search(query: str) -> list[dict]:
+    import requests
+    try:
+        resp = requests.get(
+            "http://localhost:8000/api/v2/journal/search",
+            params={"q": query, "scope": "entry", "limit": 50},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return []
+
+
+def _rerun_v2_analysis(trade_id: str) -> None:
+    """Stub — server route POST /api/v2/journal/analyze/{id} does not exist yet.
+
+    Deferred to a later phase once the post-trade analysis agent surface is
+    finalized. The UI button is gated disabled so this is defensive-only.
+    """
+    logger.warning(
+        "rerun_analysis invoked for %s — server route not implemented, no-op.",
+        trade_id,
+    )
 
 
 class DaemonActivityFormatted(BaseModel):
@@ -608,9 +671,6 @@ class AppState(rx.State):
     scanner_subtitle: str = ""
     scanner_recent_html: str = ""
     news_feed_html: str = ""
-
-    # === Journal Equity (updated by poll loop) ===
-    journal_equity_data: list[dict] = []
 
     # === Activity Sidebar (Chat Page) ===
     wake_feed: List[WakeItem] = []
@@ -1340,26 +1400,6 @@ class AppState(rx.State):
             pass
         return activities_list, today_list[:15]
 
-    @staticmethod
-    def _fetch_equity_data(days: int) -> list[dict]:
-        """Fetch equity curve data (sync, runs in thread)."""
-        try:
-            from hynous.core.equity_tracker import get_equity_data
-            from datetime import datetime, timezone
-            data = get_equity_data(days=days)
-            result = []
-            for point in data:
-                ts = point.get("timestamp", 0)
-                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-                result.append({
-                    "date": dt.strftime("%m/%d"),
-                    "value": point.get("account_value", 0),
-                    "pnl": point.get("unrealized_pnl", 0),
-                })
-            return result
-        except Exception:
-            return []
-
     # === Portfolio Polling ===
 
     def start_polling(self):
@@ -1490,17 +1530,11 @@ class AppState(rx.State):
             _cluster_tick = (_cluster_tick + 1) % 1200  # wraps every ~5h, stays bounded
             if _cluster_tick % 4 == 0:
                 try:
-                    # Grab current equity_days for equity fetch
-                    eq_days = 30
-                    async with self:
-                        eq_days = self.equity_days
-
-                    scanner_data, wallet_data, daemon_events, equity_data = await asyncio.to_thread(
+                    scanner_data, wallet_data, daemon_events = await asyncio.to_thread(
                         lambda: (
                             AppState._fetch_scanner_status(),
                             AppState._fetch_wallet_snapshot(),
                             AppState._fetch_daemon_events(),
-                            AppState._fetch_equity_data(eq_days),
                         )
                     )
                     async with self:
@@ -1536,8 +1570,6 @@ class AppState(rx.State):
                         activities, today_wakes = daemon_events
                         self.daemon_activities = activities
                         self.daemon_today_wakes = today_wakes
-                        # Equity data
-                        self.journal_equity_data = equity_data
                 except Exception:
                     pass
 
@@ -2256,60 +2288,42 @@ class AppState(rx.State):
             "wakes_triggered": 0, "recent": [], "news": [],
         }
 
-    # === Journal State ===
+    # === Journal State (v2) ===
 
-    journal_win_rate: str = "—"
-    journal_total_pnl: str = "—"        # Real PnL from exchange (account - initial)
-    journal_recorded_pnl: str = "—"     # PnL sum from recorded trades in Nous
-    journal_profit_factor: str = "—"
-    journal_total_trades: str = "0"
-    journal_fee_losses: str = "0"
-    journal_fee_heavy_count:  str = "0"
-    journal_total_fees:       str = "—"
-    journal_pnl_mode:         str = "pct"   # "pct" = ROE %, "usd" = dollar amount
-    journal_current_streak: str = "—"
-    journal_max_win_streak: str = "0"
-    journal_max_loss_streak: str = "0"
-    journal_avg_duration: str = "—"
-    equity_days: int = 30
-    closed_trades: List[ClosedTrade] = []
-    symbol_breakdown: list[dict] = []
-
-    # Regret tab
-    journal_tab: str = "trades"
-    journal_expanded_trades: list[str] = []
-    journal_show_all_trades: bool = False
-
-    def set_journal_tab(self, tab: str):
-        self.journal_tab = tab
-
-    def set_journal_pnl_mode(self, mode: str):
-        self.journal_pnl_mode = mode
-
-    def toggle_trade_detail(self, trade_id: str):
-        """Toggle expand/collapse for a trade row."""
-        if trade_id in self.journal_expanded_trades:
-            self.journal_expanded_trades = [t for t in self.journal_expanded_trades if t != trade_id]
-        else:
-            self.journal_expanded_trades = self.journal_expanded_trades + [trade_id]
-
-    def toggle_show_all_trades(self):
-        self.journal_show_all_trades = not self.journal_show_all_trades
-
-    @_background
-    async def set_equity_days(self, days: str):
-        """Update equity chart timeframe — fetch in background to avoid blocking UI."""
-        async with self:
-            self.equity_days = int(days)
-        equity_data = await asyncio.to_thread(AppState._fetch_equity_data, int(days))
-        async with self:
-            self.journal_equity_data = equity_data
+    journal_trades: list[TradeRow] = []
+    journal_selected_trade_id: str = ""
+    journal_selected_trade_detail: dict = {}
+    journal_selected_trade_events: list[dict] = []
+    journal_selected_trade_analysis: dict = {}
+    journal_selected_trade_related: list[dict] = []
+    journal_filter_status: str = "all"
+    journal_filter_exit_classification: str = "all"
+    journal_filter_since: str = ""
+    journal_filter_until: str = ""
+    journal_filter_text: str = ""
+    journal_stats: dict = {
+        "total_trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "total_pnl": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "profit_factor": 0.0,
+        "best_trade": 0.0,
+        "worst_trade": 0.0,
+        "avg_hold_s": 0,
+    }
+    journal_patterns: list[dict] = []
+    journal_view_mode: str = "list"  # "list" | "detail" | "patterns"
+    journal_analysis_expanded_findings: list[str] = []
+    journal_analysis_rerun_pending: bool = False
 
     def go_to_journal(self):
         """Navigate to journal page and load data."""
         self.current_page = "journal"
         self.journal_unread = False
-        return AppState.load_journal
+        return AppState.load_journal_v2
 
     def go_to_debug(self):
         """Navigate to the debug page."""
@@ -2742,64 +2756,126 @@ class AppState(rx.State):
             })
         return result
 
-    @_background
-    async def load_journal(self):
-        """Load trade stats and equity data for journal page."""
-        data = await asyncio.to_thread(self._fetch_journal_data)
-        if data:
-            async with self:
-                stats, trades, breakdown = data
-                self.journal_win_rate = f"{stats['win_rate']:.0f}%" if stats['total_trades'] > 0 else "—"
-                # Real PnL from exchange (account_value - initial)
-                if self.portfolio_value > 0 and self.portfolio_initial > 0:
-                    real_pnl = self.portfolio_value - self.portfolio_initial
-                    rsign = "+" if real_pnl >= 0 else ""
-                    self.journal_total_pnl = f"{rsign}${real_pnl:.2f}"
-                else:
-                    self.journal_total_pnl = "—"
-                # Recorded trade PnL from Nous (for reference)
-                if stats['total_trades'] > 0:
-                    rsign2 = "+" if stats['total_pnl'] >= 0 else ""
-                    self.journal_recorded_pnl = f"{rsign2}${stats['total_pnl']:.2f}"
-                else:
-                    self.journal_recorded_pnl = "—"
-                pf = stats['profit_factor']
-                self.journal_profit_factor = f"{pf:.2f}" if pf != float('inf') else "∞" if stats['total_trades'] > 0 else "—"
-                self.journal_total_trades = str(stats['total_trades'])
-                self.journal_fee_losses       = str(stats.get('fee_losses', 0))
-                self.journal_fee_heavy_count  = str(stats.get('fee_heavy_count', 0))
-                total_fees = stats.get('total_fees', 0.0)
-                self.journal_total_fees = f"-${total_fees:.2f}" if total_fees > 0 else "—"
-                # Streaks
-                streak = stats['current_streak']
-                if streak > 0:
-                    self.journal_current_streak = f"+{streak}W"
-                elif streak < 0:
-                    self.journal_current_streak = f"{streak}L"
-                else:
-                    self.journal_current_streak = "—"
-                self.journal_max_win_streak = str(stats['max_win_streak'])
-                self.journal_max_loss_streak = str(stats['max_loss_streak'])
-                # Avg duration
-                dur = stats['avg_duration_hours']
-                if dur >= 24:
-                    self.journal_avg_duration = f"{dur / 24:.1f}d"
-                elif dur > 0:
-                    self.journal_avg_duration = f"{dur:.1f}h"
-                else:
-                    self.journal_avg_duration = "—"
-                self.closed_trades = trades
-                self.symbol_breakdown = breakdown
+    # === v2 Journal loaders / handlers ===
 
-        # Equity data — fetch immediately so chart isn't blank until poll loop fires
-        eq_days = self.equity_days
-        equity_data = await asyncio.to_thread(AppState._fetch_equity_data, eq_days)
+    @_background
+    async def load_journal_v2(self):
+        """Fetch journal data from /api/v2/journal/* endpoints."""
         async with self:
-            self.journal_equity_data = equity_data
+            filter_status = self.journal_filter_status
+            filter_classification = self.journal_filter_exit_classification
+            filter_since = self.journal_filter_since
+            filter_until = self.journal_filter_until
+
+        params: dict = {}
+        if filter_status != "all":
+            params["status"] = filter_status
+        if filter_classification != "all":
+            params["exit_classification"] = filter_classification
+        if filter_since:
+            params["since"] = filter_since
+        if filter_until:
+            params["until"] = filter_until
+
+        trades_data = await asyncio.to_thread(_fetch_v2_journal_trades, params)
+        stats_data = await asyncio.to_thread(_fetch_v2_journal_stats, {})
+        patterns_data = await asyncio.to_thread(_fetch_v2_journal_patterns)
+
+        async with self:
+            self.journal_trades = [_row_from_summary(t) for t in trades_data]
+            # Merge returned stats over the zeroed default so missing keys stay zero.
+            merged = dict(self.journal_stats)
+            for k, v in (stats_data or {}).items():
+                if v is not None:
+                    merged[k] = v
+            self.journal_stats = merged
+            self.journal_patterns = patterns_data
+
+    @_background
+    async def select_trade(self, trade_id: str):
+        """Load full detail bundle for a trade."""
+        async with self:
+            self.journal_selected_trade_id = trade_id
+            self.journal_view_mode = "detail"
+
+        detail = await asyncio.to_thread(_fetch_v2_journal_trade, trade_id)
+        related = await asyncio.to_thread(_fetch_v2_journal_related, trade_id)
+
+        async with self:
+            self.journal_selected_trade_detail = detail or {}
+            self.journal_selected_trade_events = (detail or {}).get("events", []) or []
+            self.journal_selected_trade_analysis = (detail or {}).get("analysis", {}) or {}
+            self.journal_selected_trade_related = related or []
+
+    @_background
+    async def search_journal(self, query: str):
+        """Semantic search over journal."""
+        async with self:
+            self.journal_filter_text = query
+
+        results = await asyncio.to_thread(_fetch_v2_journal_search, query)
+        trades: list[TradeRow] = []
+        for r in (results or [])[:50]:
+            tid = r.get("trade_id") if isinstance(r, dict) else None
+            if not tid:
+                continue
+            detail = await asyncio.to_thread(_fetch_v2_journal_trade, tid)
+            if not detail:
+                continue
+            analysis = detail.get("analysis") or {}
+            merged: dict = dict(detail)
+            merged["process_quality_score"] = analysis.get("process_quality_score", 0)
+            merged["mistake_tags_csv"] = ",".join(analysis.get("mistake_tags", []) or [])
+            merged["one_line_summary"] = analysis.get("one_line_summary", "") or ""
+            trades.append(_row_from_summary(merged))
+
+        async with self:
+            self.journal_trades = trades
+
+    @_background
+    async def rerun_analysis(self, trade_id: str):
+        """Manually re-trigger the analysis agent for a trade (stubbed — server route TBD)."""
+        async with self:
+            self.journal_analysis_rerun_pending = True
+
+        await asyncio.to_thread(_rerun_v2_analysis, trade_id)
+
+        # Refresh the detail view so UI reflects any server-side change.
+        await self.select_trade(trade_id)
+
+        async with self:
+            self.journal_analysis_rerun_pending = False
+
+    def set_journal_view_mode(self, mode: str):
+        self.journal_view_mode = mode
+        if mode == "list":
+            self.journal_selected_trade_id = ""
+            self.journal_selected_trade_detail = {}
+            self.journal_selected_trade_events = []
+            self.journal_selected_trade_analysis = {}
+            self.journal_selected_trade_related = []
+
+    def set_journal_filter_status(self, status: str):
+        self.journal_filter_status = status
+        return AppState.load_journal_v2
+
+    def set_journal_filter_exit_classification(self, value: str):
+        self.journal_filter_exit_classification = value
+        return AppState.load_journal_v2
+
+    def toggle_finding_expanded(self, finding_id: str):
+        if finding_id in self.journal_analysis_expanded_findings:
+            self.journal_analysis_expanded_findings = [
+                f for f in self.journal_analysis_expanded_findings if f != finding_id
+            ]
+        else:
+            self.journal_analysis_expanded_findings = (
+                self.journal_analysis_expanded_findings + [finding_id]
+            )
 
     async def reset_paper_stats(self):
-        """Reset paper trade stats — stamps current time as session start so old Nous
-        nodes are excluded from win rate / PnL calculations going forward."""
+        """Reset paper trade stats — stamps current time as session start so old
+        trade records are excluded from win rate / PnL calculations going forward."""
         def _do_reset():
             from hynous.data.providers.hyperliquid import get_provider
             from hynous.core.config import load_config
@@ -2808,92 +2884,3 @@ class AppState(rx.State):
                 provider.reset_paper_stats()
 
         await asyncio.to_thread(_do_reset)
-        await self.load_journal()
-
-    @staticmethod
-    def _fetch_journal_data():
-        """Fetch journal data from trade analytics (sync, runs in thread).
-
-        M3: Nous enrichment removed. Enrichment fields (thesis, stop_loss,
-        take_profit, confidence, rr_ratio, trade_type, mfe_pct, mae_pct,
-        mae_usd) are populated with empty defaults until M4 wires them from
-        the v2 journal. Numeric/boolean fields still on TradeRecord
-        (mfe_usd, lev_return_pct, fee_loss, fee_heavy, fee_estimate,
-        pnl_gross, leverage) are taken from the TradeRecord directly.
-        """
-        try:
-            from hynous.core.trade_analytics import get_trade_stats
-            stats = get_trade_stats()
-
-            trades = []
-            for t in stats.trades:
-                dur_h = round(t.duration_hours, 1)
-                if dur_h >= 24:
-                    dur_str = f"{dur_h / 24:.1f}d"
-                elif dur_h >= 1:
-                    dur_str = f"{dur_h:.1f}h"
-                elif dur_h > 0:
-                    dur_str = f"{max(1, int(dur_h * 60))}m"
-                else:
-                    dur_str = "—"
-
-                trades.append(ClosedTrade(
-                    symbol=t.symbol,
-                    side=t.side,
-                    entry_px=t.entry_px,
-                    exit_px=t.exit_px,
-                    pnl_pct=round(t.pnl_pct, 2),
-                    pnl_usd=round(t.pnl_usd, 2),
-                    closed_at=t.closed_at,
-                    close_type=t.close_type,
-                    duration_hours=dur_h,
-                    duration_str=dur_str,
-                    date=t.closed_at.split("T")[0] if "T" in t.closed_at else t.closed_at[:10],
-                    trade_id=f"{t.symbol}_{t.closed_at[:16]}",
-                    thesis="",
-                    stop_loss=0.0,
-                    take_profit=0.0,
-                    confidence=0.0,
-                    rr_ratio=0.0,
-                    trade_type="",
-                    mfe_pct=0.0,
-                    mfe_usd=t.mfe_usd,
-                    mae_pct=0.0,
-                    mae_usd=0.0,
-                    lev_return_pct=t.lev_return_pct,
-                    fee_loss=t.fee_loss,
-                    fee_heavy=t.fee_heavy,
-                    fee_estimate=t.fee_estimate,
-                    pnl_gross=t.pnl_gross,
-                    leverage=t.leverage,
-                    detail_html="",
-                ))
-            breakdown = [
-                {
-                    "symbol": sym,
-                    "trades": d["trades"],
-                    "win_rate": d["win_rate"],
-                    "pnl": f"${d['pnl']:.2f}",
-                    "pnl_positive": d["pnl"] >= 0,
-                }
-                for sym, d in sorted(stats.by_symbol.items())
-            ]
-            return (
-                {
-                    "win_rate": stats.win_rate,
-                    "total_pnl": stats.total_pnl,
-                    "profit_factor": stats.profit_factor,
-                    "total_trades": stats.total_trades,
-                    "current_streak": stats.current_streak,
-                    "max_win_streak": stats.max_win_streak,
-                    "max_loss_streak": stats.max_loss_streak,
-                    "avg_duration_hours": stats.avg_duration_hours,
-                    "fee_losses": stats.fee_losses,
-                    "fee_heavy_count": stats.fee_heavy_count,
-                    "total_fees": stats.total_fees,
-                },
-                trades,
-                breakdown,
-            )
-        except Exception:
-            return None

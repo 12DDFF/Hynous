@@ -111,11 +111,13 @@ _TOOL_COLORS = {
     "search_web": ("#e879f9", "rgba(232,121,249,0.12)"),           # fuchsia
     "get_my_costs": ("#94a3b8", "rgba(148,163,184,0.12)"),         # slate
     "get_account": ("#f59e0b", "rgba(245,158,11,0.12)"),           # amber
-    "execute_trade": ("#22c55e", "rgba(34,197,94,0.12)"),          # green
     "close_position": ("#ef4444", "rgba(239,68,68,0.12)"),         # red
     "modify_position": ("#a78bfa", "rgba(167,139,250,0.12)"),      # purple
-    "get_trade_stats": ("#60a5fa", "rgba(96,165,250,0.12)"),       # blue
     "data_layer": ("#22d3ee", "rgba(34,211,238,0.12)"),            # cyan
+    "get_book_history": ("#818cf8", "rgba(129,140,248,0.12)"),     # indigo
+    "monitor_signal": ("#facc15", "rgba(250,204,21,0.12)"),        # yellow
+    "search_trades": ("#e879f9", "rgba(232,121,249,0.12)"),        # fuchsia (shares with search_web — OK, different context)
+    "get_trade_by_id": ("#60a5fa", "rgba(96,165,250,0.12)"),       # blue
 }
 
 
@@ -206,20 +208,30 @@ def _tools_detail() -> rx.Component:
             "Check operating costs — API usage, subscriptions, burn rate",
         ),
         _tool_row(
-            "get_trade_stats",
-            "trending-up",
-            "Win rate, PnL, profit factor, streaks, per-symbol breakdown",
+            "get_book_history",
+            "history",
+            "Historical L2 orderbook snapshots for depth replay",
+        ),
+        _tool_row(
+            "monitor_signal",
+            "radar",
+            "Monitor custom price/volume signals with cooldowns",
+        ),
+        _tool_row(
+            "search_trades",
+            "search",
+            "Semantic search over journaled trades",
+        ),
+        _tool_row(
+            "get_trade_by_id",
+            "file-text",
+            "Retrieve full v2 journal bundle for a trade",
         ),
         # --- Trading ---
         _tool_row(
             "get_account",
             "wallet",
             "Balance, positions, orders — flexible views (summary/positions/orders/full)",
-        ),
-        _tool_row(
-            "execute_trade",
-            "arrow-up-right",
-            "Market or limit orders, optional SL/TP, per-trade leverage",
         ),
         _tool_row(
             "close_position",
