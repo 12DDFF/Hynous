@@ -1,0 +1,86 @@
+2026-04-12 17:43:32,255 INFO  __main__: config loaded: mode=paper
+2026-04-12 17:43:32,264 INFO  satellite.schema: Satellite schema initialized
+2026-04-12 17:43:32,265 INFO  hynous.intelligence.daemon: Satellite initialized: /Users/bauthoi/Documents/Hynous/storage/satellite.db
+2026-04-12 17:43:32,886 INFO  satellite.training.artifact: Loaded model artifact v2 (trained on 50132 samples)
+2026-04-12 17:43:33,601 INFO  hynous.intelligence.daemon: Satellite inference loaded: v2 (50132 samples, threshold 3.0%, shadow=True)
+2026-04-12 17:43:33,605 INFO  satellite.training.condition_artifact: Loaded condition artifact: entry_quality v1 (spearman=0.054)
+2026-04-12 17:43:33,606 INFO  satellite.training.condition_artifact: Loaded condition artifact: funding_4h v1 (spearman=0.000)
+2026-04-12 17:43:33,608 INFO  satellite.training.condition_artifact: Loaded condition artifact: mae_long v1 (spearman=0.228)
+2026-04-12 17:43:33,610 INFO  satellite.training.condition_artifact: Loaded condition artifact: mae_short v1 (spearman=0.272)
+2026-04-12 17:43:33,612 INFO  satellite.training.condition_artifact: Loaded condition artifact: move_30m v1 (spearman=0.492)
+2026-04-12 17:43:33,615 INFO  satellite.training.condition_artifact: Loaded condition artifact: range_30m v1 (spearman=0.551)
+2026-04-12 17:43:33,616 INFO  satellite.training.condition_artifact: Loaded condition artifact: sl_survival_03 v1 (spearman=0.274)
+2026-04-12 17:43:33,623 INFO  satellite.training.condition_artifact: Loaded condition artifact: sl_survival_05 v1 (spearman=0.201)
+2026-04-12 17:43:33,626 INFO  satellite.training.condition_artifact: Loaded condition artifact: vol_1h v1 (spearman=0.620)
+2026-04-12 17:43:33,628 INFO  satellite.training.condition_artifact: Loaded condition artifact: vol_4h v1 (spearman=0.663)
+2026-04-12 17:43:33,631 INFO  satellite.training.condition_artifact: Loaded condition artifact: vol_expand v1 (spearman=0.355)
+2026-04-12 17:43:33,633 INFO  satellite.training.condition_artifact: Loaded condition artifact: volume_1h v1 (spearman=0.317)
+2026-04-12 17:43:33,633 INFO  satellite.conditions: ConditionEngine loaded 12 models: entry_quality, funding_4h, mae_long, mae_short, move_30m, range_30m, sl_survival_03, sl_survival_05, vol_1h, vol_4h, vol_expand, volume_1h
+2026-04-12 17:43:33,633 INFO  hynous.intelligence.daemon: Loaded 12 condition models
+2026-04-12 17:43:33,634 INFO  hynous.intelligence.daemon: Condition wake evaluator initialized
+2026-04-12 17:43:33,638 INFO  satellite.tick_inference: Loaded tick model: direction_10s (10s horizon, sp=0.3263)
+2026-04-12 17:43:33,640 INFO  satellite.tick_inference: Loaded tick model: direction_120s (120s horizon, sp=0.0800)
+2026-04-12 17:43:33,643 INFO  satellite.tick_inference: Loaded tick model: direction_15s (15s horizon, sp=0.2676)
+2026-04-12 17:43:33,645 INFO  satellite.tick_inference: Loaded tick model: direction_180s (180s horizon, sp=0.0829)
+2026-04-12 17:43:33,647 INFO  satellite.tick_inference: Loaded tick model: direction_20s (20s horizon, sp=0.2306)
+2026-04-12 17:43:33,650 INFO  satellite.tick_inference: Loaded tick model: direction_30s (30s horizon, sp=0.1879)
+2026-04-12 17:43:33,652 INFO  satellite.tick_inference: Loaded tick model: direction_45s (45s horizon, sp=0.1328)
+2026-04-12 17:43:33,655 INFO  satellite.tick_inference: Loaded tick model: direction_60s (60s horizon, sp=0.1148)
+2026-04-12 17:43:33,655 INFO  satellite.tick_inference: TickInferenceEngine: 8 models loaded
+2026-04-12 17:43:33,655 INFO  hynous.intelligence.daemon: Tick inference engine loaded: ['direction_10s', 'direction_120s', 'direction_15s', 'direction_180s', 'direction_20s', 'direction_30s', 'direction_45s', 'direction_60s']
+2026-04-12 17:43:33,655 INFO  __main__: daemon constructed
+2026-04-12 17:43:33,655 INFO  hynous.intelligence.daemon: Daemon started (price=60s, deriv=300s, review=3600s, curiosity=900s, decay=21600s, conflicts=1800s, health=3600s, backfill=43200s, scanner=ON)
+2026-04-12 17:43:33,655 INFO  __main__: daemon.start() called
+2026-04-12 17:43:33,655 INFO  __main__: daemon running (duration=infinite)
+2026-04-12 17:43:34,676 INFO  hynous.data.providers.hyperliquid: HyperliquidProvider initialized (url=https://api.hyperliquid.xyz)
+2026-04-12 17:43:34,679 INFO  hynous.data.providers.paper: Loaded paper state: $1000.00 balance, 0 positions, 0 fills
+2026-04-12 17:43:34,679 INFO  hynous.data.providers.paper: PaperProvider initialized (balance=$1000.00, positions=0)
+2026-04-12 17:43:36,832 INFO  hynous.data.providers.hynous_data: HynousDataClient initialized → http://127.0.0.1:8100
+2026-04-12 17:43:36,834 INFO  hynous.data.providers.coinglass: CoinglassProvider initialized
+2026-04-12 17:43:41,579 INFO  hynous.intelligence.daemon: Restored daily PnL from disk: $0.00 (0 entries, 0 micro)
+2026-04-12 17:43:41,598 INFO  hynous.intelligence.daemon: v2 journal store initialized: storage/v2/journal.db
+2026-04-12 17:43:41,600 INFO  hynous.intelligence.daemon: v2 mechanical entry trigger initialized: ml_signal_driven (thresh=50.00 dir=0.55 eq=60 vol<=high)
+2026-04-12 17:43:41,603 INFO  hynous.intelligence.daemon: v2 batch rejection cron started (interval=3600s)
+2026-04-12 17:43:41,603 INFO  hynous.intelligence.daemon: v2 weekly rollup cron started (interval=168h, window=30d)
+2026-04-12 17:43:41,603 WARNING hynous.data.providers.ws_feeds: WS market feed connecting to wss://api.hyperliquid.xyz/ws (coins: ['ETH', 'BTC', 'SOL'])...
+2026-04-12 17:43:41,603 WARNING hynous.data.providers.ws_feeds: MarketDataFeed started for coins: ['ETH', 'BTC', 'SOL']
+2026-04-12 17:43:41,604 WARNING hynous.intelligence.daemon: WS market data feed started via provider
+2026-04-12 17:43:41,609 INFO  satellite.weight_updater: Weight update skipped: 0/30 trades
+2026-04-12 17:43:41,931 INFO  websocket: Websocket connected
+2026-04-12 17:43:41,932 WARNING hynous.data.providers.ws_feeds: WS market feed connected — 13 subscriptions sent
+2026-04-12 17:44:34,081 INFO  __main__: heartbeat: 60s elapsed
+2026-04-12 17:45:34,504 INFO  __main__: heartbeat: 121s elapsed
+2026-04-12 17:46:34,956 INFO  __main__: heartbeat: 181s elapsed
+2026-04-12 17:47:35,367 INFO  __main__: heartbeat: 242s elapsed
+2026-04-12 17:47:40,507 INFO  hynous.intelligence.scanner: Scanner warmed up: 5 price polls, 0 deriv polls, 0 liquid pairs
+2026-04-12 17:48:35,748 INFO  __main__: heartbeat: 302s elapsed
+2026-04-12 17:49:36,212 INFO  __main__: heartbeat: 363s elapsed
+2026-04-12 17:50:36,625 INFO  __main__: heartbeat: 423s elapsed
+2026-04-12 17:51:37,018 INFO  __main__: heartbeat: 483s elapsed
+2026-04-12 17:52:37,491 INFO  __main__: heartbeat: 544s elapsed
+2026-04-12 17:53:37,957 INFO  __main__: heartbeat: 604s elapsed
+2026-04-12 17:54:38,395 INFO  __main__: heartbeat: 665s elapsed
+2026-04-12 17:55:38,857 INFO  __main__: heartbeat: 725s elapsed
+2026-04-12 17:56:39,327 INFO  __main__: heartbeat: 786s elapsed
+2026-04-12 17:57:39,729 INFO  __main__: heartbeat: 846s elapsed
+2026-04-12 17:58:40,181 INFO  __main__: heartbeat: 907s elapsed
+2026-04-12 17:59:40,663 INFO  __main__: heartbeat: 967s elapsed
+2026-04-12 18:00:40,971 INFO  __main__: heartbeat: 1027s elapsed
+2026-04-12 18:01:41,225 INFO  __main__: heartbeat: 1088s elapsed
+2026-04-12 18:02:41,460 INFO  __main__: heartbeat: 1148s elapsed
+2026-04-12 18:03:41,711 INFO  __main__: heartbeat: 1208s elapsed
+2026-04-12 18:04:41,962 INFO  __main__: heartbeat: 1268s elapsed
+2026-04-12 18:05:42,326 INFO  __main__: heartbeat: 1329s elapsed
+2026-04-12 18:06:42,781 INFO  __main__: heartbeat: 1389s elapsed
+2026-04-12 18:07:43,268 INFO  __main__: heartbeat: 1450s elapsed
+2026-04-12 18:08:43,739 INFO  __main__: heartbeat: 1510s elapsed
+2026-04-12 18:09:44,182 INFO  __main__: heartbeat: 1571s elapsed
+2026-04-12 18:10:44,619 INFO  __main__: heartbeat: 1631s elapsed
+2026-04-12 18:11:45,053 INFO  __main__: heartbeat: 1691s elapsed
+2026-04-12 18:12:45,482 INFO  __main__: heartbeat: 1752s elapsed
+2026-04-12 18:13:45,884 INFO  __main__: heartbeat: 1812s elapsed
+2026-04-12 18:14:46,267 INFO  __main__: heartbeat: 1873s elapsed
+2026-04-12 18:14:57,661 INFO  __main__: received signal 2, stopping
+2026-04-12 18:14:59,283 INFO  hynous.intelligence.daemon: Daemon stopped (wakes=0, watchpoints=0, learning=0)
+2026-04-12 18:14:59,283 INFO  __main__: daemon.stop() called
+2026-04-12 18:14:59,283 INFO  __main__: run_daemon complete: 1886s elapsed, no fatal errors
