@@ -110,20 +110,10 @@ _TOOL_COLORS = {
     "get_institutional_flow": ("#34d399", "rgba(52,211,153,0.12)"),# emerald
     "search_web": ("#e879f9", "rgba(232,121,249,0.12)"),           # fuchsia
     "get_my_costs": ("#94a3b8", "rgba(148,163,184,0.12)"),         # slate
-    "store_memory": ("#a3e635", "rgba(163,230,53,0.12)"),          # lime
-    "recall_memory": ("#a3e635", "rgba(163,230,53,0.12)"),         # lime
-    "update_memory": ("#a3e635", "rgba(163,230,53,0.12)"),         # lime
-    "delete_memory": ("#ef4444", "rgba(239,68,68,0.12)"),          # red
-    "explore_memory": ("#a3e635", "rgba(163,230,53,0.12)"),        # lime
-    "manage_conflicts": ("#fb923c", "rgba(251,146,60,0.12)"),      # orange
-    "manage_clusters": ("#86efac", "rgba(134,239,172,0.12)"),      # green-light
-    "analyze_memory": ("#94a3b8", "rgba(148,163,184,0.12)"),       # slate
-    "batch_prune": ("#94a3b8", "rgba(148,163,184,0.12)"),          # slate
     "get_account": ("#f59e0b", "rgba(245,158,11,0.12)"),           # amber
     "execute_trade": ("#22c55e", "rgba(34,197,94,0.12)"),          # green
     "close_position": ("#ef4444", "rgba(239,68,68,0.12)"),         # red
     "modify_position": ("#a78bfa", "rgba(167,139,250,0.12)"),      # purple
-    "manage_watchpoints": ("#fbbf24", "rgba(251,191,36,0.12)"),    # amber
     "get_trade_stats": ("#60a5fa", "rgba(96,165,250,0.12)"),       # blue
     "data_layer": ("#22d3ee", "rgba(34,211,238,0.12)"),            # cyan
 }
@@ -220,52 +210,6 @@ def _tools_detail() -> rx.Component:
             "trending-up",
             "Win rate, PnL, profit factor, streaks, per-symbol breakdown",
         ),
-        # --- Memory ---
-        _tool_row(
-            "store_memory",
-            "brain",
-            "Store memories with [[wikilinks]] — batch by calling multiple times",
-        ),
-        _tool_row(
-            "recall_memory",
-            "search",
-            "Search persistent memory for past analyses and knowledge",
-        ),
-        _tool_row(
-            "update_memory",
-            "pencil",
-            "Edit existing memories — update content, tags, or links",
-        ),
-        _tool_row(
-            "delete_memory",
-            "trash-2",
-            "Remove outdated or incorrect memories from the graph",
-        ),
-        _tool_row(
-            "explore_memory",
-            "network",
-            "Browse memory graph — neighbors, edges, clusters, paths",
-        ),
-        _tool_row(
-            "manage_conflicts",
-            "shield-alert",
-            "Review and resolve contradictory memories",
-        ),
-        _tool_row(
-            "manage_clusters",
-            "folder-tree",
-            "Create, rename, merge memory clusters — organize knowledge",
-        ),
-        _tool_row(
-            "analyze_memory",
-            "scan",
-            "Find stale, weak, or low-quality memories for cleanup",
-        ),
-        _tool_row(
-            "batch_prune",
-            "scissors",
-            "Bulk delete dormant or irrelevant memories",
-        ),
         # --- Trading ---
         _tool_row(
             "get_account",
@@ -286,11 +230,6 @@ def _tools_detail() -> rx.Component:
             "modify_position",
             "settings",
             "Update stop loss, take profit, leverage, or cancel orders",
-        ),
-        _tool_row(
-            "manage_watchpoints",
-            "eye",
-            "Set price alerts and conditional watchpoints on any asset",
         ),
         spacing="3",
         width="100%",

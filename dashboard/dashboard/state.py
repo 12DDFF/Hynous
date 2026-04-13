@@ -290,29 +290,6 @@ class ClosedTrade(BaseModel):
     detail_html: str = ""  # pre-rendered HTML for expanded view
 
 
-class PhantomRecord(BaseModel):
-    """Resolved phantom for regret tab display."""
-    symbol: str
-    side: str           # "long" / "short"
-    result: str         # "missed_opportunity" / "good_pass"
-    pnl_pct: float      # leveraged ROE %
-    anomaly_type: str   # e.g. "price_spike", "book_flip"
-    category: str       # "micro" / "macro"
-    date: str           # pre-formatted date string
-    headline: str       # anomaly headline from title
-    phantom_id: str = ""  # node ID (for expand tracking)
-    entry_px: float = 0.0
-    exit_px: float = 0.0
-    detail_html: str = ""  # pre-rendered HTML for expanded view
-
-
-class PlaybookRecord(BaseModel):
-    """Playbook entry for regret tab display."""
-    title: str
-    content: str
-    date: str           # pre-formatted date string
-
-
 def _build_trade_detail_html(d: dict) -> str:
     """Build pre-rendered HTML for an expanded trade detail panel."""
     parts = []
@@ -365,177 +342,6 @@ def _build_trade_detail_html(d: dict) -> str:
     if not parts:
         return '<div style="color:#525252;font-size:0.82rem">No details available</div>'
     return "".join(parts)
-
-
-def _build_phantom_detail_html(sig: dict, headline: str = "") -> str:
-    """Build pre-rendered HTML for an expanded phantom detail panel."""
-    parts = []
-    ep = sig.get("entry_price", 0) or sig.get("entry_px", 0)
-    xp = sig.get("exit_price", 0) or sig.get("exit_px", 0)
-    if ep > 0:
-        parts.append(f'<span style="color:#525252">Entry:</span> ${ep:,.2f}')
-    if xp > 0:
-        parts.append(f'<span style="color:#525252">Exit:</span> ${xp:,.2f}')
-    cat = sig.get("category", "")
-    if cat:
-        color = "#a855f7" if cat == "micro" else "#3b82f6"
-        parts.append(f'<span style="color:{color};font-weight:500">{cat.upper()}</span>')
-    at = sig.get("anomaly_type", "")
-    if at and headline:
-        esc = headline.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        parts.append(f'<span style="color:#525252">Signal:</span> {esc}')
-    desc = sig.get("description", "")
-    if desc:
-        esc = desc.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        parts.append(f'<div style="color:#a3a3a3;font-size:0.8rem;margin-top:4px">{esc}</div>')
-
-    if not parts:
-        return '<div style="color:#525252;font-size:0.82rem">No details available</div>'
-    return '<div style="font-size:0.82rem;color:#e5e5e5;line-height:1.7">' + "<br>".join(parts) + "</div>"
-
-
-def _enrich_trade(close_node: dict, nous_client) -> dict:
-    """Follow edges from a trade_close node to its entry node, extract enrichment data."""
-    result = {
-        "trade_id": close_node.get("id", ""),
-        "thesis": "",
-        "stop_loss": 0.0,
-        "take_profit": 0.0,
-        "confidence": 0.0,
-        "rr_ratio": 0.0,
-        "trade_type": "",
-        "mfe_pct": 0.0,
-        "mfe_usd": 0.0,
-        "mae_pct": 0.0,
-        "mae_usd": 0.0,
-        "lev_return_pct": 0.0,
-        "fee_loss": False,
-        "fee_heavy": False,
-        "fee_estimate": 0.0,
-        "pnl_gross": 0.0,
-    }
-
-    # Get MFE + lev_return_pct + trade_type + fee fields from close node's signals
-    try:
-        close_body = json.loads(close_node.get("content_body", "{}"))
-        close_signals = close_body.get("signals", {})
-        mfe_pct_raw              = float(close_signals.get("mfe_pct", 0))
-        result["mfe_pct"]  = mfe_pct_raw
-        result["mfe_usd"]  = float(close_signals.get("mfe_usd", 0.0))
-        lev_stored         = int(close_signals.get("leverage", 0))
-        sz_usd             = float(close_signals.get("size_usd", 0.0))
-        pnl_usd_sig        = float(close_signals.get("pnl_usd", 0.0))
-        lev_return_pct     = float(close_signals.get("lev_return_pct", 0.0))
-        # Derive lev_return_pct when missing
-        if lev_return_pct == 0.0:
-            margin_used = float(close_signals.get("margin_used", 0.0))
-            if margin_used > 0 and pnl_usd_sig != 0.0:
-                lev_return_pct = round(pnl_usd_sig / margin_used * 100, 2)
-        if lev_return_pct == 0.0 and lev_stored > 0 and sz_usd > 0 and pnl_usd_sig != 0.0:
-            lev_return_pct = round(pnl_usd_sig / (sz_usd / lev_stored) * 100, 2)
-        result["lev_return_pct"] = lev_return_pct
-        # Derive leverage when not stored
-        if lev_stored == 0 and lev_return_pct != 0.0 and sz_usd > 0 and pnl_usd_sig != 0.0:
-            lev_stored = max(1, round(abs(lev_return_pct * sz_usd / (pnl_usd_sig * 100))))
-        result["leverage"] = lev_stored
-        # Derive mfe_usd — try each available data path in order
-        if result["mfe_usd"] == 0.0 and mfe_pct_raw > 0:
-            # Path 1: from lev_return_pct + pnl (pre-existing)
-            if lev_return_pct != 0.0 and pnl_usd_sig != 0.0:
-                result["mfe_usd"] = round(mfe_pct_raw * pnl_usd_sig / lev_return_pct, 2)
-            # Path 2: from margin_used directly (new nodes from trigger close fix)
-            if result["mfe_usd"] == 0.0:
-                margin_sig = float(close_signals.get("margin_used", 0.0))
-                if margin_sig > 0:
-                    result["mfe_usd"] = round(mfe_pct_raw / 100 * margin_sig, 2)
-            # Path 3: derive margin from size_usd / leverage
-            if result["mfe_usd"] == 0.0 and sz_usd > 0 and lev_stored > 0:
-                result["mfe_usd"] = round(mfe_pct_raw / 100 * sz_usd / lev_stored, 2)
-        result["mae_pct"]        = float(close_signals.get("mae_pct", 0.0))
-        result["mae_usd"]        = float(close_signals.get("mae_usd", 0.0))
-        result["fee_loss"]       = bool(close_signals.get("fee_loss", False))
-        result["fee_heavy"]      = bool(close_signals.get("fee_heavy", False))
-        result["fee_estimate"]   = float(close_signals.get("fee_estimate", 0.0))
-        result["pnl_gross"]      = float(close_signals.get("pnl_gross", 0.0))
-        if close_signals.get("trade_type"):
-            result["trade_type"] = close_signals["trade_type"]
-    except Exception:
-        pass
-
-    # Follow part_of edge (in) to find the linked trade_entry node
-    node_id = close_node.get("id")
-    if not node_id or not nous_client:
-        return result
-
-    try:
-        edges = nous_client.get_edges(node_id, direction="in")
-        entry_node = None
-        for edge in edges:
-            if edge.get("type") == "part_of":
-                source_id = edge.get("source_id")
-                if source_id:
-                    entry_node = nous_client.get_node(source_id)
-                    if entry_node:
-                        break
-
-        # Fallback: list by subtype if no edge found (search fails without embeddings)
-        if not entry_node:
-            try:
-                close_body_fb = json.loads(close_node.get("content_body", "{}"))
-                symbol = close_body_fb.get("signals", {}).get("symbol", "")
-                closed_at = close_node.get("created_at", "")
-                if symbol:
-                    candidates = nous_client.list_nodes(
-                        subtype="custom:trade_entry",
-                        created_before=closed_at if closed_at else None,
-                        limit=10,
-                    )
-                    # list_nodes returns newest first — first symbol match is best
-                    for candidate in candidates:
-                        title = candidate.get("content_title", "")
-                        if symbol.upper() in title.upper():
-                            entry_node = candidate
-                            break
-            except Exception:
-                pass
-
-        if not entry_node:
-            return result
-
-        # Parse entry node
-        entry_body_raw = entry_node.get("content_body", "")
-        try:
-            entry_body = json.loads(entry_body_raw)
-        except (json.JSONDecodeError, TypeError):
-            return result
-
-        # Thesis text
-        result["thesis"] = entry_body.get("text", "")
-        # Extract thesis from text field — it starts with "Thesis: "
-        if result["thesis"].startswith("Thesis: "):
-            # Get just the thesis part (before "Entry:")
-            lines = result["thesis"].split("\n")
-            thesis_parts = []
-            for line in lines:
-                if line.startswith("Entry:") or line.startswith("Stop Loss:") or line.startswith("Confidence:"):
-                    break
-                thesis_parts.append(line.replace("Thesis: ", "", 1) if line.startswith("Thesis: ") else line)
-            result["thesis"] = "\n".join(thesis_parts).strip()
-
-        # Signals
-        entry_signals = entry_body.get("signals", {})
-        result["stop_loss"] = float(entry_signals.get("stop", 0))
-        result["take_profit"] = float(entry_signals.get("target", 0))
-        result["confidence"] = float(entry_signals.get("confidence", 0))
-        result["rr_ratio"] = float(entry_signals.get("rr_ratio", 0))
-        # Only set from entry if close signals didn't already have it
-        if not result["trade_type"]:
-            result["trade_type"] = entry_signals.get("trade_type", "macro")
-
-    except Exception:
-        pass
-
-    return result
 
 
 class DaemonActivityFormatted(BaseModel):
@@ -2471,16 +2277,8 @@ class AppState(rx.State):
 
     # Regret tab
     journal_tab: str = "trades"
-    regret_missed_count: str = "0"
-    regret_good_pass_count: str = "0"
-    regret_miss_rate: str = "—"
-    regret_miss_rate_high: bool = False  # True if miss rate >= 50%
-    regret_phantoms: list[PhantomRecord] = []
-    regret_playbooks: list[PlaybookRecord] = []
     journal_expanded_trades: list[str] = []
-    journal_expanded_phantoms: list[str] = []
     journal_show_all_trades: bool = False
-    journal_show_all_phantoms: bool = False
 
     def set_journal_tab(self, tab: str):
         self.journal_tab = tab
@@ -2495,18 +2293,8 @@ class AppState(rx.State):
         else:
             self.journal_expanded_trades = self.journal_expanded_trades + [trade_id]
 
-    def toggle_phantom_detail(self, phantom_id: str):
-        """Toggle expand/collapse for a phantom row."""
-        if phantom_id in self.journal_expanded_phantoms:
-            self.journal_expanded_phantoms = [p for p in self.journal_expanded_phantoms if p != phantom_id]
-        else:
-            self.journal_expanded_phantoms = self.journal_expanded_phantoms + [phantom_id]
-
     def toggle_show_all_trades(self):
         self.journal_show_all_trades = not self.journal_show_all_trades
-
-    def toggle_show_all_phantoms(self):
-        self.journal_show_all_phantoms = not self.journal_show_all_phantoms
 
     @_background
     async def set_equity_days(self, days: str):
@@ -3009,75 +2797,6 @@ class AppState(rx.State):
         async with self:
             self.journal_equity_data = equity_data
 
-        # Regret data (phantom tracker + playbooks from Nous)
-        regret = await asyncio.to_thread(self._fetch_regret_data)
-        if regret:
-            phantoms = []
-            for node in regret["missed"] + regret["good"]:
-                try:
-                    body = json.loads(node.get("content_body", "{}"))
-                    sig = body.get("signals", {})
-                    created = node.get("created_at", "")
-                    date_str = created.split("T")[0] if "T" in created else created[:10]
-                    headline = node.get("content_title", "")
-                    node_id = node.get("id", "")
-                    ep = float(sig.get("entry_price", 0) or sig.get("entry_px", 0) or 0)
-                    xp = float(sig.get("exit_price", 0) or sig.get("exit_px", 0) or 0)
-                    detail_html = _build_phantom_detail_html(sig, headline)
-                    phantoms.append(PhantomRecord(
-                        symbol=sig.get("symbol", "?"),
-                        side=sig.get("side", "?"),
-                        result=sig.get("result", "?"),
-                        pnl_pct=round(float(sig.get("pnl_pct", 0)), 1),
-                        anomaly_type=sig.get("anomaly_type", "?"),
-                        category=sig.get("category", "?"),
-                        date=date_str,
-                        headline=headline,
-                        phantom_id=node_id or f"p_{date_str}_{sig.get('symbol', '')}",
-                        entry_px=ep,
-                        exit_px=xp,
-                        detail_html=detail_html,
-                    ))
-                except Exception:
-                    continue
-            # Sort newest first
-            phantoms.sort(key=lambda p: p.date, reverse=True)
-
-            pbs = []
-            for node in regret["playbooks"]:
-                try:
-                    created = node.get("created_at", "")
-                    date_str = created.split("T")[0] if "T" in created else created[:10]
-                    body_raw = node.get("content_body", "")
-                    # Body may be JSON or plain text
-                    try:
-                        body_data = json.loads(body_raw)
-                        content = body_data.get("text", body_raw)
-                    except (json.JSONDecodeError, TypeError):
-                        content = body_raw
-                    pbs.append(PlaybookRecord(
-                        title=node.get("content_title", "Untitled"),
-                        content=content or "",
-                        date=date_str,
-                    ))
-                except Exception:
-                    continue
-            pbs.sort(key=lambda p: p.date, reverse=True)
-
-            missed_count = sum(1 for p in phantoms if p.result == "missed_opportunity")
-            good_count = sum(1 for p in phantoms if p.result == "good_pass")
-            total = missed_count + good_count
-            rate_pct = (missed_count / total * 100) if total > 0 else 0
-            rate = f"{rate_pct:.0f}%" if total > 0 else "—"
-
-            async with self:
-                self.regret_phantoms = phantoms
-                self.regret_playbooks = pbs
-                self.regret_missed_count = str(missed_count)
-                self.regret_good_pass_count = str(good_count)
-                self.regret_miss_rate = rate
-                self.regret_miss_rate_high = rate_pct >= 50
-
     async def reset_paper_stats(self):
         """Reset paper trade stats — stamps current time as session start so old Nous
         nodes are excluded from win rate / PnL calculations going forward."""
@@ -3093,32 +2812,18 @@ class AppState(rx.State):
 
     @staticmethod
     def _fetch_journal_data():
-        """Fetch journal data from trade analytics + Nous enrichment (sync, runs in thread)."""
+        """Fetch journal data from trade analytics (sync, runs in thread).
+
+        M3: Nous enrichment removed. Enrichment fields (thesis, stop_loss,
+        take_profit, confidence, rr_ratio, trade_type, mfe_pct, mae_pct,
+        mae_usd) are populated with empty defaults until M4 wires them from
+        the v2 journal. Numeric/boolean fields still on TradeRecord
+        (mfe_usd, lev_return_pct, fee_loss, fee_heavy, fee_estimate,
+        pnl_gross, leverage) are taken from the TradeRecord directly.
+        """
         try:
             from hynous.core.trade_analytics import get_trade_stats
             stats = get_trade_stats()
-
-            # Fetch raw close nodes from Nous for enrichment
-            close_nodes_by_key: dict[tuple, dict] = {}
-            nous_client = None
-            try:
-                from hynous.nous.client import get_client
-                nous_client = get_client()
-                if nous_client:
-                    raw_nodes = nous_client.list_nodes(subtype="custom:trade_close", limit=500)
-                    for node in raw_nodes:
-                        try:
-                            body = json.loads(node.get("content_body", "{}"))
-                            sig = body.get("signals", {})
-                            sym = sig.get("symbol", "")
-                            created = node.get("created_at", "")
-                            if sym and created:
-                                # Key: (symbol, date prefix) for matching to TradeRecords
-                                close_nodes_by_key[(sym, created[:16])] = node
-                        except Exception:
-                            continue
-            except Exception:
-                pass
 
             trades = []
             for t in stats.trades:
@@ -3132,20 +2837,6 @@ class AppState(rx.State):
                 else:
                     dur_str = "—"
 
-                # Match to raw Nous node for enrichment
-                enrichment = {}
-                close_node = close_nodes_by_key.get((t.symbol, t.closed_at[:16]))
-                if not close_node:
-                    # Try broader match by symbol + date
-                    for key, node in close_nodes_by_key.items():
-                        if key[0] == t.symbol and key[1][:10] == t.closed_at[:10]:
-                            close_node = node
-                            break
-                if close_node and nous_client:
-                    enrichment = _enrich_trade(close_node, nous_client)
-
-                detail_html = _build_trade_detail_html(enrichment) if enrichment else ""
-
                 trades.append(ClosedTrade(
                     symbol=t.symbol,
                     side=t.side,
@@ -3158,24 +2849,24 @@ class AppState(rx.State):
                     duration_hours=dur_h,
                     duration_str=dur_str,
                     date=t.closed_at.split("T")[0] if "T" in t.closed_at else t.closed_at[:10],
-                    trade_id=enrichment.get("trade_id", f"{t.symbol}_{t.closed_at[:16]}"),
-                    thesis=enrichment.get("thesis", ""),
-                    stop_loss=enrichment.get("stop_loss", 0.0),
-                    take_profit=enrichment.get("take_profit", 0.0),
-                    confidence=enrichment.get("confidence", 0.0),
-                    rr_ratio=enrichment.get("rr_ratio", 0.0),
-                    trade_type=enrichment.get("trade_type", ""),
-                    mfe_pct=enrichment.get("mfe_pct", 0.0),
-                    mfe_usd=enrichment.get("mfe_usd") or t.mfe_usd,
-                    mae_pct=enrichment.get("mae_pct", 0.0),
-                    mae_usd=enrichment.get("mae_usd", 0.0),
-                    lev_return_pct=enrichment.get("lev_return_pct") or t.lev_return_pct,
-                    fee_loss=enrichment.get("fee_loss", False) or t.fee_loss,
-                    fee_heavy=enrichment.get("fee_heavy", False) or t.fee_heavy,
-                    fee_estimate=enrichment.get("fee_estimate") or t.fee_estimate,
-                    pnl_gross=enrichment.get("pnl_gross") or t.pnl_gross,
-                    leverage=enrichment.get("leverage") or t.leverage,
-                    detail_html=detail_html,
+                    trade_id=f"{t.symbol}_{t.closed_at[:16]}",
+                    thesis="",
+                    stop_loss=0.0,
+                    take_profit=0.0,
+                    confidence=0.0,
+                    rr_ratio=0.0,
+                    trade_type="",
+                    mfe_pct=0.0,
+                    mfe_usd=t.mfe_usd,
+                    mae_pct=0.0,
+                    mae_usd=0.0,
+                    lev_return_pct=t.lev_return_pct,
+                    fee_loss=t.fee_loss,
+                    fee_heavy=t.fee_heavy,
+                    fee_estimate=t.fee_estimate,
+                    pnl_gross=t.pnl_gross,
+                    leverage=t.leverage,
+                    detail_html="",
                 ))
             breakdown = [
                 {
@@ -3204,22 +2895,5 @@ class AppState(rx.State):
                 trades,
                 breakdown,
             )
-        except Exception:
-            return None
-
-    @staticmethod
-    def _fetch_regret_data() -> dict | None:
-        """Fetch phantom + playbook data from Nous (sync, runs in thread)."""
-        try:
-            from hynous.nous.client import get_client
-            client = get_client()
-            if client is None:
-                return None
-
-            missed = client.list_nodes(subtype="custom:missed_opportunity", limit=500)
-            good = client.list_nodes(subtype="custom:good_pass", limit=500)
-            playbooks = client.list_nodes(subtype="custom:playbook", limit=30)
-
-            return {"missed": missed, "good": good, "playbooks": playbooks}
         except Exception:
             return None
