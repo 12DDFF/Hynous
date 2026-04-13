@@ -154,7 +154,7 @@ cd data-layer && pytest tests/
 
 Phase 4 is complete; the canonical CE-ignore list has been fully retired
 (M6b deleted the orphan test files and `pytest tests/` now runs
-unrestricted). Current baseline (phase 7 in progress): `576 passed / 0 failed`.
+unrestricted). Current baseline (phase 7 complete): `576 passed / 0 failed`.
 
 ---
 
@@ -167,7 +167,7 @@ unrestricted). Current baseline (phase 7 in progress): `576 passed / 0 failed`.
 - **Phase 4** complete (2026-04-12) — Nous server + Python client deleted, 9 decision-injection modules removed, 8 v1 memory tools removed, unused coinglass methods + perplexity/cryptocompare out, prompt trimmed ~40%, `scripts/run_daemon.py` standalone, `pytest tests/` = 482p/0f. Deferred to phase 7: `trade_analytics.py`, `memory_tracker.py`, dashboard memory/graph/brain pages, Makefile/pyproject/deploy rework, cryptocompare + perplexity + news alert detector.
 - **Phase 5** complete (2026-04-12) — mechanical entry loop: `src/hynous/mechanical_entry/` (interface, `MLSignalDrivenTrigger`, `compute_entry_params`, `executor`) + daemon rewire (`_evaluate_entry_signals` + `_periodic_ml_signal_check` at 60 s). v1 `intelligence/agent.py` deleted, all daemon LLM-wake methods removed (`grep agent.chat src/hynous/intelligence/daemon.py` → 0). User chat agent moved to `src/hynous/user_chat/` with `/api/v2/chat/*` router. Rejected entry signals write `status='rejected'` rows with `rejection_reason` for phase 6 batch analysis. Final baselines: 551p/0f, ruff 62, mypy 252. Deferred to phase 7: `intelligence/tools/market_watch.py` (writes to removed `daemon._pending_watches` — unreachable), `discord/bot.py` (stale `self.agent.chat` call — unreachable; bot not started from any v2 path).
 - **Phase 6** complete (2026-04-12) — consolidation + pattern rollup: `src/hynous/journal/consolidation.py` (4 edge builders: temporal preceded/followed-by, regime-bucket, rejection-reason, rejection-vs-contemporaneous) + weekly `run_weekly_rollup` writing `system_health_report` pattern rows (mistake_tag_summary, rejection_reasons, grade_summary, regime_performance). Edge builds fire automatically after analysis insert via `build_edges_for_trade` hook; daemon starts the rollup cron (`start_weekly_rollup_cron`, interval from `V2Config.consolidation.pattern_rollup_interval_hours`). Routes `/api/v2/journal/patterns` and `/api/v2/journal/trades/{id}/related` live in `api.py`. CLI manual trigger at `python -m hynous.journal rollup`. No-dedup design note preserved in `consolidation.py`. Final baselines: 576p/0f, ruff 62, mypy 252. Registry unchanged (18 tools).
-- **Phase 7** in progress (2026-04-12, M1–M7 complete, M8 current) — deferred-artifact cleanup: `intelligence/agent.py` + `memory_tracker.py` + `trade_analytics.py` deleted; v1 tools (`market_watch`, `trade_stats`, `watchpoints`) removed; `DiscordConfig` + `src/hynous/discord/` + cryptocompare + perplexity providers purged; briefing trimmed 435→244 lines; ruff/mypy floors dropped (src 51, dashboard 120, mypy 237); registry pinned at 15 tools; 576p/0f maintained throughout. M8 = documentation refresh + scanner dead-code sweep; M9 = close-out.
+- **Phase 7** complete (2026-04-12) — dashboard rework + deferred-artifact cleanup. M1–M3 removed Memory/Graph pages, `brain.html`/`graph.html`, `/api/nous` proxy. M4 rewrote the Journal page on `/api/v2/journal/*` (6 fetchers: trades, trade detail, related, stats, patterns, search). M5–M6 trimmed `intelligence/agent.py`, `memory_tracker.py`, `trade_analytics.py`, orphan tools, `Makefile` refresh, systemd rework (3→2 services), state cleanup. M7 deleted cryptocompare + perplexity + news + dormant tools. M8 = documentation refresh + scanner dead-code sweep. M9 = dashboard boot + 8-page import-through + 30-min paper smoke + component README audit (`intelligence`, `core`, `data` rewritten; `journal`, `satellite` left accurate-as-is) + acceptance doc. Final baselines: **576p/0f, mypy 223, ruff src 51, ruff dashboard 120, registry 15**. Smoke log: `storage/v2/smoke-phase-7.log`.
 
 ---
 
@@ -199,4 +199,4 @@ unrestricted). Current baseline (phase 7 in progress): `576 passed / 0 failed`.
 
 ---
 
-Last updated: 2026-04-12 (phase 7 M8 — documentation refresh)
+Last updated: 2026-04-12 (phase 7 complete)
