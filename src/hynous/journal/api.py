@@ -60,12 +60,18 @@ def _require_store() -> JournalStore:
 
 
 class TradeSummary(BaseModel):
-    """One row of ``GET /trades`` — minimum fields for a journal list view."""
+    """One row of ``GET /trades`` — minimum fields for a journal list view.
+
+    Includes the rejection triplet (``rejection_reason`` / ``trigger_source`` /
+    ``trigger_type``) and ``trade_type`` so the dashboard can distinguish
+    rejected rows from closed trades without a second fetch.
+    """
 
     trade_id: str
     symbol: str
     side: str
     status: str
+    trade_type: str | None = None
     entry_ts: str | None = None
     entry_px: float | None = None
     exit_ts: str | None = None
@@ -76,6 +82,9 @@ class TradeSummary(BaseModel):
     hold_duration_s: int | None = None
     peak_roe: float | None = None
     leverage: int | None = None
+    rejection_reason: str | None = None
+    trigger_source: str | None = None
+    trigger_type: str | None = None
 
 
 class AggregateStats(BaseModel):

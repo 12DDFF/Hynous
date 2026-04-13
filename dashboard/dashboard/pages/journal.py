@@ -136,6 +136,14 @@ def _trade_list_view() -> rx.Component:
 
 
 def _trade_row(trade: TradeRow) -> rx.Component:
+    return rx.cond(
+        trade.status == "rejected",
+        _rejection_row(trade),
+        _closed_trade_row(trade),
+    )
+
+
+def _closed_trade_row(trade: TradeRow) -> rx.Component:
     return rx.box(
         rx.hstack(
             rx.text(trade.symbol, font_weight="600", color="#e5e5e5", width="80px"),
@@ -170,6 +178,42 @@ def _trade_row(trade: TradeRow) -> rx.Component:
         cursor="pointer",
         on_click=AppState.select_trade(trade.trade_id),
         _hover={"background": "#111"},
+        width="100%",
+    )
+
+
+def _rejection_row(trade: TradeRow) -> rx.Component:
+    """Render a rejected-entry row. No prices, no ROE — shows reason + source."""
+    return rx.box(
+        rx.hstack(
+            rx.text(trade.symbol, font_weight="600", color="#a3a3a3", width="80px"),
+            rx.text(
+                "REJECTED",
+                padding="0.15rem 0.45rem",
+                background="#2a1a1a",
+                color="#f87171",
+                border_radius="4px",
+                font_size="0.7rem",
+                font_weight="600",
+                width="90px",
+                text_align="center",
+            ),
+            rx.text(trade.entry_ts[:16], color="#737373", font_size="0.8rem", width="140px"),
+            rx.text(
+                trade.rejection_reason,
+                color="#fbbf24",
+                font_size="0.85rem",
+                font_family="monospace",
+                min_width="220px",
+            ),
+            rx.text(trade.trigger_source, color="#525252", font_size="0.8rem"),
+            spacing="3",
+            align="center",
+            width="100%",
+        ),
+        padding="0.6rem 0.75rem",
+        border_bottom="1px solid #1a1a1a",
+        opacity="0.85",
         width="100%",
     )
 

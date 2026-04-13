@@ -242,6 +242,7 @@ class TradeRow(rx.Base):
     symbol: str
     side: str
     status: str
+    trade_type: str = ""
     entry_ts: str = ""
     exit_ts: str = ""
     entry_px: float = 0.0
@@ -252,6 +253,10 @@ class TradeRow(rx.Base):
     exit_classification: str = ""
     peak_roe: float = 0.0
     leverage: int = 0
+    # Rejection triplet — empty string on closed/open trades
+    rejection_reason: str = ""
+    trigger_source: str = ""
+    trigger_type: str = ""
     # Analysis projections (populated only by search_journal path or detail fetch)
     process_quality_score: int = 0
     mistake_tags_csv: str = ""
@@ -274,6 +279,7 @@ def _row_from_summary(d: dict) -> "TradeRow":
         symbol=g("symbol", ""),
         side=g("side", ""),
         status=g("status", ""),
+        trade_type=g("trade_type", ""),
         entry_ts=g("entry_ts", ""),
         exit_ts=g("exit_ts", ""),
         entry_px=float(g("entry_px", 0.0)),
@@ -284,6 +290,9 @@ def _row_from_summary(d: dict) -> "TradeRow":
         exit_classification=g("exit_classification", ""),
         peak_roe=float(g("peak_roe", 0.0)),
         leverage=int(g("leverage", 0)),
+        rejection_reason=g("rejection_reason", ""),
+        trigger_source=g("trigger_source", ""),
+        trigger_type=g("trigger_type", ""),
         process_quality_score=int(g("process_quality_score", 0)),
         mistake_tags_csv=g("mistake_tags_csv", ""),
         one_line_summary=g("one_line_summary", ""),
@@ -739,10 +748,12 @@ class AppState(rx.State):
     # === Stop Generation ===
 
     def stop_generation(self):
-        """Interrupt agent stream."""
-        global _agent
-        if _agent:
-            _agent.abort_stream()
+        """Interrupt agent stream.
+
+        v2 chat is a single blocking HTTP call to ``/api/v2/chat/message`` —
+        there is no token stream to abort. The button just clears UI state
+        so the user can submit a new message.
+        """
         self.is_loading = False
         self.active_tool = ""
         self.agent_status = "idle"
@@ -808,123 +819,53 @@ class AppState(rx.State):
 
     @_background
     async def stream_response(self):
-        """Stream agent response as a background task.
+        """Dispatch one chat turn to the v2 user-chat HTTP endpoint.
 
-        Runs chat_stream() in a thread so it never blocks the event loop.
-        State updates are pushed via async with self between chunks.
+        Phase 5 M6 replaced the v1 streaming agent with a blocking
+        request/response agent mounted at ``/api/v2/chat/message``. There
+        is no token stream — we block on the HTTP call in a worker
+        thread, then push the final reply as a single message.
         """
         async with self:
             user_input = self._pending_input
 
-        # Run in thread so agent init (7s on first call) doesn't block event loop
-        agent = await asyncio.to_thread(_get_agent)
-        tools_used = []
+        # Ensure daemon is up so ``/api/v2/chat/*`` has been wired.
+        await asyncio.to_thread(_get_agent)
 
-        if agent:
+        def _post_chat() -> tuple[str, str | None]:
+            """Blocking POST. Returns (reply, error). error is None on success."""
+            import requests
             try:
-                # Run sync streaming generator in a thread, consume via queue
-                import queue
-                chunk_queue: queue.Queue = queue.Queue()
-                sentinel = object()
-
-                def _produce():
-                    try:
-                        for chunk_type, chunk_data in agent.chat_stream(user_input):
-                            chunk_queue.put((chunk_type, chunk_data))
-                    except Exception as e:
-                        chunk_queue.put(("error", str(e)))
-                    chunk_queue.put(sentinel)
-
-                # Start producer thread
-                import threading
-                producer = threading.Thread(target=_produce, daemon=True)
-                producer.start()
-
-                # Consume chunks in batches — push state every ~80ms
-                # instead of per-token. Reduces state lock acquisitions
-                # and computed var evaluations by ~10-50x.
-                done = False
-                while not done:
-                    text_batch = []
-                    tool_event = None
-                    error_msg = None
-                    replace_text = None
-
-                    # Drain all available chunks without blocking
-                    while True:
-                        try:
-                            item = chunk_queue.get_nowait()
-                        except Exception:
-                            break  # queue empty
-
-                        if item is sentinel:
-                            done = True
-                            break
-                        chunk_type, chunk_data = item
-                        if chunk_type == "error":
-                            error_msg = chunk_data
-                            done = True
-                            break
-                        elif chunk_type == "text":
-                            text_batch.append(chunk_data)
-                        elif chunk_type == "tool":
-                            tool_event = chunk_data
-                            break  # Push tool events immediately
-                        elif chunk_type == "replace":
-                            replace_text = chunk_data
-
-                    # Push batched updates in a single state lock
-                    if text_batch or tool_event or error_msg or replace_text:
-                        async with self:
-                            if error_msg:
-                                self.streaming_text += f"\n\nSomething went wrong: {error_msg}"
-                                self.agent_status = "error"
-                            if replace_text:
-                                # Agent stripped text tool calls — replace with clean version
-                                self.streaming_text = replace_text
-                            elif text_batch:
-                                self.active_tool = ""
-                                self.streaming_text += "".join(text_batch)
-                            if tool_event:
-                                if self.streaming_text.strip():
-                                    self._append_msg(Message(
-                                        sender="hynous",
-                                        content=_highlight(self.streaming_text),
-                                        timestamp=self._format_time(),
-                                    ))
-                                    self.streaming_text = ""
-                                self.active_tool = tool_event
-                                if tool_event not in tools_used:
-                                    tools_used.append(tool_event)
-
-                    if not done:
-                        await asyncio.sleep(0.08)  # ~80ms between UI pushes
-
-                producer.join(timeout=5)
-
-            except Exception as e:
-                logger.error(f"Agent chat error: {e}")
-                async with self:
-                    self.streaming_text += "\n\nSomething went wrong on my end. Give me a moment and try again."
-                    self.agent_status = "error"
-        else:
-            async with self:
-                self.streaming_text = (
-                    f"I can't connect to my brain right now. "
-                    f"Make sure OPENROUTER_API_KEY is set in your .env file.\n\n"
-                    f"Error: {_agent_error or 'Unknown'}"
+                resp = requests.post(
+                    "http://localhost:8000/api/v2/chat/message",
+                    json={"message": user_input},
+                    timeout=120,
                 )
-                self.agent_status = "error"
+                if resp.status_code == 503:
+                    return "", "User chat agent not initialized on server."
+                resp.raise_for_status()
+                data = resp.json()
+                return str(data.get("reply", "")), None
+            except requests.exceptions.Timeout:
+                return "", "Chat request timed out after 120s."
+            except Exception as exc:
+                return "", f"{type(exc).__name__}: {exc}"
 
-        # Finalize
+        reply, error = await asyncio.to_thread(_post_chat)
+
         async with self:
-            response = self.streaming_text
-            display_tools = [_TOOL_TAG.get(t, t) for t in tools_used]
+            if error:
+                self.streaming_text = f"Something went wrong: {error}"
+                self.agent_status = "error"
+            else:
+                self.streaming_text = reply
+                self.agent_status = "idle"
+
             hynous_msg = Message(
                 sender="hynous",
-                content=_highlight(response),
+                content=_highlight(self.streaming_text),
                 timestamp=self._format_time(),
-                tools_used=display_tools,
+                tools_used=[],
             )
             self._append_msg(hynous_msg)
 
@@ -932,11 +873,9 @@ class AppState(rx.State):
             self.active_tool = ""
             self._add_activity("chat", f"Chat: {user_input[:30]}...", "info")
             self.is_loading = False
-            if self.agent_status != "error":
-                self.agent_status = "idle"
 
-        # Persist to disk (outside state lock)
-        self._save_chat(agent)
+        # Persist UI messages only (no agent history — v2 chat is stateless).
+        self._save_chat(None)
 
     def send_suggestion(self, suggestion: str):
         """Send a suggestion as a message."""
@@ -969,20 +908,28 @@ class AppState(rx.State):
 
     @_background
     async def init_daemon(self):
-        """Ensure agent + daemon are initialized (runs in background on page load)."""
+        """Ensure daemon is initialized (runs in background on page load)."""
         agent = await asyncio.to_thread(_get_agent)
         if agent:
             async with self:
-                self.selected_model = agent.config.agent.model
-                self.selected_sub_model = agent.config.memory.compression_model
+                # v2 still reads ``agent.model`` from the agent block;
+                # the memory.compression_model selector is dead in v2.
+                try:
+                    self.selected_model = agent.config.agent.model
+                except AttributeError:
+                    pass
 
     def _save_chat(self, agent=None):
-        """Persist current messages and agent history to disk."""
+        """Persist current UI messages to disk.
+
+        v2 chat is stateless on the server side (``/api/v2/chat/*`` rebuilds
+        the system prompt every turn), so there is no agent history to
+        snapshot. We keep the UI-message log only.
+        """
         try:
             from hynous.core.persistence import save
             ui_data = [m.model_dump() for m in self.messages]
-            history = agent._history if agent else []
-            save(ui_data, history)
+            save(ui_data, [])
         except Exception as e:
             logger.error(f"Failed to save chat: {e}")
 
@@ -2116,22 +2063,31 @@ class AppState(rx.State):
         return _MODEL_TO_LABEL.get(self.selected_sub_model, self.selected_sub_model)
 
     def set_agent_model(self, label: str):
-        """Switch the main agent model at runtime."""
+        """Switch the main agent model at runtime.
+
+        v2 has no in-process agent to rebuild a system prompt on — the
+        user-chat agent reads its model from config at each call, so we
+        only update the config value + persisted preference.
+        """
         model_id = _LABEL_TO_MODEL.get(label, label)
         self.selected_model = model_id
         agent = _get_agent()
         if agent:
-            agent.config.agent.model = model_id
-            agent.rebuild_system_prompt()
+            try:
+                agent.config.agent.model = model_id
+            except AttributeError:
+                pass
         _save_model_prefs(model_id, self.selected_sub_model)
 
     def set_sub_model(self, label: str):
-        """Switch the sub-agent (coach/compression) model at runtime."""
+        """Switch the sub-agent model preference.
+
+        v2 deleted the memory/compression sub-agent. The selector still
+        exists in the UI and the preference is persisted for phase 7's
+        dashboard rework; it is not applied to any live agent today.
+        """
         model_id = _LABEL_TO_MODEL.get(label, label)
         self.selected_sub_model = model_id
-        agent = _get_agent()
-        if agent:
-            agent.config.memory.compression_model = model_id
         _save_model_prefs(self.selected_model, model_id)
 
     # === Scanner Banner State ===
