@@ -11,12 +11,14 @@ import math
 log = logging.getLogger(__name__)
 
 
-def compute_rolling_ic(store, window: int = 30) -> dict[str, float]:
+def compute_rolling_ic(store, window: int = 10) -> dict[str, float]:
     """Compute Spearman IC for each signal against trade outcome ROE.
 
     Args:
         store: SatelliteStore with entry_snapshots table.
-        window: Last N closed trades to evaluate.
+        window: Last N closed trades to evaluate. Default 10 (tightened
+            from 30 in phase-8 new-M1 so the evaluator matches the
+            updater's default ``min_trades``).
 
     Returns:
         Dict of {signal_name: spearman_rho}. Positive = signal predicts winners.
