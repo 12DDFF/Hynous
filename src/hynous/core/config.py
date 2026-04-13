@@ -120,9 +120,6 @@ class ScannerConfig:
     momentum_5m_pct: float = 1.5               # 5m candle body % to trigger momentum_burst
     momentum_volume_mult: float = 2.0          # Volume multiplier vs rolling avg
     position_adverse_threshold: float = 0.40   # Imbalance threshold for adverse book signal
-    # News integration (CryptoCompare)
-    news_poll_enabled: bool = True             # Poll CryptoCompare for news (every deriv cycle)
-    news_wake_max_age_minutes: int = 30        # Only alert on news < 30min old
     # Peak reversion detector (mirrors DaemonConfig thresholds — scanner has its own ScannerConfig)
     peak_reversion_threshold_micro: float = 0.40  # Giveback fraction to fire peak_reversion for micro
     peak_reversion_threshold_macro: float = 0.50  # Giveback fraction to fire peak_reversion for macro
@@ -134,16 +131,6 @@ class DataLayerConfig:
     url: str = "http://127.0.0.1:8100"
     enabled: bool = True
     timeout: int = 5
-
-
-@dataclass
-class DiscordConfig:
-    """Discord bot settings — chat relay + daemon notifications."""
-    enabled: bool = False
-    token: str = ""              # from DISCORD_BOT_TOKEN env var
-    channel_id: int = 0          # channel for notifications + chat
-    stats_channel_id: int = 0    # separate channel for stats panel (0 = use channel_id)
-    allowed_user_ids: list[int] = field(default_factory=list)  # only respond to these Discord users (empty = any)
 
 
 @dataclass
@@ -253,7 +240,6 @@ class Config:
     hyperliquid: HyperliquidConfig = field(default_factory=HyperliquidConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
-    discord: DiscordConfig = field(default_factory=DiscordConfig)
     data_layer: DataLayerConfig = field(default_factory=DataLayerConfig)
     satellite: SatelliteConfig = field(default_factory=SatelliteConfig)
     v2: V2Config = field(default_factory=V2Config)
@@ -289,7 +275,6 @@ def load_config(config_path: Optional[str] = None) -> Config:
     hl_raw = raw.get("hyperliquid", {})
     daemon_raw = raw.get("daemon", {})
     scanner_raw = raw.get("scanner", {})
-    discord_raw = raw.get("discord", {})
     dl_raw = raw.get("data_layer", {})
     sat_raw = raw.get("satellite", {})
     v2_raw = raw.get("v2", {}) or {}
@@ -363,17 +348,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
             momentum_5m_pct=scanner_raw.get("momentum_5m_pct", 1.5),
             momentum_volume_mult=scanner_raw.get("momentum_volume_mult", 2.0),
             position_adverse_threshold=scanner_raw.get("position_adverse_threshold", 0.40),
-            news_poll_enabled=scanner_raw.get("news_poll_enabled", True),
-            news_wake_max_age_minutes=scanner_raw.get("news_wake_max_age_minutes", 30),
             peak_reversion_threshold_micro=scanner_raw.get("peak_reversion_threshold_micro", 0.40),
             peak_reversion_threshold_macro=scanner_raw.get("peak_reversion_threshold_macro", 0.50),
-        ),
-        discord=DiscordConfig(
-            enabled=discord_raw.get("enabled", False),
-            token=os.environ.get("DISCORD_BOT_TOKEN", ""),
-            channel_id=discord_raw.get("channel_id", 0),
-            stats_channel_id=discord_raw.get("stats_channel_id", 0),
-            allowed_user_ids=discord_raw.get("allowed_user_ids", []),
         ),
         data_layer=DataLayerConfig(
             url=dl_raw.get("url", "http://127.0.0.1:8100"),

@@ -28,9 +28,6 @@ dependencies = [
     # Data
     "hyperliquid-python-sdk>=0.1.0",
 
-    # Discord
-    "discord.py>=2.3.0",
-
     # Async
     "aiohttp>=3.9.0",
 

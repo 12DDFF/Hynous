@@ -88,14 +88,11 @@ _TOOL_DISPLAY = {
     "get_global_sentiment": "Reading global sentiment",
     "get_options_flow": "Analyzing options flow",
     "get_institutional_flow": "Tracking institutional flow",
-    "search_web": "Searching the web",
     "get_my_costs": "Checking costs",
     "get_account": "Checking account",
     "close_position": "Closing position",
     "modify_position": "Modifying position",
     "data_layer": "Querying data layer",
-    "get_book_history": "Fetching book history",
-    "monitor_signal": "Monitoring signal",
     "search_trades": "Searching trades",
     "get_trade_by_id": "Loading trade details",
 }
@@ -180,13 +177,10 @@ _TOOL_TAG = {
     "get_global_sentiment": "sentiment",
     "get_options_flow": "options",
     "get_institutional_flow": "institutional",
-    "search_web": "web search",
     "get_my_costs": "costs",
     "get_account": "account",
     "close_position": "close",
     "modify_position": "modify",
-    "get_book_history": "book history",
-    "monitor_signal": "monitor",
     "search_trades": "search trades",
     "get_trade_by_id": "trade details",
     "data_layer": "data layer",
@@ -492,7 +486,6 @@ def _apply_trading_settings(ts) -> None:
         _agent.config.scanner.wake_threshold = ts.scanner_wake_threshold
         _agent.config.scanner.book_poll_enabled = ts.scanner_micro_enabled
         _agent.config.scanner.max_anomalies_per_wake = ts.scanner_max_wakes_per_cycle
-        _agent.config.scanner.news_poll_enabled = ts.scanner_news_enabled
         _agent.config.hyperliquid.max_position_usd = ts.max_position_usd
     except Exception:
         pass
@@ -593,9 +586,6 @@ class AppState(rx.State):
     # === Sparkline ===
     portfolio_sparkline_svg: str = ""
 
-    # === Collapsible Cards ===
-    news_expanded: bool = True
-
     # === Position Chart (Sidebar Expand) ===
     expanded_position: str = ""  # symbol of expanded position ("" = none)
     position_chart_html: str = ""  # pre-rendered Lightweight Charts HTML
@@ -644,8 +634,6 @@ class AppState(rx.State):
     wallet_haiku_cost: str = "$0.00"
     wallet_haiku_calls: str = "0"
     wallet_cache_savings: str = "$0.00"
-    wallet_perplexity_cost: str = "$0.00"
-    wallet_perplexity_calls: str = "0"
     total_trades_str: str = "0"
     micro_entries_today: str = "0"
     entries_today: str = "0"
@@ -655,7 +643,6 @@ class AppState(rx.State):
     scanner_status_color: str = "#525252"
     scanner_subtitle: str = ""
     scanner_recent_html: str = ""
-    news_feed_html: str = ""
 
     # === Activity Sidebar (Chat Page) ===
     wake_feed: List[WakeItem] = []
@@ -666,7 +653,6 @@ class AppState(rx.State):
     wake_detail_tool_trace_text: str = ""
     wake_detail_signal_header: str = ""
     wake_detail_decision: str = ""
-    active_watches: List[str] = []
 
     # === Trading Settings ===
     settings_dirty: bool = False
@@ -705,7 +691,6 @@ class AppState(rx.State):
     settings_scanner_threshold: float = 0.5
     settings_scanner_micro: bool = True
     settings_scanner_max_wakes: int = 5
-    settings_scanner_news: bool = True
     # Smart Money
     settings_sm_copy_alerts: bool = True
     settings_sm_exit_alerts: bool = True
@@ -736,11 +721,6 @@ class AppState(rx.State):
     settings_ml_drawdown_risk: bool = True
     settings_ml_regime_shift: bool = True
     settings_ml_funding_extreme: bool = False
-
-    # === Collapsible Toggles ===
-
-    def toggle_news_expanded(self):
-        self.news_expanded = not self.news_expanded
 
     def view_wake_detail(self, content: str, category: str, timestamp: str,
                          tool_trace_text: str = "", signal_header: str = "", decision: str = ""):
@@ -1042,7 +1022,6 @@ class AppState(rx.State):
             self.scanner_status_text = "Scanner Offline"
             self.scanner_status_color = "#525252"
             self.scanner_subtitle = ""
-            self.active_watches = []
             self.satellite_running = False
             return
 
@@ -1126,16 +1105,6 @@ class AppState(rx.State):
                 parts.append(f"{self.scanner_wakes_total} wakes")
             self.scanner_subtitle = " \u00b7 ".join(parts) if parts else "No anomalies yet"
 
-        # Active monitor_signal watches
-        if _daemon._pending_watches:
-            now = _time.time()
-            self.active_watches = [
-                f"{sym}{' [' + w['side'] + ']' if w.get('side') else ''} — {max(0, int(w['fire_at'] - now))}s"
-                for sym, w in list(_daemon._pending_watches.items())
-            ]
-        else:
-            self.active_watches = []
-
         # Sync satellite toggle with actual daemon state
         self.satellite_running = _daemon.satellite_enabled
 
@@ -1207,8 +1176,7 @@ class AppState(rx.State):
             "llm_cost": "$0.00", "llm_calls": "0", "llm_tokens": "0 in / 0 out",
             "models_html": "", "sonnet_cost": "$0.00", "sonnet_calls": "0",
             "haiku_cost": "$0.00", "haiku_calls": "0",
-            "cache_savings": "$0.00", "perplexity_cost": "$0.00",
-            "perplexity_calls": "0", "total_trades": "0",
+            "cache_savings": "$0.00", "total_trades": "0",
         }
         try:
             from hynous.core.costs import get_month_summary
@@ -1259,14 +1227,6 @@ class AppState(rx.State):
                 result["cache_savings"] = f"${s['claude']['cache_savings_usd']:.2f}"
             except Exception:
                 pass
-            try:
-                result["perplexity_cost"] = f"${s['perplexity']['cost_usd']:.2f}"
-            except Exception:
-                pass
-            try:
-                result["perplexity_calls"] = str(s["perplexity"]["calls"])
-            except Exception:
-                pass
         except Exception:
             pass
         try:
@@ -1313,38 +1273,6 @@ class AppState(rx.State):
             '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.72rem;">'
             + "".join(rows) + '</div>'
         )
-
-    @staticmethod
-    def _build_news_html(news: list[dict]) -> str:
-        """Pre-build news feed HTML."""
-        import time as _time
-        if not news:
-            return (
-                '<div style="font-size:0.8rem;color:#404040;text-align:center;padding:1rem 0;">'
-                'No news yet \u2014 scanner polls every 5 min</div>'
-            )
-        rows = []
-        now = _time.time()
-        for n in news[:8]:
-            pub = n.get("published_on", 0)
-            age_s = int(now - pub) if pub else 0
-            if age_s < 60:
-                age = "now"
-            elif age_s < 3600:
-                age = f"{age_s // 60}m"
-            else:
-                age = f"{age_s // 3600}h"
-            from html import escape
-            title = escape(n.get("title", ""))
-            source = escape(n.get("source", ""))
-            rows.append(
-                f'<div style="display:flex;gap:0.5rem;padding:0.35rem 0;border-bottom:1px solid #1a1a1a;align-items:baseline;min-width:0;overflow:hidden;">'
-                f'<span style="width:28px;color:#525252;flex-shrink:0;font-size:0.7rem;text-align:right">{age}</span>'
-                f'<span style="flex:1;min-width:0;color:#a3a3a3;font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{title}</span>'
-                f'<span style="color:#525252;font-size:0.65rem;flex-shrink:0">{source}</span>'
-                f'</div>'
-            )
-        return '<div style="font-family:inherit;overflow:hidden;width:100%;">' + "".join(rows) + '</div>'
 
     @staticmethod
     def _fetch_daemon_events() -> tuple:
@@ -1532,10 +1460,8 @@ class AppState(rx.State):
                         self.scanner_anomalies_total = scanner_data["anomalies_detected"]
                         self.scanner_wakes_total = scanner_data["wakes_triggered"]
                         self.scanner_recent = scanner_data["recent"]
-                        self.scanner_news = scanner_data.get("news", [])
                         # Pre-build HTML (avoids per-tick rebuilds)
                         self.scanner_recent_html = AppState._build_scanner_html(self.scanner_recent)
-                        self.news_feed_html = AppState._build_news_html(self.scanner_news)
                         # Wallet (single get_month_summary call for all fields)
                         self.wallet_total_str = wallet_data["total_str"]
                         self.wallet_subtitle = wallet_data["subtitle"]
@@ -1548,8 +1474,6 @@ class AppState(rx.State):
                         self.wallet_haiku_cost = wallet_data["haiku_cost"]
                         self.wallet_haiku_calls = wallet_data["haiku_calls"]
                         self.wallet_cache_savings = wallet_data["cache_savings"]
-                        self.wallet_perplexity_cost = wallet_data["perplexity_cost"]
-                        self.wallet_perplexity_calls = wallet_data["perplexity_calls"]
                         self.total_trades_str = wallet_data["total_trades"]
                         # Daemon events
                         activities, today_wakes = daemon_events
@@ -1835,14 +1759,11 @@ class AppState(rx.State):
             "get_global_sentiment": "#2dd4bf",
             "get_options_flow": "#f472b6",
             "get_institutional_flow": "#34d399",
-            "search_web": "#e879f9",
             "get_my_costs": "#94a3b8",
             "get_account": "#f59e0b",
             "close_position": "#ef4444",
             "modify_position": "#a78bfa",
             "data_layer": "#22d3ee",
-            "get_book_history": "#818cf8",
-            "monitor_signal": "#facc15",
             "search_trades": "#e879f9",
             "get_trade_by_id": "#60a5fa",
         }
@@ -2250,7 +2171,6 @@ class AppState(rx.State):
     scanner_wakes_total: int = 0
     scanner_recent: list[dict] = []
     scanner_expanded: bool = False
-    scanner_news: list[dict] = []  # Recent news headlines from CryptoCompare
 
     def toggle_scanner_expanded(self):
         """Toggle scanner detail panel."""
@@ -2351,7 +2271,6 @@ class AppState(rx.State):
         self.settings_scanner_threshold = ts.scanner_wake_threshold
         self.settings_scanner_micro = ts.scanner_micro_enabled
         self.settings_scanner_max_wakes = ts.scanner_max_wakes_per_cycle
-        self.settings_scanner_news = ts.scanner_news_enabled
         self.settings_sm_copy_alerts = ts.sm_copy_alerts
         self.settings_sm_exit_alerts = ts.sm_exit_alerts
         self.settings_sm_min_win_rate = ts.sm_min_win_rate
@@ -2412,7 +2331,6 @@ class AppState(rx.State):
             scanner_wake_threshold=self.settings_scanner_threshold,
             scanner_micro_enabled=self.settings_scanner_micro,
             scanner_max_wakes_per_cycle=self.settings_scanner_max_wakes,
-            scanner_news_enabled=self.settings_scanner_news,
             sm_copy_alerts=self.settings_sm_copy_alerts,
             sm_exit_alerts=self.settings_sm_exit_alerts,
             sm_min_win_rate=self.settings_sm_min_win_rate,
@@ -2509,8 +2427,6 @@ class AppState(rx.State):
         self.settings_scanner_micro = v; self.settings_dirty = True
     def set_settings_scanner_max_wakes(self, v: str):
         self.settings_scanner_max_wakes = int(float(v)); self.settings_dirty = True
-    def set_settings_scanner_news(self, v: bool):
-        self.settings_scanner_news = v; self.settings_dirty = True
     def set_settings_sm_copy_alerts(self, v: bool):
         self.settings_sm_copy_alerts = v; self.settings_dirty = True
     def set_settings_sm_exit_alerts(self, v: bool):

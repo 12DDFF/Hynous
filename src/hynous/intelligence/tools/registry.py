@@ -116,9 +116,6 @@ def get_registry() -> ToolRegistry:
     from . import institutional
     institutional.register(registry)
 
-    from . import web_search
-    web_search.register(registry)
-
     from . import costs
     costs.register(registry)
 
@@ -127,9 +124,6 @@ def get_registry() -> ToolRegistry:
 
     from . import data_layer
     data_layer.register(registry)
-
-    from . import market_watch
-    market_watch.register(registry)
 
     from . import search_trades
     search_trades.register(registry)

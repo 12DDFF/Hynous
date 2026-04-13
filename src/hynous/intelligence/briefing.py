@@ -338,12 +338,6 @@ def build_briefing(
         if asset:
             sections.append(_format_asset_section(asset, snapshot, daemon=daemon))
 
-    # --- News headlines (from scanner) ---
-    if daemon and getattr(daemon, "_scanner", None):
-        news_section = _build_news_section(daemon, config)
-        if news_section:
-            sections.append(news_section)
-
     # --- Data layer intelligence (heatmap + HLP + CVD) ---
     if config and config.data_layer.enabled:
         dl_section = _build_data_layer_section(config, data_cache.symbols)
@@ -605,32 +599,6 @@ def _format_asset_section(asset: AssetData, snapshot, daemon=None) -> str:
                 lines.append(sparkline)
 
     return "\n".join(lines)
-
-
-def _build_news_section(daemon, config) -> str:
-    """Build news headlines section from scanner's news buffer."""
-    try:
-        # Gather symbols to filter by
-        pos_coins = list(daemon._prev_positions.keys()) if hasattr(daemon, "_prev_positions") else []
-        symbols = list(set(config.execution.symbols) | set(pos_coins))
-        news = daemon._scanner.get_recent_news(symbols=symbols, limit=5)
-        if not news:
-            return ""
-
-        lines = ["News:"]
-        for n in news:
-            age_sec = time.time() - n.get("published_on", 0)
-            age_min = int(age_sec / 60)
-            if age_min < 60:
-                age_str = f"{age_min}m ago"
-            else:
-                age_str = f"{age_min // 60}h ago"
-            title = n.get("title", "")[:60]
-            source = n.get("source", "")
-            lines.append(f'  "{title}" ({source}, {age_str})')
-        return "\n".join(lines)
-    except Exception:
-        return ""
 
 
 def _format_sparkline(candles: list[dict], symbol: str) -> str:

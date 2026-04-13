@@ -41,9 +41,7 @@ Sensitive values go in `/opt/hynous/.env` (never committed):
 OPENROUTER_API_KEY=sk-or-...        # Single key for all LLM providers via OpenRouter
 HYPERLIQUID_PRIVATE_KEY=...          # Hyperliquid wallet private key
 OPENAI_API_KEY=sk-...                # OpenAI — required for journal embeddings (text-embedding-3-small)
-DISCORD_BOT_TOKEN=...               # Discord bot token (optional)
 COINGLASS_API_KEY=...               # Coinglass derivatives data (optional)
-CRYPTOCOMPARE_API_KEY=...           # CryptoCompare news API (optional — works without one at lower rate limits)
 ```
 
 ## What `setup.sh` Installs

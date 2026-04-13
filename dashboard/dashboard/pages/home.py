@@ -108,15 +108,12 @@ _TOOL_COLORS = {
     "get_global_sentiment": ("#2dd4bf", "rgba(45,212,191,0.12)"),  # teal
     "get_options_flow": ("#f472b6", "rgba(244,114,182,0.12)"),     # pink
     "get_institutional_flow": ("#34d399", "rgba(52,211,153,0.12)"),# emerald
-    "search_web": ("#e879f9", "rgba(232,121,249,0.12)"),           # fuchsia
     "get_my_costs": ("#94a3b8", "rgba(148,163,184,0.12)"),         # slate
     "get_account": ("#f59e0b", "rgba(245,158,11,0.12)"),           # amber
     "close_position": ("#ef4444", "rgba(239,68,68,0.12)"),         # red
     "modify_position": ("#a78bfa", "rgba(167,139,250,0.12)"),      # purple
     "data_layer": ("#22d3ee", "rgba(34,211,238,0.12)"),            # cyan
-    "get_book_history": ("#818cf8", "rgba(129,140,248,0.12)"),     # indigo
-    "monitor_signal": ("#facc15", "rgba(250,204,21,0.12)"),        # yellow
-    "search_trades": ("#e879f9", "rgba(232,121,249,0.12)"),        # fuchsia (shares with search_web — OK, different context)
+    "search_trades": ("#e879f9", "rgba(232,121,249,0.12)"),        # fuchsia
     "get_trade_by_id": ("#60a5fa", "rgba(96,165,250,0.12)"),       # blue
 }
 
@@ -198,24 +195,9 @@ def _tools_detail() -> rx.Component:
         ),
         # --- Intelligence ---
         _tool_row(
-            "search_web",
-            "search",
-            "Real-time web search for news, macro events, knowledge gaps",
-        ),
-        _tool_row(
             "get_my_costs",
             "wallet",
             "Check operating costs — API usage, subscriptions, burn rate",
-        ),
-        _tool_row(
-            "get_book_history",
-            "history",
-            "Historical L2 orderbook snapshots for depth replay",
-        ),
-        _tool_row(
-            "monitor_signal",
-            "radar",
-            "Monitor custom price/volume signals with cooldowns",
         ),
         _tool_row(
             "search_trades",
@@ -334,35 +316,6 @@ def _wallet_detail() -> rx.Component:
         rx.box(
             rx.html(AppState.wallet_models_html),
             padding_left="36px",
-            width="100%",
-        ),
-
-        # Perplexity API
-        rx.hstack(
-            rx.box(
-                rx.icon("search", size=16, color="#e879f9"),
-                width="36px",
-                height="36px",
-                border_radius="10px",
-                background="rgba(232,121,249,0.12)",
-                display="flex",
-                align_items="center",
-                justify_content="center",
-                flex_shrink="0",
-            ),
-            rx.vstack(
-                rx.text("Perplexity API", font_size="0.85rem", font_weight="500", color="#e5e5e5"),
-                rx.hstack(
-                    rx.text(AppState.wallet_perplexity_cost, font_size="0.8rem", color="#e879f9", font_weight="500"),
-                    rx.text("·", color="#333"),
-                    rx.text(AppState.wallet_perplexity_calls + " calls", font_size="0.75rem", color="#525252"),
-                    spacing="2",
-                    align="center",
-                ),
-                spacing="0",
-            ),
-            spacing="3",
-            align="start",
             width="100%",
         ),
 
@@ -1585,56 +1538,6 @@ def _scanner_banner() -> rx.Component:
     )
 
 
-def _news_card() -> rx.Component:
-    """News feed card — recent crypto headlines from CryptoCompare."""
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.hstack(
-                    rx.icon("newspaper", size=14, color="#22d3ee"),
-                    rx.text(
-                        "News",
-                        font_size="0.75rem",
-                        font_weight="600",
-                        color="#737373",
-                        text_transform="uppercase",
-                        letter_spacing="0.05em",
-                    ),
-                    spacing="2",
-                    align="center",
-                ),
-                rx.spacer(),
-                rx.text(
-                    "via CryptoCompare",
-                    font_size="0.6rem",
-                    color="#404040",
-                ),
-                rx.icon(
-                    rx.cond(AppState.news_expanded, "chevron-up", "chevron-down"),
-                    size=14,
-                    color="#525252",
-                ),
-                width="100%",
-                align="center",
-                cursor="pointer",
-                on_click=AppState.toggle_news_expanded,
-            ),
-            rx.cond(
-                AppState.news_expanded,
-                rx.html(AppState.news_feed_html),
-                rx.fragment(),
-            ),
-            spacing="3",
-            width="100%",
-        ),
-        background="#111111",
-        border="1px solid #1a1a1a",
-        border_radius="12px",
-        padding="1rem",
-        overflow="hidden",
-    )
-
-
 def home_page() -> rx.Component:
     """Home page — profile card + dashboard info."""
     return rx.box(
@@ -1659,9 +1562,6 @@ def home_page() -> rx.Component:
 
                 # Regime indicator
                 _regime_banner(),
-
-                # News
-                rx.box(_news_card(), width="100%"),
 
                 # Open Positions
                 rx.box(positions_section(), width="100%"),

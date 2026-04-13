@@ -54,27 +54,16 @@ def get_daemon_chat_queue() -> _queue_module.Queue:
 
 
 def _notify_discord(wake_type: str, title: str, response: str):
-    """Forward daemon notification to Discord (if bot is running)."""
-    try:
-        from ..discord.bot import notify
-        notify(title, wake_type, response)
-    except Exception:
-        pass
+    pass
 
 
 def _notify_discord_simple(message: str):
-    """Send a plain-text trade notification to Discord (no header, no agent response)."""
-    try:
-        from ..discord.bot import notify_simple
-        notify_simple(message)
-    except Exception:
-        pass
+    pass
 
 
 _TOOL_DISPLAY = {
     "get_market_data": "market data",
     "get_orderbook": "orderbook",
-    "get_book_history": "book history",
     "get_funding_history": "funding",
     "get_liquidations": "liquidations",
     "get_multi_timeframe": "multi-TF",
@@ -87,18 +76,6 @@ _TOOL_DISPLAY = {
     "execute_trade": "trade",
     "close_position": "close",
     "modify_position": "modify",
-    "monitor_signal": "monitor",
-    "recall_memory": "memory",
-    "store_memory": "memory",
-    "update_memory": "memory",
-    "delete_memory": "memory",
-    "explore_memory": "explore",
-    "manage_conflicts": "conflicts",
-    "manage_clusters": "clusters",
-    "manage_watchpoints": "watchpoints",
-    "batch_prune": "memory",
-    "analyze_memory": "memory",
-    "search_web": "web search",
     "data_layer": "data layer",
 }
 
@@ -147,8 +124,6 @@ def _extract_decision(tool_calls: list[dict]) -> str:
         return "trade"
     if "close_position" in names or "modify_position" in names:
         return "manage"
-    if "monitor_signal" in names:
-        return "monitor"
     return "pass"
 
 
@@ -1258,9 +1233,6 @@ class Daemon:
             except Exception as e:
                 logger.debug("Scanner liq ingest failed: %s", e)
 
-            # Feed scanner: news from CryptoCompare
-            if self.config.scanner.news_poll_enabled:
-                self._poll_news()
 
         # Refresh trigger orders cache for fill classification
         self._refresh_trigger_cache()
@@ -3418,23 +3390,6 @@ class Daemon:
             "Profit alert: %s %s %s (ROE %+.1f%%, %s)",
             tier, coin, side, roe_pct, trade_type,
         )
-
-    # ================================================================
-    # News Polling
-    # ================================================================
-
-    def _poll_news(self):
-        """Fetch crypto news from CryptoCompare and feed to scanner. Zero tokens."""
-        try:
-            from ..data.providers.cryptocompare import get_provider as cc_get
-            cc = cc_get()
-            # Fetch news for tracked + position symbols
-            symbols = list(set(self.config.execution.symbols) | set(self._prev_positions.keys()))
-            articles = cc.get_news(categories=symbols, limit=30)
-            if articles and self._scanner:
-                self._scanner.ingest_news(articles)
-        except Exception as e:
-            logger.debug("News poll failed: %s", e)
 
     # ================================================================
     # Risk Guardrails (Circuit Breaker)

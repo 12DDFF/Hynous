@@ -110,18 +110,6 @@ scanner:
   momentum_5m_pct: 1.5               # 5m candle body % to trigger momentum_burst
   momentum_volume_mult: 2.0          # Volume multiplier vs rolling avg for momentum
   position_adverse_threshold: 0.40   # Imbalance threshold for adverse book signal
-  # News integration (CryptoCompare)
-  news_poll_enabled: true              # Poll CryptoCompare for news (every deriv cycle)
-  news_wake_max_age_minutes: 30        # Only alert on news < 30min old
-
-# Discord bot (chat relay + daemon notifications)
-discord:
-  enabled: true                                # Master switch
-  channel_id: 1469952346028245097              # Discord channel ID for notifications + chat
-  stats_channel_id: 1469946713471975476        # Separate channel for stats panel
-  allowed_user_ids:                            # Only respond to these users
-    - 1415781451474927657                      # David
-    - 614868895643205639                       # Kevin
 
 # Data layer (hynous-data service)
 data_layer:

@@ -130,11 +130,6 @@ class MarketScanner:
         self.position_directions: dict[str, str] = {}  # sym → "long"/"short" (set by daemon)
         self.peak_roe_data: dict[str, dict] = {}  # coin → {peak_roe, current_roe, leverage, trade_type, side}
 
-        # News buffer
-        self._news: list[dict] = []           # Recent articles (last 50)
-        self._seen_news_ids: set[str] = set() # Dedup by article ID
-        self._alerted_news_ids: set[str] = set()  # Already alerted
-
         # Dedup: fingerprint → expiry timestamp
         self._seen: dict[str, float] = {}
 
@@ -277,21 +272,6 @@ class MarketScanner:
                 if c["t"] not in existing_ts:
                     buf.append(c)
 
-    def ingest_news(self, articles: list[dict]):
-        """Store news articles from CryptoCompare. Deduplicates by article ID."""
-        for a in articles:
-            aid = a.get("id", "")
-            if not aid or aid in self._seen_news_ids:
-                continue
-            self._seen_news_ids.add(aid)
-            self._news.append(a)
-
-        # Cap display buffer — intentionally do NOT rebuild _seen_news_ids from kept
-        # articles. Discarding old IDs would allow the same articles to re-alert the
-        # next time they appear in the API response.
-        if len(self._news) > 50:
-            self._news = self._news[-50:]
-
     def regime_shifted(self, from_label: str, to_label: str, score: float,
                        micro_safe: bool = True, reversal_detail: str = "",
                        micro_score: float = 0.0):
@@ -313,25 +293,6 @@ class MarketScanner:
         """Get recent 5m candles for a symbol (up to 12, oldest first)."""
         buf = self._candles_5m.get(symbol)
         return list(buf) if buf else []
-
-    def get_recent_news(self, symbols: list[str] | None = None, limit: int = 5) -> list[dict]:
-        """Get recent news articles, optionally filtered by symbol. Newest first."""
-        if not self._news:
-            return []
-
-        if symbols:
-            sym_set = {s.upper() for s in symbols}
-            filtered = []
-            for n in reversed(self._news):
-                cats = (n.get("categories", "") or "").upper()
-                title = (n.get("title", "") or "").upper()
-                if any(s in cats or s in title for s in sym_set):
-                    filtered.append(n)
-                    if len(filtered) >= limit:
-                        break
-            return filtered
-
-        return list(reversed(self._news[-limit:]))
 
     # -----------------------------------------------------------------
     # Detection — main entry point
@@ -371,12 +332,6 @@ class MarketScanner:
 
         if self._deriv_polls >= _WARMUP_DIVERGENCE:
             anomalies.extend(self._detect_oi_price_divergence())
-
-        # Tier 4: News alerts — DISABLED as wake source (53% of wakes, <1% trade
-        # conversion). News is still ingested and available via get_recent_news()
-        # for briefings and agent tools — it just doesn't wake the agent.
-        # if self._news:
-        #     anomalies.extend(self._detect_news_alert())
 
         # Tier 3: Liquidations (absolute thresholds, no warmup)
         if len(self._liqs) >= 1:
@@ -476,16 +431,6 @@ class MarketScanner:
 
     def get_status(self) -> dict:
         """Export scanner state for dashboard display."""
-        # Recent news for dashboard (unfiltered, newest first)
-        news_for_dash = []
-        for n in reversed(self._news[-10:]):
-            news_for_dash.append({
-                "title": n.get("title", "")[:80],
-                "source": n.get("source", ""),
-                "published_on": n.get("published_on", 0),
-                "categories": n.get("categories", ""),
-            })
-
         return {
             "active": self._warmup_logged or self._price_polls >= _WARMUP_PRICES,
             "warming_up": not self._warmup_logged and self._price_polls < _WARMUP_PRICES,
@@ -504,7 +449,6 @@ class MarketScanner:
                 }
                 for a in reversed(self._recent_anomalies)
             ],
-            "news": news_for_dash,
         }
 
     # -----------------------------------------------------------------
@@ -1282,76 +1226,6 @@ class MarketScanner:
 
         return results
 
-
-    # -----------------------------------------------------------------
-    # Tier 4: News Alerts
-    # -----------------------------------------------------------------
-
-    def _detect_news_alert(self) -> list[AnomalyEvent]:
-        """Detect important news articles for tracked/position symbols."""
-        results = []
-        now = time.time()
-        max_age = getattr(self.config, "news_wake_max_age_minutes", 30) * 60
-        tracked = self.execution_symbols | self.position_symbols
-
-        for article in self._news:
-            aid = article.get("id", "")
-            if aid in self._alerted_news_ids:
-                continue
-
-            # Age check
-            published = article.get("published_on", 0)
-            if now - published > max_age:
-                continue
-
-            # Relevance check: article categories or title contain tracked symbol
-            cats = (article.get("categories", "") or "").upper()
-            title = (article.get("title", "") or "").upper()
-            body = (article.get("body", "") or "").upper()
-
-            relevant_syms = []
-            for sym in tracked:
-                if sym in cats or sym in title:
-                    relevant_syms.append(sym)
-
-            if not relevant_syms:
-                continue
-
-            # Severity
-            severity = 0.6
-            # Boost if article mentions a position symbol (direct risk)
-            position_hit = any(s in self.position_symbols for s in relevant_syms)
-            if position_hit:
-                severity += 0.15
-            # Boost for regulatory/exchange news
-            if "REGULATION" in cats or "EXCHANGE" in cats:
-                severity += 0.1
-
-            headline = article.get("title", "")[:80]
-            source = article.get("source", "")
-            age_min = int((now - published) / 60)
-            detail = f"Source: {source} | {age_min}m ago | {article.get('body', '')[:150]}"
-
-            self._alerted_news_ids.add(aid)
-
-            primary_sym = relevant_syms[0] if relevant_syms else "MARKET"
-            results.append(AnomalyEvent(
-                type="news_alert",
-                symbol=primary_sym,
-                severity=min(severity, 1.0),
-                headline=headline,
-                detail=detail,
-                fingerprint=f"news:{aid}",
-                detected_at=now,
-                category="news",
-            ))
-
-        # Cap alerted IDs — keep only IDs still in news buffer (deterministic)
-        if len(self._alerted_news_ids) > 200:
-            current_ids = {a.get("id", "") for a in self._news}
-            self._alerted_news_ids &= current_ids
-
-        return results
 
     # -----------------------------------------------------------------
     # Tier 5: Regime Shift

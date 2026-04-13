@@ -72,7 +72,6 @@ class TradingSettings:
     scanner_wake_threshold: float = 0.5
     scanner_micro_enabled: bool = True
     scanner_max_wakes_per_cycle: int = 5
-    scanner_news_enabled: bool = True
 
     # --- Smart Money ---
     sm_copy_alerts: bool = True

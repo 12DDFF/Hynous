@@ -430,40 +430,6 @@ def _wake_row(item: WakeItem) -> rx.Component:
     )
 
 
-def _watches_section() -> rx.Component:
-    """Pulsing indicator when monitor_signal watches are active."""
-    return rx.cond(
-        AppState.active_watches.length() > 0,
-        rx.vstack(
-            rx.hstack(
-                rx.box(
-                    width="6px",
-                    height="6px",
-                    border_radius="50%",
-                    background="#f59e0b",
-                    style={"animation": "pulse 2s cubic-bezier(0.4,0,0.6,1) infinite"},
-                ),
-                _label("Watching"),
-                spacing="2",
-                align="center",
-            ),
-            rx.foreach(
-                AppState.active_watches,
-                lambda w: rx.text(
-                    w,
-                    font_size="0.7rem",
-                    color="#a3a3a3",
-                    font_family="JetBrains Mono, monospace",
-                ),
-            ),
-            spacing="1",
-            width="100%",
-            padding_bottom="0.5rem",
-        ),
-        rx.fragment(),
-    )
-
-
 def _activity_section() -> rx.Component:
     """Scrollable activity feed — newest events first."""
     return rx.box(
@@ -534,8 +500,6 @@ def _sidebar() -> rx.Component:
             width="100%",
             flex_shrink="0",
         ),
-        # Active watches indicator (only when monitor_signal is ticking)
-        _watches_section(),
         # Middle — scrollable activity feed
         _activity_section(),
         # Bottom — pinned stats

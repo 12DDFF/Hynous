@@ -33,11 +33,9 @@ intelligence/
     ├── sentiment.py      # get_global_sentiment
     ├── options.py        # get_options_flow
     ├── institutional.py  # get_institutional_flow
-    ├── web_search.py     # search_web
     ├── costs.py          # get_my_costs
     ├── trading.py        # execute_trade, close_position, modify_position, get_account
-    ├── data_layer.py     # data_layer (heatmap, orderflow, whales, HLP, smart money, wallets)
-    └── market_watch.py   # get_book_history, monitor_signal
+    └── data_layer.py     # data_layer (heatmap, orderflow, whales, HLP, smart money, wallets)
 ```
 
 ---

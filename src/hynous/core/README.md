@@ -38,7 +38,7 @@ print(config.agent.max_tokens) # 2048 (default, overridable per wake type)
 print(config.v2.journal.db_path)  # "storage/v2/journal.db"
 ```
 
-Key config dataclasses: `AgentConfig`, `DaemonConfig`, `ExecutionConfig`, `DiscordConfig`, `SatelliteConfig`, `DataLayerConfig`, `HyperliquidConfig`, `ScannerConfig`, `V2Config` (with `V2JournalConfig` / `V2AnalysisAgentConfig` / `V2MechanicalEntryConfig` / `V2ConsolidationConfig` / `V2UserChatConfig` sub-configs).
+Key config dataclasses: `AgentConfig`, `DaemonConfig`, `ExecutionConfig`, `SatelliteConfig`, `DataLayerConfig`, `HyperliquidConfig`, `ScannerConfig`, `V2Config` (with `V2JournalConfig` / `V2AnalysisAgentConfig` / `V2MechanicalEntryConfig` / `V2ConsolidationConfig` / `V2UserChatConfig` sub-configs).
 
 ---
 

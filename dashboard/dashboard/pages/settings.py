@@ -253,8 +253,6 @@ def _scanner_card() -> rx.Component:
         _divider(),
         _toggle("Micro Detectors", "Enable L2 orderbook & 5m candle micro-structure detectors",
                 AppState.settings_scanner_micro, AppState.set_settings_scanner_micro),
-        _toggle("News Alerts", "Enable CryptoCompare news-based wake alerts",
-                AppState.settings_scanner_news, AppState.set_settings_scanner_news),
     )
 
 

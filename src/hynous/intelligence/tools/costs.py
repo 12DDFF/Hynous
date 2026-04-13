@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 TOOL_DEF = {
     "name": "get_my_costs",
     "description": (
-        "Check your own operating costs — Claude API usage, Perplexity API usage, "
+        "Check your own operating costs — LLM API usage "
         "and fixed subscriptions (Coinglass). Use this when David asks about costs, "
         "or when you want to be aware of your burn rate."
     ),

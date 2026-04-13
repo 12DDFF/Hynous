@@ -22,9 +22,7 @@ Sensitive values should be in environment variables, not config files:
 OPENROUTER_API_KEY=sk-or-...        # Single key for all LLM providers via OpenRouter
 HYPERLIQUID_PRIVATE_KEY=...          # Hyperliquid wallet private key
 OPENAI_API_KEY=sk-...                # OpenAI — required for Nous vector embeddings (used by nous-server)
-DISCORD_BOT_TOKEN=...               # Discord bot token (optional)
 COINGLASS_API_KEY=...               # Coinglass derivatives data (optional)
-CRYPTOCOMPARE_API_KEY=...           # CryptoCompare news API (optional — works without one at lower rate limits)
 ```
 
 ---
@@ -130,7 +128,7 @@ daemon:
 
 ### `scanner` -> `ScannerConfig`
 
-Market scanner — anomaly detection across all Hyperliquid pairs. Includes macro detectors (price spikes, funding extremes, OI surges, liquidation cascades), micro/L2 detectors (book imbalance flips, momentum bursts, adverse book signals), and news integration (CryptoCompare polling).
+Market scanner — anomaly detection across all Hyperliquid pairs. Includes macro detectors (price spikes, funding extremes, OI surges, liquidation cascades) and micro/L2 detectors (book imbalance flips, momentum bursts, adverse book signals).
 
 `ScannerConfig` has two additional fields wired through `load_config()` (fixed in breakeven-fix Round 2, Bug I): `peak_reversion_threshold_micro` (0.40) and `peak_reversion_threshold_macro` (0.50). `taker_fee_pct` was removed from `ScannerConfig` — scanner now reads from `get_trading_settings().taker_fee_pct`.
 
@@ -154,23 +152,6 @@ scanner:
   momentum_5m_pct: 1.5
   momentum_volume_mult: 2.0
   position_adverse_threshold: 0.40
-  # News (CryptoCompare)
-  news_poll_enabled: true
-  news_wake_max_age_minutes: 30
-```
-
-### `discord` -> `DiscordConfig`
-
-Discord bot — chat relay and daemon notifications. Requires `DISCORD_BOT_TOKEN` env var.
-
-```yaml
-discord:
-  enabled: true
-  channel_id: 1469952346028245097
-  stats_channel_id: 1469946713471975476
-  allowed_user_ids:
-    - 1415781451474927657
-    - 614868895643205639
 ```
 
 ### `data_layer` -> `DataLayerConfig`

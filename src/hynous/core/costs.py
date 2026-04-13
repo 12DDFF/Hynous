@@ -1,8 +1,8 @@
 """
 Cost Tracker
 
-Tracks operational costs for Hynous: LLM API usage (any provider via OpenRouter),
-Perplexity, and fixed monthly subscriptions. Persists to storage/costs.json.
+Tracks operational costs for Hynous: LLM API usage (any provider via OpenRouter)
+and fixed monthly subscriptions. Persists to storage/costs.json.
 
 Cost per call is calculated by LiteLLM's completion_cost() which knows
 pricing for all models. No hardcoded pricing tables needed.
@@ -74,12 +74,10 @@ def _get_month(data: dict, month: str) -> dict:
     if month not in data["months"]:
         data["months"][month] = {
             "llm": {},  # model_label → {calls, input_tokens, output_tokens, cost_usd}
-            "perplexity": {"input_tokens": 0, "output_tokens": 0, "calls": 0},
             "fixed": dict(FIXED_MONTHLY),
         }
     m = data["months"][month]
     m.setdefault("llm", {})
-    m.setdefault("perplexity", {"input_tokens": 0, "output_tokens": 0, "calls": 0})
     m.setdefault("fixed", dict(FIXED_MONTHLY))
 
     # Migrate old claude_sonnet/claude_haiku buckets → llm
@@ -146,16 +144,6 @@ def record_llm_usage(
     _save(data)
 
 
-def record_perplexity_usage(input_tokens: int, output_tokens: int) -> None:
-    """Record a Perplexity API call's token usage."""
-    data = _load()
-    month = _get_month(data, _month_key())
-    month["perplexity"]["input_tokens"] += input_tokens
-    month["perplexity"]["output_tokens"] += output_tokens
-    month["perplexity"]["calls"] += 1
-    _save(data)
-
-
 _summary_cache: dict | None = None
 _summary_cache_time: float = 0
 _SUMMARY_CACHE_TTL = 30  # seconds
@@ -167,7 +155,6 @@ def get_month_summary(month: Optional[str] = None) -> dict:
     Returns dict with:
         llm: {total_cost_usd, total_calls, total_input_tokens, total_output_tokens,
               models: [{label, calls, input_tokens, output_tokens, cost_usd}, ...]}
-        perplexity: {input_tokens, output_tokens, calls, cost_usd}
         fixed: {coinglass: 35.00, ...}
         total_usd: float
 
@@ -206,9 +193,6 @@ def get_month_summary(month: Optional[str] = None) -> dict:
             "cost_usd": round(cost, 4),
         })
 
-    # Perplexity (still uses simple pricing since it doesn't go through LiteLLM)
-    p = m["perplexity"]
-    perplexity_cost = (p["input_tokens"] + p["output_tokens"]) / 1_000_000 * 1.00
     fixed_total = sum(m["fixed"].values())
 
     result = {
@@ -232,12 +216,8 @@ def get_month_summary(month: Optional[str] = None) -> dict:
             "sonnet": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0},
             "haiku": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0},
         },
-        "perplexity": {
-            **p,
-            "cost_usd": round(perplexity_cost, 4),
-        },
         "fixed": m["fixed"],
-        "total_usd": round(total_llm_cost + perplexity_cost + fixed_total, 2),
+        "total_usd": round(total_llm_cost + fixed_total, 2),
     }
 
     if month == _month_key():
@@ -270,14 +250,6 @@ def get_cost_report() -> str:
                 f"({model['calls']} calls, "
                 f"{model['input_tokens']:,} in / {model['output_tokens']:,} out)"
             )
-
-    # Perplexity
-    p = s["perplexity"]
-    lines.append(
-        f"  Perplexity API: ${p['cost_usd']:.2f} "
-        f"({p['calls']} calls, "
-        f"{p['input_tokens']:,} in / {p['output_tokens']:,} out tokens)"
-    )
 
     # Fixed
     for name, cost in s["fixed"].items():
