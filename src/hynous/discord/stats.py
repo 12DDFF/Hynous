@@ -146,13 +146,27 @@ def build_stats_embed(provider, daemon, config) -> discord.Embed:
         market_text = "Daemon not running"
     embed.add_field(name="Market", value=market_text, inline=False)
 
-    # 7. Trade performance (from Nous — zero cost)
+    # 7. Trade performance (from v2 journal — zero-cost local SQLite)
     try:
-        from ..core.trade_analytics import get_trade_stats, format_stats_compact
-        stats = get_trade_stats()
-        if stats and stats.total_trades > 0:
-            account_pnl = account_value - initial if initial else None
-            perf_text = format_stats_compact(stats, account_pnl=account_pnl)
+        from ..core.config import load_config
+        from ..journal.store import JournalStore
+        cfg = load_config()
+        store = JournalStore(cfg.v2.journal.db_path)
+        stats = store.get_aggregate_stats()
+        total = stats.get("total_trades", 0) or 0
+        if total > 0:
+            account_pnl = account_value - initial if initial else (stats.get("total_pnl") or 0)
+            sign = "+" if account_pnl >= 0 else ""
+            pf = stats.get("profit_factor") or 0
+            pf_str = (
+                f"{pf:.1f}" if pf not in (float("inf"), 0)
+                else ("inf" if pf == float("inf") else "0.0")
+            )
+            win_rate = stats.get("win_rate") or 0
+            perf_text = (
+                f"{total} trades, {win_rate:.0f}% win, "
+                f"{sign}${account_pnl:.2f}, PF {pf_str}"
+            )
         else:
             perf_text = "No closed trades yet"
     except Exception:

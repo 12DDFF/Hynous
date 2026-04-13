@@ -1118,7 +1118,7 @@ def profile_card() -> rx.Component:
 
             # Stats row (clickable — opens detail dialogs)
             rx.hstack(
-                _stat_with_dialog("26", "Tools", "Available Tools", _tools_detail()),
+                _stat_with_dialog("18", "Tools", "Available Tools", _tools_detail()),
                 rx.divider(orientation="vertical", height="32px", border_color="#1a1a1a"),
                 _stat_with_dialog(AppState.total_trades_str, "Trades", "Trades", _trades_detail()),
                 rx.divider(orientation="vertical", height="32px", border_color="#1a1a1a"),

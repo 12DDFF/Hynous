@@ -46,43 +46,6 @@ class HyperliquidConfig:
 
 
 @dataclass
-class MemoryConfig:
-    """Tiered memory settings — working window + Nous-backed compression."""
-    window_size: int = 4            # Complete exchanges to keep in working window
-    max_context_tokens: int = 4000  # Token budget for injected recalled context
-    retrieve_limit: int = 20        # Max Nous results per retrieval (token budget is the real limiter)
-    compression_model: str = "openrouter/anthropic/claude-haiku-4-5-20251001"  # OpenRouter
-    compress_enabled: bool = True   # Master switch for automatic compression
-    gate_filter_enabled: bool = True  # Pre-storage quality gate (MF-15)
-
-
-@dataclass
-class OrchestratorConfig:
-    """Intelligent Retrieval Orchestrator — multi-pass memory search."""
-    enabled: bool = True                    # Master switch
-    quality_threshold: float = 0.20         # Min top-result score to accept
-    relevance_ratio: float = 0.4            # Dynamic cutoff: score >= top * ratio
-    max_results: int = 20                   # Hard cap on merged results (token budget is the real limiter)
-    max_sub_queries: int = 4                # Max decomposition parts
-    max_retries: int = 1                    # Reformulation attempts per sub-query
-    timeout_seconds: float = 3.0            # Total orchestration timeout
-    search_limit_per_query: int = 25        # Results to fetch per sub-query (overfetch for quality gate)
-
-
-@dataclass
-class SectionsConfig:
-    """Memory sections — brain-inspired bias layer on retrieval and decay.
-
-    Sections are determined by subtype → section mapping (static lookup).
-    These settings control the behavior overlay.
-    See: revisions/memory-sections/executive-summary.md
-    """
-    enabled: bool = True                    # Master switch for section-aware behavior
-    intent_boost: float = 1.3              # Score multiplier for query-relevant sections
-    default_section: str = "KNOWLEDGE"     # Fallback section for unknown subtypes
-
-
-@dataclass
 class DaemonConfig:
     """Background daemon settings — watchdog + curiosity + periodic review."""
     enabled: bool = False                 # Master switch
@@ -287,14 +250,11 @@ class Config:
     # Sub-configs
     agent: AgentConfig = field(default_factory=AgentConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
-    memory: MemoryConfig = field(default_factory=MemoryConfig)
     hyperliquid: HyperliquidConfig = field(default_factory=HyperliquidConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     discord: DiscordConfig = field(default_factory=DiscordConfig)
-    orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
     data_layer: DataLayerConfig = field(default_factory=DataLayerConfig)
-    sections: SectionsConfig = field(default_factory=SectionsConfig)
     satellite: SatelliteConfig = field(default_factory=SatelliteConfig)
     v2: V2Config = field(default_factory=V2Config)
 
@@ -326,14 +286,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
     # Build config
     agent_raw = raw.get("agent", {})
     exec_raw = raw.get("execution", {})
-    mem_raw = raw.get("memory", {})
     hl_raw = raw.get("hyperliquid", {})
     daemon_raw = raw.get("daemon", {})
     scanner_raw = raw.get("scanner", {})
     discord_raw = raw.get("discord", {})
-    orch_raw = raw.get("orchestrator", {})
     dl_raw = raw.get("data_layer", {})
-    sections_raw = raw.get("sections", {})
     sat_raw = raw.get("satellite", {})
     v2_raw = raw.get("v2", {}) or {}
 
@@ -349,14 +306,6 @@ def load_config(config_path: Optional[str] = None) -> Config:
             mode=exec_raw.get("mode", "paper"),
             paper_balance=exec_raw.get("paper_balance", 50000),
             symbols=exec_raw.get("symbols", ["BTC", "ETH", "SOL"]),
-        ),
-        memory=MemoryConfig(
-            window_size=mem_raw.get("window_size", 4),
-            max_context_tokens=mem_raw.get("max_context_tokens", 4000),
-            retrieve_limit=mem_raw.get("retrieve_limit", 20),
-            compression_model=mem_raw.get("compression_model", "openrouter/anthropic/claude-haiku-4-5-20251001"),
-            compress_enabled=mem_raw.get("compress_enabled", True),
-            gate_filter_enabled=mem_raw.get("gate_filter_enabled", True),
         ),
         hyperliquid=HyperliquidConfig(
             mainnet_url=hl_raw.get("mainnet_url", "https://api.hyperliquid.xyz"),
@@ -426,25 +375,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
             stats_channel_id=discord_raw.get("stats_channel_id", 0),
             allowed_user_ids=discord_raw.get("allowed_user_ids", []),
         ),
-        orchestrator=OrchestratorConfig(
-            enabled=orch_raw.get("enabled", True),
-            quality_threshold=orch_raw.get("quality_threshold", 0.20),
-            relevance_ratio=orch_raw.get("relevance_ratio", 0.4),
-            max_results=orch_raw.get("max_results", 20),
-            max_sub_queries=orch_raw.get("max_sub_queries", 4),
-            max_retries=orch_raw.get("max_retries", 1),
-            timeout_seconds=orch_raw.get("timeout_seconds", 3.0),
-            search_limit_per_query=orch_raw.get("search_limit_per_query", 25),
-        ),
         data_layer=DataLayerConfig(
             url=dl_raw.get("url", "http://127.0.0.1:8100"),
             enabled=dl_raw.get("enabled", True),
             timeout=dl_raw.get("timeout", 5),
-        ),
-        sections=SectionsConfig(
-            enabled=sections_raw.get("enabled", True),
-            intent_boost=sections_raw.get("intent_boost", 1.3),
-            default_section=sections_raw.get("default_section", "KNOWLEDGE"),
         ),
         satellite=SatelliteConfig(
             enabled=sat_raw.get("enabled", False),

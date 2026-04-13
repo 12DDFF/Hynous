@@ -90,19 +90,14 @@ _TOOL_DISPLAY = {
     "get_institutional_flow": "Tracking institutional flow",
     "search_web": "Searching the web",
     "get_my_costs": "Checking costs",
-    "store_memory": "Storing memory",
-    "recall_memory": "Searching memories",
     "get_account": "Checking account",
-    "execute_trade": "Executing trade",
     "close_position": "Closing position",
     "modify_position": "Modifying position",
-    "delete_memory": "Deleting memory",
-    "manage_watchpoints": "Managing watchpoints",
-    "get_trade_stats": "Checking trade stats",
-    "explore_memory": "Exploring memory graph",
-    "manage_conflicts": "Managing conflicts",
-    "manage_clusters": "Managing clusters",
     "data_layer": "Querying data layer",
+    "get_book_history": "Fetching book history",
+    "monitor_signal": "Monitoring signal",
+    "search_trades": "Searching trades",
+    "get_trade_by_id": "Loading trade details",
 }
 # --- Model preference persistence ---
 _MODEL_PREFS_FILE = Path(__file__).resolve().parents[2] / "storage" / "model_prefs.json"
@@ -187,23 +182,13 @@ _TOOL_TAG = {
     "get_institutional_flow": "institutional",
     "search_web": "web search",
     "get_my_costs": "costs",
-    "store_memory": "memory",
-    "recall_memory": "memory",
-    "update_memory": "memory",
-    "batch_prune": "memory",
-    "analyze_memory": "memory",
     "get_account": "account",
-    "execute_trade": "trade",
     "close_position": "close",
     "modify_position": "modify",
-    "delete_memory": "delete",
-    "manage_watchpoints": "watchpoints",
-    "get_trade_stats": "stats",
-    "explore_memory": "explore",
-    "manage_conflicts": "conflicts",
-    "manage_clusters": "clusters",
     "get_book_history": "book history",
     "monitor_signal": "monitor",
+    "search_trades": "search trades",
+    "get_trade_by_id": "trade details",
     "data_layer": "data layer",
 }
 
@@ -1285,8 +1270,8 @@ class AppState(rx.State):
         except Exception:
             pass
         try:
-            from hynous.core.trade_analytics import get_trade_stats
-            result["total_trades"] = str(get_trade_stats().total_trades)
+            stats = _fetch_v2_journal_stats({})
+            result["total_trades"] = str(stats.get("total_trades", 0))
         except Exception:
             pass
         return result

@@ -14,11 +14,9 @@ core/
 ├── logging.py         # Logging setup
 ├── clock.py           # Timestamp injection for agent messages
 ├── costs.py           # LLM cost tracking (per-model, per-session)
-├── trade_analytics.py # Trade performance analytics (TradeRecord, TradeStats, thesis enrichment, time filtering). Phase 4 orphan; scheduled for removal in phase 7.
 ├── trading_settings.py # Runtime-adjustable trading parameters (TradingSettings dataclass, JSON persistence, thread-safe singleton)
 ├── persistence.py     # Paper trading state + conversation history persistence
 ├── daemon_log.py      # Daemon event logging for UI display
-├── memory_tracker.py  # Phase 4 orphan; scheduled for removal in phase 7.
 ├── equity_tracker.py  # Append-only equity curve persistence (5-min snapshots, 30-day prune)
 ├── request_tracer.py  # Debug trace collector (spans per agent.chat() call)
 └── trace_log.py       # Trace persistence + content-addressed payload storage
@@ -40,7 +38,7 @@ print(config.agent.max_tokens) # 2048 (default, overridable per wake type)
 print(config.v2.journal.db_path)  # "storage/v2/journal.db"
 ```
 
-Key config dataclasses: `AgentConfig`, `DaemonConfig`, `ExecutionConfig`, `DiscordConfig`, `SatelliteConfig`, `DataLayerConfig`, `HyperliquidConfig`, `ScannerConfig`, `SectionsConfig`, `V2Config` (with `V2JournalConfig` / `V2AnalysisAgentConfig` / `V2MechanicalEntryConfig` / `V2ConsolidationConfig` / `V2UserChatConfig` sub-configs).
+Key config dataclasses: `AgentConfig`, `DaemonConfig`, `ExecutionConfig`, `DiscordConfig`, `SatelliteConfig`, `DataLayerConfig`, `HyperliquidConfig`, `ScannerConfig`, `V2Config` (with `V2JournalConfig` / `V2AnalysisAgentConfig` / `V2MechanicalEntryConfig` / `V2ConsolidationConfig` / `V2UserChatConfig` sub-configs).
 
 ---
 

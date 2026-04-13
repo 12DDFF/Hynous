@@ -735,15 +735,29 @@ def _build_data_layer_section(config, symbols: list[str]) -> str:
 
 
 def _build_stats_line(account_pnl: float | None = None) -> str:
-    """Performance stats one-liner from trade analytics."""
+    """Performance stats one-liner from the v2 journal."""
     try:
-        from ..core.trade_analytics import get_trade_stats, format_stats_compact
-        stats = get_trade_stats()
-        if stats.total_trades > 0:
-            return format_stats_compact(stats, account_pnl=account_pnl)
+        from ..core.config import load_config
+        from ..journal.store import JournalStore
+        cfg = load_config()
+        store = JournalStore(cfg.v2.journal.db_path)
+        stats = store.get_aggregate_stats()
+        total = stats.get("total_trades", 0) or 0
+        if total <= 0:
+            return ""
+        pnl = account_pnl if account_pnl is not None else (stats.get("total_pnl") or 0)
+        sign = "+" if pnl >= 0 else ""
+        pf = stats.get("profit_factor") or 0
+        pf_str = f"{pf:.1f}" if pf not in (float("inf"), 0) else ("inf" if pf == float("inf") else "0.0")
+        win_rate = stats.get("win_rate") or 0
+        return (
+            f"Performance: {total} trades, "
+            f"{win_rate:.0f}% win, "
+            f"{sign}${pnl:.2f}, "
+            f"PF {pf_str}"
+        )
     except Exception:
-        pass
-    return ""
+        return ""
 
 
 def _build_recent_trades(daemon) -> str:
@@ -776,37 +790,42 @@ def _build_recent_trades(daemon) -> str:
                 "age_s": age_s,
             })
 
-    # Fallback: Nous (after daemon restart, cache is empty)
+    # Fallback: v2 journal (after daemon restart, cache is empty)
     if not trades:
         try:
-            from ..core.trade_analytics import get_trade_stats
-            stats = get_trade_stats()
-            if stats.trades:
-                now = time.time()
-                for t in stats.trades[:6]:
-                    age_s = 0
+            from datetime import datetime
+
+            from ..core.config import load_config
+            from ..journal.store import JournalStore
+            cfg = load_config()
+            store = JournalStore(cfg.v2.journal.db_path)
+            rows = store.list_trades(status="closed", limit=6)
+            now = time.time()
+            for r in rows:
+                age_s = 0.0
+                exit_ts = r.get("exit_ts")
+                if exit_ts:
                     try:
-                        from datetime import datetime, timezone
                         closed_dt = datetime.fromisoformat(
-                            t.closed_at.replace("Z", "+00:00")
+                            str(exit_ts).replace("Z", "+00:00")
                         )
                         age_s = now - closed_dt.timestamp()
                     except Exception:
                         pass
 
-                    close_type = t.close_type
-                    if close_type == "full":
-                        close_type = "agent close"
+                close_type = r.get("exit_classification") or "unknown"
+                if close_type == "full":
+                    close_type = "agent close"
 
-                    trades.append({
-                        "coin": t.symbol,
-                        "side": t.side,
-                        "leverage": t.leverage or 20,
-                        "lev_return_pct": t.lev_return_pct,
-                        "mfe_pct": 0,
-                        "close_type": close_type,
-                        "age_s": age_s,
-                    })
+                trades.append({
+                    "coin": r.get("symbol", ""),
+                    "side": r.get("side", ""),
+                    "leverage": r.get("leverage") or 20,
+                    "lev_return_pct": r.get("roe_pct") or 0,
+                    "mfe_pct": 0,
+                    "close_type": close_type,
+                    "age_s": age_s,
+                })
         except Exception:
             pass
 

@@ -52,7 +52,7 @@ The embed includes 7 sections (built in `stats.py`):
 | Positions | HyperliquidProvider | Coin, side, leverage, size, entry, PnL, return %, liquidation price, SL/TP |
 | Regime | Daemon snapshot | Combined label, macro/micro scores, session, reversal flags, guidance |
 | Market | Daemon snapshot | BTC/ETH/SOL prices, Fear & Greed index |
-| Performance | trade_analytics | Win rate, avg win/loss, profit factor, total PnL |
+| Performance | v2 JournalStore | Win rate, profit factor, total PnL |
 | System | Daemon | Scanner status (pairs, anomalies, wakes), wake count, next review, circuit breaker |
 | Footer | Config | Execution mode (PAPER/TESTNET/LIVE), refresh interval |
 
