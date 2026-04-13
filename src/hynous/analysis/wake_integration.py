@@ -132,6 +132,16 @@ def trigger_analysis_for_trade(
             embedding=embedding_bytes,
         )
 
+        # phase 6 M3: fire-and-forget edge build after analysis is persisted.
+        # build_edges_async spawns a daemon thread; the local try/except is
+        # belt-and-suspenders around the import + dispatch so an edge-build
+        # failure never rolls back the analysis insert.
+        try:
+            from hynous.journal.consolidation import build_edges_async
+            build_edges_async(journal_store, trade_id)
+        except Exception:
+            logger.exception("Edge building dispatch failed for %s", trade_id)
+
         logger.info(
             "Analysis complete for %s: %d findings, %d tags, score=%d, unverified=%d",
             trade_id,

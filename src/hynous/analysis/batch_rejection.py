@@ -200,6 +200,16 @@ def _process_rejection_batch(
             prompt_version="rejection-v1",
         )
 
+        # phase 6 M3: fire-and-forget edge build after each rejection is persisted.
+        # Local try/except keeps a single bad dispatch from killing the rest of
+        # the batch; the outer try/except in run_batch_rejection_analysis is the
+        # batch-level safety net.
+        try:
+            from hynous.journal.consolidation import build_edges_async
+            build_edges_async(journal_store, tid)
+        except Exception:
+            logger.exception("Edge building dispatch failed for %s", tid)
+
 
 def start_batch_rejection_cron(
     *,

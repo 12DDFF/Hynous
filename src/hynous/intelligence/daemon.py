@@ -944,6 +944,26 @@ class Daemon:
             except Exception:
                 logger.exception("Failed to start v2 batch rejection cron")
 
+        # v2: start weekly pattern rollup cron (phase 6 M2/M3).
+        if (
+            self._journal_store is not None
+            and self.config.v2.consolidation.pattern_rollup_enabled
+        ):
+            try:
+                from hynous.journal.consolidation import start_weekly_rollup_cron
+                start_weekly_rollup_cron(
+                    journal_store=self._journal_store,
+                    interval_s=self.config.v2.consolidation.pattern_rollup_interval_hours * 3600,
+                    window_days=self.config.v2.consolidation.pattern_rollup_window_days,
+                )
+                logger.info(
+                    "v2 weekly rollup cron started (interval=%dh, window=%dd)",
+                    self.config.v2.consolidation.pattern_rollup_interval_hours,
+                    self.config.v2.consolidation.pattern_rollup_window_days,
+                )
+            except Exception:
+                logger.exception("Failed to start v2 weekly rollup cron")
+
         # Start WebSocket market data feed via provider
         if self.config.daemon.ws_price_feed:
             provider = self._get_provider()
