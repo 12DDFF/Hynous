@@ -626,3 +626,261 @@ def test_migrate_staging_skips_corrupt_row(tmp_path: Any) -> None:
     )
     assert counts["entries"] == 0
     assert counts["skipped_entries"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 Milestone 4 — /patterns + /trades/{id}/related routes
+# ---------------------------------------------------------------------------
+
+
+def test_api_patterns_route_returns_latest(
+    api_client: TestClient, tmp_journal_db: JournalStore,
+) -> None:
+    """Seed two patterns with different updated_at; assert newest first,
+    JSON fields parsed, and pattern_type filter works.
+    """
+    import json as _json
+
+    conn = tmp_journal_db._connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO trade_patterns
+                (id, title, description, pattern_type, aggregate_json,
+                 member_trade_ids_json, window_start, window_end,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "pat_old", "Old rollup", "older description",
+                "system_health_report",
+                _json.dumps({"total_trades": 5, "win_rate": 40.0}),
+                _json.dumps(["t1", "t2", "t3"]),
+                "2026-04-05T00:00:00+00:00",
+                "2026-04-12T00:00:00+00:00",
+                "2026-04-12T00:00:00+00:00",
+                "2026-04-12T00:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO trade_patterns
+                (id, title, description, pattern_type, aggregate_json,
+                 member_trade_ids_json, window_start, window_end,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "pat_new", "New rollup", "newer description",
+                "system_health_report",
+                _json.dumps({"total_trades": 8, "win_rate": 62.5}),
+                _json.dumps(["t4", "t5", "t6", "t7"]),
+                "2026-04-12T00:00:00+00:00",
+                "2026-04-19T00:00:00+00:00",
+                "2026-04-19T00:00:00+00:00",
+                "2026-04-19T00:00:00+00:00",
+            ),
+        )
+    finally:
+        conn.close()
+
+    resp = api_client.get("/api/v2/journal/patterns")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 2
+    # Newest first
+    assert data[0]["id"] == "pat_new"
+    assert data[1]["id"] == "pat_old"
+    # JSON columns parsed into native types
+    assert isinstance(data[0]["aggregate"], dict)
+    assert data[0]["aggregate"]["win_rate"] == 62.5
+    assert isinstance(data[0]["member_trade_ids"], list)
+    assert data[0]["member_trade_ids"] == ["t4", "t5", "t6", "t7"]
+
+    # Filter by matching pattern_type — both rows still returned
+    resp = api_client.get(
+        "/api/v2/journal/patterns",
+        params={"pattern_type": "system_health_report"},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+    # Filter by non-existent type — empty
+    resp = api_client.get(
+        "/api/v2/journal/patterns", params={"pattern_type": "not_a_type"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_api_patterns_respects_limit(
+    api_client: TestClient, tmp_journal_db: JournalStore,
+) -> None:
+    """Seed 12 pattern rows; assert limit=5 returns 5 newest in DESC order."""
+    import json as _json
+
+    conn = tmp_journal_db._connect()
+    try:
+        for i in range(12):
+            conn.execute(
+                """
+                INSERT INTO trade_patterns
+                    (id, title, description, pattern_type, aggregate_json,
+                     member_trade_ids_json, window_start, window_end,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"pat_{i:02d}",
+                    f"Rollup #{i}",
+                    None,
+                    "system_health_report",
+                    _json.dumps({"i": i}),
+                    _json.dumps([]),
+                    "2026-04-05T00:00:00+00:00",
+                    "2026-04-12T00:00:00+00:00",
+                    "2026-04-12T00:00:00+00:00",
+                    # Monotonically increasing updated_at — later i == newer
+                    f"2026-04-12T10:{i:02d}:00+00:00",
+                ),
+            )
+    finally:
+        conn.close()
+
+    resp = api_client.get("/api/v2/journal/patterns", params={"limit": 5})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 5
+    # DESC ordering — ids 11, 10, 09, 08, 07
+    assert [row["id"] for row in data] == [
+        "pat_11", "pat_10", "pat_09", "pat_08", "pat_07",
+    ]
+
+
+def test_api_related_route_returns_linked_trades(
+    api_client: TestClient, tmp_journal_db: JournalStore,
+) -> None:
+    """Three edges A→B(followed_by), A→C(same_regime_bucket), A→B(preceded_by).
+    No dedup: B appears twice under different edge_types. Expect 3 rows,
+    ordered by ``edge_type ASC, created_at DESC``.
+    """
+    for tid, pnl in (("A", 10.0), ("B", 20.0), ("C", -5.0)):
+        tmp_journal_db.upsert_trade(
+            trade_id=tid, symbol="BTC", side="long", trade_type="macro",
+            status="closed", entry_ts="2026-04-12T10:00:00+00:00",
+            realized_pnl_usd=pnl,
+        )
+
+    conn = tmp_journal_db._connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO trade_edges
+                (source_trade_id, target_trade_id, edge_type, strength,
+                 reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("A", "B", "followed_by", 0.8, "close in time",
+             "2026-04-12T11:00:00+00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO trade_edges
+                (source_trade_id, target_trade_id, edge_type, strength,
+                 reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("A", "C", "same_regime_bucket", 0.5, "same vol regime",
+             "2026-04-12T11:05:00+00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO trade_edges
+                (source_trade_id, target_trade_id, edge_type, strength,
+                 reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("A", "B", "preceded_by", 0.7, "prior context",
+             "2026-04-12T11:10:00+00:00"),
+        )
+    finally:
+        conn.close()
+
+    resp = api_client.get("/api/v2/journal/trades/A/related")
+    assert resp.status_code == 200
+    rows = resp.json()
+    # Raw rows — no dedup, B appears twice under distinct edge_types
+    assert len(rows) == 3
+
+    for row in rows:
+        for key in (
+            "other_id", "edge_type", "strength", "reason",
+            "symbol", "side", "status", "realized_pnl_usd",
+        ):
+            assert key in row
+
+    # Expected ordering: edge_type ASC, created_at DESC
+    # followed_by < preceded_by < same_regime_bucket (alphabetical)
+    assert [(r["edge_type"], r["other_id"]) for r in rows] == [
+        ("followed_by", "B"),
+        ("preceded_by", "B"),
+        ("same_regime_bucket", "C"),
+    ]
+
+
+def test_api_related_route_filters_by_edge_type(
+    api_client: TestClient, tmp_journal_db: JournalStore,
+) -> None:
+    """Same seed as previous test; edge_type=followed_by returns exactly 1 row."""
+    for tid in ("A", "B", "C"):
+        tmp_journal_db.upsert_trade(
+            trade_id=tid, symbol="BTC", side="long", trade_type="macro",
+            status="closed", entry_ts="2026-04-12T10:00:00+00:00",
+            realized_pnl_usd=0.0,
+        )
+
+    conn = tmp_journal_db._connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO trade_edges
+                (source_trade_id, target_trade_id, edge_type, strength,
+                 reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("A", "B", "followed_by", 0.8, None,
+             "2026-04-12T11:00:00+00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO trade_edges
+                (source_trade_id, target_trade_id, edge_type, strength,
+                 reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("A", "C", "same_regime_bucket", 0.5, None,
+             "2026-04-12T11:05:00+00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO trade_edges
+                (source_trade_id, target_trade_id, edge_type, strength,
+                 reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("A", "B", "preceded_by", 0.7, None,
+             "2026-04-12T11:10:00+00:00"),
+        )
+    finally:
+        conn.close()
+
+    resp = api_client.get(
+        "/api/v2/journal/trades/A/related",
+        params={"edge_type": "followed_by"},
+    )
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["other_id"] == "B"
+    assert rows[0]["edge_type"] == "followed_by"

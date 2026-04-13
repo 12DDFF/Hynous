@@ -17,10 +17,15 @@ Routes (all under ``/api/v2/journal``):
     GET  /search                         — semantic search (entry|analysis)
     POST /trades/{trade_id}/tags         — attach a tag
     DELETE /trades/{trade_id}/tags/{tag} — remove a tag
+    GET  /patterns                       — latest pattern records
+                                           (pattern_type + limit filters)
+    GET  /trades/{trade_id}/related      — edges outbound from a trade
+                                           (edge_type filter, raw rows)
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -206,3 +211,98 @@ def remove_trade_tag_endpoint(trade_id: str, tag: str) -> dict[str, Any]:
     store = _require_store()
     store.remove_tag(trade_id, tag)
     return {"status": "ok"}
+
+
+@router.get("/patterns")
+def list_patterns_endpoint(
+    pattern_type: str | None = Query(None),
+    limit: int = Query(10, le=50),
+) -> list[dict[str, Any]]:
+    """List latest trade patterns (weekly rollups). Ordered by updated_at DESC."""
+    store = _require_store()
+    conn = store._connect()
+    try:
+        if pattern_type:
+            rows = conn.execute(
+                """
+                SELECT id, title, description, pattern_type, aggregate_json,
+                       member_trade_ids_json, window_start, window_end, created_at, updated_at
+                FROM trade_patterns
+                WHERE pattern_type = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (pattern_type, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, title, description, pattern_type, aggregate_json,
+                       member_trade_ids_json, window_start, window_end, created_at, updated_at
+                FROM trade_patterns
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        return [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "description": r["description"],
+                "pattern_type": r["pattern_type"],
+                "aggregate": json.loads(r["aggregate_json"]),
+                "member_trade_ids": json.loads(r["member_trade_ids_json"]),
+                "window_start": r["window_start"],
+                "window_end": r["window_end"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+@router.get("/trades/{trade_id}/related")
+def get_related_trades_endpoint(
+    trade_id: str,
+    edge_type: str | None = Query(None),
+) -> list[dict[str, Any]]:
+    """Edges outbound from ``trade_id``, optionally filtered by ``edge_type``.
+
+    Returns raw edge rows — a single neighbour may appear under multiple
+    ``edge_type``s (e.g. a rejection's nearest prior same-symbol trade is
+    both ``preceded_by`` AND ``rejection_vs_contemporaneous_trade``). Callers
+    that want unique neighbours should group client-side.
+    """
+    store = _require_store()
+    conn = store._connect()
+    try:
+        if edge_type:
+            rows = conn.execute(
+                """
+                SELECT e.target_trade_id AS other_id, e.edge_type, e.strength, e.reason,
+                       t.symbol, t.side, t.status, t.realized_pnl_usd
+                FROM trade_edges e
+                JOIN trades t ON e.target_trade_id = t.trade_id
+                WHERE e.source_trade_id = ? AND e.edge_type = ?
+                ORDER BY e.created_at DESC
+                """,
+                (trade_id, edge_type),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT e.target_trade_id AS other_id, e.edge_type, e.strength, e.reason,
+                       t.symbol, t.side, t.status, t.realized_pnl_usd
+                FROM trade_edges e
+                JOIN trades t ON e.target_trade_id = t.trade_id
+                WHERE e.source_trade_id = ?
+                ORDER BY e.edge_type, e.created_at DESC
+                """,
+                (trade_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
