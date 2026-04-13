@@ -40,6 +40,7 @@ TICK_WS_URL = "ws://localhost:18100/ws/ticks"
 
 N_SIMULATIONS = 200
 PRICE_HISTORY_LEN = 300
+MC_DETERMINISTIC = True
 
 _clients: set = set()
 
@@ -261,7 +262,16 @@ class TickPredictor:
                     return d1 + (d2-d1)*(sec-h1)/(h2-h1)
             return 0
 
-        rng = np.random.default_rng()
+        if MC_DETERMINISTIC:
+            _seed_key = (
+                round(price, 4),
+                vol,
+                tuple(sorted((int(k), float(v)) for k, v in predictions.items())),
+            )
+            _seed = int(hashlib.blake2b(repr(_seed_key).encode(), digest_size=8).hexdigest(), 16)
+            rng = np.random.default_rng(_seed)
+        else:
+            rng = np.random.default_rng()
         paths = np.zeros((N_SIMULATIONS, len(tps)))
         paths[:, 0] = price
         for ti in range(1, len(tps)):
