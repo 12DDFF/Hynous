@@ -1,6 +1,7 @@
 # Data Module
 
-> Market data providers and execution layer -- Hynous's connection to the outside world.
+> Market data providers and execution layer -- Hynous's connection to
+> the outside world.
 
 ---
 
@@ -13,22 +14,32 @@ data/
 │   ├── paper.py           # Paper trading simulator (wraps HyperliquidProvider)
 │   ├── ws_feeds.py        # WebSocket feed manager (allMids, l2Book, activeAssetCtx, candle 1m/5m)
 │   ├── coinglass.py       # Cross-exchange derivatives data (Coinglass API v4)
-│   ├── cryptocompare.py   # Crypto news articles (CryptoCompare News API v2)
 │   ├── hynous_data.py     # HTTP client for hynous-data service (liquidations, whales, order flow)
-│   ├── perplexity.py      # Web search via Perplexity Sonar API
 │   └── __init__.py
 └── __init__.py
 ```
+
+v2 note: `cryptocompare.py`, `perplexity.py`, and the related news /
+web-search agent tools were removed in phase 7 M7.
 
 ---
 
 ## Providers
 
-All providers follow the singleton pattern via a module-level `get_provider()` (or `get_client()`) function. REST methods are synchronous, using `requests.Session` for connection reuse. Market data reads (`get_all_prices`, `get_l2_book`, `get_asset_context`, `get_multi_asset_contexts`) are WS-first with REST fallback — managed by `MarketDataFeed` in `ws_feeds.py`.
+All providers follow the singleton pattern via a module-level
+`get_provider()` (or `get_client()`) function. REST methods are
+synchronous, using `requests.Session` for connection reuse. Market data
+reads (`get_all_prices`, `get_l2_book`, `get_asset_context`,
+`get_multi_asset_contexts`) are WS-first with REST fallback -- managed
+by `MarketDataFeed` in `ws_feeds.py`.
 
 ### HyperliquidProvider (`hyperliquid.py`)
 
-The primary provider. Wraps the Hyperliquid Python SDK for both market data reads (always mainnet) and order execution (mainnet, testnet, or paper mode). Market data reads are WS-first (via `MarketDataFeed` in `ws_feeds.py`) with REST fallback if WS is stale (>30s). Write operations always use REST.
+The primary provider. Wraps the Hyperliquid Python SDK for both market
+data reads (always mainnet) and order execution (mainnet, testnet, or
+paper mode). Market data reads are WS-first (via `MarketDataFeed` in
+`ws_feeds.py`) with REST fallback if WS is stale (>30s). Write
+operations always use REST.
 
 **Market Data Methods:**
 
@@ -74,13 +85,15 @@ The primary provider. Wraps the Hyperliquid Python SDK for both market data read
 - `start_ws(coins)` called by daemon on startup; `stop_ws()` on shutdown
 - Exchange is lazily initialized only when a private key is available
 
-**Singleton:** `get_provider(config)` returns `PaperProvider` (paper mode) or `HyperliquidProvider` (testnet/live).
+**Singleton:** `get_provider(config)` returns `PaperProvider` (paper mode)
+or `HyperliquidProvider` (testnet/live).
 
 ---
 
 ### PaperProvider (`paper.py`)
 
-Drop-in replacement for `HyperliquidProvider` that simulates all trading operations internally while delegating all market data reads to mainnet.
+Drop-in replacement for `HyperliquidProvider` that simulates all trading
+operations internally while delegating all market data reads to mainnet.
 
 - Uses real mainnet prices for accurate PnL math
 - Simulates margin, leverage, liquidation prices, taker fees (0.035%)
@@ -88,7 +101,9 @@ Drop-in replacement for `HyperliquidProvider` that simulates all trading operati
 - Persists state to `storage/paper-state.json` (survives restarts)
 - `reset_paper_stats()` marks a new session boundary for stats filtering
 
-All data methods (`get_price`, `get_candles`, `get_l2_book`, etc.) pass through to the real `HyperliquidProvider`. WS methods (`start_ws`, `stop_ws`, `ws_health`) also pass through.
+All data methods (`get_price`, `get_candles`, `get_l2_book`, etc.) pass
+through to the real `HyperliquidProvider`. WS methods (`start_ws`,
+`stop_ws`, `ws_health`) also pass through.
 
 ---
 
@@ -115,59 +130,31 @@ Cross-exchange derivatives data from the Coinglass API v4.
 
 ---
 
-### CryptoCompareProvider (`cryptocompare.py`)
-
-Crypto news articles from the CryptoCompare News API v2.
-
-| Method | Data |
-|--------|------|
-| `get_news(categories?, limit)` | Latest articles filtered by coin/topic (e.g., `["BTC", "Regulation"]`) |
-
-Returns cleaned dicts with: `id`, `title`, `body` (truncated to 200 chars), `source`, `published_on`, `categories`, `url`.
-
-**Configuration:** `CRYPTOCOMPARE_API_KEY` environment variable (optional -- works without one at lower rate limits).
-
----
-
 ### HynousDataClient (`hynous_data.py`)
 
-HTTP client for the `hynous-data` service running on `:8100`. Provides data that requires persistent state or specialized scrapers.
+HTTP client for the `hynous-data` service running on `:8100`. Provides
+data that requires persistent state or specialized scrapers.
 
 | Method | Data |
 |--------|------|
 | `heatmap(coin)` / `heatmap_summary(coin)` | Liquidation heatmap (buckets, densest zones) |
 | `hlp_positions()` / `hlp_summary()` | HLP vault positions (top by size) |
 | `hlp_sentiment(hours)` | HLP sentiment (side flips, deltas) |
-| `order_flow(coin)` / `order_flow_summary(coin)` | CVD / order flow by time window |
+| `order_flow(coin)` / `order_flow_summary(coin)` | CVD / order flow by time window (now includes 30m + large-trade count per Amendment 10) |
 | `whales(coin, top_n)` / `whale_summary(coin)` | Largest positions (net bias, long/short USD) |
 | `smart_money(top_n, min_win_rate, style, ...)` | Most profitable traders with filters |
 | `sm_watchlist()` / `sm_watch()` / `sm_unwatch()` | Smart money wallet tracker CRUD |
 | `sm_profile(address, days)` / `sm_trades(address, limit)` | Individual wallet profiles and trades |
-| `sm_changes(minutes)` | Recent wallet position changes |
+| `sm_changes(minutes)` | Recent wallet position changes (action-key: entry/flip/increase) |
 | `sm_create_alert()` / `sm_list_alerts()` / `sm_delete_alert()` | Wallet alert management |
 | `record_historical(funding, oi, volume)` | Record snapshot data to historical tables |
 | `health()` / `stats()` | Service health and statistics |
 
-All methods return `None` on connection failure (graceful degradation). The `is_available` property tracks reachability.
+All methods return `None` on connection failure (graceful degradation).
+The `is_available` property tracks reachability.
 
-**Configuration:** `data_layer.url` and `data_layer.timeout` in `config/default.yaml` (default: `http://127.0.0.1:8100`, 5s timeout).
-
----
-
-### PerplexityProvider (`perplexity.py`)
-
-Real-time web search via the Perplexity Sonar API. Gives the agent access to current news, macro events, and knowledge gaps.
-
-| Method | Data |
-|--------|------|
-| `search(query, context?, max_tokens)` | Web search answer + citations |
-
-- Model: `sonar` ($1/M tokens, 128K context)
-- Temperature: 0.2 (factual)
-- System prompt steers toward crypto/finance context
-- Token usage is recorded for cost tracking via `core.costs`
-
-**Configuration:** `PERPLEXITY_API_KEY` environment variable (required).
+**Configuration:** `data_layer.url` and `data_layer.timeout` in
+`config/default.yaml` (default: `http://127.0.0.1:8100`, 5s timeout).
 
 ---
 
@@ -175,10 +162,10 @@ Real-time web search via the Perplexity Sonar API. Gives the agent access to cur
 
 1. Create `providers/my_provider.py` with a class and `get_provider()` singleton
 2. Export in `providers/__init__.py` if needed
-3. Create corresponding tool(s) in `intelligence/tools/`
+3. If the data should be agent-accessible, create a tool in `intelligence/tools/`
 4. Register the tool in `intelligence/tools/registry.py`
 5. Add tool strategy guidance in `intelligence/prompts/builder.py`
 
 ---
 
-Last updated: 2026-03-15
+Last updated: 2026-04-12 (phase 7 complete)
