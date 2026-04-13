@@ -1,7 +1,6 @@
 [Unit]
 Description=Hynous Dashboard + Agent + Daemon + Discord Bot
-After=network.target nous.service hynous-data.service
-Requires=nous.service
+After=network.target hynous-data.service
 Wants=hynous-data.service
 
 [Service]

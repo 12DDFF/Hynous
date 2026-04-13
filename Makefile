@@ -1,7 +1,7 @@
 # Hynous Makefile
 # Common commands for development
 
-.PHONY: install dev dashboard daemon test lint clean
+.PHONY: install dev dashboard daemon test lint clean smoke
 
 # Install dependencies
 install:
@@ -22,6 +22,10 @@ daemon:
 # Run tests
 test:
 	pytest
+
+# Short smoke (5 min) — paper daemon with no positions expected to open
+smoke:
+	PYTHONPATH=src .venv/bin/python -m scripts.run_daemon --duration 300 2>&1 | tee storage/v2/smoke-quick.log
 
 # Run tests with coverage
 coverage:
@@ -55,6 +59,7 @@ help:
 	@echo "  make dashboard  - Run Reflex dashboard"
 	@echo "  make daemon     - Run background agent"
 	@echo "  make test       - Run tests"
+	@echo "  make smoke      - Run 5-min paper daemon smoke"
 	@echo "  make coverage   - Run tests with coverage"
 	@echo "  make lint       - Lint code"
 	@echo "  make format     - Format code"

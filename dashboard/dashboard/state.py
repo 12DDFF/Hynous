@@ -1837,16 +1837,14 @@ class AppState(rx.State):
             "get_institutional_flow": "#34d399",
             "search_web": "#e879f9",
             "get_my_costs": "#94a3b8",
-            "store_memory": "#a3e635",
-            "recall_memory": "#a3e635",
             "get_account": "#f59e0b",
-            "execute_trade": "#22c55e",
             "close_position": "#ef4444",
             "modify_position": "#a78bfa",
-            "get_trade_stats": "#f97316",
-            "explore_memory": "#a3e635",
-            "manage_conflicts": "#f87171",
-            "manage_clusters": "#a5b4fc",
+            "data_layer": "#22d3ee",
+            "get_book_history": "#818cf8",
+            "monitor_signal": "#facc15",
+            "search_trades": "#e879f9",
+            "get_trade_by_id": "#60a5fa",
         }
         return colors.get(self.active_tool, "#a5b4fc")
 

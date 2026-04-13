@@ -166,4 +166,4 @@ Test services are **disabled** (won't auto-start on reboot) so they don't eat RA
 
 ---
 
-Last updated: 2026-04-12 (phase 4 M6a — Nous server deleted)
+Last updated: 2026-04-12 (phase 7 M6 — packaging + deploy cleanup)
