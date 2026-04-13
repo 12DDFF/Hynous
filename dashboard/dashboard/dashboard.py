@@ -9,6 +9,7 @@ Run with:
 """
 
 import reflex as rx
+from fastapi.middleware.asyncexitstack import AsyncExitStackMiddleware
 from .state import AppState
 from .components import navbar
 from .pages import home_page, chat_page, journal_page, login_page, debug_page, settings_page, data_page, ml_page
@@ -277,6 +278,14 @@ app._api.add_middleware(_NoCacheHTMLMiddleware)
 # JournalStore. Daemon keeps its own StagingStore until phase-2 M7 swaps both
 # processes onto the same journal.db. Wrapped in try/except so a DB-init error
 # at dashboard startup is logged but doesn't brick the rest of the app.
+#
+# AsyncExitStackMiddleware is required: FastAPI's APIRoute.__call__ reads
+# scope["fastapi_middleware_astack"]. Reflex's app._api is a raw Starlette app
+# that never sets it, so routes 500 with AssertionError without this middleware.
+# Install before extending routes so the middleware stack is frozen with it
+# included before the first request hits either router.
+app._api.add_middleware(AsyncExitStackMiddleware)
+
 try:
     from hynous.core.config import load_config as _load_cfg_for_journal
     from hynous.journal.api import router as _journal_router, set_store as _set_journal_store
@@ -288,7 +297,11 @@ try:
         busy_timeout_ms=_cfg.v2.journal.busy_timeout_ms,
     )
     _set_journal_store(_journal_store)
-    app._api.include_router(_journal_router)
+    # Reflex 0.8.26's app._api is a Starlette app, not FastAPI — it has no
+    # include_router. FastAPI APIRoute subclasses starlette.routing.Route and
+    # bakes the prefix into .path at router construction, so we can attach
+    # them directly to the Starlette router's routes list.
+    app._api.router.routes.extend(_journal_router.routes)
 except Exception as _journal_mount_err:
     import logging as _journal_mount_logging
     _journal_mount_logging.getLogger(__name__).exception(
@@ -311,7 +324,7 @@ try:
         journal_store=_journal_store,
     )
     _set_user_chat_agent(_user_chat_agent)
-    app._api.include_router(_user_chat_router)
+    app._api.router.routes.extend(_user_chat_router.routes)
 except Exception as _user_chat_mount_err:
     import logging as _user_chat_mount_logging
     _user_chat_mount_logging.getLogger(__name__).exception(

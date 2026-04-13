@@ -1397,7 +1397,6 @@ class AppState(rx.State):
                     pass
                 if new_daemon_msgs:
                     async with self:
-                        self.is_waking = False  # Clear manual wake indicator
                         # Route ALL daemon wakes to sidebar activity feed
                         for item in new_daemon_msgs:
                             raw = item.get('response', '')
@@ -1770,31 +1769,6 @@ class AppState(rx.State):
         return colors.get(self.active_tool, "#a5b4fc")
 
     # === Daemon Controls ===
-
-    is_waking: bool = False  # True while a manual wake is in progress
-
-    def wake_agent_now(self):
-        """Trigger an immediate daemon review wake.
-
-        Non-blocking: fires the wake in a daemon background thread.
-        Response appears in chat feed via the daemon chat queue.
-        The is_waking flag is cleared by poll_portfolio when the response arrives.
-        """
-        if _daemon is None or not _daemon.is_running:
-            self._add_activity("system", "Cannot wake — daemon not running", "warning")
-            return
-        if self.is_waking:
-            return  # Already waking
-
-        self.is_waking = True
-        # Phase 5 M7: trigger_manual_wake() was removed with the v1 agent.
-        # Phase 7 dashboard rework will retire this button; until then, log
-        # and surface to the user instead of crashing.
-        logger.info("manual wake ignored in v2 — no LLM trading agent")
-        self._add_activity(
-            "system", "Manual wake is disabled in v2", "warning",
-        )
-        self.is_waking = False
 
     def toggle_daemon(self, checked: bool = True):
         """Toggle daemon on/off.
