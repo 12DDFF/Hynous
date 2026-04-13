@@ -193,7 +193,7 @@ def _by_exchange(provider, symbol: str, time_range: str) -> str:
         reverse=True,
     )
 
-    lines = [f"{symbol} Liquidations by Exchange ({range}):"]
+    lines = [f"{symbol} Liquidations by Exchange ({time_range}):"]
 
     if aggregate:
         total = aggregate.get("liquidation_usd", 0)

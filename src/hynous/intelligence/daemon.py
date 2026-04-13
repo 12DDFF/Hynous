@@ -4020,8 +4020,8 @@ class Daemon:
     def _run_feedback_analysis(self):
         """Compute rolling signal IC and update composite score weights.
 
-        Runs daily. Requires >= 30 closed trades in entry_snapshots.
-        Updates self._entry_score_weights and persists to disk.
+        Runs daily. Uses ``update_weights`` default ``min_trades=10``
+        (phase-8 new-M1 tightening) — do not re-override here.
         """
         try:
             from satellite.weight_updater import update_weights
@@ -4038,7 +4038,7 @@ class Daemon:
             # Attempt weight update
             weights_path = self.config.project_root / "storage" / "entry_score_weights.json"
             new_weights = update_weights(
-                self._satellite_store, weights_path, min_trades=30,
+                self._satellite_store, weights_path,
             )
             if new_weights:
                 self._entry_score_weights = new_weights
