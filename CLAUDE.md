@@ -31,11 +31,12 @@ analyzes trades after they close.
 ```
 hynous/
 ├── src/hynous/          # Main Python application
-│   ├── intelligence/    # Agent brain (agent, daemon, scanner, tools, prompts)
-│   ├── journal/         # v2 trade journal (schema, store, capture, counterfactuals, embeddings, migrate_staging)
+│   ├── intelligence/    # Daemon, scanner, tools, prompts (v2: mechanical loop, no autonomous LLM)
+│   ├── journal/         # v2 trade journal (schema, store, capture, counterfactuals, embeddings, consolidation, migrate_staging)
 │   ├── analysis/        # v2 post-trade analysis agent (rules engine + LLM synthesis + wake integration)
-│   ├── data/            # Market data providers (Hyperliquid, Coinglass, etc. + WS feed manager)
-│   ├── discord/         # Discord bot (chat relay, notifications, stats)
+│   ├── mechanical_entry/ # v2 mechanical entry loop (interface, ml_signal_driven trigger, entry_params, executor)
+│   ├── user_chat/       # v2 user chat agent (agent, api, prompt) — mounted at `/api/v2/chat/*`
+│   ├── data/            # Market data providers (Hyperliquid, Coinglass + WS feed manager)
 │   └── core/            # Shared utilities (config, types, tracing, trading_settings)
 ├── dashboard/           # Reflex UI + `/api/v2/journal/*` FastAPI router
 ├── satellite/           # ML feature engine (XGBoost condition models, walk-forward)
@@ -86,19 +87,16 @@ Tools registered in `registry.py` are the canonical surface; keep scope narrow.
 All config in `config/default.yaml`. Loaded by `src/hynous/core/config.py` → `load_config()`.
 
 Top-level dataclasses include AgentConfig, ExecutionConfig, HyperliquidConfig,
-MemoryConfig, OrchestratorConfig, SectionsConfig, DaemonConfig, ScannerConfig,
-DataLayerConfig, DiscordConfig, SatelliteConfig, V2Config (journal /
-analysis_agent / mechanical_entry / consolidation / user_chat sub-configs),
-and Config (root).
+DaemonConfig, ScannerConfig, DataLayerConfig, SatelliteConfig, V2Config
+(journal / analysis_agent / mechanical_entry / consolidation / user_chat
+sub-configs), and Config (root).
 
 **Environment variables** (in `.env`, never committed):
 ```
 OPENROUTER_API_KEY=sk-or-...        # LLM providers via OpenRouter
 HYPERLIQUID_PRIVATE_KEY=...          # Exchange wallet
 OPENAI_API_KEY=...                   # Journal + analysis-agent embeddings (text-embedding-3-small)
-DISCORD_BOT_TOKEN=...               # Discord bot (optional)
 COINGLASS_API_KEY=...               # Derivatives data (optional)
-CRYPTOCOMPARE_API_KEY=...           # News feed (optional)
 ```
 
 ---
@@ -156,7 +154,7 @@ cd data-layer && pytest tests/
 
 Phase 4 is complete; the canonical CE-ignore list has been fully retired
 (M6b deleted the orphan test files and `pytest tests/` now runs
-unrestricted). Post-phase-4 baseline: `482 passed / 0 failed`.
+unrestricted). Current baseline (phase 7 in progress): `576 passed / 0 failed`.
 
 ---
 
@@ -169,7 +167,7 @@ unrestricted). Post-phase-4 baseline: `482 passed / 0 failed`.
 - **Phase 4** complete (2026-04-12) — Nous server + Python client deleted, 9 decision-injection modules removed, 8 v1 memory tools removed, unused coinglass methods + perplexity/cryptocompare out, prompt trimmed ~40%, `scripts/run_daemon.py` standalone, `pytest tests/` = 482p/0f. Deferred to phase 7: `trade_analytics.py`, `memory_tracker.py`, dashboard memory/graph/brain pages, Makefile/pyproject/deploy rework, cryptocompare + perplexity + news alert detector.
 - **Phase 5** complete (2026-04-12) — mechanical entry loop: `src/hynous/mechanical_entry/` (interface, `MLSignalDrivenTrigger`, `compute_entry_params`, `executor`) + daemon rewire (`_evaluate_entry_signals` + `_periodic_ml_signal_check` at 60 s). v1 `intelligence/agent.py` deleted, all daemon LLM-wake methods removed (`grep agent.chat src/hynous/intelligence/daemon.py` → 0). User chat agent moved to `src/hynous/user_chat/` with `/api/v2/chat/*` router. Rejected entry signals write `status='rejected'` rows with `rejection_reason` for phase 6 batch analysis. Final baselines: 551p/0f, ruff 62, mypy 252. Deferred to phase 7: `intelligence/tools/market_watch.py` (writes to removed `daemon._pending_watches` — unreachable), `discord/bot.py` (stale `self.agent.chat` call — unreachable; bot not started from any v2 path).
 - **Phase 6** complete (2026-04-12) — consolidation + pattern rollup: `src/hynous/journal/consolidation.py` (4 edge builders: temporal preceded/followed-by, regime-bucket, rejection-reason, rejection-vs-contemporaneous) + weekly `run_weekly_rollup` writing `system_health_report` pattern rows (mistake_tag_summary, rejection_reasons, grade_summary, regime_performance). Edge builds fire automatically after analysis insert via `build_edges_for_trade` hook; daemon starts the rollup cron (`start_weekly_rollup_cron`, interval from `V2Config.consolidation.pattern_rollup_interval_hours`). Routes `/api/v2/journal/patterns` and `/api/v2/journal/trades/{id}/related` live in `api.py`. CLI manual trigger at `python -m hynous.journal rollup`. No-dedup design note preserved in `consolidation.py`. Final baselines: 576p/0f, ruff 62, mypy 252. Registry unchanged (18 tools).
-- **Phase 7** next — dashboard rebuild + deferred-artifact cleanup (to be scoped).
+- **Phase 7** in progress (2026-04-12, M1–M7 complete, M8 current) — deferred-artifact cleanup: `intelligence/agent.py` + `memory_tracker.py` + `trade_analytics.py` deleted; v1 tools (`market_watch`, `trade_stats`, `watchpoints`) removed; `DiscordConfig` + `src/hynous/discord/` + cryptocompare + perplexity providers purged; briefing trimmed 435→244 lines; ruff/mypy floors dropped (src 51, dashboard 120, mypy 237); registry pinned at 15 tools; 576p/0f maintained throughout. M8 = documentation refresh + scanner dead-code sweep; M9 = close-out.
 
 ---
 
@@ -201,4 +199,4 @@ unrestricted). Post-phase-4 baseline: `482 passed / 0 failed`.
 
 ---
 
-Last updated: 2026-04-12 (phase 6 M5 — phase 6 complete; ready for phase 7 handoff)
+Last updated: 2026-04-12 (phase 7 M8 — documentation refresh)

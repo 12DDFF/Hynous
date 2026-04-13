@@ -35,14 +35,14 @@
 │  │  • Post-trade analysis triggered after every exit           │      │
 │  └───────┬─────────────────────────────────────────────────────┘      │
 │          │                                                             │
-│     ┌────┴─────┬────────────┬───────────────┬──────────────────┐      │
-│     ▼          ▼            ▼               ▼                  ▼      │
-│ ┌───────┐ ┌─────────┐ ┌───────────┐ ┌────────────────┐ ┌───────────┐  │
-│ │Journal│ │Analysis │ │ Scanner   │ │  Satellite     │ │  Discord  │  │
-│ │store  │ │agent    │ │ (anomaly  │ │  (feature +    │ │    bot    │  │
-│ │(SQLite│ │(rules + │ │  detect)  │ │   inference)   │ │  relay    │  │
-│ │ 9 tbl)│ │  LLM)   │ │           │ │                │ │           │  │
-│ └───┬───┘ └────┬────┘ └─────┬─────┘ └────────┬───────┘ └───────────┘  │
+│     ┌────┴─────┬────────────┬───────────────┐                        │
+│     ▼          ▼            ▼               ▼                         │
+│ ┌───────┐ ┌─────────┐ ┌───────────┐ ┌────────────────┐                │
+│ │Journal│ │Analysis │ │ Scanner   │ │  Satellite     │                │
+│ │store  │ │agent    │ │ (anomaly  │ │  (feature +    │                │
+│ │(SQLite│ │(rules + │ │  detect)  │ │   inference)   │                │
+│ │ 9 tbl)│ │  LLM)   │ │           │ │                │                │
+│ └───┬───┘ └────┬────┘ └─────┬─────┘ └────────┬───────┘                │
 └─────┼──────────┼────────────┼────────────────┼────────────────────────┘
       │          │            │                │
       ▼          ▼            │                │  satellite.tick()
@@ -78,13 +78,12 @@ Drives the mechanical loop, emits journal events, wakes the analysis agent.
 
 | Module | Responsibility |
 |--------|----------------|
-| `daemon.py` | Fast trigger loop, poll loops, journal writes, analysis triggers, mechanical exits |
-| `scanner.py` | Market-wide anomaly detection across Hyperliquid pairs |
+| `daemon.py` | Fast trigger loop, poll loops, journal writes, analysis triggers, mechanical exits, mechanical entry via `_periodic_ml_signal_check` (60 s) |
+| `scanner.py` | Market-wide anomaly detection across Hyperliquid pairs (producer of `AnomalyEvent`; v2 has no LLM wake formatter) |
 | `regime.py` | Regime detection (hybrid macro/micro dual scoring, zero LLM cost) |
-| `agent.py` | LiteLLM wrapper (kept for user chat + analysis agent; not used for trade decisions in v2) |
-| `prompts/` | System prompts (identity + tool strategy) |
-| `tools/` | Tool handlers. Trading, scanner ops, and market-data reads remain; v1 memory tools were removed in phase 4 |
-| `briefing.py` | Pre-built context injection (evolving in phase 7 when dashboard reworks) |
+| `prompts/` | System prompts (user-chat-oriented in v2; identity + tool strategy) |
+| `tools/` | Tool handlers — 15 tools, user-chat surface only (phase 4 removed v1 memory tools; phase 5 kept trading/read tools for user chat but detached them from the decision loop) |
+| `briefing.py` | Pre-built context injection (trimmed in phase 7 M7) |
 | `context_snapshot.py` | Live state block (portfolio, positions, regime, ML predictions) |
 
 ### `src/hynous/journal/` — trade journal (v2)
@@ -124,6 +123,30 @@ Persisted rows carry narrative, citations, merged deterministic + LLM
 findings, mistake tags, grades, `process_quality_score`, and
 `unverified_claims`.
 
+### `src/hynous/mechanical_entry/` — mechanical entry loop (v2)
+
+Replaces v1's LLM-driven entry decisions. Runs on a 60 s cadence from
+`daemon._periodic_ml_signal_check`. See
+`v2-planning/08-phase-5-mechanical-entry.md` for the full design.
+
+| Module | Responsibility |
+|--------|----------------|
+| `interface.py` | `EntryTrigger` protocol + `EntryDecision` dataclass (accept / reject with reason) |
+| `ml_signal_driven.py` | `MLSignalDrivenTrigger` — gates entries on satellite conditions (vol/entry_quality/momentum/sl_survival) and regime |
+| `compute_entry_params.py` | Vol-adaptive leverage, size, SL / TP resolution from `TradingSettings` and vol regime |
+| `executor.py` | Execution helpers — submits the order, writes entry snapshot, writes rejection row on reject |
+
+### `src/hynous/user_chat/` — user chat agent (v2)
+
+LLM conversational surface only. Not in the trading decision path. Mounted
+at `/api/v2/chat/*`.
+
+| Module | Responsibility |
+|--------|----------------|
+| `agent.py` | LiteLLM-backed conversational agent (lazy-imports `litellm`) |
+| `api.py` | FastAPI router mounted on the dashboard process |
+| `prompt.py` | System prompt builder (user-chat identity + tool strategy) |
+
 ### `src/hynous/data/` — market data
 
 | Module | Responsibility |
@@ -132,9 +155,7 @@ findings, mistake tags, grades, `process_quality_score`, and
 | `providers/ws_feeds.py` | `MarketDataFeed` — one WS connection managing `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m) with 30s staleness gating and REST fallback |
 | `providers/paper.py` | Paper trading simulator (local order matching) |
 | `providers/coinglass.py` | Coinglass derivatives API |
-| `providers/cryptocompare.py` | News feed / sentiment |
 | `providers/hynous_data.py` | Client for the data-layer service (:8100) |
-| `providers/perplexity.py` | Perplexity web search |
 
 ### `src/hynous/core/` — shared utilities
 
@@ -145,11 +166,6 @@ findings, mistake tags, grades, `process_quality_score`, and
 | `trading_settings.py` | Runtime-adjustable trading parameters (thread-safe singleton, JSON-persisted) |
 | `request_tracer.py` | Debug trace collector (8 span types per call) |
 | `trace_log.py` | Trace persistence + SHA256 content-addressed payload storage |
-
-### `src/hynous/discord/` — Discord bot
-
-Chat relay + daemon notifications. Shares process space with daemon, uses
-its own asyncio event loop on a background thread.
 
 ### `dashboard/` — Reflex UI
 
@@ -202,8 +218,7 @@ daemon.py (continuous loops)
     │     ├── Funding, OI, sentiment polls
     │     ├── Push historical snapshot → data-layer (POST /v1/historical/record)
     │     ├── satellite.tick() → 28 features → satellite.db
-    │     ├── _run_satellite_inference() → XGBoost + SHAP → satellite.db
-    │     └── news polling (CryptoCompare)
+    │     └── _run_satellite_inference() → XGBoost + SHAP → satellite.db
     │
     ├── _check_positions() → fill detection
     │     ├── Entry detected: journal.capture_entry() → write entry_snapshot + trade row
@@ -215,7 +230,7 @@ daemon.py (continuous loops)
     └── Background threads:
           • rejection-analysis-cron (hourly): batch-judge pending rejections
           • counterfactual check (30min): recompute deferred exit counterfactuals
-          • ML-signal wake (if not shadow mode): calls scanner/analysis
+          • ML-signal mechanical entry (60s cadence via `_periodic_ml_signal_check`)
 ```
 
 ### Post-trade analysis flow
@@ -252,10 +267,13 @@ See `docs/integration.md` for the enumerated list.
 ## Tools Reference
 
 Tools live in `src/hynous/intelligence/tools/` and register in
-`registry.py`. The current surface is pared down after phase 4's tier-1
-deletions (v1 memory tools removed). Consult `registry.py` for the
-authoritative list — it changes during phase 4 milestones. Phase 5 will
-remove trade-execution tools as the LLM exits the trading loop entirely.
+`registry.py`. Phase 5 removed the LLM from the trading decision loop;
+the 15 tools that remain in the registry are the surface available to the
+user-chat agent (`src/hynous/user_chat/`). Trade-execution tools are kept
+for the user chat, but the daemon never invokes an LLM to decide on a
+trade — entries go through `mechanical_entry/` and exits through
+`daemon._fast_trigger_check`. Consult `registry.py` for the authoritative
+list.
 
 ---
 
@@ -316,7 +334,7 @@ VPS deployment via systemd services and Caddy reverse proxy.
 
 ```
 deploy/
-├── hynous.service       # Main app (dashboard + daemon + journal + discord)
+├── hynous.service       # Main app (dashboard + daemon + journal)
 ├── hynous-data.service  # Data-layer FastAPI service (:8100)
 ├── setup.sh             # VPS provisioning script
 └── README.md            # Deployment instructions
@@ -354,4 +372,4 @@ completed) in `docs/archive/`. Highlights:
 
 ---
 
-Last updated: 2026-04-12 (phase 4 M6a — Nous server deleted, 5→4 component architecture)
+Last updated: 2026-04-12 (phase 7 M8 — architecture refresh for v2)

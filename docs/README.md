@@ -27,10 +27,10 @@ and a post-trade LLM analysis pipeline. Authoritative design docs live in
 | 1 | `v2-planning/04-phase-1-data-capture.md` | Complete |
 | 2 | `v2-planning/05-phase-2-journal-module.md` | Complete |
 | 3 | `v2-planning/06-phase-3-analysis-agent.md` | Complete |
-| 4 | `v2-planning/07-phase-4-tier1-deletions.md` | In progress |
-| 5 | `v2-planning/08-phase-5-mechanical-entry.md` | Pending |
-| 6 | `v2-planning/09-phase-6-consolidation.md` | Pending |
-| 7 | `v2-planning/10-phase-7-dashboard.md` | Pending |
+| 4 | `v2-planning/07-phase-4-tier1-deletions.md` | Complete |
+| 5 | `v2-planning/08-phase-5-mechanical-entry.md` | Complete |
+| 6 | `v2-planning/09-phase-6-consolidation.md` | Complete |
+| 7 | `v2-planning/10-phase-7-dashboard.md` | In progress |
 | 8 | `v2-planning/11-phase-8-quant-improvements.md` | Pending |
 
 Other v2-planning files: `01-pre-implementation-reading.md`,
@@ -43,13 +43,14 @@ Other v2-planning files: `01-pre-implementation-reading.md`,
 
 | Area | Document |
 |------|----------|
-| Agent brain + tools | [`src/hynous/intelligence/README.md`](../src/hynous/intelligence/README.md), [`src/hynous/intelligence/tools/README.md`](../src/hynous/intelligence/tools/README.md), [`src/hynous/intelligence/prompts/README.md`](../src/hynous/intelligence/prompts/README.md) |
+| Daemon + tools | [`src/hynous/intelligence/README.md`](../src/hynous/intelligence/README.md), [`src/hynous/intelligence/tools/README.md`](../src/hynous/intelligence/tools/README.md), [`src/hynous/intelligence/prompts/README.md`](../src/hynous/intelligence/prompts/README.md) |
 | Market data | [`src/hynous/data/README.md`](../src/hynous/data/README.md) |
 | Journal (v2) | [`src/hynous/journal/README.md`](../src/hynous/journal/README.md) |
 | Analysis agent (v2) | `src/hynous/analysis/` (see phase 3 doc) |
+| Mechanical entry (v2) | `src/hynous/mechanical_entry/` (see `v2-planning/08-phase-5-mechanical-entry.md`) |
+| User chat (v2) | `src/hynous/user_chat/` (see phase 5 doc) |
 | Satellite | [`satellite/README.md`](../satellite/README.md), [`satellite/training/README.md`](../satellite/training/README.md), [`satellite/artemis/README.md`](../satellite/artemis/README.md) |
 | Data-layer service | [`data-layer/README.md`](../data-layer/README.md) |
-| Discord bot | [`src/hynous/discord/README.md`](../src/hynous/discord/README.md) |
 | Core utilities | [`src/hynous/core/README.md`](../src/hynous/core/README.md) |
 | Deployment | [`deploy/README.md`](../deploy/README.md) |
 
@@ -109,4 +110,4 @@ Key conventions:
 
 ---
 
-Last updated: 2026-04-12 (phase 4 M6a — docs hub rewritten for v2)
+Last updated: 2026-04-12 (phase 7 M8 — docs hub refresh)

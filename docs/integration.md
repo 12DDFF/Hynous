@@ -88,8 +88,11 @@ the data-layer's SQLite file.
 5. Daemon then calls `_run_satellite_inference()` which runs XGBoost +
    SHAP via `InferenceEngine.predict(...)`, writes predictions to
    `satellite.db`, updates `_latest_predictions` cache
-6. If a signal fires AND not in shadow mode AND no position for that
-   coin: `_wake_agent(source="daemon:ml_signal")`
+6. Signal gating happens inside the mechanical entry loop, not here. The
+   daemon's `_periodic_ml_signal_check` (60 s cadence) reads
+   `_latest_predictions` and drives `mechanical_entry/ml_signal_driven.py`
+   to accept or reject candidate entries. No LLM is woken from satellite
+   predictions in v2.
 
 **Kill switch**: `KillSwitch.check_staleness()` auto-disables inference if
 no snapshot for >900s.
@@ -250,4 +253,4 @@ Not WS-fed (stays REST):
 
 ---
 
-Last updated: 2026-04-12 (phase 4 M6a — integration.md rewritten for v2)
+Last updated: 2026-04-12 (phase 7 M8 — integration refresh for v2)
