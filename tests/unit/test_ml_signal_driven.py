@@ -80,7 +80,7 @@ def _fresh_predictions(
     ts: float | None = None,
 ) -> dict[str, Any]:
     return {
-        "_entry_score": entry_score,
+        "entry_score": entry_score,
         "signal": signal,
         "long_roe": long_roe,
         "short_roe": short_roe,

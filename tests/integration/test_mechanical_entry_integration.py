@@ -86,7 +86,7 @@ def _make_favorable_predictions() -> dict[str, Any]:
             "signal": "long",
             "long_roe": 6.0,
             "short_roe": -1.2,
-            "_entry_score": 72,
+            "entry_score": 72,
             "conditions": {
                 "timestamp": time.time(),
                 "entry_quality": {"percentile": 75},
@@ -334,7 +334,7 @@ def test_rejected_signals_accumulate_in_journal(
             "signal": "long",
             "long_roe": 6.0,
             "short_roe": -1.0,
-            "_entry_score": 72,
+            "entry_score": 72,
             "conditions": {
                 "timestamp": now - 3600,  # 1h old — stale
                 "entry_quality": {"percentile": 75},
@@ -350,7 +350,7 @@ def test_rejected_signals_accumulate_in_journal(
             "signal": "long",
             "long_roe": 6.0,
             "short_roe": -1.0,
-            "_entry_score": 40,  # below the 50 threshold
+            "entry_score": 40,  # below the 50 threshold
             "conditions": {
                 "timestamp": now,
                 "entry_quality": {"percentile": 75},

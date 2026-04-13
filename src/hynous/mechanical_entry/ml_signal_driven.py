@@ -117,8 +117,10 @@ class MLSignalDrivenTrigger(EntryTriggerSource):
             )
             return None
 
-        # Gate 4: composite entry score
-        comp_score = preds.get("_entry_score")
+        # Gate 4: composite entry score.
+        # NOTE: daemon.py writes this under ``entry_score`` (no underscore
+        # prefix) at the satellite inference cache. Keep in sync.
+        comp_score = preds.get("entry_score")
         if comp_score is None:
             self._rejection_record(
                 ctx,
