@@ -2182,12 +2182,6 @@ class AppState(rx.State):
         else:
             self.satellite_running = False
 
-    def go_to_memory(self):
-        """Navigate to memory management page and load data."""
-        self.current_page = "memory"
-        self.memory_unread = False
-        return AppState.load_memory_page
-
     def go_to_chat_with_message(self, msg: str):
         """Navigate to chat and send a message."""
         self.current_page = "chat"

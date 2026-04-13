@@ -11,7 +11,7 @@ Run with:
 import reflex as rx
 from .state import AppState
 from .components import navbar
-from .pages import home_page, chat_page, graph_page, journal_page, memory_page, login_page, debug_page, settings_page, data_page, ml_page
+from .pages import home_page, chat_page, journal_page, login_page, debug_page, settings_page, data_page, ml_page
 
 
 def _dashboard_content() -> rx.Component:
@@ -156,7 +156,6 @@ def _dashboard_content() -> rx.Component:
                 on_home=AppState.go_to_home,
                 on_chat=AppState.go_to_chat,
                 on_journal=AppState.go_to_journal,
-                on_memory=AppState.go_to_memory,
                 on_data=AppState.go_to_data,
                 on_ml=AppState.go_to_ml,
                 on_settings=AppState.go_to_settings,
@@ -196,7 +195,7 @@ def _dashboard_content() -> rx.Component:
                                     rx.cond(
                                         AppState.current_page == "debug",
                                         debug_page(),
-                                        memory_page(),
+                                        home_page(),
                                     ),
                                 ),
                             ),
@@ -318,28 +317,6 @@ except Exception as _user_chat_mount_err:
     _user_chat_mount_logging.getLogger(__name__).exception(
         "v2 user chat mount failed: %s", _user_chat_mount_err,
     )
-
-
-# Proxy Nous API through the Reflex backend so the browser doesn't need
-# direct access to port 3100 (blocked by UFW).
-async def _nous_proxy(request):
-    """Proxy /api/nous/* → localhost:3100/v1/*"""
-    import httpx
-    from starlette.responses import JSONResponse
-    path = request.path_params.get("path", "graph")
-    qs = str(request.query_params)
-    url = f"http://localhost:3100/v1/{path}"
-    if qs:
-        url += f"?{qs}"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url)
-            return JSONResponse(resp.json(), status_code=resp.status_code)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=502)
-
-
-app._api.add_route("/api/nous/{path:path}", _nous_proxy)
 
 
 async def _data_proxy(request):
