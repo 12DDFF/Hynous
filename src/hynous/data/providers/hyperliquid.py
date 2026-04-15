@@ -754,7 +754,32 @@ class HyperliquidProvider:
             List of candle dicts with keys: t (int ms), o, h, l, c, v (all float).
             Sorted by timestamp ascending.
         """
-        raw = self._info.candles_snapshot(symbol, interval, start_ms, end_ms)
+        # Retry on 429 — mirrors the get_all_prices and Info() patterns. The
+        # candles_snapshot endpoint shares the /info bucket and is the first
+        # thing to trip rate limits during boot storms (observed live
+        # 2026-04-15 from the kronos shadow tick).
+        import time as _time
+
+        from hyperliquid.utils.error import ClientError
+
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):  # 3 tries total
+            try:
+                raw = self._info.candles_snapshot(symbol, interval, start_ms, end_ms)
+                break
+            except ClientError as exc:
+                last_exc = exc
+                status = getattr(exc, "status_code", None) or (exc.args[0] if exc.args else None)
+                if status != 429 or attempt == 3:
+                    raise
+                wait_s = 2 ** (attempt - 1)  # 1s, 2s
+                logger.warning(
+                    "candles_snapshot(%s, %s) 429 — retrying in %ds (attempt %d/3)",
+                    symbol, interval, wait_s, attempt,
+                )
+                _time.sleep(wait_s)
+        else:  # pragma: no cover — defensive; loop exits via break or raise
+            raise last_exc  # type: ignore[misc]
         candles = []
         for c in raw:
             candles.append({
