@@ -82,7 +82,7 @@ class KronosAdapter:
     def __init__(
         self,
         *,
-        model_name: str = "NeoQuasar/Kronos-base",
+        model_name: str = "NeoQuasar/Kronos-small",
         tokenizer_name: str = "NeoQuasar/Kronos-Tokenizer-base",
         max_context: int = 512,
         device: str | None = None,

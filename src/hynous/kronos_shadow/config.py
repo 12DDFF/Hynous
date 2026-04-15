@@ -16,9 +16,11 @@ class V2KronosShadowConfig:
 
     enabled: bool = False
     symbol: str = "BTC"
-    # Largest open-source Kronos variant (102.3M params, Kronos-Tokenizer-base).
-    # Kronos-large (499M) weights are NOT publicly released by upstream.
-    model_name: str = "NeoQuasar/Kronos-base"
+    # Largest Kronos variant that fits on a 2-vCPU VPS within the 300s tick
+    # cadence (24.7M params, Kronos-Tokenizer-base). Kronos-base (102.3M)
+    # blew the cadence in live testing; Kronos-large (499M) weights are
+    # not publicly released by upstream.
+    model_name: str = "NeoQuasar/Kronos-small"
     tokenizer_name: str = "NeoQuasar/Kronos-Tokenizer-base"
     max_context: int = 512
     lookback_bars: int = 360

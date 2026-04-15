@@ -227,20 +227,18 @@ v2:
   kronos_shadow:
     enabled: false
     symbol: "BTC"
-    # Largest open-source Kronos variant (102.3M params).
+    # Hardware-feasibility note: Kronos-base (102.3M) was tried first but
+    # exceeded the 300s cadence on a 2-vCPU VPS even at pred_len=6
+    # sample_count=1 (>4 min, never completed). Kronos-small is the largest
+    # variant that fits comfortably on this hardware. Upgrade VPS to
+    # 4+ vCPU and swap to Kronos-base if you want full model capacity.
     # Kronos-large (499M) weights are NOT publicly released by upstream.
-    model_name: "NeoQuasar/Kronos-base"
+    model_name: "NeoQuasar/Kronos-small"
     tokenizer_name: "NeoQuasar/Kronos-Tokenizer-base"
     max_context: 512
     lookback_bars: 360
-    # pred_len drives autoregressive step count — each step is a sequential
-    # forward pass through 102M params. Kronos-base on a 2-vCPU box ran
-    # pred_len=24 sample_count=20 in 327s and pred_len=24 sample_count=1
-    # still hadn't completed in 200s+. Dropping pred_len drastically is the
-    # only knob that helps (sample_count is batched but the autoregressive
-    # decode is strictly sequential).
-    pred_len: 6                    # 6h forecast horizon — fits comfortably in cadence
-    sample_count: 1
+    pred_len: 24                   # full 24h horizon
+    sample_count: 5                # MC variance estimation
     temperature: 1.0
     top_p: 0.9
     tick_interval_s: 300
