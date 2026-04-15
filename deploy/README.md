@@ -29,7 +29,10 @@ systemctl start hynous
 | Service | What it runs | Port | Unit file |
 |---------|-------------|------|-----------|
 | `hynous-data` | Data layer — Hyperliquid market intelligence (Python) | 8100 | `hynous-data.service` |
-| `hynous` | Dashboard + daemon + journal + analysis agent + user-chat (Reflex + FastAPI in-process) | 3000 | `hynous.service` |
+| `hynous` | Dashboard + journal API + analysis agent + user-chat (Reflex + FastAPI in-process) | 3000 / 8000 | `hynous.service` |
+| `hynous-daemon` | Mechanical entry loop + Kronos shadow predictor (`scripts/run_daemon`, standalone) | — | `hynous-daemon.service` |
+
+The daemon was split out of the Reflex process in 2026-04-15 because granian's ASGI worker doesn't keep long-lived background threads alive reliably. Both `hynous` and `hynous-daemon` write to the same SQLite journal at `/opt/hynous/storage/v2/journal.db` (path resolved against project root, not CWD).
 
 Service dependencies: `hynous` wants `hynous-data` (see `After=` / `Wants=` in the unit files). The v2 trade journal runs in-process inside `hynous` (SQLite at `storage/v2/journal.db`).
 
@@ -164,11 +167,35 @@ Test services are **disabled** (won't auto-start on reboot) so they don't eat RA
 
 ```bash
 git push origin v2
-ssh vps "cd /opt/hynous && sudo -u hynous git pull && sudo systemctl restart hynous"
+ssh vps "cd /opt/hynous && sudo -u hynous git fetch origin v2 && sudo -u hynous git merge --ff-only origin/v2"
+# Restart the services that pulled changes:
+ssh vps "sudo systemctl restart hynous hynous-daemon"
 # If data-layer changed as well:
 ssh vps "sudo systemctl restart hynous-data"
 ```
 
+**Use `git fetch` + `git merge --ff-only` rather than `git pull`** — there's a
+stale `monte-carlo-live-heatmap` ref on the VPS with permission issues that
+breaks `pull` but not targeted fetch.
+
+### Kronos Shadow Predictor (Optional)
+
+The shadow runs in `hynous-daemon` and is **disabled by default**. To enable on the VPS:
+
+```bash
+# Install heavy ML extras (CPU-only torch wheel, ~200 MB)
+ssh vps "sudo -u hynous /opt/hynous/.venv/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch"
+ssh vps "sudo -u hynous /opt/hynous/.venv/bin/pip install --no-cache-dir 'huggingface_hub>=0.33.0' 'einops>=0.8.0' 'safetensors>=0.6.0' 'tqdm>=4.67.0'"
+
+# Flip the enabled flag in /opt/hynous/config/default.yaml (in-place, NOT committed back)
+ssh vps "sudo -u hynous sed -i 's/^    enabled: false$/    enabled: true/' /opt/hynous/config/default.yaml"
+
+# Restart and verify
+ssh vps "sudo systemctl restart hynous-daemon && sudo journalctl -u hynous-daemon -n 50 --no-pager | grep kronos"
+```
+
+First boot downloads ~50 MB of Kronos-small weights to `~hynous/.cache/huggingface/`. Each shadow tick takes ~30 s of CPU on a 2-vCPU VPS. See `v2-planning/12-kronos-shadow-integration.md` for full design.
+
 ---
 
-Last updated: 2026-04-14 (v2 rebuild complete — post phase 8 acceptance)
+Last updated: 2026-04-15 (3rd systemd service: hynous-daemon for mechanical loop + Kronos shadow)

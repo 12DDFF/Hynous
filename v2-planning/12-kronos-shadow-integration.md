@@ -1065,4 +1065,126 @@ downstream work, gated on shadow data.
 
 ---
 
-Last updated: 2026-04-14 (guide authored)
+Last updated: 2026-04-15 (guide authored 2026-04-14, implementation outcomes appended below)
+
+---
+
+## 11. Implementation Outcomes (2026-04-15)
+
+The guide above was followed end-to-end. Real-world outcomes diverged from
+plan in five places that future agents must know:
+
+### 11.1 Final live config (NOT what the guide originally specified)
+
+| Field | Guide default | Live value | Why |
+|---|---|---|---|
+| `model_name` | `NeoQuasar/Kronos-mini` | `NeoQuasar/Kronos-small` | User wanted the largest open-source variant. Tried `Kronos-base` (102 M) — overflowed the 300 s cadence on a 2-vCPU VPS even at `pred_len=6 sample_count=1` (>4 min, never completed). `Kronos-large` (499 M) weights are not publicly released. `Kronos-small` (24.7 M) is the largest viable on this hardware — first inference 33.7 s with 10× cadence headroom. |
+| `tokenizer_name` | `Kronos-Tokenizer-2k` | `Kronos-Tokenizer-base` | Pairs with Kronos-small/base per upstream model zoo. |
+| `pred_len` | 24 | 24 | Restored after Kronos-base experiments |
+| `sample_count` | 20 | 5 | Trimmed for headroom; the upside-prob proxy still works |
+
+If the VPS upgrades to ≥4 vCPU, swap to `Kronos-base` via one config edit. The
+Kronos-base path was proven to load and run successfully — it just blew the
+tick budget on small hardware.
+
+### 11.2 Cascading bugs surfaced during deploy (5 total)
+
+The guide had no way to predict any of these. All were caught by live
+operational testing:
+
+1. **`JournalStore` interface mismatch** — `store.insert_kronos_shadow` reached
+   for `journal._lock` and `journal._conn`, but the real `JournalStore` exposes
+   `_write_lock` and a per-operation `_connect()` method (no persistent
+   connection). The unit tests' `FakeJournal` shared the same wrong attribute
+   names, so the bug only surfaced live as
+   `AttributeError: 'JournalStore' object has no attribute '_lock'`. **Fix
+   commit `37b4d14`** rewrote both the store and the `FakeJournal` to use the
+   real interface (per-op `_connect()` + `_write_lock`, autocommit via
+   `isolation_level=None`).
+
+2. **Daemon thread dying inside Reflex granian ASGI worker.** The original
+   daemon was instantiated via `_eager_agent_start` in dashboard.py, but
+   granian's ASGI worker does not reliably keep long-lived background threads
+   alive. After a Hyperliquid 429 storm at 2026-04-15T01:17:02Z, the daemon
+   thread died and never resumed across multiple service restarts. **Fix:
+   new `deploy/hynous-daemon.service`** (commit `c1671c3`) runs
+   `scripts.run_daemon` as a standalone systemd unit with `Restart=always`,
+   completely decoupled from the UI's ASGI lifecycle.
+
+3. **Hyperliquid `Info()` constructor 429 cascade.** The SDK's `Info(skip_ws=True)`
+   blocks on a `spotMeta` POST during `__init__`. During daemon boot the
+   satellite + scanner + daemon subsystems all instantiate `Info()` near-
+   simultaneously and trip the rate limit. The bare `ClientError(429)` reached
+   `_loop_inner`, hit the FATAL outer guard, and killed the daemon thread.
+   This was the actual root cause of the pre-existing daemon-dead-since-01:17
+   regression — completely orthogonal to the Kronos shadow work. **Fix
+   commit `4c34009`**: `_build_info_with_retry` wraps `Info(...)` in 3
+   attempts with exponential backoff (1 s, 2 s) on 429 only.
+
+4. **`provider.get_candles` 429 on every Kronos shadow tick.** The
+   `candles_snapshot` endpoint shares the `/info` rate-limit bucket. Every
+   shadow tick was failing on the 360-bar candle fetch and writing nothing
+   to the DB. **Fix commit `1235466`**: same retry pattern applied to
+   `get_candles`.
+
+5. **Journal DB path divergence.** `db_path` in config is relative
+   (`storage/v2/journal.db`) and resolved against process CWD. Reflex
+   (cwd `/opt/hynous/dashboard`) wrote to a *different* file from the
+   standalone daemon (cwd `/opt/hynous`). Dashboard read 2,632 stale
+   rejection rows from the broken-daemon era while live shadow data landed
+   in a file the dashboard never opened. **Fix commit `fc4c02e`**:
+   `JournalStore.__init__` resolves relative paths against
+   `_find_project_root()`. Absolute paths (test fixtures) pass through
+   unchanged.
+
+### 11.3 Operational posture for the standalone daemon
+
+- Service: `hynous-daemon.service` (User=hynous, WorkingDirectory=/opt/hynous,
+  ExecStart=`.venv/bin/python -m scripts.run_daemon --log-level INFO`,
+  Restart=always)
+- The `enabled: true` flip is a **VPS-local edit** to
+  `/opt/hynous/config/default.yaml`, NOT committed to git. Future deploys
+  must `git stash` it before pulling, then re-apply. Use `sed -i` to
+  scriptify if needed.
+- HF cache lives at `~hynous/.cache/huggingface/`. Both Kronos-Tokenizer-base
+  and Kronos-small weights are cached there post-boot (~50 MB).
+- Live latency on Kronos-small: ~33 s per inference (CPU, 2 vCPU box).
+  `top -bn1 -H -p <pid>` shows two threads pegged at ~85 % each during
+  inference — torch is using both cores for matmul. No further parallelism
+  available.
+
+### 11.4 What the data should show after 1-2 weeks
+
+Per the guide's § 8 observation plan, query
+`kronos_shadow_predictions` after ~2,000 rows accumulate. Watch for:
+
+- Distribution of `shadow_decision` (long / short / skip)
+- Agreement matrix vs `live_decision` (most live decisions will be `skip`
+  — that's normal, the live trigger is conservative)
+- P50 / P99 of `inference_ms` (currently 33 s; should stay flat)
+
+If shadow data shows real edge against actual closed trade outcomes,
+promote to confirmation gate per § 8 Option B. If not, drop the flag and
+move on.
+
+### 11.5 Git commit trail
+
+Single-session implementation history on branch `v2`:
+
+```
+7484611  swap default model: Kronos-mini → Kronos-base (largest open-source)
+0bf390a  M1-M7 — vendor Kronos + shadow predictor (opt-in, zero live impact)
+37b4d14  fix JournalStore interface mismatch caught in live boot
+4c34009  retry HyperliquidProvider Info() on 429 — unblocks daemon boot
+1235466  retry get_candles on 429
+fc4c02e  journal scroll + DB path mismatch between dashboard and daemon
+c1671c3  new hynous-daemon systemd unit for standalone mechanical loop
+0ed9b95  drop sample_count 20 → 5 — Kronos-base CPU inference overflows cadence
+f34e89b  sample_count 5 → 1 — autoregressive cost doesn't scale linearly
+8b0ef17  pred_len 24 → 6 — sequential autoregressive cost is the real bottleneck
+d475bfb  fall back from Kronos-base → Kronos-small (hardware-feasible)
+```
+
+The Kronos-base/sample_count/pred_len commits (`0ed9b95` through `8b0ef17`)
+are all overridden by `d475bfb`. Reading the YAML alone tells you the live
+config; reading the commit log tells you why we ended up there.

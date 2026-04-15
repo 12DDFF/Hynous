@@ -15,14 +15,17 @@ memory tooling have been removed. The current system writes every trade
 lifecycle event to a local SQLite journal at `storage/v2/journal.db` and
 analyzes trades after they close.
 
-**4 runtime components:**
+**5 runtime components / 3 systemd services:**
 
-| Component | Port | Language | Purpose |
-|-----------|------|----------|---------|
-| Reflex Dashboard | `:3000` | Python → React | UI |
-| FastAPI Gateway | `:8000` | Python | Agent brain, daemon, journal (in-process), analysis agent |
-| Data Layer | `:8100` | Python/FastAPI | Market data collection + analytics |
-| Satellite | (in-process) | Python | ML feature engine + XGBoost inference |
+| Component | Port | Service | Purpose |
+|-----------|------|---------|---------|
+| Reflex Dashboard | `:3000` | `hynous` | UI (granian frontend) |
+| FastAPI Gateway | `:8000` | `hynous` | journal API + chat API + analysis agent (in-process) |
+| Data Layer | `:8100` | `hynous-data` | Market data collection + analytics |
+| Mechanical Daemon | (in-process) | `hynous-daemon` | Entry/exit loop + Kronos shadow predictor (`scripts/run_daemon`, standalone since 2026-04-15) |
+| Satellite | (in-process inside daemon) | `hynous-daemon` | ML feature engine + XGBoost inference |
+
+The journal SQLite file (`storage/v2/journal.db`) is shared between `hynous` and `hynous-daemon` — `JournalStore.__init__` resolves the relative `db_path` against project root so both processes land on the same file regardless of CWD.
 
 ---
 
@@ -36,13 +39,14 @@ hynous/
 │   ├── analysis/        # v2 post-trade analysis agent (rules engine + LLM synthesis + wake integration)
 │   ├── mechanical_entry/ # v2 mechanical entry loop (interface, ml_signal_driven trigger, entry_params, executor)
 │   ├── user_chat/       # v2 user chat agent (agent, api, prompt) — mounted at `/api/v2/chat/*`
+│   ├── kronos_shadow/   # Kronos foundation-model shadow predictor (post-v2; vendor/ holds upstream MIT code)
 │   ├── data/            # Market data providers (Hyperliquid, Coinglass + WS feed manager)
 │   └── core/            # Shared utilities (config, types, tracing, trading_settings)
 ├── dashboard/           # Reflex UI + `/api/v2/journal/*` FastAPI router
 ├── satellite/           # ML feature engine (XGBoost condition models, walk-forward)
 ├── data-layer/          # Standalone data collection service
 ├── config/              # YAML configuration (default.yaml, theme.yaml)
-├── deploy/              # VPS deployment (2 systemd services: hynous, hynous-data; setup.sh)
+├── deploy/              # VPS deployment (3 systemd services: hynous, hynous-data, hynous-daemon; setup.sh)
 ├── scripts/             # Entry points (run_dashboard.py, run_daemon.py)
 ├── tests/               # Test suites (unit, integration, e2e)
 ├── docs/                # Documentation hub + archived revisions
@@ -203,7 +207,17 @@ unrestricted). Current baseline (phase 8 complete): `592 passed / 0 failed`.
 - `docs/revisions/ws-migration/` — WS migration Phase 1 (market data via `ws_feeds.py`): `allMids`, `l2Book`, `activeAssetCtx`, `candle` (1m/5m), staleness-gated with REST fallback. Phase 2 (account data) deferred.
 - `docs/archive/` — completed v1 revision guides, kept for historical reference only
 - Each major directory has its own `README.md`
+- `v2-planning/12-kronos-shadow-integration.md` — post-v2 Kronos shadow integration guide + implementation outcomes
 
 ---
 
-Last updated: 2026-04-13 (phase 8 complete — v2 rebuild complete)
+## Post-v2 Additions (2026-04-15)
+
+- **Kronos shadow predictor** live (`src/hynous/kronos_shadow/`). Currently `Kronos-small` (24.7 M params, the largest variant viable on a 2-vCPU VPS — Kronos-base / 102 M overflowed the 300 s tick cadence). Writes to `kronos_shadow_predictions` table, never affects live trading. Optional extras: `pip install -e ".[kronos-shadow]"`.
+- **`hynous-daemon` systemd service** runs `scripts/run_daemon` standalone. Was the only stable way to keep the mechanical loop alive — Reflex's granian ASGI worker does not reliably keep long-lived background threads.
+- **Journal DB path unification** — `JournalStore.__init__` resolves relative `db_path` against project root. Both `hynous` (cwd `/opt/hynous/dashboard`) and `hynous-daemon` (cwd `/opt/hynous`) write to the same `/opt/hynous/storage/v2/journal.db`. Prior split-brain caused 2632 stale rejection rows in dashboard DB invisible to the daemon.
+- **Hyperliquid 429 retry layer** — `HyperliquidProvider.__init__` retries `Info()` and `provider.get_candles` retries `candles_snapshot` (both share the `/info` rate-limit bucket). Was the silent killer of the daemon thread during boot storms.
+
+---
+
+Last updated: 2026-04-15 (post-v2: Kronos shadow live, daemon split, journal path unified)

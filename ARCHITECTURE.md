@@ -372,7 +372,64 @@ completed) in `docs/archive/`. Highlights:
 
 ---
 
-Last updated: 2026-04-14 (post phase 8 — v2 rebuild complete)
+Last updated: 2026-04-15 (post-v2 — Kronos shadow + hynous-daemon split + journal path unification)
+
+---
+
+## Post-v2 Additions (2026-04-15)
+
+Three independent improvements landed in one session, **no live trading impact**:
+
+### `src/hynous/kronos_shadow/` — Kronos shadow predictor
+
+Vendored [Kronos](https://github.com/shiyu-coder/Kronos) (arXiv 2508.02739,
+AAAI 2026, MIT license) running alongside `MLSignalDrivenTrigger` as a
+read-only foundation-model side car. Currently `NeoQuasar/Kronos-small`
+(24.7 M params; Kronos-base needed >2 vCPU). Every 300 s on the daemon
+tick: fetch 360 × 1 h BTC bars → forecast next 24 bars (5 MC samples) →
+derive upside-prob → write row to `kronos_shadow_predictions` (new table)
+with both shadow and live decisions for offline comparison.
+
+| Module | Responsibility |
+|--------|----------------|
+| `adapter.py` | Soft-failing torch import + `KronosAdapter.load()` + `predict_upside_prob()` |
+| `shadow_predictor.py` | Coordinator: fetch candles → infer → derive long/short/skip → record |
+| `store.py` | Direct-SQL writer (uses `JournalStore._write_lock` + `_connect()`) |
+| `config.py` | `V2KronosShadowConfig` |
+| `vendor/` | Vendored upstream `kronos.py` + `module.py` (sibling-import fix only; MIT) |
+
+Optional extras: `pip install -e ".[kronos-shadow]"` (torch, huggingface_hub,
+einops, safetensors, tqdm). Soft-fails cleanly without them.
+
+### `deploy/hynous-daemon.service` — standalone daemon process
+
+Runs `scripts/run_daemon` independently of the Reflex UI. Decouples the
+mechanical loop from granian ASGI worker lifecycle (the prior in-process
+daemon thread inside Reflex died silently after rate-limit storms;
+standalone with `Restart=always` is the canonical pattern). **Three systemd
+services now**:
+
+| Service | Process | Port |
+|---|---|---|
+| `hynous` | Reflex UI (granian) + journal/chat routers | 3000, 8000 |
+| `hynous-data` | Standalone market-data service | 8100 |
+| `hynous-daemon` | Mechanical entry loop + Kronos shadow tick (in-process) | — |
+
+### Journal DB path unification
+
+`JournalStore.__init__` now resolves relative `db_path` against
+`_find_project_root()` so daemon (cwd `/opt/hynous`) and dashboard
+(cwd `/opt/hynous/dashboard`) both land on
+`/opt/hynous/storage/v2/journal.db`. Absolute paths pass through unchanged
+so test fixtures work as before. Single source of truth for live trigger
+writes, Kronos shadow writes, and dashboard reads.
+
+### Hyperliquid 429 retry layer
+
+`HyperliquidProvider.__init__` retries `Info()` on 429 (was the silent
+killer of the daemon thread during boot storms). `provider.get_candles`
+also retries on 429 — the candle endpoint shares the `/info` rate-limit
+bucket and the Kronos shadow tick was failing on it.
 
 ---
 

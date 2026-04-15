@@ -104,6 +104,12 @@ If you're an AI agent working on this project:
 
 **Final baselines:** 592 tests passing / 0 failing · mypy 223 · ruff src 51 · ruff dashboard 120 · 15 tools in registry.
 
+### Post-v2 Additions
+
+- **Kronos shadow predictor** (`src/hynous/kronos_shadow/`, 2026-04-15) — vendored Kronos foundation model (arXiv 2508.02739, AAAI 2026; MIT license) running alongside the live `MLSignalDrivenTrigger` as a read-only side car. Writes "would-fire" verdicts to `kronos_shadow_predictions`. Currently uses **Kronos-small** (24.7 M params, the largest variant feasible on a 2-vCPU VPS — Kronos-base / 102 M overflowed the 300 s tick cadence in live testing, Kronos-large / 499 M weights are not publicly released). See `v2-planning/12-kronos-shadow-integration.md`. Tests: 631 passed / 0 failed including 24 new shadow tests.
+- **Standalone daemon service** (`deploy/hynous-daemon.service`) — runs `scripts/run_daemon` independently of the Reflex UI process. Decouples the mechanical loop from granian's ASGI worker lifecycle. **3 systemd services total**: `hynous` (UI), `hynous-data` (data layer :8100), `hynous-daemon` (mechanical loop + Kronos shadow).
+- **Journal DB path unification** — `JournalStore` resolves relative `db_path` against project root so daemon (cwd `/opt/hynous`) and dashboard (cwd `/opt/hynous/dashboard`) write to the same file (`/opt/hynous/storage/v2/journal.db`). Prior split-brain caused dashboard to show stale data.
+
 ---
 
 ## Tech Stack
@@ -116,9 +122,10 @@ If you're an AI agent working on this project:
 | Journal | Python SQLite (`JournalStore` in-process, 9-table schema, OpenAI text-embedding-3-small / 512-dim matryoshka) |
 | Data | Hyperliquid (REST + WS), Coinglass |
 | ML | Satellite (Python, XGBoost; 14 condition models + 8 tick-direction models) |
-| Deploy | Ubuntu 24.04, systemd (2 services: hynous + hynous-data), Caddy HTTPS |
+| Deploy | Ubuntu 24.04, systemd (3 services: hynous + hynous-data + hynous-daemon), Caddy HTTPS |
+| Shadow predictor | Kronos foundation model (vendored, MIT, CPU inference, opt-in via `[kronos-shadow]` extras) |
 | Config | YAML (default.yaml, theme.yaml) |
 
 ---
 
-*Last updated: 2026-04-14 (v2 rebuild complete — post phase 8 acceptance)*
+*Last updated: 2026-04-15 (post-v2: Kronos shadow live, hynous-daemon service split, journal path unified)*
