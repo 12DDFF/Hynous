@@ -1,0 +1,19 @@
+[Unit]
+Description=Hynous Daemon — mechanical entry loop + Kronos shadow
+After=network.target hynous-data.service
+Wants=hynous-data.service
+
+[Service]
+Type=simple
+User=hynous
+Group=hynous
+WorkingDirectory=/opt/hynous
+EnvironmentFile=/opt/hynous/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/hynous/src
+ExecStart=/opt/hynous/.venv/bin/python -m scripts.run_daemon --log-level INFO
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
