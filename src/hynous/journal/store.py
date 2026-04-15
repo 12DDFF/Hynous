@@ -41,10 +41,24 @@ class JournalStore:
     """
 
     def __init__(self, db_path: str, *, busy_timeout_ms: int = 5000) -> None:
-        self._db_path = db_path
+        # Resolve relative paths against the project root so daemon-mode
+        # (cwd=/opt/hynous) and dashboard-mode (cwd=/opt/hynous/dashboard)
+        # land on the same SQLite file. Absolute paths pass through
+        # unchanged, preserving test-fixture behaviour. Without this,
+        # dashboard reads and daemon writes diverge into separate DBs.
+        path_obj = Path(db_path)
+        if not path_obj.is_absolute():
+            from hynous.core.config import _find_project_root
+
+            try:
+                root = _find_project_root()
+                path_obj = (root / db_path).resolve()
+            except Exception:
+                path_obj = path_obj.resolve()
+        self._db_path = str(path_obj)
         self._busy_timeout_ms = busy_timeout_ms
         self._write_lock = threading.Lock()
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        path_obj.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
     # ========================================================================

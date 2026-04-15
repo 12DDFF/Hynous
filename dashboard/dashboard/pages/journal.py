@@ -15,7 +15,14 @@ from ..components import card, stat_card
 # =============================================================================
 
 def journal_page() -> rx.Component:
-    """v2 Journal — primary destination for trade transparency."""
+    """v2 Journal — primary destination for trade transparency.
+
+    Outer container is bounded by 100vh and ``overflow_y="auto"`` so the
+    list view (which can have 100s of rows) is independently scrollable
+    rather than relying on the parent layout's overflow rules. Without
+    this, the list overflows the viewport and the user can't reach the
+    rows past the fold (observed live 2026-04-15).
+    """
     return rx.box(
         _header_stats(),
         _filters_bar(),
@@ -30,7 +37,14 @@ def journal_page() -> rx.Component:
         ),
         padding="1.5rem",
         padding_top="5rem",
+        padding_bottom="3rem",
         width="100%",
+        height="100vh",
+        overflow_y="auto",
+        style={
+            "scrollbar_width": "thin",
+            "scrollbar_color": "#262626 transparent",
+        },
     )
 
 
