@@ -234,7 +234,11 @@ v2:
     max_context: 512
     lookback_bars: 360
     pred_len: 24
-    sample_count: 5  # Kronos-base @ 102M params is CPU-bound; 20 overflows the 300s cadence. 5 keeps inference ~70-90s.
+    # Kronos-base @ 102M params on CPU: sample_count=20 measured 327s (over
+    # cadence), 5 also overflowed (autoregressive doesn't scale linearly).
+    # 1 sample fits comfortably (~15-25s expected) and the upside_prob proxy
+    # still works since it derives std from the mean-path high/low envelope.
+    sample_count: 1
     temperature: 1.0
     top_p: 0.9
     tick_interval_s: 300
