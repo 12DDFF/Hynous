@@ -234,7 +234,7 @@ v2:
     max_context: 512
     lookback_bars: 360
     pred_len: 24
-    sample_count: 20
+    sample_count: 5  # Kronos-base @ 102M params is CPU-bound; 20 overflows the 300s cadence. 5 keeps inference ~70-90s.
     temperature: 1.0
     top_p: 0.9
     tick_interval_s: 300
