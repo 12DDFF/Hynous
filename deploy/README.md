@@ -29,7 +29,7 @@ systemctl start hynous
 | Service | What it runs | Port | Unit file |
 |---------|-------------|------|-----------|
 | `hynous-data` | Data layer — Hyperliquid market intelligence (Python) | 8100 | `hynous-data.service` |
-| `hynous` | Dashboard + Agent + Daemon + Discord bot (Reflex) | 3000 | `hynous.service` |
+| `hynous` | Dashboard + daemon + journal + analysis agent + user-chat (Reflex + FastAPI in-process) | 3000 | `hynous.service` |
 
 Service dependencies: `hynous` wants `hynous-data` (see `After=` / `Wants=` in the unit files). The v2 trade journal runs in-process inside `hynous` (SQLite at `storage/v2/journal.db`).
 
@@ -105,8 +105,6 @@ your-domain.com {
 
 Then `systemctl restart caddy`. Caddy auto-provisions HTTPS.
 
-Or just use the Discord bot — it's your main mobile interface anyway.
-
 ## Test Instance
 
 A second Hynous instance for A/B testing (e.g., breakeven disabled vs enabled for ML metrics). Shares the data layer with production.
@@ -157,11 +155,20 @@ ssh vps "cd /opt/hynous && sudo -u hynous git pull && sudo systemctl restart hyn
 
 ### Branch Mapping
 
-- `main` branch → `/opt/hynous` (production, ports 3000/8000)
+- `v2` branch → `/opt/hynous` (production, ports 3000/8000). v2 is the live system; `main` is the retired v1 branch and is not deployed.
 - `test-env` branch → `/opt/hynous-test` (testing, ports 3001/8001)
 
 Test services are **disabled** (won't auto-start on reboot) so they don't eat RAM when not in use. Start manually when needed.
 
+### Standard v2 Deploy Flow
+
+```bash
+git push origin v2
+ssh vps "cd /opt/hynous && sudo -u hynous git pull && sudo systemctl restart hynous"
+# If data-layer changed as well:
+ssh vps "sudo systemctl restart hynous-data"
+```
+
 ---
 
-Last updated: 2026-04-12 (phase 7 M6 — packaging + deploy cleanup)
+Last updated: 2026-04-14 (v2 rebuild complete — post phase 8 acceptance)

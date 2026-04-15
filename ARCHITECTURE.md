@@ -372,4 +372,27 @@ completed) in `docs/archive/`. Highlights:
 
 ---
 
-Last updated: 2026-04-12 (phase 7 M8 — architecture refresh for v2)
+Last updated: 2026-04-14 (post phase 8 — v2 rebuild complete)
+
+---
+
+## Phase 8 — Quantitative Improvements (2026-04-13)
+
+Phase 8 is ML-only and does not change the component topology above. It
+landed:
+
+- **Tick downsample + retrain** (`tick_inference.py`): canonical 5 s downsample
+  on the inference path; 8 direction models at 10–180 s horizons live under
+  `satellite/artifacts/tick_models/direction_{10..180}s/` (53–67 % accuracy).
+- **Monte-Carlo fixes**: feature-list consolidation, `_zero_count >= 10`
+  guard, bias-score restricted to strong-only signals.
+- **Composite-score calibration audit** (new-M3).
+- **Weight-update tightening**: `min_trades 30 → 10`, EMA smoothing, daily
+  interval (new-M1).
+- **Seeded MC RNG** (new-M2) closes tick-audit Issue 5.
+- **Direction-model retrain bridge** (new-M4) connects the retrain harness to
+  the tick model artifacts.
+
+Baselines after phase 8: 592 p / 0 f · mypy 223/40 · ruff src 51 · ruff
+dashboard 120 · registry 15. Smoke log:
+`storage/v2/smoke-phase-8.log` (30-min paper, 0 exceptions).
