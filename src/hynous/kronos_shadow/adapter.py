@@ -82,8 +82,8 @@ class KronosAdapter:
     def __init__(
         self,
         *,
-        model_name: str = "NeoQuasar/Kronos-mini",
-        tokenizer_name: str = "NeoQuasar/Kronos-Tokenizer-2k",
+        model_name: str = "NeoQuasar/Kronos-base",
+        tokenizer_name: str = "NeoQuasar/Kronos-Tokenizer-base",
         max_context: int = 512,
         device: str | None = None,
     ) -> None:
@@ -137,7 +137,7 @@ class KronosAdapter:
                 Must contain ≥ 64 bars. Only the last ``max_context`` are used.
             pred_len: forecast horizon in bars.
             sample_count: Monte Carlo sample count. 20 is the CPU sweet spot
-                for Kronos-mini.
+                for the CPU path; tune down if Kronos-base inference exceeds the cadence.
 
         Raises:
             RuntimeError: if :meth:`load` has not completed.

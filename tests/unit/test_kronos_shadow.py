@@ -525,7 +525,8 @@ def test_v2_kronos_shadow_defaults_from_yaml(tmp_path) -> None:
     cfg = load_config()  # reads repo's config/default.yaml
     assert cfg.v2.kronos_shadow.enabled is False
     assert cfg.v2.kronos_shadow.symbol == "BTC"
-    assert cfg.v2.kronos_shadow.model_name == "NeoQuasar/Kronos-mini"
+    assert cfg.v2.kronos_shadow.model_name == "NeoQuasar/Kronos-base"
+    assert cfg.v2.kronos_shadow.tokenizer_name == "NeoQuasar/Kronos-Tokenizer-base"
     assert cfg.v2.kronos_shadow.lookback_bars == 360
     assert cfg.v2.kronos_shadow.long_threshold == 0.60
     assert cfg.v2.kronos_shadow.short_threshold == 0.40
