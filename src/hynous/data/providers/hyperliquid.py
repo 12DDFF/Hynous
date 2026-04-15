@@ -101,6 +101,40 @@ class HyperliquidProvider:
     # indefinitely on Hyperliquid API calls.
     _TIMEOUT = 10
 
+    @staticmethod
+    def _build_info_with_retry(base_url: str, timeout: int) -> Info:
+        """Construct a Hyperliquid ``Info`` with retry on 429.
+
+        The SDK's ``Info.__init__`` makes a blocking ``spotMeta`` call. During
+        daemon boot multiple subsystems hit the same REST endpoint within a
+        single second, which occasionally trips Hyperliquid's rate limit and
+        surfaces as ``ClientError(429)``. Left unhandled this kills the
+        daemon's main loop before it can iterate once (observed in
+        2026-04-15 production). We mirror the retry pattern used by
+        ``get_all_prices`` below.
+        """
+        import time
+
+        from hyperliquid.utils.error import ClientError
+
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):  # 3 tries total
+            try:
+                return Info(base_url=base_url, skip_ws=True, timeout=timeout)
+            except ClientError as exc:
+                last_exc = exc
+                status = getattr(exc, "status_code", None) or (exc.args[0] if exc.args else None)
+                if status != 429 or attempt == 3:
+                    raise
+                wait_s = 2 ** (attempt - 1)  # 1s, 2s
+                logger.warning(
+                    "Info(%s) 429 rate-limited — retrying in %ds (attempt %d/3)",
+                    base_url, wait_s, attempt,
+                )
+                time.sleep(wait_s)
+        # Unreachable; last_exc is always set on the final raise path
+        raise last_exc  # type: ignore[misc]
+
     def __init__(self, trade_url: str | None = None):
         """Initialize with mainnet data + optional separate trading endpoint.
 
@@ -109,13 +143,16 @@ class HyperliquidProvider:
                        go to mainnet. Data reads ALWAYS use mainnet for
                        accurate prices, funding rates, and OI.
         """
-        self._info = Info(base_url=self.MAINNET_URL, skip_ws=True, timeout=self._TIMEOUT)
+        self._info = self._build_info_with_retry(self.MAINNET_URL, self._TIMEOUT)
         self._exchange: Exchange | None = None
         self._wallet = None
         self._trade_url = trade_url or self.MAINNET_URL
         # Separate Info for account queries when trading on testnet
         # (positions/fills/orders live on the testnet chain, not mainnet)
-        self._trade_info = Info(base_url=self._trade_url, skip_ws=True, timeout=self._TIMEOUT) if trade_url else self._info
+        if trade_url:
+            self._trade_info = self._build_info_with_retry(self._trade_url, self._TIMEOUT)
+        else:
+            self._trade_info = self._info
         self._sz_decimals: dict[str, int] | None = None
         # Price cache for rate-limit resilience (2s TTL)
         self._mids_cache: dict[str, str] | None = None
