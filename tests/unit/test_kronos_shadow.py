@@ -35,17 +35,39 @@ from hynous.kronos_shadow.store import insert_kronos_shadow
 
 @dataclass
 class FakeJournal:
-    """SQLite-backed minimal journal double for store tests."""
+    """SQLite-backed minimal journal double for store tests.
 
-    _conn: sqlite3.Connection = field(default=None)  # type: ignore[assignment]
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    Mirrors the real :class:`JournalStore` contract:
+    - ``_write_lock`` serializes mutations
+    - ``_connect()`` returns a per-operation connection (autocommit)
+    - a persistent ``_inspect_conn`` is exposed for test assertions only
+    """
+
+    _inspect_conn: sqlite3.Connection = field(default=None)  # type: ignore[assignment]
+    _write_lock: threading.Lock = field(default_factory=threading.Lock)
+    _db_path: str = ""
 
     def __post_init__(self) -> None:
-        if self._conn is None:
-            self._conn = sqlite3.connect(":memory:")
-            from hynous.journal.schema import SCHEMA_DDL
+        # Use a tmp file rather than :memory: so multiple SQLite
+        # connections (inspect + per-op from insert_kronos_shadow) see the
+        # same DB. File is auto-cleaned by the OS when the test process exits;
+        # each FakeJournal gets a unique path.
+        import tempfile
 
-            self._conn.executescript(SCHEMA_DDL)
+        fd, path = tempfile.mkstemp(prefix="fake_journal_", suffix=".db")
+        import os
+
+        os.close(fd)
+        self._db_path = path
+        boot = sqlite3.connect(self._db_path, isolation_level=None)
+        from hynous.journal.schema import SCHEMA_DDL
+
+        boot.executescript(SCHEMA_DDL)
+        boot.close()
+        self._inspect_conn = sqlite3.connect(self._db_path, isolation_level=None)
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(self._db_path, isolation_level=None)
 
 
 @dataclass
@@ -287,7 +309,7 @@ def test_shadow_returns_none_on_insufficient_candles() -> None:
     result = sp.predict_and_record(daemon=daemon)
     assert result is None
     # No insert attempted.
-    rows = journal._conn.execute("SELECT COUNT(*) FROM kronos_shadow_predictions").fetchone()
+    rows = journal._inspect_conn.execute("SELECT COUNT(*) FROM kronos_shadow_predictions").fetchone()
     assert rows[0] == 0
 
 
@@ -317,7 +339,7 @@ def test_shadow_derives_long_on_high_upside_prob() -> None:
 
     result = sp.predict_and_record(daemon=daemon)
     assert result is not None
-    row = journal._conn.execute(
+    row = journal._inspect_conn.execute(
         "SELECT shadow_decision FROM kronos_shadow_predictions",
     ).fetchone()
     assert row[0] == "long"
@@ -336,7 +358,7 @@ def test_shadow_derives_short_on_low_upside_prob() -> None:
     sp = KronosShadowPredictor(adapter=adapter, config=_default_config())
 
     sp.predict_and_record(daemon=daemon)
-    row = journal._conn.execute(
+    row = journal._inspect_conn.execute(
         "SELECT shadow_decision FROM kronos_shadow_predictions",
     ).fetchone()
     assert row[0] == "short"
@@ -355,7 +377,7 @@ def test_shadow_derives_skip_in_neutral_zone() -> None:
     sp = KronosShadowPredictor(adapter=adapter, config=_default_config())
 
     sp.predict_and_record(daemon=daemon)
-    row = journal._conn.execute(
+    row = journal._inspect_conn.execute(
         "SELECT shadow_decision FROM kronos_shadow_predictions",
     ).fetchone()
     assert row[0] == "skip"
@@ -378,7 +400,7 @@ def test_shadow_records_live_decision_snapshot() -> None:
     sp = KronosShadowPredictor(adapter=adapter, config=_default_config())
 
     sp.predict_and_record(daemon=daemon)
-    row = journal._conn.execute(
+    row = journal._inspect_conn.execute(
         "SELECT shadow_decision, live_decision FROM kronos_shadow_predictions",
     ).fetchone()
     assert row == ("short", "long")  # disagreement captured
@@ -399,7 +421,7 @@ def test_shadow_inference_exception_is_swallowed() -> None:
     result = sp.predict_and_record(daemon=daemon)
     assert result is None
     # No row should have been persisted.
-    assert journal._conn.execute(
+    assert journal._inspect_conn.execute(
         "SELECT COUNT(*) FROM kronos_shadow_predictions",
     ).fetchone()[0] == 0
 
@@ -446,7 +468,7 @@ def test_insert_writes_all_columns() -> None:
         config=cfg,
     )
 
-    row = journal._conn.execute(
+    row = journal._inspect_conn.execute(
         """
         SELECT symbol, model_variant, tokenizer_name, lookback_len, pred_len,
                sample_count, current_close, mean_forecast_close_end,
@@ -480,7 +502,7 @@ def test_insert_indexes_exist() -> None:
     journal = FakeJournal()
     idx_names = {
         r[0]
-        for r in journal._conn.execute(
+        for r in journal._inspect_conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index' "
             "AND tbl_name='kronos_shadow_predictions'",
         ).fetchall()
