@@ -219,3 +219,22 @@ v2:
     max_tokens: 4096
     temperature: 0.2
     tool_timeout_s: 30
+
+  # Kronos foundation-model shadow predictor (post-v2 experiment).
+  # Runs alongside the live trigger, writes would-fire verdicts to
+  # kronos_shadow_predictions. Zero live-trading impact.
+  # See v2-planning/12-kronos-shadow-integration.md.
+  kronos_shadow:
+    enabled: false
+    symbol: "BTC"
+    model_name: "NeoQuasar/Kronos-mini"
+    tokenizer_name: "NeoQuasar/Kronos-Tokenizer-2k"
+    max_context: 512
+    lookback_bars: 360
+    pred_len: 24
+    sample_count: 20
+    temperature: 1.0
+    top_p: 0.9
+    tick_interval_s: 300
+    long_threshold: 0.60
+    short_threshold: 0.40

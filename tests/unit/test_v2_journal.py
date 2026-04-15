@@ -75,7 +75,7 @@ def test_entry_snapshot_from_dict_raises_keyerror_on_missing_section() -> None:
 
 
 def test_journal_store_init_creates_schema(tmp_path: Any) -> None:
-    """Fresh DB has all 9 tables (8 functional + journal_metadata)."""
+    """Fresh DB has the 9 v2 tables + kronos_shadow_predictions (post-v2)."""
     from hynous.journal.store import JournalStore
 
     store = JournalStore(str(tmp_path / "j.db"))
@@ -100,6 +100,9 @@ def test_journal_store_init_creates_schema(tmp_path: Any) -> None:
         "trade_tags",
         "trade_edges",
         "trade_patterns",
+        # Post-v2 additive — shadow predictor side table
+        # (v2-planning/12-kronos-shadow-integration.md § 5).
+        "kronos_shadow_predictions",
     }
 
 

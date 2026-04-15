@@ -49,6 +49,13 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
+kronos-shadow = [
+    "torch>=2.0.0",
+    "huggingface_hub>=0.33.0",
+    "einops>=0.8.0",
+    "safetensors>=0.6.0",
+    "tqdm>=4.67.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -60,6 +67,9 @@ packages = ["src/hynous", "satellite"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "kronos: Kronos shadow integration tests (requires torch + network)",
+]
 
 [tool.ruff]
 line-length = 100
@@ -73,3 +83,10 @@ ignore = ["E501"]  # Line length handled separately
 python_version = "3.11"
 warn_return_any = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "hynous.kronos_shadow.vendor.*"
+ignore_errors = true
+
+[tool.ruff.lint.per-file-ignores]
+"src/hynous/kronos_shadow/vendor/*.py" = ["E", "F", "I", "N", "W"]

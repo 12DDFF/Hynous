@@ -155,6 +155,38 @@ CREATE TABLE IF NOT EXISTS trade_patterns (
 CREATE INDEX IF NOT EXISTS idx_patterns_type ON trade_patterns(pattern_type);
 CREATE INDEX IF NOT EXISTS idx_patterns_window
     ON trade_patterns(window_start, window_end);
+
+-- Kronos shadow predictions (post-v2 experiment — read-only side table).
+-- See v2-planning/12-kronos-shadow-integration.md § 5. Never joins against
+-- trades.trade_id (shadow rows are time-anchored, not trade-anchored).
+CREATE TABLE IF NOT EXISTS kronos_shadow_predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    predicted_at REAL NOT NULL,
+    symbol TEXT NOT NULL,
+    model_variant TEXT NOT NULL,
+    tokenizer_name TEXT NOT NULL,
+    lookback_len INTEGER NOT NULL,
+    pred_len INTEGER NOT NULL,
+    sample_count INTEGER NOT NULL,
+    current_close REAL NOT NULL,
+    mean_forecast_close_end REAL NOT NULL,
+    predicted_return_bps REAL NOT NULL,
+    sample_std_bps REAL NOT NULL,
+    upside_prob REAL NOT NULL,
+    shadow_decision TEXT NOT NULL,
+    live_decision TEXT NOT NULL,
+    long_threshold REAL NOT NULL,
+    short_threshold REAL NOT NULL,
+    inference_ms REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_kronos_shadow_predicted_at
+    ON kronos_shadow_predictions(predicted_at);
+CREATE INDEX IF NOT EXISTS idx_kronos_shadow_symbol
+    ON kronos_shadow_predictions(symbol);
+CREATE INDEX IF NOT EXISTS idx_kronos_shadow_decision
+    ON kronos_shadow_predictions(shadow_decision);
 """
 
 # ============================================================================

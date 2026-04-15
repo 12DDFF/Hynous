@@ -10,6 +10,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
+from hynous.kronos_shadow.config import V2KronosShadowConfig
+
 
 def _find_project_root() -> Path:
     """Walk up from this file to find the project root (where config/ lives)."""
@@ -224,6 +226,7 @@ class V2Config:
     mechanical_entry: V2MechanicalEntryConfig = field(default_factory=V2MechanicalEntryConfig)
     consolidation: V2ConsolidationConfig = field(default_factory=V2ConsolidationConfig)
     user_chat: V2UserChatConfig = field(default_factory=V2UserChatConfig)
+    kronos_shadow: V2KronosShadowConfig = field(default_factory=V2KronosShadowConfig)
 
 
 @dataclass
@@ -419,6 +422,22 @@ def load_config(config_path: Optional[str] = None) -> Config:
                 max_tokens=v2_raw.get("user_chat", {}).get("max_tokens", 4096),
                 temperature=v2_raw.get("user_chat", {}).get("temperature", 0.2),
                 tool_timeout_s=v2_raw.get("user_chat", {}).get("tool_timeout_s", 30),
+            ),
+            kronos_shadow=V2KronosShadowConfig(
+                enabled=v2_raw.get("kronos_shadow", {}).get("enabled", False),
+                symbol=v2_raw.get("kronos_shadow", {}).get("symbol", "BTC"),
+                model_name=v2_raw.get("kronos_shadow", {}).get("model_name", "NeoQuasar/Kronos-mini"),
+                tokenizer_name=v2_raw.get("kronos_shadow", {}).get("tokenizer_name", "NeoQuasar/Kronos-Tokenizer-2k"),
+                max_context=v2_raw.get("kronos_shadow", {}).get("max_context", 512),
+                lookback_bars=v2_raw.get("kronos_shadow", {}).get("lookback_bars", 360),
+                pred_len=v2_raw.get("kronos_shadow", {}).get("pred_len", 24),
+                sample_count=v2_raw.get("kronos_shadow", {}).get("sample_count", 20),
+                temperature=v2_raw.get("kronos_shadow", {}).get("temperature", 1.0),
+                top_p=v2_raw.get("kronos_shadow", {}).get("top_p", 0.9),
+                tick_interval_s=v2_raw.get("kronos_shadow", {}).get("tick_interval_s", 300),
+                device=v2_raw.get("kronos_shadow", {}).get("device", None),
+                long_threshold=v2_raw.get("kronos_shadow", {}).get("long_threshold", 0.60),
+                short_threshold=v2_raw.get("kronos_shadow", {}).get("short_threshold", 0.40),
             ),
         ),
         project_root=root,

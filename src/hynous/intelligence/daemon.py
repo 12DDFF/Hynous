@@ -317,6 +317,9 @@ class Daemon:
         # v2 phase 5: mechanical entry trigger (set by _init_mechanical_entry).
         self._entry_trigger: "EntryTriggerSource | None" = None
         self._last_entry_check: float = 0   # v2 phase 5: periodic ML signal evaluation
+        # v2 post-launch: optional Kronos shadow predictor (set by _init_kronos_shadow).
+        self._kronos_shadow: Any = None
+        self._last_kronos_shadow: float = 0.0
         if config.satellite.enabled:
             try:
                 from satellite.config import SatelliteConfig as SatCfg
@@ -901,6 +904,14 @@ class Daemon:
             logger.exception("Failed to initialize v2 mechanical entry trigger")
             self._entry_trigger = None
 
+        # v2 post-launch: Kronos shadow predictor (read-only side car).
+        # Wrapped so init failure never prevents the daemon loop from running.
+        try:
+            self._init_kronos_shadow()
+        except Exception:
+            logger.exception("Failed to initialize Kronos shadow predictor")
+            self._kronos_shadow = None
+
         # v2: start batch rejection analysis cron (phase 3 M5).
         # Wrapped in its own try/except so cron start failure never prevents
         # the daemon from entering its main loop.
@@ -1035,6 +1046,19 @@ class Daemon:
                         logger.debug(
                             "Periodic ML signal check failed", exc_info=True,
                         )
+
+                # 3d. Kronos shadow tick (post-v2, read-only). Runs on its own
+                # cadence (default 300s) on a background thread so inference
+                # latency never stalls _fast_trigger_check.
+                if self._kronos_shadow is not None:
+                    tick_interval = self.config.v2.kronos_shadow.tick_interval_s
+                    if now - self._last_kronos_shadow >= tick_interval:
+                        self._last_kronos_shadow = now
+                        threading.Thread(
+                            target=self._run_kronos_shadow_tick,
+                            name="kronos-shadow",
+                            daemon=True,
+                        ).start()
 
                 # 4. Curiosity cron removed in phase 4.
                 # 5. Periodic review cron removed in phase 5 (v1 LLM wake retired).
@@ -3463,6 +3487,46 @@ class Daemon:
                 cfg.trigger_source,
             )
             self._entry_trigger = None
+
+    def _init_kronos_shadow(self) -> None:
+        """Load Kronos and build the shadow predictor; no-op if disabled or deps missing."""
+        cfg = self.config.v2.kronos_shadow
+        if not cfg.enabled:
+            logger.info("kronos-shadow: disabled in config")
+            return
+        try:
+            from hynous.kronos_shadow.adapter import KronosAdapter, is_kronos_available
+            from hynous.kronos_shadow.shadow_predictor import KronosShadowPredictor
+        except ImportError:
+            logger.warning("kronos-shadow: import failed — disabling")
+            return
+        if not is_kronos_available():
+            logger.warning("kronos-shadow: extras missing — disabling")
+            return
+        adapter = KronosAdapter(
+            model_name=cfg.model_name,
+            tokenizer_name=cfg.tokenizer_name,
+            max_context=cfg.max_context,
+            device=cfg.device,
+        )
+        try:
+            adapter.load()
+        except Exception:
+            logger.exception("kronos-shadow: load failed — disabling")
+            return
+        self._kronos_shadow = KronosShadowPredictor(adapter=adapter, config=cfg)
+        logger.info(
+            "kronos-shadow: ENABLED symbol=%s model=%s cadence=%ds",
+            cfg.symbol, cfg.model_name, cfg.tick_interval_s,
+        )
+
+    def _run_kronos_shadow_tick(self) -> None:
+        """Background-thread entry point. Never raises — the worker swallows."""
+        try:
+            if self._kronos_shadow is not None:
+                self._kronos_shadow.predict_and_record(daemon=self)
+        except Exception:
+            logger.exception("kronos-shadow: tick worker crashed")
 
     def _evaluate_entry_signals(self, anomalies: list) -> None:
         """Evaluate the configured mechanical trigger for each anomaly (v2 phase 5).
