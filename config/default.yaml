@@ -203,6 +203,8 @@ v2:
     max_vol_regime: "high"               # reject if vol is extreme
     roe_target_pct: 10.0                 # fixed TP target as ROE %
     coin: "BTC"                          # single coin for phase 1
+    tick_confirmation_enabled: false     # if true, require tick-horizon model sign to agree with satellite direction
+    tick_confirmation_horizon: "direction_10s"  # which tick horizon's sign to check when enabled
 
   # Consolidation (phase 6)
   consolidation:

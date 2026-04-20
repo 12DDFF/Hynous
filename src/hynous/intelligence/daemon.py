@@ -3468,15 +3468,19 @@ class Daemon:
                 direction_confidence_threshold=cfg.direction_confidence_threshold,
                 entry_quality_threshold=cfg.require_entry_quality_pctl,
                 max_vol_regime=cfg.max_vol_regime,
+                tick_confirmation_enabled=cfg.tick_confirmation_enabled,
+                tick_confirmation_horizon=cfg.tick_confirmation_horizon,
             )
             logger.info(
                 "v2 mechanical entry trigger initialized: %s "
-                "(thresh=%.2f dir=%.2f eq=%d vol<=%s)",
+                "(thresh=%.2f dir=%.2f eq=%d vol<=%s tick_conf=%s@%s)",
                 self._entry_trigger.name(),
                 cfg.composite_entry_threshold,
                 cfg.direction_confidence_threshold,
                 cfg.require_entry_quality_pctl,
                 cfg.max_vol_regime,
+                cfg.tick_confirmation_enabled,
+                cfg.tick_confirmation_horizon,
             )
         elif cfg.trigger_source in ("", "none", "disabled"):
             logger.info("v2 mechanical entry: disabled by config")

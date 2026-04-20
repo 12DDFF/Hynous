@@ -190,6 +190,8 @@ class V2MechanicalEntryConfig:
     max_vol_regime: str = "high"
     roe_target_pct: float = 10.0
     coin: str = "BTC"
+    tick_confirmation_enabled: bool = False
+    tick_confirmation_horizon: str = "direction_10s"
 
 
 @dataclass
@@ -405,6 +407,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
                 max_vol_regime=v2_raw.get("mechanical_entry", {}).get("max_vol_regime", "high"),
                 roe_target_pct=v2_raw.get("mechanical_entry", {}).get("roe_target_pct", 10.0),
                 coin=v2_raw.get("mechanical_entry", {}).get("coin", "BTC"),
+                tick_confirmation_enabled=v2_raw.get("mechanical_entry", {}).get("tick_confirmation_enabled", False),
+                tick_confirmation_horizon=v2_raw.get("mechanical_entry", {}).get("tick_confirmation_horizon", "direction_10s"),
             ),
             consolidation=V2ConsolidationConfig(
                 edges_enabled=v2_raw.get("consolidation", {}).get("edges_enabled", True),

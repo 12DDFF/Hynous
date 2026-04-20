@@ -8,9 +8,10 @@ Fires an ``EntrySignal`` when all of the following gates pass:
 4. Predictions fresh (``conditions["timestamp"]`` within 600 s of now).
 5. Composite entry score >= ``composite_threshold``.
 6. Direction model emits ``"long"`` or ``"short"`` (not ``"skip"`` / ``"conflict"``).
-7. Direction confidence >= ``direction_confidence_threshold``.
-8. Entry-quality percentile >= ``entry_quality_threshold``.
-9. Vol regime rank <= ``max_vol_regime`` rank.
+7. (Optional) Tick direction model agrees with satellite direction.
+8. Direction confidence >= ``direction_confidence_threshold``.
+9. Entry-quality percentile >= ``entry_quality_threshold``.
+10. Vol regime rank <= ``max_vol_regime`` rank.
 
 Gate ordering is load-bearing: cheapest / most-likely-to-reject gates run
 first. Do not reorder without a matching update to phase 6's rejection
@@ -51,11 +52,15 @@ class MLSignalDrivenTrigger(EntryTriggerSource):
         direction_confidence_threshold: float,
         entry_quality_threshold: int,
         max_vol_regime: str,
+        tick_confirmation_enabled: bool = False,
+        tick_confirmation_horizon: str = "direction_10s",
     ) -> None:
         self._composite_threshold = composite_threshold
         self._direction_conf_threshold = direction_confidence_threshold
         self._entry_quality_threshold = entry_quality_threshold
         self._max_vol_regime = max_vol_regime
+        self._tick_confirmation_enabled = tick_confirmation_enabled
+        self._tick_confirmation_horizon = tick_confirmation_horizon
 
     def name(self) -> str:
         return "ml_signal_driven"
@@ -152,7 +157,49 @@ class MLSignalDrivenTrigger(EntryTriggerSource):
             )
             return None
 
-        # Gate 6: direction confidence.
+        # Gate 6 (optional): tick direction confirmation.
+        # Tick predictions are cached by daemon._poll_derivatives under tick_* keys.
+        # tick_signal is "long" | "short" | "skip" | None (engine missing / stale tick data).
+        # When enabled, satellite direction must agree with tick_signal or be confirmed by the
+        # chosen horizon's sign in tick_predictions. "skip" or disagreement = reject.
+        if self._tick_confirmation_enabled:
+            tick_signal = preds.get("tick_signal")
+            tick_return_bps = preds.get("tick_return_bps")
+            horizon_pred_bps = (preds.get("tick_predictions") or {}).get(
+                self._tick_confirmation_horizon,
+            )
+            if tick_signal is None and horizon_pred_bps is None:
+                self._rejection_record(
+                    ctx,
+                    symbol=symbol,
+                    reason="tick_confirmation_unavailable",
+                    detail={"tick_signal": None, "horizon": self._tick_confirmation_horizon},
+                )
+                return None
+            # Prefer the specific horizon's sign when we have it; fall back to tick_signal.
+            if horizon_pred_bps is not None:
+                tick_agrees = (
+                    (direction_signal == "long" and horizon_pred_bps > 0)
+                    or (direction_signal == "short" and horizon_pred_bps < 0)
+                )
+            else:
+                tick_agrees = tick_signal == direction_signal
+            if not tick_agrees:
+                self._rejection_record(
+                    ctx,
+                    symbol=symbol,
+                    reason="tick_direction_disagreement",
+                    detail={
+                        "direction": direction_signal,
+                        "tick_signal": tick_signal,
+                        "horizon": self._tick_confirmation_horizon,
+                        "horizon_pred_bps": horizon_pred_bps,
+                        "tick_return_bps": tick_return_bps,
+                    },
+                )
+                return None
+
+        # Gate 7: direction confidence.
         # NOTE: ``max(abs(long_roe), abs(short_roe)) / 10.0`` is a rough
         # normalizer carried forward from the v1 adaptive trailing layer.
         # A formal calibration is deferred to phase 8.
@@ -171,7 +218,7 @@ class MLSignalDrivenTrigger(EntryTriggerSource):
             )
             return None
 
-        # Gate 7: entry-quality percentile
+        # Gate 8: entry-quality percentile
         eq = conditions.get("entry_quality", {}) or {}
         eq_pctl = eq.get("percentile", 0) or 0
         if eq_pctl < self._entry_quality_threshold:
@@ -186,7 +233,7 @@ class MLSignalDrivenTrigger(EntryTriggerSource):
             )
             return None
 
-        # Gate 8: vol regime
+        # Gate 9: vol regime
         vol_regime = (conditions.get("vol_1h", {}) or {}).get("regime", "normal")
         if _VOL_RANK.get(vol_regime, 99) > _VOL_RANK.get(self._max_vol_regime, 2):
             self._rejection_record(
