@@ -1,0 +1,42 @@
+{
+  "name": "reversal_30m",
+  "version": 1,
+  "feature_hash": "654e004b22c4d7c9",
+  "feature_names": [
+    "realized_vol_1h",
+    "realized_vol_4h",
+    "vol_of_vol",
+    "volume_acceleration",
+    "volume_vs_1h_avg_ratio",
+    "price_trend_1h",
+    "return_autocorrelation",
+    "oi_change_rate_1h",
+    "liq_imbalance_1h",
+    "body_ratio_1h"
+  ],
+  "target_description": "P(price reverses >0.3% in next 30m)",
+  "created_at": "2026-04-20T04:45:41.028511+00:00",
+  "training_samples": 71838,
+  "validation_spearman": 0.0977,
+  "validation_mae": 0.4444,
+  "xgboost_params": {
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "verbosity": 0,
+    "scale_pos_weight": 0.12239860008749454
+  },
+  "percentiles": {
+    "p10": 0.368328,
+    "p25": 0.450432,
+    "p50": 0.540316,
+    "p75": 0.613443,
+    "p90": 0.695775,
+    "p95": 0.747408
+  }
+}

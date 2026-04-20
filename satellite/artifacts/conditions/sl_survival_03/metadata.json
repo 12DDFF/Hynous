@@ -15,10 +15,10 @@
     "hours_to_funding"
   ],
   "target_description": "P(0.3% SL hit within 30m for long)",
-  "created_at": "2026-03-22T23:21:06.281213+00:00",
-  "training_samples": 55584,
-  "validation_spearman": 0.2736,
-  "validation_mae": 0.462,
+  "created_at": "2026-04-20T04:45:14.390360+00:00",
+  "training_samples": 72704,
+  "validation_spearman": 0.2604,
+  "validation_mae": 0.4529,
   "xgboost_params": {
     "objective": "binary:logistic",
     "eval_metric": "logloss",
@@ -29,14 +29,14 @@
     "min_child_weight": 10,
     "gamma": 0.1,
     "verbosity": 0,
-    "scale_pos_weight": 3.150537634408602
+    "scale_pos_weight": 3.7475512602847068
   },
   "percentiles": {
-    "p10": 0.224793,
-    "p25": 0.317913,
-    "p50": 0.483122,
-    "p75": 0.58335,
-    "p90": 0.677178,
-    "p95": 0.72303
+    "p10": 0.23062,
+    "p25": 0.346983,
+    "p50": 0.465689,
+    "p75": 0.582004,
+    "p90": 0.663808,
+    "p95": 0.709213
   }
 }

@@ -17,10 +17,10 @@
     "liq_imbalance_1h"
   ],
   "target_description": "Future vol / current vol ratio",
-  "created_at": "2026-03-22T23:20:59.679321+00:00",
-  "training_samples": 55636,
-  "validation_spearman": 0.3546,
-  "validation_mae": 0.3458,
+  "created_at": "2026-04-20T04:44:56.557350+00:00",
+  "training_samples": 72343,
+  "validation_spearman": 0.3498,
+  "validation_mae": 0.2869,
   "xgboost_params": {
     "objective": "reg:pseudohubererror",
     "max_depth": 4,
@@ -32,11 +32,11 @@
     "verbosity": 0
   },
   "percentiles": {
-    "p10": 0.948897,
-    "p25": 1.010193,
-    "p50": 1.095147,
-    "p75": 1.167738,
-    "p90": 1.230838,
-    "p95": 1.271968
+    "p10": 0.952515,
+    "p25": 1.016701,
+    "p50": 1.091274,
+    "p75": 1.155348,
+    "p90": 1.21491,
+    "p95": 1.249943
   }
 }

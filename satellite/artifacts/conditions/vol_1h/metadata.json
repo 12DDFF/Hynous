@@ -17,10 +17,10 @@
     "oi_price_direction"
   ],
   "target_description": "Future realized_vol_1h (12 snapshots ahead)",
-  "created_at": "2026-03-22T23:20:42.401882+00:00",
-  "training_samples": 55876,
-  "validation_spearman": 0.6201,
-  "validation_mae": 0.1602,
+  "created_at": "2026-04-20T04:44:02.964101+00:00",
+  "training_samples": 73008,
+  "validation_spearman": 0.729,
+  "validation_mae": 0.1286,
   "xgboost_params": {
     "objective": "reg:pseudohubererror",
     "max_depth": 4,
@@ -32,11 +32,11 @@
     "verbosity": 0
   },
   "percentiles": {
-    "p10": 0.211396,
-    "p25": 0.278531,
-    "p50": 0.372863,
-    "p75": 0.49366,
-    "p90": 0.658919,
-    "p95": 0.768773
+    "p10": 0.20778,
+    "p25": 0.277602,
+    "p50": 0.375558,
+    "p75": 0.508536,
+    "p90": 0.678503,
+    "p95": 0.788993
   }
 }

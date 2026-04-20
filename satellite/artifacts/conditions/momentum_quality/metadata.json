@@ -1,0 +1,41 @@
+{
+  "name": "momentum_quality",
+  "version": 1,
+  "feature_hash": "39b9d4741ce1fe54",
+  "feature_names": [
+    "volume_acceleration",
+    "volume_vs_1h_avg_ratio",
+    "cvd_ratio_30m",
+    "cvd_acceleration",
+    "oi_change_rate_1h",
+    "body_ratio_1h",
+    "return_autocorrelation",
+    "realized_vol_1h",
+    "realized_vol_4h",
+    "price_trend_1h",
+    "close_position_5m"
+  ],
+  "target_description": "Volume-backed momentum ratio at i+6",
+  "created_at": "2026-04-20T04:45:50.084810+00:00",
+  "training_samples": 72986,
+  "validation_spearman": 0.3893,
+  "validation_mae": 0.2133,
+  "xgboost_params": {
+    "objective": "reg:pseudohubererror",
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "verbosity": 0
+  },
+  "percentiles": {
+    "p10": 0.13259,
+    "p25": 0.167213,
+    "p50": 0.234995,
+    "p75": 0.340456,
+    "p90": 0.464075,
+    "p95": 0.553411
+  }
+}
