@@ -28,7 +28,8 @@ from dataclasses import dataclass, field
 log = logging.getLogger(__name__)
 
 # Feature names — order matters, must match training.
-# Canonical list — data-layer/engine/tick_collector.py has a copy; keep in sync.
+# Single source of truth. data-layer/engine/tick_collector.py imports
+# TICK_FEATURE_NAMES + TICK_SCHEMA_VERSION from here — do not duplicate.
 TICK_FEATURE_NAMES = [
     # Orderbook imbalance at multiple depth levels
     "book_imbalance_5",       # bid_vol / (bid_vol + ask_vol) at top 5 levels

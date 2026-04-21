@@ -23,51 +23,19 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# Feature names — order matters, must match training.
-# Canonical list lives in satellite/tick_features.py; keep in sync.
-TICK_FEATURE_NAMES = [
-    # Orderbook imbalance at multiple depth levels
-    "book_imbalance_5",
-    "book_imbalance_10",
-    "book_imbalance_20",
-    # Depth metrics
-    "bid_depth_usd_5",
-    "ask_depth_usd_5",
-    "spread_pct",
-    "mid_price",
-    # VWAP deviations
-    "buy_vwap_deviation",
-    "sell_vwap_deviation",
-    # Trade flow at multiple windows
-    "flow_imbalance_10s",
-    "flow_imbalance_30s",
-    "flow_imbalance_60s",
-    "flow_intensity_10s",
-    "flow_intensity_30s",
-    # Volume metrics
-    "trade_volume_10s_usd",
-    "trade_volume_30s_usd",
-    # Momentum
-    "price_change_10s",
-    "price_change_30s",
-    "price_change_60s",
-    # Pressure
-    "large_trade_imbalance",
-    # --- v2 features (book pressure + trade size distribution) ---
-    # Book pressure delta — how fast is the orderbook shifting?
-    "book_imbalance_delta_5s",   # imbalance_5 now minus 5s ago
-    "book_imbalance_delta_10s",  # imbalance_5 now minus 10s ago
-    "depth_ratio_change_5s",     # (bid/ask depth ratio now) / (5s ago) - 1
-    # Trade size distribution — are whales active?
-    "max_trade_usd_60s",         # largest single trade notional in 60s
-    "trade_count_60s",           # raw number of trades in 60s
-    "trade_count_10s",           # raw number of trades in 10s
-]
+# Feature names + schema version — imported from the canonical source in
+# satellite/. Both packages share the root venv via `pip install -e .`
+# (see pyproject.toml `packages = ["src/hynous", "satellite"]`), so the
+# hynous-data process can resolve this import even though it has its own
+# pyproject.toml. Duplicating the list inline used to be the pattern;
+# v2-debug M5 removed the drift risk (training vs collector column
+# mismatch on silent edits) by consolidating.
+from satellite.tick_features import (  # noqa: E402
+    TICK_FEATURE_NAMES,
+    TICK_SCHEMA_VERSION,
+)
 
 TICK_FEATURE_COUNT = len(TICK_FEATURE_NAMES)
-
-# v2: added 6 book-delta + trade-distribution features
-TICK_SCHEMA_VERSION = 2
 
 # v2 features added via ALTER TABLE migration
 _V2_FEATURES = [
