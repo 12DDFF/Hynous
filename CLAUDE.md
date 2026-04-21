@@ -218,6 +218,11 @@ unrestricted). Current baseline (phase 8 complete): `592 passed / 0 failed`.
 - **Journal DB path unification** — `JournalStore.__init__` resolves relative `db_path` against project root. Both `hynous` (cwd `/opt/hynous/dashboard`) and `hynous-daemon` (cwd `/opt/hynous`) write to the same `/opt/hynous/storage/v2/journal.db`. Prior split-brain caused 2632 stale rejection rows in dashboard DB invisible to the daemon.
 - **Hyperliquid 429 retry layer** — `HyperliquidProvider.__init__` retries `Info()` and `provider.get_candles` retries `candles_snapshot` (both share the `/info` rate-limit bucket). Was the silent killer of the daemon thread during boot storms.
 
+## Post-v2 Additions (2026-04-20)
+
+- **ML stack retrain.** Direction model **v3** lives at `satellite/artifacts/v3/` with target switched from `risk_adj_30m` to peak ROE (`best_roe_30m_net`); v2 was emitting 100 % skip on recent data. The daemon picks the highest `v*` artifact dir at boot (`daemon.py:374-384`), so v3 is auto-loaded — v2 is left in tree but unused. Conditions retrained on 72K snapshots: 12 existing models refreshed (notable wins: entry_quality 0.05→0.32, volume_1h 0.32→0.47, funding_4h 0.00→0.23, vol_1h 0.62→0.73), `momentum_quality` added (active, spearman 0.39), `reversal_30m` added but kept in `DISABLED_MODELS` (spearman 0.10). Tick direction models retrained on 455K v2 tick snapshots, **8 → 6 horizons** (45s and 180s dropped as weak) — `direction_10s` improved 66.6 % → 69.7 % directional accuracy.
+- **Opt-in tick-confirmation gate.** New gate in `MLSignalDrivenTrigger` between the direction-signal and direction-confidence checks: when `v2.mechanical_entry.tick_confirmation_enabled: true`, the chosen tick horizon's sign must agree with the satellite direction. Off by default. Configurable via `tick_confirmation_horizon` (default `direction_10s`). Two new rejection reasons: `tick_confirmation_unavailable`, `tick_direction_disagreement`.
+
 ---
 
-Last updated: 2026-04-15 (post-v2: Kronos shadow live, daemon split, journal path unified)
+Last updated: 2026-04-20 (ML stack retrain — direction v3, conditions v2, tick models v2; opt-in tick-confirmation entry gate)

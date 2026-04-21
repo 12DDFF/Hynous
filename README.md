@@ -42,7 +42,7 @@ hynous/
 │   ├── pages/               # Dashboard pages
 │   └── state.py             # Session + state management
 │
-├── satellite/               # ML feature engine (feature extraction, training, inference, 8 tick-direction models)
+├── satellite/               # ML feature engine (feature extraction, training, inference, 6 tick-direction models)
 ├── data-layer/              # Market data collection service (:8100)
 │
 ├── config/                  # YAML configuration (default.yaml, theme.yaml)
@@ -109,6 +109,7 @@ If you're an AI agent working on this project:
 - **Kronos shadow predictor** (`src/hynous/kronos_shadow/`, 2026-04-15) — vendored Kronos foundation model (arXiv 2508.02739, AAAI 2026; MIT license) running alongside the live `MLSignalDrivenTrigger` as a read-only side car. Writes "would-fire" verdicts to `kronos_shadow_predictions`. Currently uses **Kronos-small** (24.7 M params, the largest variant feasible on a 2-vCPU VPS — Kronos-base / 102 M overflowed the 300 s tick cadence in live testing, Kronos-large / 499 M weights are not publicly released). See `v2-planning/12-kronos-shadow-integration.md`. Tests: 631 passed / 0 failed including 24 new shadow tests.
 - **Standalone daemon service** (`deploy/hynous-daemon.service`) — runs `scripts/run_daemon` independently of the Reflex UI process. Decouples the mechanical loop from granian's ASGI worker lifecycle. **3 systemd services total**: `hynous` (UI), `hynous-data` (data layer :8100), `hynous-daemon` (mechanical loop + Kronos shadow).
 - **Journal DB path unification** — `JournalStore` resolves relative `db_path` against project root so daemon (cwd `/opt/hynous`) and dashboard (cwd `/opt/hynous/dashboard`) write to the same file (`/opt/hynous/storage/v2/journal.db`). Prior split-brain caused dashboard to show stale data.
+- **ML stack retrain (2026-04-20)** — direction model **v3** (`satellite/artifacts/v3/`, target switched from `risk_adj_30m` to peak ROE; daemon picks the highest `v*` dir at boot, so v3 is auto-loaded), 12 conditions retrained on 72K snapshots + `momentum_quality` added as active + `reversal_30m` added as disabled (13 active / 14 total), 6 tick direction models (10s/15s/20s/30s/60s/120s; 45s and 180s dropped as weak). New opt-in entry gate `v2.mechanical_entry.tick_confirmation_enabled` (off by default) requires the chosen tick horizon's sign to agree with the satellite direction.
 
 ---
 
@@ -121,11 +122,11 @@ If you're an AI agent working on this project:
 | User-chat agent | LiteLLM-backed, read-only tool surface (`search_trades`, `get_trade_by_id`) |
 | Journal | Python SQLite (`JournalStore` in-process, 9-table schema, OpenAI text-embedding-3-small / 512-dim matryoshka) |
 | Data | Hyperliquid (REST + WS), Coinglass |
-| ML | Satellite (Python, XGBoost; 14 condition models + 8 tick-direction models) |
+| ML | Satellite (Python, XGBoost; 14 condition models / 13 active + 6 tick-direction models) |
 | Deploy | Ubuntu 24.04, systemd (3 services: hynous + hynous-data + hynous-daemon), Caddy HTTPS |
 | Shadow predictor | Kronos foundation model (vendored, MIT, CPU inference, opt-in via `[kronos-shadow]` extras) |
 | Config | YAML (default.yaml, theme.yaml) |
 
 ---
 
-*Last updated: 2026-04-15 (post-v2: Kronos shadow live, hynous-daemon service split, journal path unified)*
+*Last updated: 2026-04-20 (ML stack retrain — direction v3, conditions v2, tick models v2; opt-in tick-confirmation entry gate)*

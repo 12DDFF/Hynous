@@ -24,12 +24,12 @@ log = logging.getLogger(__name__)
 # Models disabled from inference (Spearman < 0.15).
 # Artifacts are kept for retraining. Re-enable by removing from this set.
 #
-# Phase 1b VPS retrain (2026-03-22, 62K+ snapshots with real feature data):
-#   vol_1h: 0.720, vol_4h: 0.673, range_30m: 0.603, move_30m: 0.533
-#   volume_1h: 0.441, momentum_quality: 0.398, vol_expand: 0.355
-#   entry_quality: 0.341, mae_short: 0.334, mae_long: 0.291
-#   sl_survival_03: 0.280, funding_4h: 0.277, sl_survival_05: 0.238
-#   reversal_30m: 0.097 — DISABLED (tautological target, confirmed broken)
+# Latest retrain (2026-04-20, ~72K snapshots from satellite.db):
+#   vol_1h: 0.729, vol_4h: 0.680, range_30m: 0.599, move_30m: 0.526
+#   volume_1h: 0.470, momentum_quality: 0.389, vol_expand: 0.350
+#   mae_short: 0.332, entry_quality: 0.316, mae_long: 0.293
+#   sl_survival_03: 0.260, funding_4h: 0.232, sl_survival_05: 0.206
+#   reversal_30m: 0.098 — DISABLED (tautological target, confirmed broken)
 DISABLED_MODELS: set[str] = {
     "reversal_30m",
 }

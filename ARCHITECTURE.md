@@ -372,7 +372,7 @@ completed) in `docs/archive/`. Highlights:
 
 ---
 
-Last updated: 2026-04-15 (post-v2 — Kronos shadow + hynous-daemon split + journal path unification)
+Last updated: 2026-04-20 (ML stack retrain — direction v3 + conditions v2 + tick models v2; tick-confirmation entry gate added)
 
 ---
 
@@ -439,8 +439,11 @@ Phase 8 is ML-only and does not change the component topology above. It
 landed:
 
 - **Tick downsample + retrain** (`tick_inference.py`): canonical 5 s downsample
-  on the inference path; 8 direction models at 10–180 s horizons live under
-  `satellite/artifacts/tick_models/direction_{10..180}s/` (53–67 % accuracy).
+  on the inference path. Phase 8 shipped 8 direction models at 10–180 s
+  horizons (53–67 % accuracy). The 2026-04-20 retrain dropped the weak
+  `direction_45s` and `direction_180s` horizons — **6 models now live** at
+  `satellite/artifacts/tick_models/direction_{10s,15s,20s,30s,60s,120s}/`
+  (~69.7 % directional accuracy at 10 s after retrain on 455K v2 tick snapshots).
 - **Monte-Carlo fixes**: feature-list consolidation, `_zero_count >= 10`
   guard, bias-score restricted to strong-only signals.
 - **Composite-score calibration audit** (new-M3).
