@@ -313,7 +313,6 @@ class Daemon:
         self._kill_switch = None                   # NEW — unconditional
         self._latest_predictions: dict[str, dict] = {}  # NEW — unconditional
         self._latest_predictions_lock = threading.Lock()
-        self._staged_entries: dict = {}  # directive_id → StagedEntry
         # v2 phase 5: mechanical entry trigger (set by _init_mechanical_entry).
         self._entry_trigger: "EntryTriggerSource | None" = None
         self._last_entry_check: float = 0   # v2 phase 5: periodic ML signal evaluation
@@ -1818,10 +1817,6 @@ class Daemon:
             self._load_position_types()
             # Load trailing stop state (prevents SL degradation on restart)
             self._load_mechanical_state()
-            # Load staged entry directives (filter expired on load)
-            from .staged_entries import load_staged_entries
-            _staged_path = self.config.project_root / "storage" / "staged_entries.json"
-            self._staged_entries = load_staged_entries(_staged_path)
 
             # Infer position types for any remaining unregistered positions
             for coin, data in self._prev_positions.items():
@@ -1867,7 +1862,7 @@ class Daemon:
         and runs check_triggers + peak ROE tracking on every loop.
         """
         provider = self._get_provider()
-        if not hasattr(provider, "check_triggers") or (not self._prev_positions and not self._staged_entries):
+        if not hasattr(provider, "check_triggers") or not self._prev_positions:
             return
 
         try:
@@ -2595,167 +2590,6 @@ class Daemon:
 
         except Exception as e:
             logger.debug("Fast trigger check failed: %s", e)
-
-        # ── Staged entry evaluation ──
-        if self._staged_entries:
-            try:
-                _se_prices = self._get_provider().get_all_prices()
-                self._evaluate_staged_entries(_se_prices)
-            except Exception as _se_err:
-                logger.debug("Staged entry evaluation failed: %s", _se_err)
-
-    def _evaluate_staged_entries(self, prices: dict[str, float]) -> None:
-        """Evaluate staged entry directives against live WS prices.
-
-        Called every ~1s from _fast_trigger_check(). Executes entries
-        mechanically when price trigger + composite score are both satisfied.
-        """
-        from .staged_entries import evaluate_trigger, persist_staged_entries
-
-        now = time.time()
-        to_remove = []
-        ts = get_trading_settings()
-
-        for did, entry in list(self._staged_entries.items()):
-            # Check expiry
-            if now >= entry.expires_at:
-                entry.status = "expired"
-                to_remove.append(did)
-                logger.info("Staged entry expired: %s %s %s", entry.coin, entry.side, did)
-                continue
-
-            # Check price trigger
-            price = prices.get(entry.coin)
-            if not price:
-                continue
-
-            if not evaluate_trigger(entry, price):
-                continue
-
-            # Re-verify composite score at trigger time
-            with self._latest_predictions_lock:
-                _pred = dict(self._latest_predictions.get(entry.coin, {}))
-            current_score = _pred.get("entry_score", 0)
-            if current_score < entry.min_entry_score:
-                # Don't cancel — score may recover. Just skip this tick.
-                continue
-
-            # Re-verify safety gates
-            if self._trading_paused:
-                continue
-            if entry.coin.upper() in self._prev_positions:
-                entry.status = "cancelled"
-                to_remove.append(did)
-                logger.info("Staged entry cancelled (position exists): %s", did)
-                continue
-            if len(self._prev_positions) >= ts.max_open_positions:
-                continue
-
-            # EXECUTE
-            self._execute_staged_entry(entry, price)
-            to_remove.append(did)
-
-        for did in to_remove:
-            self._staged_entries.pop(did, None)
-
-        if to_remove:
-            _path = self.config.project_root / "storage" / "staged_entries.json"
-            persist_staged_entries(self._staged_entries, _path)
-
-    def _execute_staged_entry(self, entry, trigger_price: float) -> None:
-        """Execute a staged entry via provider. Mechanical — no LLM."""
-        try:
-            provider = self._get_provider()
-            ts = get_trading_settings()
-
-            # Set leverage
-            provider.update_leverage(entry.coin, entry.leverage)
-
-            # Compute size from conviction (same formula as trading.py)
-            try:
-                state = provider.get_user_state()
-                portfolio = state.get("account_value", 1000)
-            except Exception:
-                portfolio = 1000
-
-            if entry.confidence >= 0.8:
-                margin = portfolio * (ts.tier_high_margin_pct / 100)
-            elif entry.confidence >= 0.6:
-                margin = portfolio * (ts.tier_medium_margin_pct / 100)
-            else:
-                margin = portfolio * (ts.tier_speculative_margin_pct / 100)
-
-            size_usd = margin * entry.leverage
-            size_usd = min(size_usd, ts.max_position_usd)
-
-            # Execute market order
-            is_buy = entry.side == "long"
-            result = provider.market_open(
-                entry.coin, is_buy, size_usd,
-                self._config.hyperliquid.default_slippage,
-            )
-
-            if result.get("status") != "filled" or not result.get("fillSz"):
-                logger.warning("Staged entry fill failed: %s %s", entry.coin, result)
-                return
-
-            fill_px = float(result.get("avgPx", trigger_price))
-            entry.status = "filled"
-            entry.fill_price = fill_px
-            entry.fill_time = time.time()
-
-            # Place SL/TP triggers (same as trading tool)
-            try:
-                if entry.stop_loss:
-                    provider.place_trigger_order(
-                        symbol=entry.coin,
-                        is_buy=not is_buy,
-                        sz=float(result["fillSz"]),
-                        trigger_px=entry.stop_loss,
-                        tpsl="sl",
-                    )
-                if entry.take_profit:
-                    provider.place_trigger_order(
-                        symbol=entry.coin,
-                        is_buy=not is_buy,
-                        sz=float(result["fillSz"]),
-                        trigger_px=entry.take_profit,
-                        tpsl="tp",
-                    )
-            except Exception:
-                logger.debug("Failed to place staged entry triggers", exc_info=True)
-
-            # Record entry (same as daemon.record_trade_entry())
-            self.record_trade_entry()
-            self.register_position_type(entry.coin, entry.trade_type)
-
-            # Store trade memory in background
-            threading.Thread(
-                target=self._store_staged_trade_memory,
-                args=(entry, fill_px, size_usd),
-                name="hynous-staged-memory",
-                daemon=True,
-            ).start()
-
-            # Notify Discord
-            _notify_discord_simple(
-                f"STAGED ENTRY FILLED: {entry.coin} {entry.side.upper()} "
-                f"@ ${fill_px:,.2f} ({entry.leverage}x) "
-                f"| staged {(time.time() - entry.created_at) / 60:.1f}min ago"
-            )
-
-            logger.info(
-                "Staged entry filled: %s %s @ %.2f (size=$%.0f, staged %.0fs ago)",
-                entry.coin, entry.side, fill_px, size_usd,
-                time.time() - entry.created_at,
-            )
-
-        except Exception:
-            logger.exception("Staged entry execution failed: %s", entry.directive_id)
-
-    def _store_staged_trade_memory(self, entry, fill_px: float, size_usd: float) -> None:
-        # No-op in v2; phase 1 journal capture handles trade persistence.
-        return None
 
     def _get_ws_candle_feed(self):
         """Get the MarketDataFeed instance from the provider, unwrapping Paper if needed.

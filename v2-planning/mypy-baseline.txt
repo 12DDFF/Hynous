@@ -245,8 +245,6 @@ src/hynous/intelligence/daemon.py:1674: error: Item "None" of "InferenceEngine |
 src/hynous/intelligence/daemon.py:1705: error: Item "None" of "InferenceEngine | None" has no attribute "_artifact"  [union-attr]
 src/hynous/intelligence/daemon.py:1705: error: Item "None" of "ModelMetadata | Any | None" has no attribute "version"  [union-attr]
 src/hynous/intelligence/daemon.py:1709: error: Item "None" of "InferenceEngine | None" has no attribute "entry_threshold"  [union-attr]
-src/hynous/intelligence/daemon.py:2110: error: Cannot find implementation or library stub for module named "hynous.intelligence.staged_entries"  [import-not-found]
-src/hynous/intelligence/daemon.py:2805: error: "Daemon" has no attribute "_config"; maybe "config"?  [attr-defined]
 src/hynous/intelligence/daemon.py:3141: error: Returning Any from function declared to return "list[dict[Any, Any]] | None"  [no-any-return]
 src/hynous/intelligence/daemon.py:3189: error: Returning Any from function declared to return "list[dict[Any, Any]] | None"  [no-any-return]
 src/hynous/intelligence/daemon.py:3422: error: Returning Any from function declared to return "str"  [no-any-return]

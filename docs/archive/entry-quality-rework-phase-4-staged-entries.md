@@ -1,5 +1,12 @@
-# Phase 4: LLM Lookahead — Staged Entries
+# Phase 4: LLM Lookahead — Staged Entries (ARCHIVED)
 
+> **Status:** RETIRED — feature was specified but never implemented.
+> The `staged_entries` module referenced throughout this doc never existed
+> in the codebase; the daemon stub that tried to import it was removed in
+> the v2-debug H1 fix. Kept for historical context only.
+>
+> Original status header (retained verbatim below):
+>
 > **Status:** DEFERRED — pending paper trading data from Phases 1-3
 > **Depends on:** Phase 3 feedback data (IC results, composite score validation)
 > **Design:** Will be revised based on paper trading results. Current guide is the original concept; the architecture may change to Option B (LLM provides direction + conviction only, mechanical system handles timing/levels/risk).
