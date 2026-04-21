@@ -1,6 +1,6 @@
 # hynous
 
-> Main Python package for the Hynous crypto intelligence system.
+> Main Python package for the Hynous v2 crypto trading system.
 
 ---
 
@@ -8,54 +8,58 @@
 
 ```
 hynous/
-├── core/           # Shared utilities (config, types, errors, logging, tracing, costs, analytics)
-├── data/           # Market data providers (Hyperliquid, Coinglass, CryptoCompare, Perplexity, hynous-data)
-├── discord/        # Discord bot — chat relay, daemon notifications, stats panel
-├── intelligence/   # LLM agent brain (agent, daemon, tools, prompts, scanner, retrieval)
-├── nous/           # Python HTTP client for the Nous TypeScript memory server
-└── __init__.py     # Package root (v0.1.0)
+├── core/              # Shared utilities (config, clock, costs, persistence, tracing, trading_settings)
+├── data/              # Market data providers (Hyperliquid REST+WS, Coinglass, hynous-data client, Paper sim)
+├── intelligence/      # Mechanical trading loop — daemon, scanner, regime, tools (user-chat surface only)
+├── journal/           # v2 trade journal (9-table SQLite + embeddings + FastAPI router + migration)
+├── analysis/          # Post-trade LLM analysis pipeline (rules + synthesis + validation + batch rejection)
+├── mechanical_entry/  # Pluggable entry trigger + deterministic param computation + executor
+├── user_chat/         # Read-only LLM chat agent mounted at /api/v2/chat/*
+├── kronos_shadow/     # Read-only Kronos foundation-model shadow predictor
+└── __init__.py        # Package root (v0.1.0)
 ```
 
 ---
 
-## How They Relate
+## Dependency Direction
 
 ```
-                    ┌──────────────┐
-                    │  intelligence │  LLM agent + daemon + tools
-                    └──────┬───────┘
-                           │ uses
-              ┌────────────┼────────────┐
-              v            v            v
-         ┌────────┐  ┌─────────┐  ┌─────────┐
-         │  data  │  │  nous   │  │  core   │
-         │        │  │         │  │         │
-         │ market │  │ memory  │  │ config  │
-         │ prices │  │ search  │  │ types   │
-         │ trades │  │ edges   │  │ tracing │
-         └────────┘  └─────────┘  └─────────┘
-              ^                        ^
-              │                        │
-         ┌────────┐                    │
-         │discord │────────────────────┘
-         │ bot    │  (shares Agent singleton, reads config)
-         └────────┘
+                 ┌──────────────┐
+                 │ mechanical_  │──uses──┐
+                 │   entry      │        │
+                 └──────────────┘        ▼
+                                 ┌──────────┐
+                 ┌──────────────┐│ journal  │
+                 │  analysis    │┤          │
+                 └──────────────┘│          │
+                                 ├──────────┤
+                 ┌──────────────┐│   data   │
+                 │ intelligence │┤          │
+                 │   (daemon)   ││          │
+                 └──────────────┘│   core   │
+                                 └──────────┘
+                 ┌──────────────┐
+                 │  user_chat   │──uses── tools/search_trades, tools/get_trade_by_id
+                 └──────────────┘
+                 ┌──────────────┐
+                 │ kronos_shadow│──uses── journal.store._write_lock, data.providers
+                 └──────────────┘
 ```
 
-- **`core`** is a dependency of every other module. Config, types, errors, logging, and tracing all live here.
-- **`intelligence`** is the central module. It imports from `data` (market reads + execution), `nous` (memory CRUD + search), and `core` (config, tracing).
-- **`data`** has no internal dependencies on other hynous modules (except `core` for config loading in `hynous_data.py`).
-- **`nous`** is a thin HTTP client. It connects to the Nous TypeScript server on `:3100`.
-- **`discord`** runs in a background thread alongside the dashboard. It shares the Agent singleton from `intelligence` for chat relay, and reads from `data` and `intelligence` for the stats panel.
+- `core` has no internal dependencies on other hynous modules (except reading its own config).
+- `intelligence.daemon` is the trading-loop orchestrator: imports from `journal` (capture + store), `analysis` (`trigger_analysis_async`), `mechanical_entry` (entry trigger + executor), `kronos_shadow` (side predictor), and `data` (providers).
+- LLM is out of the trade-execution path. The daemon does not wake an LLM. The only LLM surfaces are `analysis/` (post-trade, background thread) and `user_chat/` (HTTP request/response).
 
 ---
 
 ## Entry Points
 
-| Script | What it starts |
-|--------|----------------|
-| `scripts/run_dashboard.py` | Reflex dashboard (`:3000`) + Discord bot (background thread) |
-| `scripts/run_daemon.py` | Agent daemon (autonomous background loop) |
+| Script | Starts |
+|--------|--------|
+| `scripts/run_dashboard.py` | Reflex dashboard (`:3000`) + FastAPI routers (`/api/v2/journal/*`, `/api/v2/chat/*`) mounted in-process |
+| `scripts/run_daemon.py` | Standalone trading daemon (mechanical loop + Kronos shadow tick, 3rd systemd unit) |
+
+Data layer runs as a separate service — see `data-layer/scripts/run.py` (`:8100` FastAPI).
 
 ---
 
@@ -65,4 +69,4 @@ hynous/
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-04-21 (v2-debug H4 — removed references to deleted `discord/` and `nous/` modules, refreshed dependency graph for v2 layout)
