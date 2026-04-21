@@ -371,9 +371,9 @@ completed) in `docs/archive/`. Highlights:
 
 ---
 
-Last updated: 2026-04-21 (v3 production outage flagged — see `docs/revisions/v2-debug/README.md`)
+Last updated: 2026-04-21 (v2-debug cleanup session — 11 of 18 audit issues resolved on `v2`; see `docs/revisions/v2-debug/README.md` Status Dashboard)
 
-> **⚠️ Trading loop is halted as of 2026-04-21 02:38:40 UTC restart** — v3 direction model produces 100 % skip in production (issue C1 in the v2-debug audit). Mechanical entry has fired zero trades since. Rollback to v2 artifact pending user decision.
+> **⚠️ Trading loop is halted as of 2026-04-21 02:38:40 UTC restart** — v3 direction model produces 100 % skip in production (issue C1). Mechanical entry has fired zero trades since. VPS rollback + diagnose-script run pending user action. H1/H2/H3/H4/H5/H7/M3/M4/M5/M6A/M8 already resolved; H8 + M1 open for the next engineer session; M2 awaiting user A/B decision; M7/M9 deferred.
 
 ---
 

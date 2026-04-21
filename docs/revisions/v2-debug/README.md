@@ -1,12 +1,55 @@
 # v2 Debug — Codebase Audit Findings
 
 > **Generated:** 2026-04-20
-> **Last updated:** 2026-04-21 — added C1, H6, H7, H8 (v3 direction model regression investigation) + "For the Next Engineer" caveats section
+> **Last updated:** 2026-04-21 — annotated each issue with RESOLVED / OPEN / BLOCKED / DEFERRED status; added Status Dashboard; 11 of 18 issues landed on `v2`.
 > **Scope:** Full read-through of every Python file in `src/hynous/`, `satellite/`, `data-layer/`, `dashboard/`, `scripts/`, plus all config, deploy, and planning docs.
 > **Verification status:** Every issue in this document has been verified via `grep` + `read` against the current `v2` branch. Evidence (file paths, line numbers, exact quotes) is embedded in each entry.
 > **Purpose:** This document is the work-unit queue for closing v2 debt. Each issue includes enough context that another engineer can act on it without re-auditing. Nothing is speculative — claims that couldn't be verified are excluded.
 >
 > **Severity legend addition:** `Critical` added above `High` for actively-failing production behaviour.
+
+---
+
+## Status Dashboard (as of 2026-04-21)
+
+Eighteen issues total (1 Critical + 8 High + 9 Medium). Eleven landed on `v2` in one session of cleanup commits; the remaining seven are blocked on a user decision, blocked on C1 root-cause output, or explicitly deferred per the audit's own guidance.
+
+| ID | Severity | Status | Commit / Reason |
+|----|----------|--------|-----------------|
+| **C1** | Critical | **OPEN — BLOCKED on user VPS rollback** | Step 0 of Fix Order — user executes. Diagnose script run (Fix Order step 3) also pending. Trading is still halted until this resolves. |
+| **H1** | High | **RESOLVED** | `b468a80` — staged_entries dead code deleted from daemon (-166 LOC); design doc archived under `docs/archive/`; mypy baseline pruned. |
+| **H2** | High | **RESOLVED (strict variant)** | `ec03d27` — `src/hynous/intelligence/prompts/` deleted (builder.py + __init__.py + README.md); 4 stale prompt-introspection tests pruned from `test_ml_adaptive_trailing.py` + `test_agent_exit_lockout.py` + `test_dynamic_protective_sl.py`; 9 docs redirected from builder.py to `src/hynous/user_chat/prompt.py`. +26/-422 LOC. |
+| **H3** | High | **RESOLVED** | `b10febb` — `deploy/setup.sh` installs all three services (hynous, hynous-data, hynous-daemon); all Discord references removed from `deploy/`. |
+| **H4** | High | **RESOLVED** | `93dc039` — `src/hynous/README.md` rewritten for v2 layout (no discord/, no nous/). |
+| **H5** | High | **RESOLVED** | `2f306f1` — `config/README.md` rewritten to match actual v2 config sections; dropped phantom `nous`/`orchestrator`/`memory`/`sections` sections; full v2 sub-config tree now documented. |
+| **H6** | High | **OPEN — BLOCKED on C1 diagnose output** | Fix branches on whether v3 was trained on `best_roe_30m_net` (Hypothesis A) or `risk_adj_*` (Hypothesis B). Do not edit `scripts/retrain_direction_v3_snapshots.py` until C1 step 3 produces hard evidence. |
+| **H7** | High | **RESOLVED** | `7fe866f` — `scripts/diagnose_direction_inference.py:101` default changed from `"satellite/artifacts/v3/v3"` to `"satellite/artifacts/v3"`. One-line fix unblocks C1 step 3. |
+| **H8** | High | **OPEN** | No blocker. Engineer can ship anytime: add `long_target_column` + `short_target_column` to `ModelMetadata` (`satellite/training/artifact.py:27-56`), thread through `train_both_models`, update retrain scripts, backfill `metadata_v2.json` + `metadata_v3.json`. Closes the audit gap that let C1 ship unnoticed. |
+| **M1** | Medium | **OPEN** | Full `context_snapshot.py` delete + dead half of `briefing.py` (`get_briefing_injection` chain) + caller cleanup in `daemon.py` / `tools/trading.py` / `regime.py`. Touches ~1800 LOC across 4 files. Audit Phase B (full `DataCache` + `build_briefing` delete) is recommended; user_chat is deliberately journal-only, no briefing resurface planned. |
+| **M2** | Medium | **OPEN — BLOCKED on user decision** | Option A (keep file, fix two lying docstrings) vs Option B (rewrite 2 test files to use JournalStore, then delete `staging_store.py`). Pending user pick. |
+| **M3** | Medium | **RESOLVED** | `4b229e7` — 3 dead v1 placeholder fixtures removed from `tests/conftest.py`; `tests/README.md` fixtures section rewritten. |
+| **M4** | Medium | **RESOLVED** | `b0fac9f` — dead `trade_history_warnings` field deleted from `TradingSettings`. |
+| **M5** | Medium | **RESOLVED** | `1a3cd82` — `TICK_FEATURE_NAMES` + `TICK_SCHEMA_VERSION` deduped; `data-layer/.../tick_collector.py` now imports from `satellite.tick_features`; shared venv via `pyproject.toml` `packages = ["src/hynous", "satellite"]` confirmed working. |
+| **M6** | Medium | **RESOLVED (Option A)** | `1674f8c` — startup log line trimmed to `(price, deriv, scanner)`; v1 legacy DaemonConfig fields (11 total) left loaded-but-unused per Option A. Option B (dataclass + YAML field delete) deferred to a later config-cleanup pass if the tree ever needs leaner. |
+| **M7** | Low | **DEFERRED** | Daemon monolith (now 3951 lines post-H1) split. Audit explicitly flags this as a multi-PR refactor, not cleanup. Not part of this debt-burn. |
+| **M8** | Medium | **RESOLVED** | `2eb7232` — `paper.py` replaced hardcoded `TAKER_FEE = 0.00035` with `_taker_fee_per_side()` that reads `get_trading_settings().taker_fee_pct`. Runtime tuning now propagates to paper mode. |
+| **M9** | Low | **DEFERRED** | `dashboard/dashboard/dashboard.py` 892-line monolith refactor. Same reasoning as M7: separate effort, not cleanup. |
+
+**Remaining engineer work (can proceed in any order except H6):**
+
+1. **H8** — metadata schema addition + backfill. Unblocks future retrain audits; doesn't fix C1 directly but closes the audit gap.
+2. **M1** — dead briefing/context_snapshot removal. Touches daemon + trading + regime; biggest remaining cleanup.
+3. **M2 Option A or B** — awaiting user decision, trivial to execute once decided.
+
+**Remaining user-gated work (engineer cannot proceed):**
+
+1. **C1 step 0** — rollback VPS v3 artifact (`mv satellite/artifacts/v3 v3.disabled` on VPS, `systemctl restart hynous-daemon`).
+2. **C1 step 3** — run `scripts/diagnose_direction_inference.py` on v2 + v3 artifacts, share raw JSON output.
+3. **C1 step 4** — pick fix branch (lower threshold vs retrain) based on diagnose output.
+4. **H6** — once step 3-4 produces ground truth, engineer corrects `retrain_direction_v3_snapshots.py` targets.
+5. **M2 A-vs-B** — pick docstring-only fix (A) or test-refactor-then-delete (B).
+
+**Deferred (out of scope for this debt-burn):** M7, M9. Multi-PR refactor efforts. Start in a separate dedicated window.
 
 ---
 
@@ -76,7 +119,7 @@ At the end of the doc there's a **recommended fix order** section with topologic
 
 - **Severity:** High
 - **Category:** broken-code + dead-code
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `b468a80`** — staged_entries field + import + gate + 3 dead methods removed from daemon.py (-166 LOC); mypy baseline stripped of the import-not-found + `_config` typo entries; design doc archived to `docs/archive/entry-quality-rework-phase-4-staged-entries.md` with a RETIRED header.
 
 **Files affected:**
 - `src/hynous/intelligence/daemon.py` (lines 316, 1822, 2600, 2603, 2607, 2613, 2619, 2659, 2662, 2663, 2695)
@@ -155,7 +198,7 @@ Update mypy baseline to drop the import-not-found entry, then rerun `mypy src/` 
 
 - **Severity:** High (audit-facing — inaccurate description of system behavior)
 - **Category:** dead-code + stale-doc
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `ec03d27` (strict variant — user picked strict over lite).** The entire `src/hynous/intelligence/prompts/` directory deleted (builder.py + __init__.py + README.md). Audit missed three test files that source-read builder.py — flagged + pruned in the same commit: `TestPromptUpdated` (3 tests) in `tests/unit/test_ml_adaptive_trailing.py`, `test_system_prompt_full_exit_lockout` in `tests/unit/test_agent_exit_lockout.py`, and the unused `_builder_source` helper in `tests/unit/test_dynamic_protective_sl.py`. CLAUDE.md + ARCHITECTURE.md + 7 other doc files redirected from `prompts/builder.py` to `src/hynous/user_chat/prompt.py` (or noted that the analysis agent has its own prompt in `src/hynous/analysis/prompts.py` with no external tool surface). ruff baseline's I001 stanza for builder.py dropped. Net: +26/-422 LOC across 17 files.
 
 **Files affected:**
 - `src/hynous/intelligence/prompts/builder.py` (entire file — 245 lines)
@@ -230,7 +273,7 @@ This row is misleading — there is no system prompt in `prompts/` that's used b
 
 - **Severity:** High
 - **Category:** broken-code + stale-doc
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `b10febb`.** `setup.sh` now `cp`s all three unit files and `systemctl enable`s them at boot; the Discord echo is gone; the "Next steps" block specifies `systemctl start hynous-data hynous-daemon hynous` (correct order). `deploy/README.md` updated: quick-start uses three-service start; manual hynous-data install block removed (setup.sh now handles it); "Managing Services" commands list hynous-daemon everywhere; Discord row dropped from the test-instance table. `grep -rn "[Dd]iscord" deploy/` returns 0 matches.
 
 **Files affected:**
 - `deploy/setup.sh` (lines 57, 77, 98)
@@ -338,7 +381,7 @@ Edit `deploy/README.md`:
 
 - **Severity:** High (audit-facing)
 - **Category:** stale-doc
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `93dc039`.** Rewrote `src/hynous/README.md` to list the 8 actual v2 subpackages (`core/data/intelligence/journal/analysis/mechanical_entry/user_chat/kronos_shadow`). Dependency graph rebuilt to reflect v2 wiring (daemon orchestrates journal+analysis+mechanical_entry+kronos_shadow+data; LLM only in analysis + user_chat). Entry-points table: no Discord bot; three systemd services mentioned.
 
 **Files affected:**
 - `src/hynous/README.md` (entire file, 68 lines)
@@ -454,7 +497,7 @@ Last updated: YYYY-MM-DD (post-v2)
 
 - **Severity:** High (audit-facing)
 - **Category:** stale-doc
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `2f306f1`.** Dropped the four phantom sections (`nous` / `orchestrator` / `memory` / `sections`). New README documents the actual top-level YAML sections + the full `v2:` sub-config tree (journal / analysis_agent / mechanical_entry / consolidation / user_chat / kronos_shadow). Notes the legacy DaemonConfig fields with no v2 consumer (M6 scope). `agent.model` is now correctly flagged as legacy — `v2.user_chat.model` takes precedence.
 
 **Files affected:**
 - `config/README.md` (entire file, 293 lines)
@@ -580,7 +623,7 @@ Last updated: YYYY-MM-DD
 
 - **Severity:** Medium (wasted CPU + misleading code)
 - **Category:** dead-code + integrity-risk
-- **Status:** Verified (with important nuance)
+- **Status:** **OPEN.** Not yet executed — largest remaining cleanup (~1800 LOC across `briefing.py` + `context_snapshot.py` + caller cleanup in `daemon.py` + `tools/trading.py` + `regime.py`). The audit recommends full delete (Phase A + B + C in Proposed fix below) since user_chat is deliberately journal-only and no briefing resurface is planned. Engineer should do this in one commit; H2 already landed so no merge conflict risk.
 
 **Files affected:**
 - `src/hynous/intelligence/briefing.py` — 1448 lines. Referenced by daemon but consumed only by dead endpoint.
@@ -680,7 +723,7 @@ Phase C — clean up callers:
 
 - **Severity:** Medium (docstring lie)
 - **Category:** stale-doc
-- **Status:** Verified
+- **Status:** **OPEN — BLOCKED on user decision.** The user was presented with the A-vs-B tradeoff in the cleanup session and has not yet picked. Option A (fix two lying docstrings, leave 315-line file + 2 test importers alone) is 5 minutes of work. Option B (rewrite `test_v2_capture.py` + `test_v2_journal_integration.py` to use JournalStore directly, then delete `staging_store.py`) is a 1-2 hour test refactor that risks baseline drift. Engineer rec: A. Do not touch code until user picks.
 
 **Files affected:**
 - `src/hynous/journal/staging_store.py` — 315 lines, still exists.
@@ -756,7 +799,7 @@ Option A is lower risk and matches the spirit of phase 4 (which deleted the daem
 
 - **Severity:** Medium
 - **Category:** dead-code
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `4b229e7`.** The three TODO-stubbed fixtures (`mock_config`, `memory_store`, `mock_agent`) deleted; `tests/README.md` fixtures section rewritten to document the actual current fixtures (`tmp_journal_db`, `sample_entry_snapshot`, `sample_exit_snapshot`). Grep confirms zero usages.
 
 **Files affected:**
 - `tests/conftest.py` (lines 17-38)
@@ -818,7 +861,7 @@ Update `tests/README.md:118-125` — remove the fixtures documentation.
 
 - **Severity:** Low (one-line comment)
 - **Category:** stale-doc
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `b0fac9f` (user chose delete the field entirely).** `trade_history_warnings` field + its section header removed from `TradingSettings`. Grep of src/ + dashboard/ confirmed zero consumers. Persisted JSON-load path already has a `hasattr(ts, k)` guard so stale keys in operators' `storage/trading_settings.json` are silently skipped.
 
 **Files affected:**
 - `src/hynous/core/trading_settings.py:167`
@@ -854,7 +897,7 @@ trade_history_warnings: bool = True  # (unused in v2 — reserved for future tra
 
 - **Severity:** Medium (integrity risk)
 - **Category:** integrity-risk
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `1a3cd82`.** `data-layer/src/hynous_data/engine/tick_collector.py` now imports `TICK_FEATURE_NAMES` + `TICK_SCHEMA_VERSION` from `satellite.tick_features`. Shared venv via root `pyproject.toml` `packages = ["src/hynous", "satellite"]` confirmed working at runtime. Satellite-side header comment updated to say "single source of truth — do not duplicate." Grep confirms exactly one `^TICK_FEATURE_NAMES\s*=` definition across the repo.
 
 **Files affected:**
 - `satellite/tick_features.py:32-68` — canonical definition
@@ -916,7 +959,7 @@ satellite/tick_features.py:32:TICK_FEATURE_NAMES = [
 
 - **Severity:** Low (noise, not harm)
 - **Category:** dead-config
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `1674f8c` (Option A — user's choice).** Startup log line trimmed to `(price, deriv, scanner)`; the 8 v1 interval params (curiosity / decay / conflict / health / backfill / periodic-review) no longer print, so operators stop thinking those cycles run. The 11 legacy DaemonConfig fields + 2 deprecated properties (`next_review_seconds`, `cooldown_remaining`) remain loaded from YAML — Option B (full dataclass + YAML + property delete) left for a dedicated config-cleanup pass. `config/README.md` (H5 rewrite) already flags them as "loaded but unconsumed by v2 code."
 
 **Files affected:**
 - `src/hynous/core/config.py:56-76` (field definitions)
@@ -997,6 +1040,7 @@ Recommended: Option A now, Option B later if a proper v2 config cleanup pass hap
 
 - **Severity:** Low
 - **Category:** maintainability
+- **Status:** **DEFERRED** (per audit's own guidance — multi-PR refactor effort, not cleanup). Post-H1 daemon.py is 3951 lines, not 4117.
 - **Status:** Observed (not a bug)
 
 **Files affected:**
@@ -1075,7 +1119,7 @@ This is a multi-week effort; do not attempt in a single PR.
 
 - **Severity:** Low
 - **Category:** integrity-risk
-- **Status:** Verified (minor)
+- **Status:** **RESOLVED 2026-04-21 in commit `2eb7232`.** Hardcoded `TAKER_FEE = 0.00035` class constant replaced with `_taker_fee_per_side()` method that reads `get_trading_settings().taker_fee_pct / 2.0 / 100.0` at call time. All six `self.TAKER_FEE` references replaced. Math verified: default `taker_fee_pct=0.07` yields 0.00035 per side — identical to the prior constant. Runtime tuning now propagates without restart.
 
 **Files affected:**
 - `src/hynous/data/providers/paper.py:69` — `TAKER_FEE = 0.00035`
@@ -1122,7 +1166,7 @@ Then replace every `self.TAKER_FEE` reference with `self._taker_fee_per_side()`.
 
 - **Severity:** Low
 - **Category:** maintainability
-- **Status:** Observed (not a bug)
+- **Status:** **DEFERRED** (per audit's own guidance — multi-PR refactor effort, not cleanup).
 
 **Files affected:**
 - `dashboard/dashboard/dashboard.py` — 892 lines
@@ -1168,7 +1212,7 @@ Then `dashboard.py` shrinks to ~300 lines of app factory + router mounting.
 
 - **Severity:** Critical (live trading loop has produced zero entries since 2026-04-21 02:38:40 UTC)
 - **Category:** broken-code + integrity-risk
-- **Status:** Verified via static code inspection + commit archaeology + artifact metadata comparison. The live inference distribution itself cannot be verified from this audit environment (no VPS access), but every precondition for the reported behaviour is confirmed.
+- **Status:** **OPEN — BLOCKED on user actions.** Step 0 (VPS rollback) and Step 3 (run diagnose script on VPS, share JSON output) are user-gated per the "For the Next Engineer" preamble. H7 (step 2) is resolved — the diagnose script now runs cleanly. Once the user executes the rollback + diagnose + picks the fix branch (lower threshold vs retrain), engineer finishes via step 5 (H8) + step 6 (C1 fix + H6 script correction). Until then, trading remains halted on the VPS. Original verification: static code inspection + commit archaeology + artifact metadata comparison — every precondition for the reported 100% skip behaviour confirmed.
 
 **Files affected:**
 - `scripts/retrain_direction_v3_snapshots.py` (lines 80-81) — the retrain script used to produce the artifact
@@ -1328,7 +1372,7 @@ GROUP BY signal;
 
 - **Severity:** High (makes the v3 training non-reproducible and the commit history unreliable)
 - **Category:** broken-code + integrity-risk
-- **Status:** Verified
+- **Status:** **OPEN — BLOCKED on C1 step 3 output.** Fix branches on which hypothesis the diagnose script produces evidence for: Hypothesis A (`best_roe_30m_net` — correct the script) vs Hypothesis B (`risk_adj_*` — commit message was wrong, need a fresh retrain). Do not edit lines 80-81 until the user has raw diagnose output in hand and has chosen the C1 branch.
 
 **Files affected:**
 - `scripts/retrain_direction_v3_snapshots.py` (lines 80-81)
@@ -1394,7 +1438,7 @@ python scripts/retrain_direction_v3_snapshots.py --db storage/satellite.db --out
 
 - **Severity:** High (blocks root-cause analysis of C1 without an override flag)
 - **Category:** broken-code
-- **Status:** Verified
+- **Status:** **RESOLVED 2026-04-21 in commit `7fe866f`.** Default changed from `"satellite/artifacts/v3/v3"` → `"satellite/artifacts/v3"` (one-line fix). Unblocks C1 step 3 — diagnose script can now be run on the VPS without an explicit `--v3` override.
 
 **Files affected:**
 - `scripts/diagnose_direction_inference.py` (line 101)
@@ -1447,7 +1491,7 @@ python scripts/diagnose_direction_inference.py --days 1
 
 - **Severity:** High (audit gap that enabled C1 to ship unnoticed)
 - **Category:** integrity-risk
-- **Status:** Verified
+- **Status:** **OPEN — no blocker.** Engineer can ship anytime independent of C1 resolution. Add `long_target_column` + `short_target_column` to `ModelMetadata` (`satellite/training/artifact.py:27-56`); thread through `train_both_models` (`satellite/training/train.py:122-175`); update the two retrain scripts (`retrain_direction_v3_snapshots.py`, `retrain_direction_model.py`) to pass targets explicitly; backfill `metadata_v2.json` + `metadata_v3.json` by hand (write the currently-claimed target per the commit history, even if C1 ultimately proves that claim wrong — the metadata records what we *think* was trained). Load path warns (does not fail) on empty target_column so old artifacts still load. This is the closure step that makes future retrains auditable.
 
 **Files affected:**
 - `satellite/training/artifact.py` (lines 27-61) — `ModelMetadata` dataclass + (de)serialization
@@ -1535,42 +1579,49 @@ Direction models are the only production ML component whose target is not captur
 
 ---
 
-## Fix Order (Topological)
+## Fix Order (Topological) — Progress Snapshot
 
 Recommended execution sequence. Groups are serial; items within a group can be one PR. **Cross-reference with "For the Next Engineer" at the top of this doc — some steps require human action, not engineer action.**
 
 ### Group 0 — Production triage (critical, blocks trading)
-1. **[USER ACTION]** Rollback VPS to v2 direction artifact. Not an engineer step — flag and wait.
-2. **H7** — fix `--v3` path default in `scripts/diagnose_direction_inference.py` (1-line change). Required before step 3.
-3. **[ENGINEER ACTION]** Run diagnose script against v2 and v3 artifacts. Report raw output to user. Do not propose a fix from the output alone.
-4. **[USER ACTION]** Picks C1 fix branch (lower threshold vs. retrain) from the diagnose output.
-5. **H8** — add `target_column` to `ModelMetadata` + backfill `metadata_v2.json` / `metadata_v3.json`. Closes the audit gap.
-6. **C1 fix** — execute the branch the user picked in step 4. If "retrain" branch, coordinate with H6.
-7. **H6** — re-commit `scripts/retrain_direction_v3_snapshots.py` to match whatever target actually trained the production v3 (or corrected v3). Must happen after C1 resolves.
+1. **[USER ACTION — ⏳ PENDING]** Rollback VPS to v2 direction artifact. Rename `satellite/artifacts/v3/` → `v3.disabled/` on the VPS and `systemctl restart hynous-daemon`. Daemon's `versions[-1]` picker at `daemon.py:383` will fall back to v2. Trading stays halted until this happens.
+2. **H7 — ✅ DONE (`7fe866f`)** — `--v3` path default fixed.
+3. **[ENGINEER+USER ACTION — ⏳ PENDING]** Run diagnose script on VPS, share raw JSON output with user. Do not interpret.
+4. **[USER ACTION — ⏳ PENDING]** Pick C1 fix branch (lower threshold vs. retrain) from the diagnose output.
+5. **H8 — ⏳ OPEN** — add `target_column` to `ModelMetadata` + backfill metadata files. Can ship anytime; doesn't block C1 step 6.
+6. **C1 fix — ⏳ BLOCKED on step 4** — execute user-chosen branch.
+7. **H6 — ⏳ BLOCKED on step 6** — recommit `retrain_direction_v3_snapshots.py` to match whatever target actually trained the production artifact.
 
 ### Group 1 — High-severity, no dependencies
-- **H1** — delete staged_entries code
-- **H3** — fix deploy/setup.sh
-- **H4** — rewrite src/hynous/README.md
-- **H5** — rewrite config/README.md
+- **H1 — ✅ DONE (`b468a80`)** — staged_entries dead code deleted from daemon.
+- **H3 — ✅ DONE (`b10febb`)** — deploy setup + README for 3 services.
+- **H4 — ✅ DONE (`93dc039`)** — src/hynous/README.md rewritten.
+- **H5 — ✅ DONE (`2f306f1`)** — config/README.md rewritten.
 
 ### Group 2 — High-severity dead code (do after H1)
-- **H2** — delete prompts/builder.py + __init__.py + README.md
-- **M1** — delete context_snapshot.py, delete dead half of briefing.py, cleanup daemon + trading + regime caller sites
+- **H2 — ✅ DONE (`ec03d27`, strict variant)** — prompts/ deleted + 4 stale prompt-introspection tests pruned.
+- **M1 — ⏳ OPEN** — delete context_snapshot.py, delete dead half of briefing.py, clean up daemon + trading + regime caller sites. Largest remaining cleanup (~1800 LOC). H2 done so no merge-conflict risk.
 
 ### Group 3 — Medium-severity cleanup
-- **M2** — reconcile staging_store.py docstring vs reality. **[USER DECISION]** Option A (docstring) vs Option B (test refactor + delete) before starting.
-- **M3** — delete conftest.py v1 fixtures + update tests/README.md
-- **M4** — fix trading_settings.py Nous comment (or delete dead field)
+- **M2 — ⏳ OPEN — BLOCKED on user A-vs-B decision** — reconcile staging_store.py docstring vs reality.
+- **M3 — ✅ DONE (`4b229e7`)** — conftest.py v1 fixtures deleted + tests/README updated.
+- **M4 — ✅ DONE (`b0fac9f`)** — `trade_history_warnings` field deleted (user chose delete, not rephrase).
 
 ### Group 4 — Integrity + low-severity polish
-- **M5** — dedupe TICK_FEATURE_NAMES (data-layer imports from satellite)
-- **M6** — trim log line / defer field deletion decision
-- **M8** — paper.py read fee from TradingSettings
+- **M5 — ✅ DONE (`1a3cd82`)** — TICK_FEATURE_NAMES deduped; data-layer imports from satellite.
+- **M6 — ✅ DONE (`1674f8c`, Option A)** — startup log line trimmed to v2-relevant intervals.
+- **M8 — ✅ DONE (`2eb7232`)** — paper.py reads fee from TradingSettings.
 
 ### Group 5 — Refactor (deferred, do not start as part of this debt-burn)
-- **M7** — daemon monolith split (multi-PR, separate effort)
-- **M9** — dashboard.py route extraction (separate effort)
+- **M7 — ⏳ DEFERRED** — daemon monolith split (multi-PR, separate effort).
+- **M9 — ⏳ DEFERRED** — dashboard.py route extraction (separate effort).
+
+### Score
+
+- **✅ DONE:** 11 of 18 issues (H1, H2, H3, H4, H5, H7, M3, M4, M5, M6, M8)
+- **⏳ OPEN (engineer can start anytime):** H8, M1
+- **⏳ BLOCKED on user action or C1 diagnosis:** C1, H6, M2
+- **⏳ DEFERRED out of audit scope:** M7, M9
 
 ---
 
@@ -1585,4 +1636,4 @@ Things I noticed but am NOT calling out here because they're working as intended
 
 ---
 
-Last updated: 2026-04-21 (added "For the Next Engineer" caveats section + reordered Fix Order to put critical production triage first)
+Last updated: 2026-04-21 (post-cleanup-session — 11 of 18 issues resolved on `v2`; Status Dashboard added; per-issue Status lines annotated with commit hashes or blocker; Fix Order scored. Remaining: C1/H6 gated on user VPS rollback + diagnose; H8 + M1 open for engineer; M2 gated on user A/B pick; M7/M9 deferred.)

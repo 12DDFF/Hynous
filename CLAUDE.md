@@ -227,11 +227,43 @@ unrestricted). Current baseline (phase 8 complete): `592 passed / 0 failed`.
 
 ## ⚠️ Active Issues — read before working (2026-04-21)
 
-- **C1 — v3 direction model produces 100 % skip in production.** Trading loop has fired zero entries since the 2026-04-21 02:38:40 UTC restart. Kronos shadow log shows `live=skip` every 5 min while Kronos itself emits directional verdicts. Rollback to v2 is recommended but pending user decision. Full diagnosis + 13-issue audit catalog at **`docs/revisions/v2-debug/README.md`** (1 Critical, 8 High, 9 Medium). Read the "For the Next Engineer" preamble before any fix work — sequencing is load-bearing.
-- Audit-flagged AI-agent-guidance issues H2, H4, H5 are resolved in the
-  v2-debug cleanup commits; the "Adding a New Tool" section above now
-  points at the correct v2 prompt surfaces.
+Full audit + status dashboard: **`docs/revisions/v2-debug/README.md`** (18 issues: 1 Critical, 8 High, 9 Medium). Read the "For the Next Engineer" preamble + Status Dashboard before any fix work — sequencing is load-bearing, and 11 of 18 issues already landed in one cleanup session.
+
+### Critical — still blocking production
+
+- **C1 — v3 direction model produces 100 % skip in production. OPEN — BLOCKED on user.** Trading loop has fired zero entries since the 2026-04-21 02:38:40 UTC restart. Kronos shadow log shows `live=skip` every 5 min while Kronos itself emits directional verdicts. **User action pending:** (1) rollback VPS (`mv satellite/artifacts/v3 v3.disabled && systemctl restart hynous-daemon`), (2) run `scripts/diagnose_direction_inference.py` on VPS, (3) share JSON output, (4) pick fix branch (lower threshold vs retrain). H7 already done so the diagnose script runs cleanly.
+
+### Open — engineer can start anytime
+
+- **H8** — add `long_target_column` + `short_target_column` to `ModelMetadata` (`satellite/training/artifact.py:27-56`), thread through `train_both_models`, update retrain scripts, backfill `metadata_v2.json` + `metadata_v3.json`. Closes the audit gap that let C1 ship unnoticed. Independent of C1 resolution.
+- **M1** — delete `src/hynous/intelligence/context_snapshot.py` entirely (zero callers), delete the `get_briefing_injection` dead chain in `briefing.py`, delete `DataCache` polling at `daemon.py:219-220, 1268, 1292`, delete `invalidate_briefing_cache()` calls at `tools/trading.py:640-641, 1028-1029`, drop `data_cache` arg from `regime.classify()`. ~1800 LOC of dead code. H2 already landed so no merge-conflict risk.
+
+### Blocked on user decision
+
+- **H6** — `scripts/retrain_direction_v3_snapshots.py:80-81` passes `risk_adj_*` target names while commit `771ef4a` claims `best_roe_30m_net`. Don't touch until C1 step 3 produces hard evidence for Hypothesis A vs B.
+- **M2** — `src/hynous/journal/staging_store.py` still present despite phase-4 docstrings claiming it was deleted. Option A (fix docstrings, 5 min) vs Option B (rewrite `test_v2_capture.py` + `test_v2_journal_integration.py` to use JournalStore, then delete the file — 1-2 hrs, baseline-drift risk). Engineer rec: A.
+
+### Deferred (out of scope — multi-PR refactors)
+
+- **M7** — daemon.py monolith split (3951 lines post-H1).
+- **M9** — dashboard/dashboard/dashboard.py monolith split (892 lines).
+
+### Resolved in the 2026-04-21 cleanup session (11 issues)
+
+| ID | Commit | Issue |
+|---|---|---|
+| H7 | `7fe866f` | diagnose script `--v3` path |
+| H1 | `b468a80` | staged_entries dead code deleted |
+| H3 | `b10febb` | deploy setup for 3 services |
+| H4 | `93dc039` | src/hynous/README.md rewrite |
+| H5 | `2f306f1` | config/README.md rewrite |
+| M3 | `4b229e7` | conftest.py v1 fixtures deleted |
+| M4 | `b0fac9f` | `trade_history_warnings` deleted |
+| M8 | `2eb7232` | paper.py reads fee from settings |
+| M6A | `1674f8c` | startup log trimmed |
+| M5 | `1a3cd82` | TICK_FEATURE_NAMES deduped |
+| H2-strict | `ec03d27` | prompts/ deleted + 4 stale tests pruned |
 
 ---
 
-Last updated: 2026-04-21 (v3 production outage + 13-issue audit landed in `docs/revisions/v2-debug/`)
+Last updated: 2026-04-21 (v2-debug cleanup session — 11 of 18 issues resolved; C1/H6 blocked on user VPS rollback + diagnose run; H8 + M1 open for engineer; M2 blocked on user A/B pick; M7/M9 deferred.)
