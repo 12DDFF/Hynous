@@ -1,6 +1,6 @@
 # Configuration
 
-> All app configuration lives here.
+> All app configuration lives here. Loaded by `src/hynous/core/config.py::load_config()` at startup.
 
 ---
 
@@ -9,285 +9,151 @@
 | File | Purpose | Restart Required |
 |------|---------|------------------|
 | `default.yaml` | Main app config | Yes |
-| `theme.yaml` | UI styling | Yes |
+| `theme.yaml` | UI styling (Reflex dashboard colors/fonts) | Yes |
 
 ---
 
 ## Environment Variables
 
-Sensitive values should be in environment variables, not config files:
+Sensitive values live in `.env` at the repo root (never committed):
 
 ```bash
-# .env (create this, don't commit)
-OPENROUTER_API_KEY=sk-or-...        # Single key for all LLM providers via OpenRouter
-HYPERLIQUID_PRIVATE_KEY=...          # Hyperliquid wallet private key
-OPENAI_API_KEY=sk-...                # OpenAI — required for Nous vector embeddings (used by nous-server)
-COINGLASS_API_KEY=...               # Coinglass derivatives data (optional)
+OPENROUTER_API_KEY=sk-or-...        # LLM providers via OpenRouter (analysis agent + user chat)
+HYPERLIQUID_PRIVATE_KEY=...         # Exchange wallet
+OPENAI_API_KEY=sk-...               # Journal + analysis embeddings (text-embedding-3-small, 512-dim matryoshka)
+COINGLASS_API_KEY=...               # Derivatives data (optional)
 ```
-
----
-
-## Changing the Accent Color
-
-Edit `theme.yaml`:
-
-```yaml
-colors:
-  accent:
-    primary: "#6366F1"  # Change this to any color
-```
-
-The entire app will update to use the new color.
 
 ---
 
 ## Config Sections
 
-All sections in `default.yaml` and their corresponding dataclass in `src/hynous/core/config.py`:
+Each YAML top-level section maps (or doesn't) to a dataclass in `src/hynous/core/config.py`:
 
-### `app`
+| YAML key | Dataclass | Purpose |
+|----------|-----------|---------|
+| `app` | — | Metadata (name, version) |
+| `execution` | `ExecutionConfig` | Trading mode (paper / testnet / live_confirm / live_auto), paper balance, tracked symbols |
+| `hyperliquid` | `HyperliquidConfig` | Exchange URLs, default leverage, slippage, max position cap |
+| `agent` | `AgentConfig` | Legacy v1 LLM model default — see note below |
+| `coinglass` | — | API plan tier only |
+| `daemon` | `DaemonConfig` | Polling intervals, risk guardrails, mechanical-exit tuning, candle peak tracking, labeler/validation/ws_price_feed toggles |
+| `scanner` | `ScannerConfig` | Anomaly-detection thresholds + micro L2 detectors |
+| `data_layer` | `DataLayerConfig` | hynous-data service URL + timeout |
+| `events` | — | Legacy event thresholds (unused in v2) |
+| `satellite` | `SatelliteConfig` | ML feature engine — DB paths, snapshot interval, coins, `inference_entry_threshold`, `inference_conflict_margin`, `inference_shadow_mode` |
+| `logging` | — | Log level + format |
+| `l2_subscriber` | (data-layer config) | Enable WS L2 collection |
+| `tick_collector` | (data-layer config) | Enable tick-level feature collection |
+| `v2` | `V2Config` | v2 sub-configs — `journal`, `analysis_agent`, `mechanical_entry`, `consolidation`, `user_chat`, `kronos_shadow` |
 
-Application metadata. Not mapped to a dedicated dataclass — values accessed from raw YAML.
+### Note on `agent` section
 
-```yaml
-app:
-  name: "Hynous"
-  version: "0.1.0"
+`AgentConfig` is a legacy v1 structure. In v2 the trading path has no LLM. The `agent.model` field is still read as a fallback for the user-chat agent, but `v2.user_chat.model` takes precedence (see `src/hynous/user_chat/agent.py`).
+
+### Legacy DaemonConfig fields with no v2 consumer
+
+`DaemonConfig` still carries several intervals that were wired to v1 LLM-wake cycles (curiosity queue, FSRS decay, Nous health check, embedding backfill, consolidation, periodic review, wake rate limiting, playbook cache TTL):
+
+```
+curiosity_threshold, curiosity_check_interval, decay_interval,
+conflict_check_interval, health_check_interval,
+embedding_backfill_interval, consolidation_interval,
+max_wakes_per_hour, wake_cooldown_seconds, playbook_cache_ttl,
+periodic_interval
 ```
 
-### `execution` -> `ExecutionConfig`
+These are loaded from YAML into the dataclass but no v2 code consumes them (M6 in the v2-debug audit). Leave them at defaults; retuning has no effect.
 
-Trading execution mode and symbol list.
+---
 
-```yaml
-execution:
-  mode: "paper"              # paper | testnet | live_confirm | live_auto
-  paper_balance: 1000        # Starting balance for paper trading (USD)
-  symbols:                   # Symbols to track
-    - "BTC"
-    - "ETH"
-    - "SOL"
-```
-
-### `hyperliquid` -> `HyperliquidConfig`
-
-Exchange connection settings.
+## v2 Sub-Configs (`v2:` section)
 
 ```yaml
-hyperliquid:
-  default_leverage: 10
-  max_position_usd: 10000
-  default_slippage: 0.05       # 5% slippage tolerance for market orders
-```
+v2:
+  enabled: true                      # Master switch for v2 features (must be true on v2 branch)
 
-### `agent` -> `AgentConfig`
+  journal:                           # Phase 2 — SQLite journal at storage/v2/journal.db
+    db_path: "storage/v2/journal.db"
+    embeddings_model: "openai/text-embedding-3-small"
+    embeddings_dim: 1536
+    comparison_dim: 512              # matryoshka truncation for fast similarity
+    wal_mode: true
+    busy_timeout_ms: 5000
 
-LLM model and generation settings.
+  analysis_agent:                    # Phase 3 — post-trade LLM pipeline
+    model: "anthropic/claude-sonnet-4.5"
+    max_tokens: 4096
+    temperature: 0.2
+    retry_on_failure: false          # single-attempt; operator re-runs manually
+    batch_rejection_interval_s: 3600 # hourly batch analysis cron
+    timeout_s: 60
+    prompt_version: "v1"             # bumped when prompt surface changes
 
-```yaml
-agent:
-  model: "openrouter/anthropic/claude-sonnet-4-5-20250929"
-  max_tokens: 2048
-  temperature: 0.7
-```
+  mechanical_entry:                  # Phase 5 — entry trigger gates
+    trigger_source: "ml_signal_driven"
+    composite_entry_threshold: 50
+    direction_confidence_threshold: 0.55
+    require_entry_quality_pctl: 60
+    max_vol_regime: "high"
+    roe_target_pct: 10.0
+    coin: "BTC"
+    tick_confirmation_enabled: false            # opt-in gate: require tick horizon sign agreement
+    tick_confirmation_horizon: "direction_10s"
 
-### `coinglass`
+  consolidation:                     # Phase 6 — edge building + weekly rollup
+    edges_enabled: true
+    edge_types: ["preceded_by", "followed_by", "same_regime_bucket",
+                 "same_rejection_reason", "rejection_vs_contemporaneous_trade"]
+    pattern_rollup_enabled: true
+    pattern_rollup_interval_hours: 168           # weekly
+    pattern_rollup_window_days: 30
 
-Coinglass API plan tier. Not mapped to a dedicated dataclass.
+  user_chat:                         # Phase 5 M6 — read-only journal analyst
+    enabled: true
+    model: "anthropic/claude-opus-4"
+    max_tokens: 4096
+    temperature: 0.2
+    tool_timeout_s: 30
 
-```yaml
-coinglass:
-  plan: "hobbyist"             # hobbyist | analyst | professional
-```
-
-### `daemon` -> `DaemonConfig`
-
-Background autonomous agent. Controls poll intervals, rate limits, risk guardrails, and feature toggles.
-
-```yaml
-daemon:
-  enabled: false
-  price_poll_interval: 60          # Hyperliquid price polling (seconds)
-  deriv_poll_interval: 300         # Derivatives/sentiment polling (seconds)
-  periodic_interval: 3600          # Periodic market review wake (seconds)
-  curiosity_threshold: 1           # Pending items before learning session
-  curiosity_check_interval: 900    # Curiosity queue check (seconds)
-  decay_interval: 21600            # FSRS batch decay cycle (seconds)
-  conflict_check_interval: 1800    # Contradiction queue polling (seconds)
-  health_check_interval: 3600      # Nous health check (seconds)
-  embedding_backfill_interval: 43200  # Embedding backfill (seconds)
-  consolidation_interval: 86400    # Cross-episode generalization (seconds)
-  max_daily_loss_usd: 100          # Circuit breaker
-  max_open_positions: 3
-  max_wakes_per_hour: 6
-  wake_cooldown_seconds: 120
-  playbook_cache_ttl: 1800         # Playbook matcher cache refresh (seconds)
-```
-
-`DaemonConfig` also has keys not present in the YAML (loaded from dataclass defaults): `phantom_check_interval` (1800), `phantom_max_age_seconds` (14400). The following fields ARE in the YAML and are now wired through `load_config()` (fixed in breakeven-fix Round 2, Bug I): `peak_reversion_threshold_micro` (0.40), `peak_reversion_threshold_macro` (0.50), `breakeven_stop_enabled` (true), `breakeven_buffer_micro_pct` (0.07), `breakeven_buffer_macro_pct` (0.07), `capital_breakeven_enabled` (true), `capital_breakeven_roe` (0.5), `trailing_stop_enabled` (true), `candle_peak_tracking_enabled` (true). Note: `taker_fee_pct` was removed from `DaemonConfig` (now lives in `TradingSettings` only — use `get_trading_settings().taker_fee_pct`).
-
-### `scanner` -> `ScannerConfig`
-
-Market scanner — anomaly detection across all Hyperliquid pairs. Includes macro detectors (price spikes, funding extremes, OI surges, liquidation cascades) and micro/L2 detectors (book imbalance flips, momentum bursts, adverse book signals).
-
-`ScannerConfig` has two additional fields wired through `load_config()` (fixed in breakeven-fix Round 2, Bug I): `peak_reversion_threshold_micro` (0.40) and `peak_reversion_threshold_macro` (0.50). `taker_fee_pct` was removed from `ScannerConfig` — scanner now reads from `get_trading_settings().taker_fee_pct`.
-
-```yaml
-scanner:
-  enabled: true
-  wake_threshold: 0.6
-  max_anomalies_per_wake: 5
-  dedup_ttl_minutes: 30
-  # Macro detectors
-  price_spike_5min_pct: 3.0
-  price_spike_15min_pct: 5.0
-  funding_extreme_percentile: 95
-  oi_surge_pct: 10.0
-  liq_cascade_min_usd: 5000000
-  liq_wave_min_usd: 50000000
-  min_oi_usd: 1000000
-  # Micro / L2 detectors
-  book_poll_enabled: true
-  book_imbalance_flip_pct: 15.0
-  momentum_5m_pct: 1.5
-  momentum_volume_mult: 2.0
-  position_adverse_threshold: 0.40
-```
-
-### `data_layer` -> `DataLayerConfig`
-
-Connection settings for the hynous-data service (Hyperliquid market intelligence, port 8100).
-
-```yaml
-data_layer:
-  url: "http://127.0.0.1:8100"
-  enabled: true
-  timeout: 5
-```
-
-### `nous` -> `NousConfig`
-
-Nous memory server connection.
-
-```yaml
-nous:
-  url: "http://localhost:3100"
-  server_dir: "nous-server/server"
-  db_path: "storage/nous.db"
-  auto_retrieve_limit: 5
-```
-
-### `orchestrator` -> `OrchestratorConfig`
-
-Intelligent Retrieval Orchestrator — multi-pass memory search. See `docs/archive/memory-search/`.
-
-```yaml
-orchestrator:
-  enabled: true               # Master switch (false = single search, zero overhead)
-  quality_threshold: 0.20      # Min top-result score to accept
-  relevance_ratio: 0.4         # Dynamic cutoff: score >= top * ratio
-  max_results: 20              # Hard cap on merged results (token budget is the real limiter)
-  max_sub_queries: 4           # Max decomposition parts
-  max_retries: 1               # Reformulation attempts per sub-query
-  timeout_seconds: 3.0         # Total orchestration timeout
-  search_limit_per_query: 25   # Overfetch per sub-query
-```
-
-### `memory` -> `MemoryConfig`
-
-Tiered memory — working window + Nous-backed compression.
-
-```yaml
-memory:
-  window_size: 4
-  max_context_tokens: 4000
-  retrieve_limit: 20
-  compression_model: "openrouter/anthropic/claude-haiku-4-5-20251001"
-  compress_enabled: true
-```
-
-`MemoryConfig` also has `gate_filter_enabled` (default `true`) not present in the YAML.
-
-### `sections` -> `SectionsConfig`
-
-Memory sections — brain-inspired bias layer on retrieval and decay. Maps subtypes to 4 sections (KNOWLEDGE, EPISODIC, SIGNALS, PROCEDURAL) for differentiated retrieval weights and decay curves. See `docs/archive/memory-sections/`.
-
-```yaml
-sections:
-  enabled: true
-  intent_boost: 1.3               # Score multiplier for query-relevant sections
-  default_section: "KNOWLEDGE"    # Fallback section for unknown subtypes
-```
-
-### `satellite` -> `SatelliteConfig`
-
-ML satellite — feature engine + XGBoost inference. Computes feature snapshots from Hyperliquid market data, stores in SQLite, runs predictions. Requires `xgboost`, `shap>=0.50.0` (for XGBoost 3.x compatibility), and `numpy` (declared in `pyproject.toml`).
-
-```yaml
-satellite:
-  enabled: false
-  db_path: "storage/satellite.db"
-  data_layer_db_path: "data-layer/storage/hynous-data.db"
-  snapshot_interval: 300
-  coins:
-    - "BTC"
-    - "ETH"
-    - "SOL"
-  min_position_size_usd: 1000
-  liq_cascade_threshold: 2.5
-  liq_cascade_min_usd: 500000
-  store_raw_data: true
-  funding_settlement_hours:
-    - 0
-    - 8
-    - 16
-```
-
-### `events`
-
-Event detection thresholds. Not mapped to a dedicated dataclass.
-
-```yaml
-events:
-  funding:
-    extreme_positive: 0.001
-    extreme_negative: -0.0005
-  price:
-    spike_percent: 0.05
-  cooldown_minutes: 30
-```
-
-### `logging`
-
-Log level and format. Not mapped to a dedicated dataclass.
-
-```yaml
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  kronos_shadow:                     # Post-v2 — read-only foundation-model predictor
+    enabled: false                                # opt-in, requires `pip install -e '.[kronos-shadow]'`
+    symbol: "BTC"
+    model_name: "NeoQuasar/Kronos-small"
+    tokenizer_name: "NeoQuasar/Kronos-Tokenizer-base"
+    max_context: 512
+    lookback_bars: 360
+    pred_len: 24
+    sample_count: 5
+    temperature: 1.0
+    top_p: 0.9
+    tick_interval_s: 300
+    long_threshold: 0.60
+    short_threshold: 0.40
 ```
 
 ---
 
 ## Config Loading
 
-Config is loaded once at startup:
-
 ```python
 from hynous.core import load_config
 
 config = load_config()
 print(config.execution.mode)
+print(config.v2.journal.db_path)
+print(config.v2.mechanical_entry.composite_entry_threshold)
 ```
 
 ---
 
 ## Adding New Config
 
-1. Add to appropriate YAML file
-2. Update type definitions in `core/config.py`
-3. Access via `config.section.key`
+1. Add the key to `config/default.yaml`
+2. Add the field to the appropriate dataclass in `src/hynous/core/config.py`
+3. Wire it through `load_config()` with a matching default (**the Python default MUST match the YAML default**)
+4. Access via `config.section.key`
 
 ---
 
-Last updated: 2026-03-12
+Last updated: 2026-04-21 (v2-debug H5 — removed sections that reference deleted subsystems: `nous`, `orchestrator`, `memory`, `sections`, `capital_breakeven_enabled`)
