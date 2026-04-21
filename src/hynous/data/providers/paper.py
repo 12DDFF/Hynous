@@ -66,7 +66,18 @@ class PaperProvider:
     Persists state to JSON so positions survive restarts.
     """
 
-    TAKER_FEE = 0.00035  # 0.035% per side (Hyperliquid's actual rate)
+    def _taker_fee_per_side(self) -> float:
+        """Per-side taker fee as a decimal, derived from TradingSettings.
+
+        ``taker_fee_pct`` is a round-trip percent (0.07 == 0.07%); per side
+        is half of that, converted to a decimal fraction. With the current
+        default this yields 0.00035 (0.035 % per side), matching Hyperliquid's
+        taker rate. Kept as a method so runtime changes to
+        ``taker_fee_pct`` in storage/trading_settings.json propagate on the
+        next call without a restart.
+        """
+        from hynous.core.trading_settings import get_trading_settings
+        return get_trading_settings().taker_fee_pct / 2.0 / 100.0
 
     def __init__(self, real_provider, initial_balance: float = 1000.0):
         self._real = real_provider
@@ -272,7 +283,7 @@ class PaperProvider:
                     f"Already have a {self.positions[symbol].side} position in {symbol}"
                 )
 
-            fee = size_usd * self.TAKER_FEE
+            fee = size_usd * self._taker_fee_per_side()
             leverage = self.leverage_map.get(symbol, 5)
             margin = size_usd / leverage
 
@@ -338,7 +349,7 @@ class PaperProvider:
                 pnl_per_unit = (price - pos.entry_px) if pos.side == "long" \
                     else (pos.entry_px - price)
                 partial_pnl = pnl_per_unit * close_sz
-                fee = close_sz * price * self.TAKER_FEE
+                fee = close_sz * price * self._taker_fee_per_side()
                 net_pnl = partial_pnl - fee
 
                 # Reduce position
@@ -382,7 +393,7 @@ class PaperProvider:
                 # This is a close via limit (e.g. close_position with limit)
                 pass  # Fall through — handled by trading.py calling market_close
 
-            fee = size_usd * self.TAKER_FEE
+            fee = size_usd * self._taker_fee_per_side()
             leverage = self.leverage_map.get(symbol, 5)
             margin = size_usd / leverage
 
@@ -406,7 +417,7 @@ class PaperProvider:
                         pnl_per_unit = (limit_px - existing.entry_px) if existing.side == "long" \
                             else (existing.entry_px - limit_px)
                         partial_pnl = pnl_per_unit * actual_sz
-                        fee_close = actual_sz * limit_px * self.TAKER_FEE
+                        fee_close = actual_sz * limit_px * self._taker_fee_per_side()
                         net_pnl = partial_pnl - fee_close
                         margin_freed = existing.margin * (actual_sz / existing.size)
                         existing.size -= actual_sz
@@ -640,8 +651,8 @@ class PaperProvider:
         """
         pos = self.positions.pop(symbol)
         pnl = pos.unrealized_pnl(exit_px)
-        exit_fee = pos.size * exit_px * self.TAKER_FEE
-        entry_fee = pos.size * pos.entry_px * self.TAKER_FEE  # already paid at open
+        exit_fee = pos.size * exit_px * self._taker_fee_per_side()
+        entry_fee = pos.size * pos.entry_px * self._taker_fee_per_side()  # already paid at open
 
         # Balance gets back margin + gross PnL minus exit fee (entry fee was already deducted at open)
         net_pnl_balance = pnl - exit_fee
