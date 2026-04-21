@@ -72,11 +72,13 @@ fi
 # Storage directories
 sudo -u "$APP_USER" mkdir -p "$APP_DIR/storage"
 
-# Install systemd services
+# Install systemd services — all three are required for a working v2 system.
 echo "Installing systemd services..."
 cp "$APP_DIR/deploy/hynous.service" /etc/systemd/system/
+cp "$APP_DIR/deploy/hynous-data.service" /etc/systemd/system/
+cp "$APP_DIR/deploy/hynous-daemon.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable hynous
+systemctl enable hynous hynous-data hynous-daemon
 
 echo ""
 echo "============================================"
@@ -87,13 +89,12 @@ echo "  Next steps:"
 echo "  1. Edit your API keys:"
 echo "     nano $ENV_FILE"
 echo ""
-echo "  2. Start the services:"
-echo "     systemctl start hynous"
+echo "  2. Start the services (data-layer first, then daemon, then UI):"
+echo "     systemctl start hynous-data hynous-daemon hynous"
 echo ""
 echo "  3. Check status:"
-echo "     systemctl status hynous"
+echo "     systemctl status hynous-data hynous-daemon hynous"
 echo "     journalctl -u hynous -f"
 echo ""
 echo "  Dashboard: http://your-vps-ip:3000"
-echo "  Discord bot starts automatically."
 echo "============================================"

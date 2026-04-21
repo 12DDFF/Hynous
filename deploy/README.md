@@ -19,9 +19,8 @@ bash deploy/setup.sh
 # 3. Add your API keys
 nano /opt/hynous/.env
 
-# 4. Start everything
-systemctl start hynous-data
-systemctl start hynous
+# 4. Start everything (data-layer first, then daemon, then UI)
+systemctl start hynous-data hynous-daemon hynous
 ```
 
 ## What Gets Started
@@ -54,33 +53,25 @@ The setup script (`deploy/setup.sh`) runs 5 steps:
 1. **System packages** — `build-essential`, `git`, `curl`, `python3`, `python3-pip`, `python3-venv`
 2. **App user** — creates a `hynous` system user
 3. **Clone repo** to `/opt/hynous`
-4. **Python venv** — creates `.venv`, installs the project (`pip install -e .`) + `discord.py` + dashboard requirements. This includes satellite dependencies: `xgboost>=2.0.0`, `shap>=0.50.0` (required for XGBoost 3.x compatibility), `numpy>=1.24.0` (declared in `pyproject.toml`).
-5. **Config** — copies `.env.example` to `.env`, creates `storage/` directory, installs `hynous.service`
-
-The `hynous-data.service` unit file is included in `deploy/` but not auto-installed by `setup.sh` — copy it manually:
-
-```bash
-cp /opt/hynous/deploy/hynous-data.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable hynous-data
-```
+4. **Python venv** — creates `.venv`, installs the project (`pip install -e .`) + dashboard requirements. This includes satellite dependencies: `xgboost>=2.0.0`, `shap>=0.50.0` (required for XGBoost 3.x compatibility), `numpy>=1.24.0` (declared in `pyproject.toml`).
+5. **Config** — copies `.env.example` to `.env`, creates `storage/` directory, installs all three systemd services (`hynous.service`, `hynous-data.service`, `hynous-daemon.service`) and enables them.
 
 ## Managing Services
 
 ```bash
 # Status
-systemctl status hynous
-systemctl status hynous-data
+systemctl status hynous hynous-data hynous-daemon
 
 # Logs (live)
 journalctl -u hynous -f
 journalctl -u hynous-data -f
+journalctl -u hynous-daemon -f
 
 # Restart
-systemctl restart hynous
+systemctl restart hynous hynous-daemon
 
 # Stop
-systemctl stop hynous hynous-data
+systemctl stop hynous hynous-daemon hynous-data
 ```
 
 ## Updating
@@ -88,7 +79,7 @@ systemctl stop hynous hynous-data
 ```bash
 cd /opt/hynous
 git pull
-systemctl restart hynous-data hynous
+systemctl restart hynous-data hynous-daemon hynous
 ```
 
 ## Remote Dashboard Access (Optional)
@@ -126,9 +117,7 @@ A second Hynous instance for A/B testing (e.g., breakeven disabled vs enabled fo
 ├─────────────┼──────────────────────┼───────────────────────────┤
 │ Storage     │ /opt/hynous/storage/ │ /opt/hynous-test/storage/ │
 ├─────────────┼──────────────────────┼───────────────────────────┤
-│ Services    │ hynous               │ hynous-test               │
-├─────────────┼──────────────────────┼───────────────────────────┤
-│ Discord     │ enabled              │ disabled                  │
+│ Services    │ hynous + daemon      │ hynous-test               │
 └─────────────┴──────────────────────┴───────────────────────────┘
 ```
 
