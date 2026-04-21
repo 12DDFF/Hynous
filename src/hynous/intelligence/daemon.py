@@ -506,17 +506,17 @@ class Daemon:
         )
         self._thread.start()
         scanner_status = "ON" if self._scanner else "OFF"
-        logger.info("Daemon started (price=%ds, deriv=%ds, review=%ds, curiosity=%ds, "
-                     "decay=%ds, conflicts=%ds, health=%ds, backfill=%ds, scanner=%s)",
-                     self.config.daemon.price_poll_interval,
-                     self.config.daemon.deriv_poll_interval,
-                     self.config.daemon.periodic_interval,
-                     self.config.daemon.curiosity_check_interval,
-                     self.config.daemon.decay_interval,
-                     self.config.daemon.conflict_check_interval,
-                     self.config.daemon.health_check_interval,
-                     self.config.daemon.embedding_backfill_interval,
-                     scanner_status)
+        # v2 only surfaces the intervals that actually drive loops today.
+        # The v1 curiosity/decay/conflict/health/backfill/periodic-review
+        # intervals are still in DaemonConfig but have no v2 consumer (see
+        # v2-debug M6); dropping them from the log line stops misleading
+        # operators into thinking those cycles are running.
+        logger.info(
+            "Daemon started (price=%ds, deriv=%ds, scanner=%s)",
+            self.config.daemon.price_poll_interval,
+            self.config.daemon.deriv_poll_interval,
+            scanner_status,
+        )
 
     def stop(self):
         """Stop the daemon loop gracefully."""
