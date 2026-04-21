@@ -223,6 +223,14 @@ unrestricted). Current baseline (phase 8 complete): `592 passed / 0 failed`.
 - **ML stack retrain.** Direction model **v3** lives at `satellite/artifacts/v3/` with target switched from `risk_adj_30m` to peak ROE (`best_roe_30m_net`); v2 was emitting 100 % skip on recent data. The daemon picks the highest `v*` artifact dir at boot (`daemon.py:374-384`), so v3 is auto-loaded — v2 is left in tree but unused. Conditions retrained on 72K snapshots: 12 existing models refreshed (notable wins: entry_quality 0.05→0.32, volume_1h 0.32→0.47, funding_4h 0.00→0.23, vol_1h 0.62→0.73), `momentum_quality` added (active, spearman 0.39), `reversal_30m` added but kept in `DISABLED_MODELS` (spearman 0.10). Tick direction models retrained on 455K v2 tick snapshots, **8 → 6 horizons** (45s and 180s dropped as weak) — `direction_10s` improved 66.6 % → 69.7 % directional accuracy.
 - **Opt-in tick-confirmation gate.** New gate in `MLSignalDrivenTrigger` between the direction-signal and direction-confidence checks: when `v2.mechanical_entry.tick_confirmation_enabled: true`, the chosen tick horizon's sign must agree with the satellite direction. Off by default. Configurable via `tick_confirmation_horizon` (default `direction_10s`). Two new rejection reasons: `tick_confirmation_unavailable`, `tick_direction_disagreement`.
 
+## ⚠️ Active Issues — read before working (2026-04-21)
+
+- **C1 — v3 direction model produces 100 % skip in production.** Trading loop has fired zero entries since the 2026-04-21 02:38:40 UTC restart. Kronos shadow log shows `live=skip` every 5 min while Kronos itself emits directional verdicts. Rollback to v2 is recommended but pending user decision. Full diagnosis + 13-issue audit catalog at **`docs/revisions/v2-debug/README.md`** (1 Critical, 8 High, 9 Medium). Read the "For the Next Engineer" preamble before any fix work — sequencing is load-bearing.
+- **Audit-flagged issues that affect AI-agent guidance:**
+  - H4 (`src/hynous/README.md` references deleted `discord/` and `nous/` modules)
+  - H5 (`config/README.md` documents deleted `nous`/`orchestrator`/`memory`/`sections` config)
+  - H2 (`src/hynous/intelligence/prompts/builder.py` is dead code with v1 autonomous-agent prompt — the "Add to system prompt in `prompts/builder.py`" instruction in this file's "Adding a New Tool" section is **wrong**; user-chat tools live in `src/hynous/user_chat/prompt.py`).
+
 ---
 
-Last updated: 2026-04-20 (ML stack retrain — direction v3, conditions v2, tick models v2; opt-in tick-confirmation entry gate)
+Last updated: 2026-04-21 (v3 production outage + 13-issue audit landed in `docs/revisions/v2-debug/`)

@@ -110,6 +110,7 @@ If you're an AI agent working on this project:
 - **Standalone daemon service** (`deploy/hynous-daemon.service`) — runs `scripts/run_daemon` independently of the Reflex UI process. Decouples the mechanical loop from granian's ASGI worker lifecycle. **3 systemd services total**: `hynous` (UI), `hynous-data` (data layer :8100), `hynous-daemon` (mechanical loop + Kronos shadow).
 - **Journal DB path unification** — `JournalStore` resolves relative `db_path` against project root so daemon (cwd `/opt/hynous`) and dashboard (cwd `/opt/hynous/dashboard`) write to the same file (`/opt/hynous/storage/v2/journal.db`). Prior split-brain caused dashboard to show stale data.
 - **ML stack retrain (2026-04-20)** — direction model **v3** (`satellite/artifacts/v3/`, target switched from `risk_adj_30m` to peak ROE; daemon picks the highest `v*` dir at boot, so v3 is auto-loaded), 12 conditions retrained on 72K snapshots + `momentum_quality` added as active + `reversal_30m` added as disabled (13 active / 14 total), 6 tick direction models (10s/15s/20s/30s/60s/120s; 45s and 180s dropped as weak). New opt-in entry gate `v2.mechanical_entry.tick_confirmation_enabled` (off by default) requires the chosen tick horizon's sign to agree with the satellite direction.
+- **⚠️ v3 outage + 13-issue audit (2026-04-21)** — **trading loop is halted**: v3 direction model produces 100 % skip in production. Kronos shadow log shows `live=skip` every 5 min while Kronos itself emits directional verdicts. Full diagnosis + audit of 13 latent v2 debt items lives in **`docs/revisions/v2-debug/README.md`**. Read the "For the Next Engineer" preamble before any fix work — sequencing is load-bearing and several items are gated on user decisions.
 
 ---
 
@@ -129,4 +130,4 @@ If you're an AI agent working on this project:
 
 ---
 
-*Last updated: 2026-04-20 (ML stack retrain — direction v3, conditions v2, tick models v2; opt-in tick-confirmation entry gate)*
+*Last updated: 2026-04-21 (v3 production outage + `docs/revisions/v2-debug/` 13-issue audit)*

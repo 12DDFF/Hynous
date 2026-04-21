@@ -372,7 +372,9 @@ completed) in `docs/archive/`. Highlights:
 
 ---
 
-Last updated: 2026-04-20 (ML stack retrain — direction v3 + conditions v2 + tick models v2; tick-confirmation entry gate added)
+Last updated: 2026-04-21 (v3 production outage flagged — see `docs/revisions/v2-debug/README.md`)
+
+> **⚠️ Trading loop is halted as of 2026-04-21 02:38:40 UTC restart** — v3 direction model produces 100 % skip in production (issue C1 in the v2-debug audit). Mechanical entry has fired zero trades since. Rollback to v2 artifact pending user decision.
 
 ---
 
