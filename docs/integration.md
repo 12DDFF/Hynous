@@ -207,7 +207,7 @@ via `get_trading_settings()`.
 **Read sites**:
 - `daemon.py` — circuit breaker, TP protection, small-wins exits
 - `src/hynous/intelligence/tools/trading.py` — trade validation
-- `src/hynous/intelligence/prompts/builder.py` — threshold injection into prompts
+- `src/hynous/mechanical_entry/compute_entry_params.py` — vol-regime leverage cap, conviction margin, dynamic-SL floor/cap, TP target
 
 ---
 

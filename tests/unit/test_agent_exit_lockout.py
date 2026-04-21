@@ -34,11 +34,6 @@ def _default_yaml() -> dict:
         return yaml.safe_load(f)
 
 
-def _builder_source() -> str:
-    path = Path(__file__).parent.parent.parent / "src" / "hynous" / "intelligence" / "prompts" / "builder.py"
-    return path.read_text()
-
-
 def _daemon_source() -> str:
     path = Path(__file__).parent.parent.parent / "src" / "hynous" / "intelligence" / "daemon.py"
     return path.read_text()
@@ -409,9 +404,3 @@ class TestMessageLanguage:
         assert "Close or tighten SL now" not in src
         assert "CLOSE or tighten SL" not in src
         assert "close and lock in what's left" not in src
-
-    def test_system_prompt_full_exit_lockout(self):
-        """System prompt should contain FULL EXIT LOCKOUT."""
-        src = _builder_source()
-        assert "FULL EXIT LOCKOUT" in src
-        assert "I CANNOT close positions" in src

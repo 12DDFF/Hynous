@@ -164,7 +164,7 @@ The `is_available` property tracks reachability.
 2. Export in `providers/__init__.py` if needed
 3. If the data should be agent-accessible, create a tool in `intelligence/tools/`
 4. Register the tool in `intelligence/tools/registry.py`
-5. Add tool strategy guidance in `intelligence/prompts/builder.py`
+5. Add tool strategy guidance in `src/hynous/user_chat/prompt.py` if the tool is user-chat-invocable (analysis agent does not call external tools).
 
 ---
 

@@ -81,7 +81,6 @@ Drives the mechanical loop, emits journal events, wakes the analysis agent.
 | `daemon.py` | Fast trigger loop, poll loops, journal writes, analysis triggers, mechanical exits, mechanical entry via `_periodic_ml_signal_check` (60 s) |
 | `scanner.py` | Market-wide anomaly detection across Hyperliquid pairs (producer of `AnomalyEvent`; v2 has no LLM wake formatter) |
 | `regime.py` | Regime detection (hybrid macro/micro dual scoring, zero LLM cost) |
-| `prompts/` | System prompts (user-chat-oriented in v2; identity + tool strategy) |
 | `tools/` | Tool handlers — 15 tools, user-chat surface only (phase 4 removed v1 memory tools; phase 5 kept trading/read tools for user chat but detached them from the decision loop) |
 | `briefing.py` | Pre-built context injection (trimmed in phase 7 M7) |
 | `context_snapshot.py` | Live state block (portfolio, positions, regime, ML predictions) |
@@ -298,7 +297,7 @@ list.
 
 1. Create handler in `src/hynous/intelligence/tools/`
 2. Register in `tools/registry.py`
-3. Add to `prompts/builder.py` TOOL_STRATEGY
+3. If the tool is user-chat-invocable, mention it in `src/hynous/user_chat/prompt.py`. The analysis agent does not call external tools.
 
 ### Adding a New Page
 

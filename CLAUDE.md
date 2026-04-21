@@ -67,7 +67,9 @@ hynous/
    from . import my_tool
    my_tool.register(registry)
    ```
-3. **Add to system prompt** in `src/hynous/intelligence/prompts/builder.py` TOOL_STRATEGY section — registering alone is NOT enough; the agent won't know to use a tool without system prompt guidance.
+3. **Mention it in the consuming agent's prompt** — registry registration alone is not enough; the agent will not use a tool it doesn't see described. The two LLM surfaces in v2:
+   - **User chat** (`src/hynous/user_chat/prompt.py`) — only consumes `search_trades` and `get_trade_by_id` today. Add guidance here if the new tool is user-chat-invocable.
+   - **Analysis agent** (`src/hynous/analysis/prompts.py`) — post-trade; does not call external tools (structured JSON output only).
 
 Tools registered in `registry.py` are the canonical surface; keep scope narrow.
 
@@ -226,10 +228,9 @@ unrestricted). Current baseline (phase 8 complete): `592 passed / 0 failed`.
 ## ⚠️ Active Issues — read before working (2026-04-21)
 
 - **C1 — v3 direction model produces 100 % skip in production.** Trading loop has fired zero entries since the 2026-04-21 02:38:40 UTC restart. Kronos shadow log shows `live=skip` every 5 min while Kronos itself emits directional verdicts. Rollback to v2 is recommended but pending user decision. Full diagnosis + 13-issue audit catalog at **`docs/revisions/v2-debug/README.md`** (1 Critical, 8 High, 9 Medium). Read the "For the Next Engineer" preamble before any fix work — sequencing is load-bearing.
-- **Audit-flagged issues that affect AI-agent guidance:**
-  - H4 (`src/hynous/README.md` references deleted `discord/` and `nous/` modules)
-  - H5 (`config/README.md` documents deleted `nous`/`orchestrator`/`memory`/`sections` config)
-  - H2 (`src/hynous/intelligence/prompts/builder.py` is dead code with v1 autonomous-agent prompt — the "Add to system prompt in `prompts/builder.py`" instruction in this file's "Adding a New Tool" section is **wrong**; user-chat tools live in `src/hynous/user_chat/prompt.py`).
+- Audit-flagged AI-agent-guidance issues H2, H4, H5 are resolved in the
+  v2-debug cleanup commits; the "Adding a New Tool" section above now
+  points at the correct v2 prompt surfaces.
 
 ---
 

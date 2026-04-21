@@ -43,7 +43,7 @@ Other v2-planning files: `01-pre-implementation-reading.md`,
 
 | Area | Document |
 |------|----------|
-| Daemon + tools | [`src/hynous/intelligence/README.md`](../src/hynous/intelligence/README.md), [`src/hynous/intelligence/tools/README.md`](../src/hynous/intelligence/tools/README.md), [`src/hynous/intelligence/prompts/README.md`](../src/hynous/intelligence/prompts/README.md) |
+| Daemon + tools | [`src/hynous/intelligence/README.md`](../src/hynous/intelligence/README.md), [`src/hynous/intelligence/tools/README.md`](../src/hynous/intelligence/tools/README.md) |
 | Market data | [`src/hynous/data/README.md`](../src/hynous/data/README.md) |
 | Journal (v2) | [`src/hynous/journal/README.md`](../src/hynous/journal/README.md) |
 | Analysis agent (v2) | `src/hynous/analysis/` (see phase 3 doc) |
@@ -104,7 +104,7 @@ trade recall, token optimization, etc., which are being deleted in phase
 6. `docs/archive/` is historical — consult for v1 context, not for v2 guidance
 
 Key conventions:
-- New tools go in `src/hynous/intelligence/tools/` AND must be added to `prompts/builder.py` TOOL_STRATEGY
+- New tools go in `src/hynous/intelligence/tools/`. If user-chat-invocable, add guidance to `src/hynous/user_chat/prompt.py` — the analysis agent does not call external tools.
 - New pages go in `dashboard/dashboard/pages/` and register in `dashboard.py`
 - Config changes go in `config/default.yaml` and are modeled in `src/hynous/core/config.py`
 

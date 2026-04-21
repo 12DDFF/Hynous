@@ -30,11 +30,6 @@ def _settings_source() -> str:
     return path.read_text()
 
 
-def _builder_source() -> str:
-    path = Path(__file__).parent.parent.parent / "src" / "hynous" / "intelligence" / "prompts" / "builder.py"
-    return path.read_text()
-
-
 def _get_method(src: str, method_name: str) -> str:
     start = src.find(f"def {method_name}(")
     end = src.find("\n    def ", start + 1)

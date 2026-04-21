@@ -29,7 +29,7 @@
 3. Write a handler function that receives kwargs and returns a string
 4. Write a `register(registry)` function at the bottom
 5. Import and call `register()` from `registry.py`
-6. **Add usage guidance to `prompts/builder.py` TOOL_STRATEGY** -- the agent will not discover the tool without system prompt mention
+6. **If the tool is user-chat-invocable, add usage guidance to `src/hynous/user_chat/prompt.py`** -- registration alone is not enough; the agent will not discover a tool absent from its prompt. The analysis agent (`src/hynous/analysis/prompts.py`) does not call external tools.
 
 ```python
 # tools/my_tool.py

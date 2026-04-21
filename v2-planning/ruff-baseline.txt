@@ -815,20 +815,6 @@ F401 [*] `..core.request_tracer.SPAN_QUEUE_FLUSH` imported but unused
    |
 help: Remove unused import: `..core.request_tracer.SPAN_QUEUE_FLUSH`
 
-I001 [*] Import block is un-sorted or un-formatted
-  --> src/hynous/intelligence/prompts/builder.py:15:1
-   |
-13 |   """
-14 |
-15 | / import logging
-16 | | import time
-17 | | import threading
-   | |________________^
-18 |
-19 |   _logger = logging.getLogger(__name__)
-   |
-help: Organize imports
-
 F401 [*] `dataclasses.field` imported but unused
   --> src/hynous/intelligence/scanner.py:20:36
    |

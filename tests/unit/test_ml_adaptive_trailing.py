@@ -42,11 +42,6 @@ def _settings_source() -> str:
     return path.read_text()
 
 
-def _builder_source() -> str:
-    path = Path(__file__).parent.parent.parent / "src" / "hynous" / "intelligence" / "prompts" / "builder.py"
-    return path.read_text()
-
-
 def _get_method(src: str, method_name: str) -> str:
     start = src.find(f"def {method_name}(")
     end = src.find("\n    def ", start + 1)
@@ -119,31 +114,6 @@ class TestExitLockoutInClosePosition:
         method = _get_method(src, "handle_close_position")
         assert "_record_trade_span" in method
         assert "trailing_lockout" in method
-
-
-class TestPromptUpdated:
-    """Verify system prompt mentions EXIT LOCKOUT and lockout in profit_taking."""
-
-    def test_exit_lockout_in_system_prompt(self):
-        """EXIT LOCKOUT must appear in the MECHANICAL EXIT SYSTEM section of builder.py."""
-        src = _builder_source()
-        assert "EXIT LOCKOUT" in src
-
-    def test_prompt_mentions_cannot_close(self):
-        """Builder must mention agent CANNOT close when trail is active."""
-        src = _builder_source()
-        assert "CANNOT close" in src or "cannot close" in src.lower()
-
-    def test_profit_taking_mentions_lockout(self):
-        """profit_taking variable must mention mechanical/cannot override."""
-        src = _builder_source()
-        # Find profit_taking assignment
-        idx = src.find('profit_taking = """')
-        assert idx != -1, "profit_taking variable not found"
-        # Extract its value
-        end = src.find('"""', idx + len('profit_taking = """'))
-        profit_taking = src[idx:end]
-        assert "cannot override" in profit_taking.lower() or "locked" in profit_taking.lower() or "fully mechanical" in profit_taking.lower()
 
 
 # ---------------------------------------------------------------------------

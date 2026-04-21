@@ -12,16 +12,9 @@
 ```
 intelligence/
 ├── daemon.py             # Background loop: polling, fast-trigger checks, mechanical exit layers,
-│                         # journal capture, scanner-driven entries
-├── scanner.py            # Market-wide anomaly detection + mechanical entry evaluation
-├── briefing.py           # Briefing assembly (prompt sections, data caches — consumed by user-chat)
-├── context_snapshot.py   # Live state snapshot builder (portfolio, market, regime, data-layer signals)
-├── regime.py             # Hybrid macro/micro regime detection (dual scoring)
-│
-├── prompts/              # System prompts (single entry: builder.py)
-│   └── builder.py        # Assembles the user-chat system prompt
-│
-├── events/               # Placeholder for future event handlers (currently empty)
+│                         # journal capture, scanner-driven + periodic mechanical entry
+├── scanner.py            # Market-wide anomaly detection (producer of AnomalyEvent)
+├── regime.py             # Hybrid macro/micro regime detection (dual scoring, no LLM)
 │
 └── tools/                # Tool definitions — 15 tools total (see tools/README.md)
     ├── registry.py       # Tool dataclass + registration
@@ -50,13 +43,11 @@ See `tools/README.md`. In short:
 
 1. Create `tools/my_tool.py` with handler + `register()` function
 2. Import and call `register()` from `tools/registry.py`
-3. **Add usage guidance to `prompts/builder.py`** -- registering alone is
-   not enough; the user-chat agent will not know to use the tool without
-   prompt guidance.
-
-### Modifying the Prompt
-
-Edit `prompts/builder.py` (the only remaining prompt file in v2).
+3. If the tool is user-chat-invocable, add guidance to
+   `src/hynous/user_chat/prompt.py` -- registering alone is not enough;
+   the agent will not discover a tool absent from its prompt. The
+   analysis agent (`src/hynous/analysis/prompts.py`) does not call
+   external tools.
 
 ### Daemon Cron Tasks
 

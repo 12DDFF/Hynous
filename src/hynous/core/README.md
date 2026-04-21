@@ -48,8 +48,9 @@ Key config dataclasses defined in `config.py`:
 ## Trading Settings
 
 Runtime-adjustable parameters persisted to `storage/trading_settings.json`.
-Thread-safe singleton with lazy loading. Read by `prompts/builder.py` to
-inject live values into user-chat prompts.
+Thread-safe singleton with lazy loading. Read by `mechanical_entry/`
+(conviction margin + dynamic-SL clamps + fee-BE math) and `daemon.py`
+(circuit breaker, TP protection, small-wins exits).
 
 ```python
 from hynous.core.trading_settings import get_trading_settings

@@ -67,7 +67,7 @@ If you're an AI agent working on this project:
 3. **Architecture:** `ARCHITECTURE.md` explains how the 4 runtime components connect
 4. **Patterns:** each major directory has a README explaining its conventions
 5. **Stay modular:** one feature = one module. Don't mix concerns
-6. **Tool registration:** new tools need both `registry.py` registration AND `prompts/builder.py` system prompt guidance — registering alone is not enough
+6. **Tool registration:** new tools need both `registry.py` registration AND a mention in the consuming agent's prompt (`src/hynous/user_chat/prompt.py` for user-chat; the analysis agent doesn't call external tools). Registering alone is not enough.
 
 ---
 

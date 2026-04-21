@@ -3,8 +3,8 @@
 Intentionally compact (~80 lines of prose). The agent is a read-only
 analyst — it queries the v2 journal and explains what it finds. It does
 NOT execute, close, or modify trades, and it does NOT write memory. The
-prompt here is self-contained — do not import from the v1
-``intelligence/prompts/builder.py`` (which is going away in M8).
+prompt here is self-contained; the v1 ``intelligence/prompts/builder.py``
+was deleted in the v2-debug H2 cleanup.
 """
 
 from __future__ import annotations
