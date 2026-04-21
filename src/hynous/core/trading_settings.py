@@ -163,9 +163,6 @@ class TradingSettings:
     composite_reject_score: float = 25.0    # Hard block entries below this score (0-100)
     composite_warn_score: float = 45.0      # Warn below this score
 
-    # --- Trade History Warnings ---
-    trade_history_warnings: bool = True       # Warn on near-certain loser patterns from Nous trade history
-
 
 _lock = threading.Lock()
 _cached: TradingSettings | None = None
