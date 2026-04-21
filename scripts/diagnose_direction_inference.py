@@ -98,7 +98,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--db", default="storage/satellite.db")
     p.add_argument("--v2", default="satellite/artifacts/v2")
-    p.add_argument("--v3", default="satellite/artifacts/v3/v3")
+    p.add_argument("--v3", default="satellite/artifacts/v3")
     p.add_argument("--coin", default="BTC")
     p.add_argument("--days", type=int, default=14, help="lookback days")
     p.add_argument("--threshold", type=float, default=3.0)
