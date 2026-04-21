@@ -11,34 +11,6 @@ from typing import Any
 import pytest
 
 # ---------------------------------------------------------------------------
-# v1 / pre-v2 placeholder fixtures (kept until phase 4 deletes the subsystems
-# they reference).
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def mock_config() -> None:
-    """Provide a mock configuration for tests."""
-    # TODO: Implement when Config class is created
-    return None
-
-
-@pytest.fixture
-def memory_store() -> None:
-    """Provide an in-memory Nous store for tests."""
-    # TODO: Implement when NousStore is created
-    # return NousStore(":memory:")
-    return None
-
-
-@pytest.fixture
-def mock_agent() -> None:
-    """Provide a mock agent for tests."""
-    # TODO: Implement when Agent is created
-    return None
-
-
-# ---------------------------------------------------------------------------
 # v2 journal fixtures (phase 2 — Milestone 1/2)
 # ---------------------------------------------------------------------------
 

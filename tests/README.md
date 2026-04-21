@@ -111,17 +111,8 @@ Tests for the data layer subsystem (Hyperliquid market data, order flow, liquida
 
 Common fixtures live in `conftest.py`:
 
-```python
-# tests/conftest.py
-
-@pytest.fixture
-def mock_config():
-    return Config(...)
-
-@pytest.fixture
-def memory_store():
-    return NousStore(":memory:")
-```
+- `tmp_journal_db` — lazy-imported `JournalStore` in a tmp directory, auto-closed
+- `sample_entry_snapshot` / `sample_exit_snapshot` — fully-populated v2 snapshot dataclasses for roundtrip tests
 
 ---
 
