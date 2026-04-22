@@ -172,7 +172,11 @@ class V2JournalConfig:
 
 @dataclass
 class V2AnalysisAgentConfig:
-    model: str = "anthropic/claude-sonnet-4.5"
+    # Route via OpenRouter (OPENROUTER_API_KEY is what's in .env). Direct
+    # ``anthropic/...`` routing needs ANTHROPIC_API_KEY which the VPS does
+    # not have. Model name uses OpenRouter's dot form; LiteLLM forwards
+    # verbatim.
+    model: str = "openrouter/anthropic/claude-sonnet-4.5"
     max_tokens: int = 4096
     temperature: float = 0.2
     retry_on_failure: bool = False
@@ -209,7 +213,8 @@ class V2ConsolidationConfig:
 @dataclass
 class V2UserChatConfig:
     enabled: bool = True
-    model: str = "anthropic/claude-opus-4"
+    # Same routing/provider rationale as V2AnalysisAgentConfig.
+    model: str = "openrouter/anthropic/claude-opus-4"
     max_tokens: int = 4096
     temperature: float = 0.2
     tool_timeout_s: int = 30
@@ -223,6 +228,12 @@ UserChatConfig = V2UserChatConfig
 @dataclass
 class V2Config:
     enabled: bool = True
+    # Hard monthly cap on total v2 LLM spend (analysis + batch rejection +
+    # user-chat, summed across all models). Zero or negative disables the
+    # cap. Callers read this via :func:`hynous.core.costs.check_budget`
+    # which is primed at daemon/dashboard startup via
+    # :func:`hynous.core.costs.set_monthly_budget`.
+    monthly_llm_budget_usd: float = 40.0
     journal: V2JournalConfig = field(default_factory=V2JournalConfig)
     analysis_agent: V2AnalysisAgentConfig = field(default_factory=V2AnalysisAgentConfig)
     mechanical_entry: V2MechanicalEntryConfig = field(default_factory=V2MechanicalEntryConfig)
@@ -382,6 +393,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         ),
         v2=V2Config(
             enabled=v2_raw.get("enabled", True),
+            monthly_llm_budget_usd=v2_raw.get("monthly_llm_budget_usd", 40.0),
             journal=V2JournalConfig(
                 db_path=v2_raw.get("journal", {}).get("db_path", "storage/v2/journal.db"),
                 embeddings_model=v2_raw.get("journal", {}).get("embeddings_model", "openai/text-embedding-3-small"),
@@ -391,7 +403,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
                 busy_timeout_ms=v2_raw.get("journal", {}).get("busy_timeout_ms", 5000),
             ),
             analysis_agent=V2AnalysisAgentConfig(
-                model=v2_raw.get("analysis_agent", {}).get("model", "anthropic/claude-sonnet-4.5"),
+                model=v2_raw.get("analysis_agent", {}).get("model", "openrouter/anthropic/claude-sonnet-4.5"),
                 max_tokens=v2_raw.get("analysis_agent", {}).get("max_tokens", 4096),
                 temperature=v2_raw.get("analysis_agent", {}).get("temperature", 0.2),
                 retry_on_failure=v2_raw.get("analysis_agent", {}).get("retry_on_failure", False),
@@ -422,7 +434,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
             ),
             user_chat=V2UserChatConfig(
                 enabled=v2_raw.get("user_chat", {}).get("enabled", True),
-                model=v2_raw.get("user_chat", {}).get("model", "anthropic/claude-opus-4"),
+                model=v2_raw.get("user_chat", {}).get("model", "openrouter/anthropic/claude-opus-4"),
                 max_tokens=v2_raw.get("user_chat", {}).get("max_tokens", 4096),
                 temperature=v2_raw.get("user_chat", {}).get("temperature", 0.2),
                 tool_timeout_s=v2_raw.get("user_chat", {}).get("tool_timeout_s", 30),

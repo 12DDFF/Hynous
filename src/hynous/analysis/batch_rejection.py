@@ -75,7 +75,7 @@ def run_batch_rejection_analysis(
     *,
     journal_store: JournalStore,
     since: datetime | None = None,
-    model: str = "anthropic/claude-sonnet-4.5",
+    model: str = "openrouter/anthropic/claude-sonnet-4.5",
     batch_size: int = 10,
 ) -> int:
     """Analyze all rejected signals in the window.
@@ -87,6 +87,15 @@ def run_batch_rejection_analysis(
     """
     if since is None:
         since = datetime.now(timezone.utc) - timedelta(hours=1)
+
+    # Monthly budget guard — bail out of the entire cron iteration without
+    # enumerating rejections if the v2 LLM cap is tripped. Cheaper than
+    # checking per batch (no journal query, no network). Pending rejections
+    # simply carry over to next month's cron.
+    from hynous.core.costs import check_budget
+    is_over, _current, _budget = check_budget()
+    if is_over:
+        return 0
 
     rejections = journal_store.list_trades(
         status="rejected",
@@ -108,8 +117,20 @@ def run_batch_rejection_analysis(
 
     logger.info("Batch rejection analysis: %d pending", len(pending))
 
+    from hynous.core.costs import check_budget
+
     processed = 0
     for i in range(0, len(pending), batch_size):
+        # Re-check between batches — an earlier batch may have pushed us
+        # over the cap (each batch is a separate LiteLLM call that records
+        # cost post-return). Keeps large backlogs from over-running the cap.
+        is_over, _current, _budget = check_budget()
+        if is_over:
+            logger.info(
+                "Batch rejection analysis: budget hit after %d processed, "
+                "skipping remaining %d", processed, len(pending) - i,
+            )
+            break
         batch = pending[i:i + batch_size]
         try:
             _process_rejection_batch(batch, journal_store, model)

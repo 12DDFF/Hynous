@@ -18,8 +18,14 @@ def test_v2_config_has_default_values():
     cfg = V2Config()
     assert cfg.enabled is True
     assert cfg.journal.db_path == "storage/v2/journal.db"
-    assert cfg.analysis_agent.model.startswith("anthropic/")
+    # Model IDs route via OpenRouter since OPENROUTER_API_KEY is what ships
+    # in .env; direct ``anthropic/...`` prefix would need an Anthropic key.
+    assert cfg.analysis_agent.model.startswith("openrouter/anthropic/")
+    assert cfg.user_chat.model.startswith("openrouter/anthropic/")
     assert cfg.mechanical_entry.coin == "BTC"
+    # Monthly LLM cost cap (shared across analysis + batch rejection +
+    # user-chat); 0 or negative disables.
+    assert cfg.monthly_llm_budget_usd > 0
 
 
 def test_load_config_populates_v2_section():

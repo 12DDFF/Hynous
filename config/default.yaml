@@ -180,6 +180,13 @@ logging:
 v2:
   enabled: true  # Master switch for v2 features (must be true on v2 branch)
 
+  # Hard monthly cap on total v2 LLM spend (analysis + batch rejection +
+  # user-chat, summed across all models). Set <= 0 to disable. Read by
+  # hynous.core.costs.check_budget() at every LLM call site; when tripped,
+  # the call is skipped and a single WARNING is logged for the month.
+  # Resets on the 1st of each calendar month (local time).
+  monthly_llm_budget_usd: 40.0
+
   # Journal module (phase 2)
   journal:
     db_path: "storage/v2/journal.db"
@@ -191,7 +198,11 @@ v2:
 
   # Analysis agent (phase 3)
   analysis_agent:
-    model: "anthropic/claude-sonnet-4.5"
+    # Route via OpenRouter — OPENROUTER_API_KEY is in .env; direct
+    # Anthropic routing would need ANTHROPIC_API_KEY which isn't set.
+    # Any attempt without the prefix raises a NotFoundError in LiteLLM's
+    # Anthropic provider path.
+    model: "openrouter/anthropic/claude-sonnet-4.5"
     max_tokens: 4096
     temperature: 0.2
     retry_on_failure: false  # one-shot; manual re-analyze button available
@@ -222,7 +233,8 @@ v2:
   # User chat (simplified journal query interface — phase 5 M6)
   user_chat:
     enabled: true
-    model: "anthropic/claude-opus-4"
+    # Same provider rationale as analysis_agent — route via OpenRouter.
+    model: "openrouter/anthropic/claude-opus-4"
     max_tokens: 4096
     temperature: 0.2
     tool_timeout_s: 30

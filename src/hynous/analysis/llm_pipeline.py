@@ -64,6 +64,18 @@ def run_analysis(
         {"role": "user", "content": user_prompt},
     ]
 
+    # Monthly budget guard — skip the call (and raise so wake_integration
+    # logs + returns cleanly) if the v2 LLM cap is tripped. Set once at
+    # daemon startup via hynous.core.costs.set_monthly_budget().
+    from hynous.core.costs import check_budget
+
+    is_over, current, budget = check_budget()
+    if is_over:
+        raise RuntimeError(
+            f"LLM monthly budget hit (${current:.4f}/${budget:.2f}); "
+            f"analysis skipped",
+        )
+
     # Lazy import: v1 test modules (e.g. ``test_trade_retrieval.py``,
     # ``test_pruning.py``) stub ``sys.modules["litellm"]`` at import time when
     # the real package is absent. Alphabetical collection puts those before

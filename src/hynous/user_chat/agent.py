@@ -118,6 +118,17 @@ class UserChatAgent:
                 "(v2.user_chat.enabled = false)."
             )
 
+        # Monthly budget guard — share the v2 LLM cap with analysis + batch
+        # rejection. User gets a friendly message instead of a 502.
+        from hynous.core.costs import check_budget
+        is_over, current, budget = check_budget()
+        if is_over:
+            return (
+                f"Monthly LLM budget reached (${current:.2f} / ${budget:.2f}). "
+                f"Chat will resume on the 1st of next month, or raise "
+                f"`v2.monthly_llm_budget_usd` in config/default.yaml."
+            )
+
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": message},

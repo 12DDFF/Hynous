@@ -6,10 +6,18 @@ and fixed monthly subscriptions. Persists to storage/costs.json.
 
 Cost per call is calculated by LiteLLM's completion_cost() which knows
 pricing for all models. No hardcoded pricing tables needed.
+
+This module also owns the monthly LLM budget cap. The daemon + dashboard
+call :func:`set_monthly_budget` at startup with the configured value
+(``V2Config.monthly_llm_budget_usd``); downstream callers
+(analysis pipeline, batch rejection, user-chat) call :func:`check_budget`
+before every LLM invocation and skip if the month-to-date spend has
+reached the cap.
 """
 
 import json
 import logging
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +32,13 @@ _COSTS_FILE = _STORAGE_DIR / "costs.json"
 FIXED_MONTHLY = {
     "coinglass": 35.00,
 }
+
+# ─── Monthly budget cap ──────────────────────────────────────────────────────
+# Set once at process startup via :func:`set_monthly_budget` from
+# ``V2Config.monthly_llm_budget_usd``. ``None`` means no cap (off).
+_budget_usd: float | None = None
+_budget_lock = threading.Lock()
+_warn_emitted_for_month: str | None = None  # rate-limit the "budget hit" WARN to once per month
 
 
 def _month_key() -> str:
@@ -225,6 +240,65 @@ def get_month_summary(month: Optional[str] = None) -> dict:
         _summary_cache_time = time.monotonic()
 
     return result
+
+
+def set_monthly_budget(budget_usd: float | None) -> None:
+    """Install the active monthly LLM budget cap. ``None`` disables the cap.
+
+    Called once at process startup from the daemon + dashboard using
+    ``config.v2.monthly_llm_budget_usd``. Thread-safe; late callers
+    override earlier ones (last write wins).
+    """
+    global _budget_usd, _warn_emitted_for_month
+    with _budget_lock:
+        _budget_usd = budget_usd
+        _warn_emitted_for_month = None  # reset the once-per-month warning latch
+    if budget_usd is None:
+        logger.info("LLM monthly budget cap: disabled")
+    else:
+        logger.info("LLM monthly budget cap: $%.2f", budget_usd)
+
+
+def get_monthly_budget() -> float | None:
+    """Return the active budget (None = uncapped)."""
+    with _budget_lock:
+        return _budget_usd
+
+
+def get_monthly_llm_spend() -> float:
+    """Current month's total LLM spend in USD. Uses the 30s cache."""
+    return get_month_summary()["llm"]["total_cost_usd"]
+
+
+def check_budget() -> tuple[bool, float, float | None]:
+    """Check the current-month LLM spend against the active budget.
+
+    Returns ``(is_over, current_usd, budget_usd)``. If the budget is
+    disabled (None), returns ``(False, current_usd, None)`` so callers
+    can log the current spend without skipping.
+
+    Emits exactly one WARNING log per calendar-month the first time the
+    cap is reached; subsequent calls in the same month return silently
+    so the logs don't flood.
+    """
+    global _warn_emitted_for_month
+    with _budget_lock:
+        budget = _budget_usd
+    current = get_monthly_llm_spend()
+    if budget is None:
+        return False, current, None
+    is_over = current >= budget
+    if is_over:
+        month = _month_key()
+        with _budget_lock:
+            if _warn_emitted_for_month != month:
+                logger.warning(
+                    "LLM monthly budget reached: $%.4f / $%.2f — further LLM "
+                    "calls for %s will be skipped until the month rolls over",
+                    current, budget, month,
+                )
+                _warn_emitted_for_month = month
+    return is_over, current, budget
 
 
 def get_cost_report() -> str:

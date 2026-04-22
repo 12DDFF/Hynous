@@ -297,6 +297,19 @@ try:
         busy_timeout_ms=_cfg.v2.journal.busy_timeout_ms,
     )
     _set_journal_store(_journal_store)
+    # Prime the v2 LLM monthly budget cap for user-chat. Daemon also sets
+    # this in its own process; setting it here ensures the dashboard
+    # process enforces the cap independently (user-chat LLM calls happen
+    # here, not in the daemon).
+    try:
+        from hynous.core.costs import set_monthly_budget as _set_budget
+        _dashboard_budget = _cfg.v2.monthly_llm_budget_usd
+        _set_budget(_dashboard_budget if _dashboard_budget > 0 else None)
+    except Exception as _budget_err:
+        import logging as _budget_logging
+        _budget_logging.getLogger(__name__).exception(
+            "v2 LLM budget prime failed: %s", _budget_err,
+        )
     # Reflex 0.8.26's app._api is a Starlette app, not FastAPI — it has no
     # include_router. FastAPI APIRoute subclasses starlette.routing.Route and
     # bakes the prefix into .path at router construction, so we can attach

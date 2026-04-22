@@ -500,6 +500,17 @@ class Daemon:
             return
         global _active_daemon
         _active_daemon = self
+
+        # Prime the v2 LLM monthly budget cap. Shared across analysis
+        # pipeline, batch rejection cron, and user-chat agent via the
+        # module-level state in hynous.core.costs. <= 0 disables the cap.
+        try:
+            from ..core.costs import set_monthly_budget
+            budget = self.config.v2.monthly_llm_budget_usd
+            set_monthly_budget(budget if budget > 0 else None)
+        except Exception:
+            logger.exception("Failed to prime LLM monthly budget cap")
+
         self._running = True
         self._thread = threading.Thread(
             target=self._loop, daemon=True, name="hynous-daemon",
