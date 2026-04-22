@@ -3,6 +3,14 @@
 > **Prerequisites:** Phases 0–4 complete. v1 decision-injection is gone. The LLM is still in the codebase but phase 5 removes it from the entry path entirely.
 >
 > **Phase goal:** Replace the LLM-in-the-loop entry path with a pluggable `EntryTriggerSource` interface and an `MLSignalDrivenTrigger` concrete implementation. Refactor `execute_trade` from a tool handler into a plain function callable by the mechanical pipeline. After this phase, the LLM makes zero trading decisions.
+>
+> **⚠️ Post-phase calibration (2026-04-22 — v2-debug C1 fix).** The code sketches below show the phase-5-landed math. Two numerics were recalibrated on v3's narrower peak-ROE distribution and differ from the sketches. Trust the live code, not the sketches, for current values:
+>
+> - **Gate 4 direction-confidence normalizer:** sketches show `max(abs(long_roe), abs(short_roe)) / 10.0`. Live code is `min(1.0, ... / 5.0)` in `src/hynous/mechanical_entry/ml_signal_driven.py:208`. The `/10` was inherited from v1's ±20% clip range; v3 predictions sit in ~[0, 7%] so `/10` made the 0.55 threshold unreachable. With `/5` + clamp, the same 0.55 threshold means `max_roe ≥ 2.75%` (≈ p95 on v3).
+> - **Satellite inference threshold:** v2-planning/11-phase-8 inherited `inference_entry_threshold: 3.0` / `inference_conflict_margin: 1.0`. Now `2.0` / `0.5` respectively in `config/default.yaml`, for the same distribution reason.
+> - **Direction-model target column:** phase 5 launched with `risk_adj_*` target; v3 deployed 2026-04-20 switched to `best_*_roe_30m_net`. `ModelMetadata` now self-documents via `long_target_column` / `short_target_column` (v2-debug H8).
+>
+> Rationale + data in `docs/revisions/v2-debug/README.md § C1`.
 
 ---
 

@@ -41,7 +41,7 @@ Each YAML top-level section maps (or doesn't) to a dataclass in `src/hynous/core
 | `scanner` | `ScannerConfig` | Anomaly-detection thresholds + micro L2 detectors |
 | `data_layer` | `DataLayerConfig` | hynous-data service URL + timeout |
 | `events` | — | Legacy event thresholds (unused in v2) |
-| `satellite` | `SatelliteConfig` | ML feature engine — DB paths, snapshot interval, coins, `inference_entry_threshold`, `inference_conflict_margin`, `inference_shadow_mode` |
+| `satellite` | `SatelliteConfig` | ML feature engine — DB paths, snapshot interval, coins, `inference_entry_threshold` (2.0 on v3, calibrated for narrower peak-ROE distribution vs v2's ±20%), `inference_conflict_margin` (0.5), `inference_shadow_mode`. Calibration context: `docs/revisions/v2-debug/README.md § C1`. |
 | `logging` | — | Log level + format |
 | `l2_subscriber` | (data-layer config) | Enable WS L2 collection |
 | `tick_collector` | (data-layer config) | Enable tick-level feature collection |
@@ -93,7 +93,7 @@ v2:
   mechanical_entry:                  # Phase 5 — entry trigger gates
     trigger_source: "ml_signal_driven"
     composite_entry_threshold: 50
-    direction_confidence_threshold: 0.55
+    direction_confidence_threshold: 0.55        # gate passes when max(|long_roe|,|short_roe|) / 5.0 >= 0.55, i.e. max_roe >= 2.75%
     require_entry_quality_pctl: 60
     max_vol_regime: "high"
     roe_target_pct: 10.0
@@ -156,4 +156,4 @@ print(config.v2.mechanical_entry.composite_entry_threshold)
 
 ---
 
-Last updated: 2026-04-21 (v2-debug H5 — removed sections that reference deleted subsystems: `nous`, `orchestrator`, `memory`, `sections`, `capital_breakeven_enabled`)
+Last updated: 2026-04-22 (v2-debug C1 calibration: annotated `inference_entry_threshold` / `inference_conflict_margin` values with v3-distribution context, and the `direction_confidence_threshold` comment now documents the `/5.0` normalizer that backs it)

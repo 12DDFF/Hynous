@@ -173,7 +173,7 @@ The scaler's hash is also verified independently.
 |-------|------|-------------|
 | `version` | `int` | Model version number |
 | `feature_hash` | `str` | SHA-256 hash of feature name list (16-char hex) |
-| `feature_names` | `list[str]` | 21 feature names (12 structural + 9 avail) |
+| `feature_names` | `list[str]` | Feature names (structural + avail columns). Current production: 28 structural + 16 avail = 44 total. |
 | `created_at` | `str` | ISO8601 timestamp |
 | `training_samples` | `int` | Number of training rows |
 | `training_start` | `str` | ISO8601 earliest training timestamp |
@@ -182,6 +182,16 @@ The scaler's hash is also verified independently.
 | `validation_samples` | `int` | Number of validation rows |
 | `xgboost_params` | `dict` | Hyperparameters used |
 | `notes` | `str` | Free-form notes (default: per-model MAE breakdown) |
+| `long_target_column` | `str` | **Added 2026-04-22 (v2-debug H8).** Name of the snapshot_labels column the long model was trained on (e.g. `"best_long_roe_30m_net"` for v3, `"risk_adj_long_30m"` for v2). Empty on artifacts predating this field; `ModelArtifact.load()` warns in that case. |
+| `short_target_column` | `str` | Same for the short model. |
+
+**Backward compatibility.** Both target-column fields default to `""`. Pre-2026-04-22 artifacts load without error but trigger a `WARNING` log at load time. `ModelMetadata.from_dict()` uses `fields(cls)` to filter unknown keys so future additions stay backward-compatible too.
+
+**Deployed artifacts + their targets** (backfilled in v2-debug H8):
+| Version | `long_target_column` / `short_target_column` | Notes |
+|---|---|---|
+| v2 | `risk_adj_long_30m` / `risk_adj_short_30m` | Trained 2026-03-22. Emitted 100% skip on recent data because the target (peak ROE + negative MAE component) clusters around zero. Superseded. |
+| v3 | `best_long_roe_30m_net` / `best_short_roe_30m_net` | Trained 2026-04-20. Narrow positive distribution (p99 ≈ 3.4%, max ≈ 7.1%). Current production. |
 
 ### Direct Prediction
 
@@ -269,4 +279,4 @@ print(result.summary)
 
 ---
 
-Last updated: 2026-03-01
+Last updated: 2026-04-22 (v2-debug H8: recorded `long_target_column` + `short_target_column` in `ModelMetadata`; backfilled v2 + v3 artifacts)

@@ -1,6 +1,17 @@
 # Satellite
 
-> ML feature computation engine -- computes 12 structural features from market data, stores them in a dedicated SQLite database, and provides the single source of truth for feature computation across training, inference, and backfill.
+> ML feature computation engine — computes structural features from market data, stores them in a dedicated SQLite database, and provides the single source of truth for feature computation across training, inference, and backfill.
+
+> **⚠️ Doc drift warning** (2026-04-22). This README was written at SCHEMA_VERSION=2 with 12 structural features. The canonical state has evolved significantly:
+> - **Feature count:** 28 structural + 16 availability = 44 input dims (was 12 + 9 = 21). See `satellite/features.py:FEATURE_NAMES` + `AVAIL_COLUMNS`.
+> - **Schema version:** Currently `SCHEMA_VERSION = 4` (see `satellite/__init__.py`).
+> - **Active artifacts:** v3 direction model + 14 condition models (13 active + 1 disabled `reversal_30m`) + 6 tick direction models at 10/15/20/30/60/120s horizons.
+> - **Inference threshold:** `inference_entry_threshold: 2.0`, `inference_conflict_margin: 0.5` (recalibrated for v3 distribution on 2026-04-22 — see `docs/revisions/v2-debug/README.md § C1`).
+> - **Direction confidence normalizer:** `/5.0` with `min(1.0, ...)` clamp (was `/10.0`) — also a v2-debug C1 fix.
+> - **Dropped features (never reinstate):** `liq_magnet_direction`, `cvd_normalized_5m`, `price_change_5m_pct`, `sessions_overlapping`. If you see them referenced below, that's historical context, not current state.
+> - **ModelMetadata:** now carries `long_target_column` + `short_target_column` (v2-debug H8 — see `satellite/training/README.md`).
+>
+> Treat this doc as a narrative overview of intent; trust `satellite/features.py`, `satellite/conditions.py:DISABLED_MODELS`, `config/default.yaml`, and the training README for current truth.
 
 ---
 
@@ -124,9 +135,9 @@ satellite:
   liq_cascade_min_usd: 500000           # Minimum total liq USD for cascade
   store_raw_data: true                   # Store raw API responses (~1.5GB/yr)
   funding_settlement_hours: [0, 8, 16]   # Hyperliquid funding times (UTC)
-  # Inference (SPEC-05)
-  inference_entry_threshold: 3.0         # Min predicted ROE (%) to generate entry signal
-  inference_conflict_margin: 1.0         # Both sides must differ by this to avoid "conflict"
+  # Inference (SPEC-05) — values below are the 2026-04-22 v3 calibration
+  inference_entry_threshold: 2.0         # Min predicted ROE (%) to generate entry signal (was 3.0 for v2)
+  inference_conflict_margin: 0.5         # Both sides must differ by this to avoid "conflict" (was 1.0 for v2)
   inference_shadow_mode: true            # Shadow mode: predict but don't execute trades
 ```
 

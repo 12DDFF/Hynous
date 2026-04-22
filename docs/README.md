@@ -21,6 +21,9 @@ and a post-trade LLM analysis pipeline. Authoritative design docs live in
 
 ## Phase Docs (v2-planning/)
 
+All 9 phases complete (2026-04-13). See `v2-planning/phase-8-acceptance.md`
+for the final acceptance record.
+
 | Phase | Doc | Status |
 |-------|-----|--------|
 | 0 | `v2-planning/03-phase-0-branch-and-environment.md` | Complete |
@@ -29,13 +32,19 @@ and a post-trade LLM analysis pipeline. Authoritative design docs live in
 | 3 | `v2-planning/06-phase-3-analysis-agent.md` | Complete |
 | 4 | `v2-planning/07-phase-4-tier1-deletions.md` | Complete |
 | 5 | `v2-planning/08-phase-5-mechanical-entry.md` | Complete |
-| 6 | `v2-planning/09-phase-6-consolidation.md` | Complete |
-| 7 | `v2-planning/10-phase-7-dashboard.md` | In progress |
-| 8 | `v2-planning/11-phase-8-quant-improvements.md` | Pending |
+| 6 | `v2-planning/09-phase-6-consolidation-and-patterns.md` | Complete |
+| 7 | `v2-planning/10-phase-7-dashboard-rework.md` | Complete |
+| 8 | `v2-planning/11-phase-8-quantitative.md` | Complete |
+
+Post-v2 work has shifted to the revision directories — see
+`docs/revisions/v2-debug/` for the 18-issue post-launch audit
+(15 of 18 resolved as of 2026-04-22; M1 held for a backtesting-repurpose
+rescope; M7 + M9 deferred as multi-PR refactors).
 
 Other v2-planning files: `01-pre-implementation-reading.md`,
-`02-testing-standards.md`, baselines (`mypy-baseline.txt`,
-`ruff-baseline.txt`, `pytest-baseline.txt`).
+`02-testing-standards.md`, `12-kronos-shadow-integration.md`, phase
+acceptance docs (`phase-{4,5,6,7,8}-acceptance.md`), baselines
+(`mypy-baseline.txt`, `ruff-baseline.txt`, `pytest-baseline.txt`).
 
 ---
 
@@ -68,6 +77,7 @@ are kept for engineering reference.
 
 | Guide | Purpose |
 |-------|---------|
+| `v2-debug/` | **Active.** Post-launch 18-issue codebase audit (15 resolved). Read its Status Dashboard first for anything touching v2. |
 | `mechanical-exits/` | Trailing stops, breakeven, stop-tightening lockout, MFE/MAE tracking |
 | `breakeven-fix/` | Two-layer breakeven + dynamic protective SL (vol-regime distances) |
 | `trailing-stop-fix/` | Adaptive Trailing Stop v3 (continuous exponential retracement) |
@@ -78,8 +88,8 @@ are kept for engineering reference.
 | `realtime-price-data/` | 1-minute candle high/low MFE/MAE enhancement |
 | `agent-exit-lockout/` | Agent cannot close positions during trailing phase |
 | `feature-trimming/` | ML feature pruning |
-| `tick-system-audit/` | Microstructure feature collector audit |
-| `mc-fixes/` | Pending — phase 8 quant improvements |
+| `tick-system-audit/` | Microstructure feature collector audit (fed into phase 8) |
+| `mc-fixes/` | Monte Carlo fixes — delivered in phase 8 |
 | `llm-lookahead-trade/` | Concept doc (superseded, see entry-quality Phase 4) |
 | `agent-trade-memory/` | v1 feature (deprecated under v2 architecture) |
 
@@ -110,4 +120,4 @@ Key conventions:
 
 ---
 
-Last updated: 2026-04-12 (phase 7 M8 — docs hub refresh)
+Last updated: 2026-04-22 (phase status refresh — all 9 phases complete; v2-debug audit marked as active revision directory; 15 of 18 audit issues resolved)
