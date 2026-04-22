@@ -57,17 +57,22 @@ You will receive:
 - Which gate rejected it (rejection_reason)
 - The price path in the window following the rejection
 
-Your job is a brief JSON per rejection:
+Return ONE JSON object wrapping all judgments:
 ```json
 {
-  "rejection_id": "<trade_id>",
-  "correct": true|false,
-  "reason": "<one sentence>",
-  "counterfactual_pnl_roe": <estimated ROE if the trade had been taken>
+  "judgments": [
+    {
+      "rejection_id": "<trade_id>",
+      "correct": true|false,
+      "reason": "<one sentence>",
+      "counterfactual_pnl_roe": <estimated ROE if the trade had been taken>
+    },
+    ...
+  ]
 }
 ```
 
-Be brief. No narrative. No decoration. Just the structured judgment.
+One element in "judgments" per rejection in the batch. Be brief. No narrative. No decoration. Just the structured judgments.
 """
 
 
@@ -210,7 +215,20 @@ def _process_rejection_batch(
         logger.debug("Failed to record batch rejection LLM usage", exc_info=True)
 
     # Persist each result as a minimal analysis row.
-    for result in results.get("judgments", []):
+    # Tolerate two shapes: the prompt-requested ``{"judgments": [...]}``
+    # wrapper, or a bare list if the model drops the wrapper (Claude
+    # sometimes does this despite the prompt).
+    if isinstance(results, list):
+        judgments = results
+    elif isinstance(results, dict):
+        judgments = results.get("judgments", [])
+    else:
+        logger.warning(
+            "Batch rejection analysis: unexpected result shape %s, skipping",
+            type(results).__name__,
+        )
+        return
+    for result in judgments:
         tid = result.get("rejection_id")
         if not tid:
             continue
