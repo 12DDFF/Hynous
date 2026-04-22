@@ -352,7 +352,7 @@ def test_full_trade_lifecycle_writes_all_tables(
                 "tp_placement": 80, "size_leverage": 80, "exit_quality": 80},
         mistake_tags=[], process_quality_score=80,
         one_line_summary="s", unverified_claims=None,
-        model_used="anthropic/claude-sonnet-4.5", prompt_version="v1",
+        model_used="openrouter/anthropic/claude-sonnet-4.5", prompt_version="v1",
     )
     tmp_journal_db.add_tag(tid, "trend", source="llm")
 

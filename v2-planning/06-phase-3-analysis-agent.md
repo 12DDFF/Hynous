@@ -3,6 +3,8 @@
 > **Prerequisites:** Phases 0, 1, 2 complete and accepted.
 >
 > **Phase goal:** Build the post-trade analysis pipeline. For every closed trade, a deterministic rules engine emits objective findings, then an LLM synthesis pass produces a narrative with evidence citations. Every claim in the narrative must be backed by a finding. Output is persisted to `trade_analyses`. A hourly batch job analyzes rejected signals with a lighter prompt.
+>
+> **⚠️ Post-phase corrections (2026-04-22).** Code sketches below show `anthropic/claude-sonnet-4.5` — live code now uses `openrouter/anthropic/claude-sonnet-4.5` (the VPS only has `OPENROUTER_API_KEY`). Also two parser fixes the sketches predate: (a) OpenRouter/Anthropic wraps JSON in ` ```json ... ``` ` fences; `analysis/llm_pipeline.py::parse_llm_json()` strips them before `json.loads`. (b) Sonnet sometimes emits a bare list for the batch-rejection payload; `_process_rejection_batch` accepts both `{"judgments": [...]}` and a bare list. Plus a monthly LLM budget cap (`V2Config.monthly_llm_budget_usd`, default `$40`) that all three LLM surfaces gate on via `hynous.core.costs.check_budget()`. Trust live code over the sketches.
 
 ---
 

@@ -240,7 +240,7 @@ def test_insert_analysis_updates_trade_status_to_analyzed(
         process_quality_score=77,
         one_line_summary="Clean trend long with proper mechanical exit.",
         unverified_claims=None,
-        model_used="anthropic/claude-sonnet-4.5",
+        model_used="openrouter/anthropic/claude-sonnet-4.5",
         prompt_version="v1",
     )
     row = tmp_journal_db.list_trades()[0]
@@ -267,7 +267,7 @@ def test_get_analysis_returns_full_record(
         process_quality_score=80,
         one_line_summary="Short summary.",
         unverified_claims=[{"claim": "unproven"}],
-        model_used="anthropic/claude-sonnet-4.5",
+        model_used="openrouter/anthropic/claude-sonnet-4.5",
         prompt_version="v1",
     )
     a = tmp_journal_db.get_analysis(tid)

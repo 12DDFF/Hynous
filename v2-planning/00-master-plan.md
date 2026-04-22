@@ -176,7 +176,7 @@ src/hynous/<module>/
 
 ### LLM model selection
 
-- **Analysis agent**: Claude Sonnet via OpenRouter (`anthropic/claude-sonnet-4.5` or equivalent current model). The model is configured in `config/default.yaml` under `analysis_agent.model`.
+- **Analysis agent**: Claude Sonnet via OpenRouter. Model ID must carry the `openrouter/` prefix (current production: `openrouter/anthropic/claude-sonnet-4.5`). Direct `anthropic/...` routing raises `NotFoundError` because only `OPENROUTER_API_KEY` is in `.env`. Configured in `config/default.yaml` under `analysis_agent.model`.
 - **Batch rejection analysis**: Same model, lighter prompt. Configured separately.
 - **No Haiku for trading**: Removed entirely. The coach subsystem is deleted.
 - **No embedding model switching**: Use OpenAI `text-embedding-3-small` (1536 dim, 512-dim compared via matryoshka truncation for speed). Same as v1.

@@ -82,7 +82,7 @@ v2:
     busy_timeout_ms: 5000
 
   analysis_agent:                    # Phase 3 — post-trade LLM pipeline
-    model: "anthropic/claude-sonnet-4.5"
+    model: "openrouter/anthropic/claude-sonnet-4.5"  # openrouter/ prefix required — direct anthropic/ raises NotFoundError (VPS only has OPENROUTER_API_KEY)
     max_tokens: 4096
     temperature: 0.2
     retry_on_failure: false          # single-attempt; operator re-runs manually
@@ -111,7 +111,7 @@ v2:
 
   user_chat:                         # Phase 5 M6 — read-only journal analyst
     enabled: true
-    model: "anthropic/claude-opus-4"
+    model: "openrouter/anthropic/claude-opus-4"     # same openrouter/ prefix rule as analysis_agent
     max_tokens: 4096
     temperature: 0.2
     tool_timeout_s: 30

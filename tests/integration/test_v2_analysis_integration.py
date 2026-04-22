@@ -128,7 +128,7 @@ def test_full_pipeline_on_synthetic_winning_trade(
     wake_integration.trigger_analysis_for_trade(
         trade_id=trade_id,
         journal_store=tmp_journal_db,
-        model="anthropic/claude-sonnet-4.5",
+        model="openrouter/anthropic/claude-sonnet-4.5",
         prompt_version="v1",
     )
 
@@ -153,7 +153,7 @@ def test_full_pipeline_on_synthetic_winning_trade(
         assert required_finding_keys.issubset(set(f.keys()))
     # Prompt + model tagged correctly.
     assert persisted["prompt_version"] == "v1"
-    assert persisted["model_used"] == "anthropic/claude-sonnet-4.5"
+    assert persisted["model_used"] == "openrouter/anthropic/claude-sonnet-4.5"
 
 
 def test_full_pipeline_on_synthetic_losing_trade(

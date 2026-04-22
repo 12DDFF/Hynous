@@ -66,7 +66,7 @@ def _tool_call(*, call_id: str, name: str, args: dict[str, Any]) -> SimpleNamesp
 def _config(**overrides: Any) -> V2UserChatConfig:
     base = dict(
         enabled=True,
-        model="anthropic/claude-opus-4",
+        model="openrouter/anthropic/claude-opus-4",
         max_tokens=512,
         temperature=0.2,
         tool_timeout_s=5,

@@ -50,7 +50,7 @@ def run_analysis(
     *,
     trade_bundle: dict[str, Any],
     deterministic_findings: list[Finding],
-    model: str = "anthropic/claude-sonnet-4.5",
+    model: str = "openrouter/anthropic/claude-sonnet-4.5",
     max_tokens: int = 4096,
     temperature: float = 0.2,
     prompt_version: str = "v1",

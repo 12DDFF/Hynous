@@ -3,6 +3,8 @@
 > **Prerequisites:** `00-master-plan.md`, `01-pre-implementation-reading.md`, `02-testing-standards.md` all read in full.
 >
 > **Phase goal:** Create the v2 branch, establish the storage layout, capture static test baselines, add v2 config scaffolding. No functional code changes. This is infrastructure only.
+>
+> **⚠️ Post-phase corrections (2026-04-22).** The YAML + dataclass sketches below show `anthropic/claude-sonnet-4.5` as the analysis/user-chat model. On the VPS that raises `NotFoundError` because only `OPENROUTER_API_KEY` is set. Live code uses the `openrouter/anthropic/...` prefix. Also new since phase 0: `V2Config.monthly_llm_budget_usd` (default `$40`) caps total LLM spend via `hynous.core.costs.check_budget()`. Trust live code / `config/default.yaml` / `CLAUDE.md` over the sketches here.
 
 ---
 

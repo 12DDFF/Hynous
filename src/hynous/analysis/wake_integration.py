@@ -33,7 +33,7 @@ def trigger_analysis_for_trade(
     *,
     trade_id: str,
     journal_store: JournalStore,
-    model: str = "anthropic/claude-sonnet-4.5",
+    model: str = "openrouter/anthropic/claude-sonnet-4.5",
     prompt_version: str = "v1",
 ) -> None:
     """Run the full analysis pipeline for a closed trade.

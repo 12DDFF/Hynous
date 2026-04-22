@@ -647,7 +647,7 @@ def test_run_analysis_parses_valid_llm_response(monkeypatch: pytest.MonkeyPatch)
     result = run_analysis(
         trade_bundle={"trade_id": "t1", "entry_snapshot": {}, "exit_snapshot": {}, "events": []},
         deterministic_findings=[],
-        model="anthropic/claude-sonnet-4.5",
+        model="openrouter/anthropic/claude-sonnet-4.5",
         prompt_version="v1",
     )
 
@@ -661,7 +661,7 @@ def test_run_analysis_parses_valid_llm_response(monkeypatch: pytest.MonkeyPatch)
         "one_line_summary",
     }
     assert required.issubset(set(result.keys()))
-    assert result["model_used"] == "anthropic/claude-sonnet-4.5"
+    assert result["model_used"] == "openrouter/anthropic/claude-sonnet-4.5"
     assert result["prompt_version"] == "v1"
 
 
@@ -746,12 +746,12 @@ def test_run_analysis_records_cost_when_usage_present(
     run_analysis(
         trade_bundle={"trade_id": "t1", "entry_snapshot": {}, "exit_snapshot": {}, "events": []},
         deterministic_findings=[],
-        model="anthropic/claude-sonnet-4.5",
+        model="openrouter/anthropic/claude-sonnet-4.5",
     )
 
     assert len(calls) == 1
     call = calls[0]
-    assert call["model"] == "anthropic/claude-sonnet-4.5"
+    assert call["model"] == "openrouter/anthropic/claude-sonnet-4.5"
     assert call["input_tokens"] == 500
     assert call["output_tokens"] == 200
     assert call["cost_usd"] == 0.0123
@@ -1159,7 +1159,7 @@ def test_trigger_analysis_happy_path_persists_analysis(
     wake_integration.trigger_analysis_for_trade(
         trade_id=trade_id,
         journal_store=tmp_journal_db,
-        model="anthropic/claude-sonnet-4.5",
+        model="openrouter/anthropic/claude-sonnet-4.5",
         prompt_version="v1",
     )
 
@@ -1170,7 +1170,7 @@ def test_trigger_analysis_happy_path_persists_analysis(
     # A valid _valid_llm_output() yields no unverified claims; insert_analysis
     # stores None in that column.
     assert persisted["unverified_claims"] == []
-    assert persisted["model_used"] == "anthropic/claude-sonnet-4.5"
+    assert persisted["model_used"] == "openrouter/anthropic/claude-sonnet-4.5"
     assert persisted["prompt_version"] == "v1"
 
 

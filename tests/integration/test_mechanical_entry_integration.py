@@ -267,7 +267,7 @@ def test_full_mechanical_lifecycle(
     wake_integration.trigger_analysis_for_trade(
         trade_id=trade_id,
         journal_store=tmp_journal_db,
-        model="anthropic/claude-sonnet-4.5",
+        model="openrouter/anthropic/claude-sonnet-4.5",
         prompt_version="v1",
     )
 
@@ -276,7 +276,7 @@ def test_full_mechanical_lifecycle(
     assert analysis is not None
     assert analysis["narrative"].startswith("Mechanical entry fired")
     assert analysis["prompt_version"] == "v1"
-    assert analysis["model_used"] == "anthropic/claude-sonnet-4.5"
+    assert analysis["model_used"] == "openrouter/anthropic/claude-sonnet-4.5"
     assert analysis["process_quality_score"] == 65
 
     final_bundle = tmp_journal_db.get_trade(trade_id)
