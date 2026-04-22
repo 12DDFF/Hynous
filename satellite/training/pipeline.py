@@ -22,9 +22,15 @@ log = logging.getLogger(__name__)
 class TrainingData:
     """Prepared training data for one model (long or short).
 
-    Target columns available:
-      - risk_adj_long_30m / risk_adj_short_30m: peak ROE minus drawdown (directional)
-      - best_long_roe_30m_net / best_short_roe_30m_net: peak ROE only (legacy)
+    Target columns available on snapshot_labels:
+      - best_long_roe_30m_net / best_short_roe_30m_net: peak ROE in the
+        30m window after snapshot (current production target for v3
+        direction models — see retrain_direction_v3_snapshots.py).
+      - risk_adj_long_30m / risk_adj_short_30m: peak ROE + MAE drawdown
+        (typically a negative quantity). v2 was trained on this and
+        emitted 100% skip because the entry threshold was unreachable.
+        Retained for retrospective analysis, not recommended for entry
+        classifiers. See docs/revisions/v2-debug/README.md § C1.
     """
 
     X_train: np.ndarray         # (n_train, n_features) — normalized

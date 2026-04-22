@@ -626,7 +626,14 @@ def retrain(args: argparse.Namespace) -> int:
 
     # Train (imports deferred so dry-run / below-min paths don't require xgboost).
     from satellite.training.train import train_both_models
-    artifact = train_both_models(long_data, short_data, version=version)
+    # v2-debug H8: label here is exit_snapshot.trade_outcome.roe_at_exit
+    # (see build_training_data), shared across both sides since each trade
+    # contributes to exactly one side's training set.
+    artifact = train_both_models(
+        long_data, short_data, version=version,
+        long_target_column="roe_at_exit",
+        short_target_column="roe_at_exit",
+    )
     saved_dir = artifact.save(run_dir)
 
     report = {

@@ -77,10 +77,21 @@ def main(argv: list[str] | None = None) -> int:
         split_idx, n, split_idx, n - split_idx,
     )
 
-    long_data = prepare_training_data(rows, "risk_adj_long_30m", train_end_ts)
-    short_data = prepare_training_data(rows, "risk_adj_short_30m", train_end_ts)
+    # v2-debug H6: the deployed v3 artifact (commit 771ef4a) was trained on
+    # peak-ROE targets, not risk_adj. The 2026-04-21 diagnose confirmed the
+    # prediction distribution matches peak-ROE. Prior target names
+    # (risk_adj_long_30m / risk_adj_short_30m) were the rejected first pass
+    # preserved under satellite/artifacts/_v3_risk_adj_rejected_BACKUP/.
+    long_target = "best_long_roe_30m_net"
+    short_target = "best_short_roe_30m_net"
+    long_data = prepare_training_data(rows, long_target, train_end_ts)
+    short_data = prepare_training_data(rows, short_target, train_end_ts)
 
-    artifact = train_both_models(long_data, short_data, version=args.version)
+    artifact = train_both_models(
+        long_data, short_data, version=args.version,
+        long_target_column=long_target,
+        short_target_column=short_target,
+    )
 
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
