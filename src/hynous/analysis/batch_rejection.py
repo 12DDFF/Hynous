@@ -187,8 +187,27 @@ def _process_rejection_batch(
         temperature=0.2,
         response_format={"type": "json_object"},
     )
+    # Anthropic via OpenRouter returns JSON wrapped in markdown fences,
+    # so route through the shared fence-tolerant parser.
+    from .llm_pipeline import parse_llm_json
     content = response.choices[0].message.content
-    results = json.loads(content)
+    results = parse_llm_json(content)
+
+    # Record cost + prime the budget tracker so subsequent in-loop calls
+    # see this batch's spend reflected before they check_budget().
+    try:
+        from hynous.core.costs import record_llm_usage
+        usage = getattr(response, "usage", None)
+        if usage:
+            hidden = getattr(response, "_hidden_params", {}) or {}
+            record_llm_usage(
+                model=model,
+                input_tokens=getattr(usage, "prompt_tokens", 0),
+                output_tokens=getattr(usage, "completion_tokens", 0),
+                cost_usd=hidden.get("response_cost", 0),
+            )
+    except Exception:
+        logger.debug("Failed to record batch rejection LLM usage", exc_info=True)
 
     # Persist each result as a minimal analysis row.
     for result in results.get("judgments", []):

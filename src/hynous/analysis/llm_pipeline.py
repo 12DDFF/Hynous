@@ -19,6 +19,33 @@ from .rules_engine import Finding
 logger = logging.getLogger(__name__)
 
 
+def parse_llm_json(content: str) -> dict:
+    """Parse an LLM response body into a dict, tolerating markdown fences.
+
+    Anthropic models via OpenRouter wrap their JSON output in
+    ```json ... ``` fences regardless of ``response_format``. Strip them
+    before handing to :func:`json.loads`. Also tolerates a bare ```
+    fence (no ``json`` language tag) and trailing whitespace.
+
+    Raises ``ValueError`` on empty input or unparseable JSON after
+    fence stripping (re-thrown from :class:`json.JSONDecodeError`).
+    """
+    if not content:
+        raise ValueError("Empty LLM response")
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        first_nl = stripped.find("\n")
+        if first_nl > 0:
+            stripped = stripped[first_nl + 1:]
+        if stripped.endswith("```"):
+            stripped = stripped[:-3]
+        stripped = stripped.strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"LLM response not parseable JSON: {exc}") from exc
+
+
 def run_analysis(
     *,
     trade_bundle: dict[str, Any],
@@ -97,17 +124,18 @@ def run_analysis(
         logger.exception("Analysis LLM call failed")
         raise RuntimeError(f"Analysis LLM call failed: {e}") from e
 
-    # Extract content
+    # Extract content + tolerate markdown fences (OpenRouter Anthropic wraps
+    # JSON in ```json ... ``` regardless of response_format — see
+    # parse_llm_json docstring).
     content = response.choices[0].message.content
-    if not content:
-        raise ValueError("Empty LLM response")
-
-    # Parse JSON
     try:
-        parsed: dict[str, Any] = json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.error("LLM response was not parseable JSON: %s", content[:500])
-        raise ValueError(f"LLM response not parseable: {e}") from e
+        parsed: dict[str, Any] = parse_llm_json(content)
+    except ValueError:
+        logger.error(
+            "LLM response was not parseable JSON: %s",
+            (content or "")[:500],
+        )
+        raise
 
     # Validate required top-level keys
     required_keys = {
