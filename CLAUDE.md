@@ -69,7 +69,7 @@ hynous/
    ```
 3. **Mention it in the consuming agent's prompt** — registry registration alone is not enough; the agent will not use a tool it doesn't see described. The two LLM surfaces in v2:
    - **User chat** (`src/hynous/user_chat/prompt.py`) — only consumes `search_trades` and `get_trade_by_id` today. Add guidance here if the new tool is user-chat-invocable.
-   - **Analysis agent** (`src/hynous/analysis/prompts.py`) — post-trade; does not call external tools (structured JSON output only).
+   - **Analysis agent** (`src/hynous/analysis/prompts.py`) — post-trade; does not call external tools (structured JSON output only). LLM responses come back in markdown ```json fences via OpenRouter → routed through `analysis/llm_pipeline.py::parse_llm_json()` for parsing. Same helper used by `analysis/batch_rejection.py`.
 
 Tools registered in `registry.py` are the canonical surface; keep scope narrow.
 
@@ -99,11 +99,23 @@ sub-configs), and Config (root).
 
 **Environment variables** (in `.env`, never committed):
 ```
-OPENROUTER_API_KEY=sk-or-...        # LLM providers via OpenRouter
+OPENROUTER_API_KEY=sk-or-...        # LLM providers — all LLM calls route via openrouter/ prefix
 HYPERLIQUID_PRIVATE_KEY=...          # Exchange wallet
 OPENAI_API_KEY=...                   # Journal + analysis-agent embeddings (text-embedding-3-small)
 COINGLASS_API_KEY=...               # Derivatives data (optional)
 ```
+
+**LLM model IDs:** always use the `openrouter/` prefix (e.g.
+`openrouter/anthropic/claude-sonnet-4.5`). Direct `anthropic/...` routing
+raises `NotFoundError` because the VPS only has `OPENROUTER_API_KEY`.
+
+**LLM budget cap:** `V2Config.monthly_llm_budget_usd` (default `$40`)
+primed at daemon + dashboard startup via
+`hynous.core.costs.set_monthly_budget()`. All three LLM surfaces
+(per-trade analysis, batch rejection, user-chat) call
+`hynous.core.costs.check_budget()` before each `litellm.completion()`
+and skip gracefully when the month-to-date spend hits the cap. One
+WARN logged per calendar-month on first trip.
 
 ---
 
