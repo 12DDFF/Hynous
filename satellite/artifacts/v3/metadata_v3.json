@@ -65,5 +65,7 @@
     "seed": 42,
     "nthread": -1
   },
-  "notes": "Long MAE: 1.568, Short MAE: 1.452"
+  "notes": "Long MAE: 1.568, Short MAE: 1.452",
+  "long_target_column": "best_long_roe_30m_net",
+  "short_target_column": "best_short_roe_30m_net"
 }

@@ -15,7 +15,7 @@ Artifact layout on disk:
 import json
 import logging
 import pickle
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 from satellite.features import AVAIL_COLUMNS, FEATURE_HASH, FEATURE_NAMES
@@ -39,6 +39,11 @@ class ModelMetadata:
     validation_samples: int
     xgboost_params: dict                # Hyperparameters used
     notes: str = ""
+    # v2-debug H8: capture which label column the long/short model was trained on
+    # (e.g. "best_long_roe_30m_net", "risk_adj_long_30m"). Empty on artifacts
+    # that predate this field — load() warns but does not raise.
+    long_target_column: str = ""
+    short_target_column: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -53,11 +58,16 @@ class ModelMetadata:
             "validation_samples": self.validation_samples,
             "xgboost_params": self.xgboost_params,
             "notes": self.notes,
+            "long_target_column": self.long_target_column,
+            "short_target_column": self.short_target_column,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "ModelMetadata":
-        return cls(**d)
+        # Tolerate unknown keys in the on-disk payload so adding new optional
+        # metadata fields stays backward-compatible with older artifacts.
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in known})
 
 
 @dataclass
@@ -170,6 +180,16 @@ class ModelArtifact:
             "Loaded model artifact v%d (trained on %d samples)",
             version, metadata.training_samples,
         )
+
+        # v2-debug H8: warn on artifacts predating long/short_target_column so
+        # operators know the artifact cannot be audited against the retrain
+        # script without external evidence (commit messages, training reports).
+        if not metadata.long_target_column or not metadata.short_target_column:
+            log.warning(
+                "Artifact v%d missing long/short_target_column — retrain or "
+                "backfill metadata_v%d.json to populate",
+                metadata.version, metadata.version,
+            )
 
         return cls(
             model_long=model_long,

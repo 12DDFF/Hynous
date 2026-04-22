@@ -124,14 +124,22 @@ def train_both_models(
     short_data: TrainingData,
     version: int,
     params: dict | None = None,
+    *,
+    long_target_column: str = "",
+    short_target_column: str = "",
 ) -> ModelArtifact:
     """Train both long and short models, package into a ModelArtifact.
 
     Args:
-        long_data: Training data for long model (target = risk_adj_long_30m).
-        short_data: Training data for short model (target = risk_adj_short_30m).
+        long_data: Training data for long model.
+        short_data: Training data for short model.
         version: Model version number.
         params: Override XGBoost params.
+        long_target_column: Name of the label column the long model was
+            trained on (e.g. ``"best_long_roe_30m_net"``). Recorded in the
+            artifact metadata — v2-debug H8 closes the audit gap where
+            earlier artifacts could not be traced back to a target.
+        short_target_column: Same for the short model.
 
     Returns:
         ModelArtifact ready to save.
@@ -165,6 +173,8 @@ def train_both_models(
             f"Long MAE: {long_result.val_mae:.3f}, "
             f"Short MAE: {short_result.val_mae:.3f}"
         ),
+        long_target_column=long_target_column,
+        short_target_column=short_target_column,
     )
 
     return ModelArtifact(
