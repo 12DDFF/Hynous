@@ -136,8 +136,13 @@ satellite:
     - 8
     - 16
   # Inference (SPEC-05)
-  inference_entry_threshold: 3.0
-  inference_conflict_margin: 1.0
+  # Threshold + margin calibrated to v3 direction model's prediction
+  # distribution (2026-04-21 diagnose: p75 ~1.7%, p95 ~2.6%, p99 ~3.4%).
+  # At 3.0/1.0: ~4% action rate (production outage). At 2.0/0.5:
+  # ~9% action rate with clean long/short separation. See
+  # docs/revisions/v2-debug/README.md § C1.
+  inference_entry_threshold: 2.0
+  inference_conflict_margin: 0.5
   inference_shadow_mode: true
 
 # Event detection thresholds
