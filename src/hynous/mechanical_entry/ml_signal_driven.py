@@ -200,12 +200,21 @@ class MLSignalDrivenTrigger(EntryTriggerSource):
                 return None
 
         # Gate 7: direction confidence.
-        # NOTE: ``max(abs(long_roe), abs(short_roe)) / 10.0`` is a rough
-        # normalizer carried forward from the v1 adaptive trailing layer.
-        # A formal calibration is deferred to phase 8.
+        # Normalizer calibrated to v3 direction-model distribution. The
+        # original ``/ 10.0`` came from v1's adaptive trailing layer, which
+        # expected ROE predictions up to ±20% (the satellite clip range). v3
+        # empirically sits in a much narrower band (p99 ≈ 3.4%, max ≈ 7.1%
+        # on BTC per the 2026-04-22 diagnose), so ``/ 10`` with threshold
+        # 0.55 required max_roe ≥ 5.5% — p99.5+ territory, ~1 signal/week.
+        # Switching to ``/ 5.0`` keeps the threshold at 0.55 (max_roe ≥ 2.75)
+        # which is roughly p95 on v3 — strict enough to add filtering on top
+        # of gate 2 without being architecturally unreachable. Clamp to 1.0
+        # so conviction stays in [0, 1] for the downstream sizing tiers
+        # (``compute_entry_params`` reads signal.conviction >= 0.6 / 0.8 for
+        # tier_medium / tier_high). See docs/revisions/v2-debug/README.md § C1.
         long_roe = preds.get("long_roe", 0) or 0
         short_roe = preds.get("short_roe", 0) or 0
-        direction_conf = max(abs(long_roe), abs(short_roe)) / 10.0
+        direction_conf = min(1.0, max(abs(long_roe), abs(short_roe)) / 5.0)
         if direction_conf < self._direction_conf_threshold:
             self._rejection_record(
                 ctx,

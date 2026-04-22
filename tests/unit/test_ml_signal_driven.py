@@ -129,8 +129,9 @@ def test_fires_on_strong_conditions() -> None:
     assert result.trigger_detail["composite_score"] == 70.0
     assert result.trigger_detail["vol_regime"] == "normal"
     assert result.trigger_detail["entry_quality_pctl"] == 80
-    # conviction = max(|8.0|, |-2.0|) / 10.0 = 0.8
-    assert result.conviction == pytest.approx(0.8)
+    # conviction = min(1.0, max(|8.0|, |-2.0|) / 5.0) = min(1.0, 1.6) = 1.0
+    # Normalizer recalibrated to v3 distribution — see ml_signal_driven.py gate 7.
+    assert result.conviction == pytest.approx(1.0)
     assert result.ml_snapshot_ref["direction_signal"] == "long"
     # No rejection row written on the fire path.
     assert journal.calls == []
@@ -234,7 +235,8 @@ def test_rejects_on_missing_direction_signal(signal: str | None) -> None:
 
 def test_rejects_on_low_direction_confidence() -> None:
     journal = FakeJournal()
-    # long_roe=1.0, short_roe=-1.0 → conviction = 0.1 < threshold 0.5
+    # Under the v3-calibrated /5 normalizer: long_roe=1.0, short_roe=-1.0
+    # → conviction = min(1.0, 1.0/5.0) = 0.2, below the 0.5 threshold.
     daemon = _make_daemon(
         latest_predictions={
             "BTC": _fresh_predictions(long_roe=1.0, short_roe=-1.0),
