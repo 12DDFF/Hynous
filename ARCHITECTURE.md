@@ -371,9 +371,9 @@ completed) in `docs/archive/`. Highlights:
 
 ---
 
-Last updated: 2026-04-21 (v2-debug cleanup session — 11 of 18 audit issues resolved on `v2`; see `docs/revisions/v2-debug/README.md` Status Dashboard)
+Last updated: 2026-04-22 (v2-debug — 15 of 18 audit issues resolved on `v2`; see `docs/revisions/v2-debug/README.md` Status Dashboard)
 
-> **⚠️ Trading loop is halted as of 2026-04-21 02:38:40 UTC restart** — v3 direction model produces 100 % skip in production (issue C1). Mechanical entry has fired zero trades since. VPS rollback + diagnose-script run pending user action. H1/H2/H3/H4/H5/H7/M3/M4/M5/M6A/M8 already resolved; H8 + M1 open for the next engineer session; M2 awaiting user A/B decision; M7/M9 deferred.
+> **Trading loop running** — the 2026-04-21 C1 outage was resolved on 2026-04-22 after the diagnose script on VPS confirmed v3's prediction distribution. Config change (`inference_entry_threshold: 3.0→2.0`, `inference_conflict_margin: 1.0→0.5`) deployed + daemon restarted. H6 + H8 + M2 Option A landed in the same session. Remaining: M1 held for a backtesting-repurpose rescope; M7 + M9 deferred as multi-PR refactors.
 
 ---
 

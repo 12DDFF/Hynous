@@ -1,7 +1,7 @@
 # v2 Debug — Codebase Audit Findings
 
 > **Generated:** 2026-04-20
-> **Last updated:** 2026-04-21 — annotated each issue with RESOLVED / OPEN / BLOCKED / DEFERRED status; added Status Dashboard; 11 of 18 issues landed on `v2`.
+> **Last updated:** 2026-04-22 — C1 resolved via threshold calibration (diagnose script confirmed Hypothesis A); H6 + H8 + M2 Option A landed in the same session; 15 of 18 issues now closed. Remaining: M1 (engineer-ready, deferred for a repurpose-to-backtesting brainstorm) + M7 + M9 (multi-PR refactors, out of scope).
 > **Scope:** Full read-through of every Python file in `src/hynous/`, `satellite/`, `data-layer/`, `dashboard/`, `scripts/`, plus all config, deploy, and planning docs.
 > **Verification status:** Every issue in this document has been verified via `grep` + `read` against the current `v2` branch. Evidence (file paths, line numbers, exact quotes) is embedded in each entry.
 > **Purpose:** This document is the work-unit queue for closing v2 debt. Each issue includes enough context that another engineer can act on it without re-auditing. Nothing is speculative — claims that couldn't be verified are excluded.
@@ -10,23 +10,23 @@
 
 ---
 
-## Status Dashboard (as of 2026-04-21)
+## Status Dashboard (as of 2026-04-22)
 
-Eighteen issues total (1 Critical + 8 High + 9 Medium). Eleven landed on `v2` in one session of cleanup commits; the remaining seven are blocked on a user decision, blocked on C1 root-cause output, or explicitly deferred per the audit's own guidance.
+Eighteen issues total (1 Critical + 8 High + 9 Medium). **15 resolved, 1 engineer-ready (M1, held for backtesting-repurpose brainstorm), 2 deferred as multi-PR refactors (M7, M9).** No blockers remain for everyday operations; M1 is the largest cleanup still pending but is being rescoped.
 
 | ID | Severity | Status | Commit / Reason |
 |----|----------|--------|-----------------|
-| **C1** | Critical | **OPEN — BLOCKED on user VPS rollback** | Step 0 of Fix Order — user executes. Diagnose script run (Fix Order step 3) also pending. Trading is still halted until this resolves. |
+| **C1** | Critical | **RESOLVED** | 2026-04-22 diagnose on VPS confirmed Hypothesis A (v3 artifact was retrained on `best_*_roe_30m_net`; stale `_v3_risk_adj_rejected_BACKUP/` on disk corroborates). v3 prediction distribution: p50 long 1.26%, short 1.44%; p95 long 2.53%, short 2.88%; p99 long 3.39%, short 3.60% over 7 days / 3500 snapshots. Fix committed: `config/default.yaml` `inference_entry_threshold: 3.0→2.0`, `inference_conflict_margin: 1.0→0.5`. Threshold 2.0 yields ~9% action rate with clean long/short separation. |
 | **H1** | High | **RESOLVED** | `b468a80` — staged_entries dead code deleted from daemon (-166 LOC); design doc archived under `docs/archive/`; mypy baseline pruned. |
 | **H2** | High | **RESOLVED (strict variant)** | `ec03d27` — `src/hynous/intelligence/prompts/` deleted (builder.py + __init__.py + README.md); 4 stale prompt-introspection tests pruned from `test_ml_adaptive_trailing.py` + `test_agent_exit_lockout.py` + `test_dynamic_protective_sl.py`; 9 docs redirected from builder.py to `src/hynous/user_chat/prompt.py`. +26/-422 LOC. |
 | **H3** | High | **RESOLVED** | `b10febb` — `deploy/setup.sh` installs all three services (hynous, hynous-data, hynous-daemon); all Discord references removed from `deploy/`. |
 | **H4** | High | **RESOLVED** | `93dc039` — `src/hynous/README.md` rewritten for v2 layout (no discord/, no nous/). |
 | **H5** | High | **RESOLVED** | `2f306f1` — `config/README.md` rewritten to match actual v2 config sections; dropped phantom `nous`/`orchestrator`/`memory`/`sections` sections; full v2 sub-config tree now documented. |
-| **H6** | High | **OPEN — BLOCKED on C1 diagnose output** | Fix branches on whether v3 was trained on `best_roe_30m_net` (Hypothesis A) or `risk_adj_*` (Hypothesis B). Do not edit `scripts/retrain_direction_v3_snapshots.py` until C1 step 3 produces hard evidence. |
+| **H6** | High | **RESOLVED** | 2026-04-22 — `scripts/retrain_direction_v3_snapshots.py:80-81` corrected to use `best_long_roe_30m_net` / `best_short_roe_30m_net` (Hypothesis A confirmed by diagnose). Target names now also passed to `train_both_models` so the resulting artifacts self-document via H8 metadata fields. `retrain_direction_model.py` also threaded through with `roe_at_exit`. |
 | **H7** | High | **RESOLVED** | `7fe866f` — `scripts/diagnose_direction_inference.py:101` default changed from `"satellite/artifacts/v3/v3"` to `"satellite/artifacts/v3"`. One-line fix unblocks C1 step 3. |
-| **H8** | High | **OPEN** | No blocker. Engineer can ship anytime: add `long_target_column` + `short_target_column` to `ModelMetadata` (`satellite/training/artifact.py:27-56`), thread through `train_both_models`, update retrain scripts, backfill `metadata_v2.json` + `metadata_v3.json`. Closes the audit gap that let C1 ship unnoticed. |
-| **M1** | Medium | **OPEN** | Full `context_snapshot.py` delete + dead half of `briefing.py` (`get_briefing_injection` chain) + caller cleanup in `daemon.py` / `tools/trading.py` / `regime.py`. Touches ~1800 LOC across 4 files. Audit Phase B (full `DataCache` + `build_briefing` delete) is recommended; user_chat is deliberately journal-only, no briefing resurface planned. |
-| **M2** | Medium | **OPEN — BLOCKED on user decision** | Option A (keep file, fix two lying docstrings) vs Option B (rewrite 2 test files to use JournalStore, then delete `staging_store.py`). Pending user pick. |
+| **H8** | High | **RESOLVED** | 2026-04-22 — added `long_target_column` + `short_target_column` to `ModelMetadata` with `= ""` defaults for backward compat; `ModelArtifact.load()` now logs a warning on artifacts missing target metadata (`satellite/training/artifact.py`); `train_both_models` accepts target names as kwargs (`satellite/training/train.py`); both retrain scripts pass them through. Backfilled `metadata_v2.json` (`risk_adj_*`) and `metadata_v3.json` (`best_*_roe_30m_net`). `from_dict` now tolerant of unknown keys via `fields(cls)` filter. Tests: 56/56 pass on `test_training.py` + `test_normalize.py`. |
+| **M1** | Medium | **OPEN (held for rescope)** | Dead-code delete was originally scoped as full removal. User flagged on 2026-04-22 that `DataCache.poll()` output (L2 depth + 7d candles + 7d funding) is genuinely useful for backtesting. Proposed pivot: keep the polling, delete only the dead consumer half (`_last_state`, `get_briefing_injection`, `_build_delta`, `invalidate_briefing_cache`, `context_snapshot.py`), persist the cached data into a new `market_context_snapshots` table so offline analysis can reconstruct rolling market context at any timestamp. Implementation deferred pending a dedicated design pass. |
+| **M2** | Medium | **RESOLVED (Option A)** | 2026-04-22 — fixed the lying docstrings in `src/hynous/journal/__init__.py:8` and `src/hynous/journal/README.md:26`. `staging_store.py` stays in the tree (two tests still consume `StagingStore` for roundtrip fixtures). Option B test refactor deferred as lower-value. |
 | **M3** | Medium | **RESOLVED** | `4b229e7` — 3 dead v1 placeholder fixtures removed from `tests/conftest.py`; `tests/README.md` fixtures section rewritten. |
 | **M4** | Medium | **RESOLVED** | `b0fac9f` — dead `trade_history_warnings` field deleted from `TradingSettings`. |
 | **M5** | Medium | **RESOLVED** | `1a3cd82` — `TICK_FEATURE_NAMES` + `TICK_SCHEMA_VERSION` deduped; `data-layer/.../tick_collector.py` now imports from `satellite.tick_features`; shared venv via `pyproject.toml` `packages = ["src/hynous", "satellite"]` confirmed working. |
@@ -35,21 +35,13 @@ Eighteen issues total (1 Critical + 8 High + 9 Medium). Eleven landed on `v2` in
 | **M8** | Medium | **RESOLVED** | `2eb7232` — `paper.py` replaced hardcoded `TAKER_FEE = 0.00035` with `_taker_fee_per_side()` that reads `get_trading_settings().taker_fee_pct`. Runtime tuning now propagates to paper mode. |
 | **M9** | Low | **DEFERRED** | `dashboard/dashboard/dashboard.py` 892-line monolith refactor. Same reasoning as M7: separate effort, not cleanup. |
 
-**Remaining engineer work (can proceed in any order except H6):**
+**Remaining engineer work:**
 
-1. **H8** — metadata schema addition + backfill. Unblocks future retrain audits; doesn't fix C1 directly but closes the audit gap.
-2. **M1** — dead briefing/context_snapshot removal. Touches daemon + trading + regime; biggest remaining cleanup.
-3. **M2 Option A or B** — awaiting user decision, trivial to execute once decided.
+1. **M1 rescope** — awaiting dedicated design pass to convert dead-code delete into a repurpose-for-backtesting effort. The `DataCache` polling stays; the dead consumer half goes; new persistence table `market_context_snapshots` for offline replay. Not blocking anything operational.
 
-**Remaining user-gated work (engineer cannot proceed):**
+**Remaining user-gated work:** None operational. C1 fix was a one-line config change + VPS restart; both completed in the 2026-04-22 session.
 
-1. **C1 step 0** — rollback VPS v3 artifact (`mv satellite/artifacts/v3 v3.disabled` on VPS, `systemctl restart hynous-daemon`).
-2. **C1 step 3** — run `scripts/diagnose_direction_inference.py` on v2 + v3 artifacts, share raw JSON output.
-3. **C1 step 4** — pick fix branch (lower threshold vs retrain) based on diagnose output.
-4. **H6** — once step 3-4 produces ground truth, engineer corrects `retrain_direction_v3_snapshots.py` targets.
-5. **M2 A-vs-B** — pick docstring-only fix (A) or test-refactor-then-delete (B).
-
-**Deferred (out of scope for this debt-burn):** M7, M9. Multi-PR refactor efforts. Start in a separate dedicated window.
+**Deferred (out of scope):** M7, M9. Multi-PR refactor efforts. Start in a separate dedicated window.
 
 ---
 
@@ -1618,9 +1610,8 @@ Recommended execution sequence. Groups are serial; items within a group can be o
 
 ### Score
 
-- **✅ DONE:** 11 of 18 issues (H1, H2, H3, H4, H5, H7, M3, M4, M5, M6, M8)
-- **⏳ OPEN (engineer can start anytime):** H8, M1
-- **⏳ BLOCKED on user action or C1 diagnosis:** C1, H6, M2
+- **✅ DONE:** 15 of 18 issues (C1, H1, H2, H3, H4, H5, H6, H7, H8, M2, M3, M4, M5, M6, M8)
+- **⏳ OPEN (held for rescope):** M1 — pending repurpose-to-backtesting design pass
 - **⏳ DEFERRED out of audit scope:** M7, M9
 
 ---
@@ -1636,4 +1627,4 @@ Things I noticed but am NOT calling out here because they're working as intended
 
 ---
 
-Last updated: 2026-04-21 (post-cleanup-session — 11 of 18 issues resolved on `v2`; Status Dashboard added; per-issue Status lines annotated with commit hashes or blocker; Fix Order scored. Remaining: C1/H6 gated on user VPS rollback + diagnose; H8 + M1 open for engineer; M2 gated on user A/B pick; M7/M9 deferred.)
+Last updated: 2026-04-22 (C1 production outage resolved via diagnose-driven threshold calibration; H6 + H8 + M2 Option A landed in the same session. 15 of 18 issues closed. M1 held for rescope into a backtesting-data repurpose; M7/M9 remain deferred multi-PR refactors.)

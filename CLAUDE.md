@@ -225,28 +225,25 @@ unrestricted). Current baseline (phase 8 complete): `592 passed / 0 failed`.
 - **ML stack retrain.** Direction model **v3** lives at `satellite/artifacts/v3/` with target switched from `risk_adj_30m` to peak ROE (`best_roe_30m_net`); v2 was emitting 100 % skip on recent data. The daemon picks the highest `v*` artifact dir at boot (`daemon.py:374-384`), so v3 is auto-loaded — v2 is left in tree but unused. Conditions retrained on 72K snapshots: 12 existing models refreshed (notable wins: entry_quality 0.05→0.32, volume_1h 0.32→0.47, funding_4h 0.00→0.23, vol_1h 0.62→0.73), `momentum_quality` added (active, spearman 0.39), `reversal_30m` added but kept in `DISABLED_MODELS` (spearman 0.10). Tick direction models retrained on 455K v2 tick snapshots, **8 → 6 horizons** (45s and 180s dropped as weak) — `direction_10s` improved 66.6 % → 69.7 % directional accuracy.
 - **Opt-in tick-confirmation gate.** New gate in `MLSignalDrivenTrigger` between the direction-signal and direction-confidence checks: when `v2.mechanical_entry.tick_confirmation_enabled: true`, the chosen tick horizon's sign must agree with the satellite direction. Off by default. Configurable via `tick_confirmation_horizon` (default `direction_10s`). Two new rejection reasons: `tick_confirmation_unavailable`, `tick_direction_disagreement`.
 
-## ⚠️ Active Issues — read before working (2026-04-21)
+## ⚠️ Active Issues — read before working (2026-04-22)
 
-Full audit + status dashboard: **`docs/revisions/v2-debug/README.md`** (18 issues: 1 Critical, 8 High, 9 Medium). Read the "For the Next Engineer" preamble + Status Dashboard before any fix work — sequencing is load-bearing, and 11 of 18 issues already landed in one cleanup session.
+Full audit + status dashboard: **`docs/revisions/v2-debug/README.md`** (18 issues: 1 Critical, 8 High, 9 Medium). **15 of 18 resolved.** Only M1 remains engineer-touchable, and it's held for a rescope.
 
-### Critical — still blocking production
+### Open — held for rescope
 
-- **C1 — v3 direction model produces 100 % skip in production. OPEN — BLOCKED on user.** Trading loop has fired zero entries since the 2026-04-21 02:38:40 UTC restart. Kronos shadow log shows `live=skip` every 5 min while Kronos itself emits directional verdicts. **User action pending:** (1) rollback VPS (`mv satellite/artifacts/v3 v3.disabled && systemctl restart hynous-daemon`), (2) run `scripts/diagnose_direction_inference.py` on VPS, (3) share JSON output, (4) pick fix branch (lower threshold vs retrain). H7 already done so the diagnose script runs cleanly.
-
-### Open — engineer can start anytime
-
-- **H8** — add `long_target_column` + `short_target_column` to `ModelMetadata` (`satellite/training/artifact.py:27-56`), thread through `train_both_models`, update retrain scripts, backfill `metadata_v2.json` + `metadata_v3.json`. Closes the audit gap that let C1 ship unnoticed. Independent of C1 resolution.
-- **M1** — delete `src/hynous/intelligence/context_snapshot.py` entirely (zero callers), delete the `get_briefing_injection` dead chain in `briefing.py`, delete `DataCache` polling at `daemon.py:219-220, 1268, 1292`, delete `invalidate_briefing_cache()` calls at `tools/trading.py:640-641, 1028-1029`, drop `data_cache` arg from `regime.classify()`. ~1800 LOC of dead code. H2 already landed so no merge-conflict risk.
-
-### Blocked on user decision
-
-- **H6** — `scripts/retrain_direction_v3_snapshots.py:80-81` passes `risk_adj_*` target names while commit `771ef4a` claims `best_roe_30m_net`. Don't touch until C1 step 3 produces hard evidence for Hypothesis A vs B.
-- **M2** — `src/hynous/journal/staging_store.py` still present despite phase-4 docstrings claiming it was deleted. Option A (fix docstrings, 5 min) vs Option B (rewrite `test_v2_capture.py` + `test_v2_journal_integration.py` to use JournalStore, then delete the file — 1-2 hrs, baseline-drift risk). Engineer rec: A.
+- **M1** — originally scoped as a dead-code delete (`context_snapshot.py` + the `get_briefing_injection` half of `briefing.py`). User flagged 2026-04-22 that `DataCache.poll()` output (L2 depth + 7d candles + 7d funding) is genuinely useful for backtesting. New target: keep the polling, delete only the dead consumer half, persist the cached data into a new `market_context_snapshots` table for offline replay. Design pass deferred; no operational impact.
 
 ### Deferred (out of scope — multi-PR refactors)
 
 - **M7** — daemon.py monolith split (3951 lines post-H1).
 - **M9** — dashboard/dashboard/dashboard.py monolith split (892 lines).
+
+### Resolved in the 2026-04-22 session (4 issues — C1, H6, H8, M2A)
+
+- **C1** — diagnose script run on VPS confirmed Hypothesis A. v3 artifact was genuinely retrained on `best_*_roe_30m_net`; the `_v3_risk_adj_rejected_BACKUP/` directory on disk corroborates. Fix: `config/default.yaml` `inference_entry_threshold 3.0→2.0`, `inference_conflict_margin 1.0→0.5`. v3's p75 ≈ 1.7% and p95 ≈ 2.6% — the 3.0 threshold caught only ~4% of predictions; 2.0 catches ~9%.
+- **H6** — `scripts/retrain_direction_v3_snapshots.py:80-81` corrected to `best_long_roe_30m_net` / `best_short_roe_30m_net`. Target names now also threaded into `train_both_models` so future artifacts self-document.
+- **H8** — `ModelMetadata` gained `long_target_column` + `short_target_column` fields (defaults to `""` for backward compat). `ModelArtifact.load()` warns on artifacts missing the fields. `from_dict` now filters unknown keys via `fields(cls)`. Both existing retrain scripts pass target names through. v2 metadata backfilled with `risk_adj_*`; v3 with `best_*_roe_30m_net`.
+- **M2 Option A** — fixed the lying docstrings in `src/hynous/journal/__init__.py:8` and `src/hynous/journal/README.md:26`. `staging_store.py` stays (two test files still use it for roundtrip fixtures).
 
 ### Resolved in the 2026-04-21 cleanup session (11 issues)
 
@@ -266,4 +263,4 @@ Full audit + status dashboard: **`docs/revisions/v2-debug/README.md`** (18 issue
 
 ---
 
-Last updated: 2026-04-21 (v2-debug cleanup session — 11 of 18 issues resolved; C1/H6 blocked on user VPS rollback + diagnose run; H8 + M1 open for engineer; M2 blocked on user A/B pick; M7/M9 deferred.)
+Last updated: 2026-04-22 (C1 production outage resolved via diagnose-driven threshold calibration + H6/H8/M2A landed same session; 15/18 issues closed; M1 held for backtesting-repurpose brainstorm; M7/M9 remain deferred.)
