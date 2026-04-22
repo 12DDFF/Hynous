@@ -23,7 +23,7 @@ populates the `trade_analyses` table via an LLM post-trade analysis agent.
 | File | Purpose |
 |------|---------|
 | `schema.py` | 19 dataclasses + `entry_snapshot_from_dict` / `exit_snapshot_from_dict` reconstruction helpers + `SCHEMA_DDL` constant |
-| `staging_store.py` | Phase-1 thin SQLite wrapper (deleted in phase 4) |
+| `staging_store.py` | Phase-1 thin SQLite wrapper. Kept in tree: two test files still import `StagingStore` for round-trip fixtures. Daemon no longer writes to it (JournalStore is the sole production write target since phase 2 M7). |
 | `store.py` | **Phase 2 — `JournalStore`**: 9-table schema, CRUD, semantic search, daemon-compat methods |
 | `embeddings.py` | **Phase 2** — `EmbeddingClient` (OpenAI text-embedding-3-small, matryoshka 512-dim), `cosine_similarity`, `build_entry_embedding_text` |
 | `api.py` | **Phase 2** — FastAPI router at `/api/v2/journal/*` |
