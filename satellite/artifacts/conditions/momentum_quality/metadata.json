@@ -16,10 +16,10 @@
     "close_position_5m"
   ],
   "target_description": "Volume-backed momentum ratio at i+6",
-  "created_at": "2026-04-20T04:45:50.084810+00:00",
-  "training_samples": 72986,
-  "validation_spearman": 0.3893,
-  "validation_mae": 0.2133,
+  "created_at": "2026-05-06T00:50:20.004235+00:00",
+  "training_samples": 77944,
+  "validation_spearman": 0.3892,
+  "validation_mae": 0.213,
   "xgboost_params": {
     "objective": "reg:pseudohubererror",
     "max_depth": 4,
@@ -31,11 +31,11 @@
     "verbosity": 0
   },
   "percentiles": {
-    "p10": 0.13259,
-    "p25": 0.167213,
-    "p50": 0.234995,
-    "p75": 0.340456,
-    "p90": 0.464075,
-    "p95": 0.553411
+    "p10": 0.1326,
+    "p25": 0.168147,
+    "p50": 0.238382,
+    "p75": 0.343231,
+    "p90": 0.465821,
+    "p95": 0.560525
   }
 }

@@ -15,10 +15,10 @@
     "liq_total_1h_usd"
   ],
   "target_description": "Future volume_vs_1h_avg_ratio (12 snapshots ahead)",
-  "created_at": "2026-04-20T04:44:38.737818+00:00",
-  "training_samples": 73008,
-  "validation_spearman": 0.4699,
-  "validation_mae": 0.6721,
+  "created_at": "2026-05-06T00:48:56.155140+00:00",
+  "training_samples": 77966,
+  "validation_spearman": 0.4666,
+  "validation_mae": 0.6643,
   "xgboost_params": {
     "objective": "reg:pseudohubererror",
     "max_depth": 4,
@@ -30,11 +30,11 @@
     "verbosity": 0
   },
   "percentiles": {
-    "p10": 0.688144,
-    "p25": 0.816098,
-    "p50": 1.034792,
-    "p75": 1.29813,
-    "p90": 1.649549,
-    "p95": 1.923893
+    "p10": 0.686492,
+    "p25": 0.814462,
+    "p50": 1.029551,
+    "p75": 1.29107,
+    "p90": 1.627194,
+    "p95": 1.901405
   }
 }

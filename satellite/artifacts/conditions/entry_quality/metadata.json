@@ -17,10 +17,10 @@
     "oi_funding_pressure"
   ],
   "target_description": "long_roe minus mean of recent 6 long_roes",
-  "created_at": "2026-04-20T04:44:43.765360+00:00",
-  "training_samples": 72635,
-  "validation_spearman": 0.3163,
-  "validation_mae": 2.3378,
+  "created_at": "2026-05-06T00:49:00.959407+00:00",
+  "training_samples": 77593,
+  "validation_spearman": 0.3112,
+  "validation_mae": 2.2616,
   "xgboost_params": {
     "objective": "reg:squarederror",
     "max_depth": 5,
@@ -32,11 +32,11 @@
     "verbosity": 0
   },
   "percentiles": {
-    "p10": -1.359899,
-    "p25": -0.515906,
-    "p50": 0.104505,
-    "p75": 0.659086,
-    "p90": 1.199214,
-    "p95": 1.625909
+    "p10": -1.313932,
+    "p25": -0.488918,
+    "p50": 0.097809,
+    "p75": 0.634498,
+    "p90": 1.159634,
+    "p95": 1.596589
   }
 }
